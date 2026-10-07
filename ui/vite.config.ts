@@ -14,6 +14,8 @@ export default defineConfig(({ mode }) => {
     preview: { proxy },
     test: {
       environment: 'jsdom',
+      // e2e/ 는 Playwright 의 몫이다(실행 중인 전체 스택 앞에서 돈다).
+      include: ['src/**/*.test.{ts,tsx}'],
       setupFiles: ['./src/setupTests.ts'],
     },
   }

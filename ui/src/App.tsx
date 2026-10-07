@@ -18,6 +18,8 @@ export default function App() {
   const [view, setView] = useState<RobotListView | null>(null)
   const [records, setRecords] = useState<OperationRecord[] | null>(null)
   const [opsError, setOpsError] = useState<string | null>(null)
+  // 조작이 끝나면 하나 올린다. 목록을 주기(5초)를 기다리지 않고 다시 읽는다.
+  const [tick, setTick] = useState(0)
 
   useEffect(() => {
     let alive = true
@@ -40,7 +42,7 @@ export default function App() {
       alive = false
       clearInterval(timer)
     }
-  }, [session])
+  }, [session, tick])
 
   const current = AREAS.find((candidate) => candidate.id === area) ?? AREAS[1]
 
@@ -65,7 +67,14 @@ export default function App() {
       <RegistryBanner view={view} opsError={opsError} />
       <main>
         {!current.ready && <p>이 영역은 다음 단계에서 엽니다.</p>}
-        {current.id === 'robots' && <RobotsArea view={view} opsError={opsError} />}
+        {current.id === 'robots' && (
+          <RobotsArea
+            view={view}
+            opsError={opsError}
+            session={session}
+            onChanged={() => setTick((value) => value + 1)}
+          />
+        )}
         {current.id === 'history' && <HistoryArea records={records} opsError={opsError} />}
       </main>
     </>

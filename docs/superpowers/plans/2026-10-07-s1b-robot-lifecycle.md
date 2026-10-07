@@ -3614,3 +3614,18 @@ CI 를 폴링하지 않는다. PR 을 만든 뒤 앱의 PR 도구로 연결하�
 - 세 job 이 모두 초록이면 job 로그에서 `1 passed` 와 Gradle 시험 XML(아티팩트 `test-results`)을 확인하고, «실행 결과» 의 «CI 대기» 를 바꾸는 후속 커밋을 남긴다. S1b 완료 보고는 이 뒤에 한다(스펙 §10 «Playwright 는 CI 에서도 돌립니다»).
 - 빨가면 `playwright` job 은 아티팩트 `playwright-report` 와 로그의 `[WebServer]` 줄(런처·운영 서비스 로그)을, `gradle` job 은 `test-results` 의 XML 실패 이름을 읽고 고친다. 고친 것은 새 커밋으로 올린다. Linux 에서 처음 도는 자리이므로 Postgres 준비 신호, `java` 경로(`JAVA_HOME`), 시험 끝의 런처 끄기(`process.kill`) 뒤 Playwright 의 처리를 먼저 의심한다.
 머지는 사용자 승인 뒤다.
+
+## 실행 결과 (2026-10-07)
+
+- 브랜치 `feat/s1b-lifecycle`, 계획 커밋 `b8cbcb7` 위에 구현. S1a PR #1 이 머지 커밋 `b4fcc56` 으로 `main` 에 들어가 S1a 커밋 `3a51f29` 가 `main` 에 그대로 있으므로 계획 Task 0 의 rebase 는 하지 않고 이미 푸시한 계획 커밋을 그대로 둠. 기준 브랜치 `origin/main`, PR base `main`
+- 실행 방식: 작업을 6묶음(Task 1~2, 3~4, 5, 6, 7, 8~9)으로 나눠 Task 7 까지는 묶음마다 구현자 1명, Task 8~9 는 컨트롤러. 묶음마다 커밋된 파일을 계획을 쓸 때 돌린 스크래치 빌드의 파일과 기계 대조, 39개 파일 모두 일치. README 와 스펙 정정 문장은 Codex·Fable 초안 취합
+- 시험 결과(JUnit XML): site 12, ops-service 55(`ActorTest` 4, `BlockersTest` 7, `EnvBoundaryTest` 1, `OperationLogTest` 7, `RegistryClientTest` 6, `RegistryWritesTest` 6, `RejectionsTest` 3, `RobotListServiceTest` 9, `RobotOperationsTest` 12), e2e 13(`LifecycleTest` 10, `SkeletonTest` 3), 실패 0. vitest 23개 통과, `npm run build` 성공. `checkNoPicassoOnMain` 성공
+- Playwright(Windows): `1 passed`, 시험 51.8초, 스택 기동 포함 1.4분. 끝난 뒤 스택 프로세스와 `site-` 컨테이너 0개
+- 결함 주입: 계획의 21건(Kotlin 14, 화면 6, Playwright 1)과 최종 검토 반영 6건을 하나씩 넣고 되돌림. 매번 지정한 시험이 실패, 이름은 JUnit XML·vitest·Playwright 출력에서 확인. Playwright 기동 실패 확인에서는 프로세스 0개, Postgres 컨테이너 1개가 남았고 다음 실행이 내리고 통과
+- 계획과 달라진 점 1: Task 3 결함 주입 ① 의 `if (true)` 는 `RegistryCall.Ok` 스마트 캐스트가 깨져 컴파일되지 않음. `if (robots !is RegistryCall.Ok || true)` 로 같은 효과를 넣었고 기대한 5개 시험이 실패
+- 최종 코드 품질 검토(Critical 0)에서 반영한 것, 계획과 달라진 점:
+  - Important 1건: registry 의 선언은 이미 있는 기체면 일련번호와 표시 이름을 덮어쓰는 갱신(`ON CONFLICT ... DO UPDATE`). 일련번호를 고치는 재선언이 응답 없이 끝나면 옛 값이 그대로여도 `반영됨` 확인 행이 붙을 수 있었음. 선언의 반영 판정에 일련번호·표시 이름 일치를 더하고 단위 시험 1개 추가
+  - Minor 3건: 재조회 전 1초 대기를 지키는 시험 1개 추가(기본값으로 900ms 이상), 퇴역·복귀 API 의 사전 거절(헤더 없음 400, 모드 403, `text/plain` 415)을 통합 시험의 기존 사전 거절 시험에 추가, 사유 칸이 없는 400(스프링 기본 본문)에서 화면 사유가 비던 것을 정해진 문장으로 채우고 vitest 1개 추가
+  - 넘긴 것 1건: registry 가 반영한 뒤 조작 기록 쓰기가 실패하면 그 조작의 행이 없고 API 는 500(화면은 결과 모름). registry 와 같은 Postgres 라 드묾
+- 새 클론 검증: 커밋된 파일만으로 짧은 경로에 새로 클론해 `./gradlew build`, `npm ci && npm test`, Playwright `1 passed`
+- CI: PR 뒤 확인 대기. Linux 의 Playwright 는 로컬에서 돈 적이 없어 첫 CI 가 첫 실측
