@@ -42,6 +42,47 @@ export interface RobotListView {
   robotsAsOf: string | null
 }
 
+/** 어댑터 빌드 하나. `conformance` 는 registry 값 그대로다(S1 은 `UNTESTED` 만 본다). */
+export interface AdapterBuild {
+  adapterVersionId: number
+  version: string
+  contractSemver: string
+  conformance: string
+  registeredAt: string | null
+  registeredBy: string | null
+}
+
+/** 어댑터 제품 하나와 그 빌드들. */
+export interface Adapter {
+  adapterId: number
+  vendor: string
+  name: string
+  versions: AdapterBuild[]
+}
+
+/** 이 사이트에 등록된 어댑터 인스턴스. 빌드는 제품 이름(`vendor/name`)과 버전으로만 가리킨다. */
+export interface AdapterInstance {
+  instanceId: string
+  siteId: string
+  fleetEndpoint: string | null
+  registeredAt: string | null
+  registeredBy: string | null
+  adapter: string
+  version: string
+  contractSemver: string
+  conformance: string
+  discoveredRobots: number
+}
+
+/** 운영 서비스의 `GET /api/adapters`. 목록이 null 이면 모름, 빈 배열이면 없음이다(스펙 §9). */
+export interface AdapterListView {
+  registry: RegistryState
+  checkedAt: string
+  adapters: Adapter[] | null
+  instances: AdapterInstance[] | null
+  asOf: string | null
+}
+
 export interface OperationRecord {
   requestId: string
   mode: 'ENGINEER' | 'OPERATOR'
@@ -136,3 +177,15 @@ export const retireRobot = (session: Session, robotId: string, reason: string) =
   send('POST', retirementPath(robotId), session, { reason })
 export const reinstateRobot = (session: Session, robotId: string) =>
   send('DELETE', retirementPath(robotId), session)
+
+export const fetchAdapters = (session: Session) => getJson<AdapterListView>('/api/adapters', session)
+export const declareAdapter = (session: Session, vendor: string, name: string) =>
+  send('POST', '/api/adapters', session, { vendor, name })
+export const declareBuild = (session: Session, adapterId: number, version: string, contractSemver: string) =>
+  send('POST', `/api/adapters/${adapterId}/versions`, session, { version, contractSemver })
+export const registerInstance = (
+  session: Session,
+  instanceId: string,
+  adapterVersionId: number,
+  fleetEndpoint: string | null,
+) => send('POST', '/api/adapter-instances', session, { instanceId, adapterVersionId, fleetEndpoint })

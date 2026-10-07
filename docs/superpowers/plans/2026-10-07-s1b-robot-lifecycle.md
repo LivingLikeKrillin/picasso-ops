@@ -3628,4 +3628,4 @@ CI 를 폴링하지 않는다. PR 을 만든 뒤 앱의 PR 도구로 연결하�
   - Minor 3건: 재조회 전 1초 대기를 지키는 시험 1개 추가(기본값으로 900ms 이상), 퇴역·복귀 API 의 사전 거절(헤더 없음 400, 모드 403, `text/plain` 415)을 통합 시험의 기존 사전 거절 시험에 추가, 사유 칸이 없는 400(스프링 기본 본문)에서 화면 사유가 비던 것을 정해진 문장으로 채우고 vitest 1개 추가
   - 넘긴 것 1건: registry 가 반영한 뒤 조작 기록 쓰기가 실패하면 그 조작의 행이 없고 API 는 500(화면은 결과 모름). registry 와 같은 Postgres 라 드묾
 - 새 클론 검증: 커밋된 파일만으로 짧은 경로에 새로 클론해 `./gradlew build`, `npm ci && npm test`, Playwright `1 passed`
-- CI: PR 뒤 확인 대기. Linux 의 Playwright 는 로컬에서 돈 적이 없어 첫 CI 가 첫 실측
+- CI: PR #2 의 `gradle`·`ui`·`playwright` job 3개 초록. Linux 의 Playwright 첫 실측 `1 passed`(시험 1.0분, Playwright 가 보고한 실행 1.5분). PR #2 는 2026-10-07 머지(머지 커밋 `d94a5e6`)

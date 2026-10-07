@@ -1,5 +1,6 @@
 package dev.picasso.ops.service.registry
 
+import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.core.JacksonException
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -32,6 +33,13 @@ sealed interface RegistryCall<out T> {
     data object Unauthorized : RegistryCall<Nothing>
 }
 
+/** 읽은 값만 바꾼다. 읽지 못한 결과는 그대로 둔다. */
+fun <T, R> RegistryCall<T>.map(transform: (T) -> R): RegistryCall<R> = when (this) {
+    is RegistryCall.Ok -> RegistryCall.Ok(transform(value))
+    is RegistryCall.Silent -> this
+    RegistryCall.Unauthorized -> RegistryCall.Unauthorized
+}
+
 /** registry `GET /diag/robots` 의 한 줄. 운영 서비스가 쓰는 칸만 읽고 나머지는 버린다. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class RegistryRobot(
@@ -53,6 +61,52 @@ data class RegistryRobot(
 /** 기체 목록의 출처. 시험이 registry 없이 대신 끼운다. */
 fun interface RobotSource {
     fun robots(siteId: String): RegistryCall<List<RegistryRobot>>
+}
+
+/**
+ * registry `GET /operations/adapters` 의 빌드 한 줄. registry 는 snake_case 로 주고, 운영 서비스는 camelCase 로
+ * 화면에 넘긴다. [JsonAlias] 는 읽을 때만 쓰인다.
+ */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class RegistryBuild(
+    @JsonAlias("adapter_version_id") val adapterVersionId: Long,
+    val version: String,
+    @JsonAlias("contract_semver") val contractSemver: String,
+    val conformance: String,
+    @JsonAlias("registered_at") val registeredAt: String? = null,
+    @JsonAlias("registered_by") val registeredBy: String? = null,
+)
+
+/** registry `GET /operations/adapters` 의 제품 한 줄. 빌드 목록이 안에 든다(스펙 §5). */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class RegistryAdapter(
+    @JsonAlias("adapter_id") val adapterId: Long,
+    val vendor: String,
+    val name: String,
+    val versions: List<RegistryBuild> = emptyList(),
+)
+
+/** registry `GET /diag/adapter-instances` 의 한 줄. 빌드 id 는 없고 제품 이름(`vendor/name`)과 버전이 있다. */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class RegistryInstance(
+    val instanceId: String,
+    val siteId: String,
+    val fleetEndpoint: String? = null,
+    val registeredAt: String? = null,
+    val registeredBy: String? = null,
+    val adapter: String,
+    val version: String,
+    val contractSemver: String,
+    val conformance: String,
+    val discoveredRobots: Int = 0,
+)
+
+/** 어댑터 제품·빌드와 인스턴스 목록의 출처. 시험이 registry 없이 대신 끼운다. */
+interface AdapterSource {
+    /** 운영자 토큰 관문 안의 읽기다. 토큰이 틀리면 [RegistryCall.Unauthorized] 다. */
+    fun adapters(): RegistryCall<List<RegistryAdapter>>
+
+    fun instances(siteId: String): RegistryCall<List<RegistryInstance>>
 }
 
 /** 운영자 토큰 확인. 목록 읽기는 관문 밖이라 401 이 오지 않으므로 관문 안의 읽기를 따로 부른다. */
@@ -79,13 +133,28 @@ interface RobotWrites {
     fun reinstate(robotId: String, actor: String): RegistryWrite
 }
 
+/** 어댑터 조작 3가지(스펙 §3 S1c). 시험이 registry 없이 대신 끼운다. */
+interface AdapterWrites {
+    fun declareAdapter(vendor: String, name: String, actor: String): RegistryWrite
+
+    fun declareBuild(adapterId: Long, version: String, contractSemver: String, actor: String): RegistryWrite
+
+    fun registerInstance(
+        siteId: String,
+        instanceId: String,
+        adapterVersionId: Long,
+        fleetEndpoint: String?,
+        actor: String,
+    ): RegistryWrite
+}
+
 /** registry REST 클라이언트. 운영 서비스만 운영자 토큰을 쥔다(스펙 §4). DB 에 직결하지 않는다. */
 class RegistryClient(
     baseUrl: String,
     private val token: String,
     private val http: HttpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(),
     private val json: ObjectMapper = jacksonObjectMapper(),
-) : RobotSource, TokenProbe, RobotWrites, AutoCloseable {
+) : RobotSource, TokenProbe, RobotWrites, AdapterSource, AdapterWrites, AutoCloseable {
 
     private val base = checkBaseUrl(baseUrl)
 
@@ -124,6 +193,41 @@ class RegistryClient(
 
     override fun reinstate(robotId: String, actor: String): RegistryWrite =
         send("DELETE", "/operations/robots/${segment(robotId)}/retirement", actor, null)
+
+    override fun adapters(): RegistryCall<List<RegistryAdapter>> =
+        get("/operations/adapters") { json.readValue<List<RegistryAdapter>?>(it) }
+
+    override fun instances(siteId: String): RegistryCall<List<RegistryInstance>> {
+        val site = URLEncoder.encode(siteId, StandardCharsets.UTF_8)
+        return get("/diag/adapter-instances?site=$site") { json.readValue<List<RegistryInstance>?>(it) }
+    }
+
+    override fun declareAdapter(vendor: String, name: String, actor: String): RegistryWrite =
+        send(
+            "POST", "/operations/adapters", actor,
+            json.writeValueAsString(json.createObjectNode().put("vendor", vendor).put("name", name)),
+        )
+
+    override fun declareBuild(adapterId: Long, version: String, contractSemver: String, actor: String): RegistryWrite =
+        send(
+            "POST", "/operations/adapters/$adapterId/versions", actor,
+            json.writeValueAsString(json.createObjectNode().put("version", version).put("contract_semver", contractSemver)),
+        )
+
+    override fun registerInstance(
+        siteId: String,
+        instanceId: String,
+        adapterVersionId: Long,
+        fleetEndpoint: String?,
+        actor: String,
+    ): RegistryWrite {
+        val body = json.createObjectNode()
+            .put("instance_id", instanceId)
+            .put("adapter_version_id", adapterVersionId)
+            .put("site", siteId)
+        if (fleetEndpoint != null) body.put("fleet_endpoint", fleetEndpoint)
+        return send("POST", "/operations/adapter-instances", actor, json.writeValueAsString(body))
+    }
 
     /** [read] 가 널을 내면(본문 `null`) 값을 모르는 것이다. `OK` 인데 목록이 널인 보기를 만들지 않는다. */
     private fun <T : Any> get(path: String, read: (String) -> T?): RegistryCall<T> {

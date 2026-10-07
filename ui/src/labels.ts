@@ -25,6 +25,10 @@ export const KIND_LABEL: Record<string, string> = {
   RETIRED_ALREADY: '이미 퇴역한 기체',
   RETIRE_BAD_REQUEST: '퇴역 요청 오류',
   UNKNOWN_ROBOT: '모르는 기체',
+  ADAPTER_BAD_REQUEST: '제품·빌드 형식 오류',
+  UNKNOWN_ADAPTER: '없는 제품',
+  VERSION_CONFLICT: '같은 버전에 다른 계약값',
+  INSTANCE_BAD_REQUEST: '인스턴스 본문 오류',
   UNCLASSIFIED: '분류되지 않은 거절',
 }
 

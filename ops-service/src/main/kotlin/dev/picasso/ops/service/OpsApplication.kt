@@ -1,6 +1,8 @@
 package dev.picasso.ops.service
 
+import dev.picasso.ops.service.adapters.AdapterListService
 import dev.picasso.ops.service.log.OperationLog
+import dev.picasso.ops.service.operations.AdapterOperations
 import dev.picasso.ops.service.operations.RobotOperations
 import dev.picasso.ops.service.registry.RegistryClient
 import dev.picasso.ops.service.robots.RobotListService
@@ -55,12 +57,24 @@ open class OpsApplication {
     ): RobotListService = RobotListService(registry, registry, siteId.value, clock, threshold)
 
     @Bean
+    open fun adapterList(registry: RegistryClient, siteId: SiteId, clock: Clock): AdapterListService =
+        AdapterListService(registry, siteId.value, clock)
+
+    @Bean
     open fun robotOperations(
         registry: RegistryClient,
         log: OperationLog,
         siteId: SiteId,
         clock: Clock,
     ): RobotOperations = RobotOperations(registry, registry, log, siteId.value, clock)
+
+    @Bean
+    open fun adapterOperations(
+        registry: RegistryClient,
+        log: OperationLog,
+        siteId: SiteId,
+        clock: Clock,
+    ): AdapterOperations = AdapterOperations(registry, registry, log, siteId.value, clock)
 
     /** [migrated] 는 쓰지 않는다. 받는 것만으로 ops 마이그레이션 뒤에 이 빈이 만들어진다. */
     @Bean
