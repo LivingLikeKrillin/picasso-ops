@@ -154,7 +154,8 @@ class RegistryClient(
     private val token: String,
     private val http: HttpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(),
     private val json: ObjectMapper = jacksonObjectMapper(),
-) : RobotSource, TokenProbe, RobotWrites, AdapterSource, AdapterWrites, AutoCloseable {
+) : RobotSource, TokenProbe, RobotWrites, AdapterSource, AdapterWrites,
+    ProfileSource, CommissioningSource, ProfileWrites, BindingWrites, AutoCloseable {
 
     private val base = checkBaseUrl(baseUrl)
 
@@ -229,6 +230,43 @@ class RegistryClient(
         return send("POST", "/operations/adapter-instances", actor, json.writeValueAsString(body))
     }
 
+    override fun catalog(): RegistryCall<RegistryCatalog> =
+        get("/operations/skill-types") { json.readValue<RegistryCatalog?>(it) }
+
+    override fun revisions(): RegistryCall<List<RegistryRevision>> =
+        get("/operations/profile-revisions") { json.readValue<List<RegistryRevision>?>(it) }
+
+    /** 이력은 빼고(`history` 기본값) 이 사이트의 활성 바인딩만 읽는다. */
+    override fun bindings(siteId: String): RegistryCall<List<RegistryBinding>> {
+        val site = URLEncoder.encode(siteId, StandardCharsets.UTF_8)
+        return get("/diag/bindings?site=$site") { json.readValue<RegistryBindings?>(it)?.rows }
+    }
+
+    override fun software(siteId: String): RegistryCall<List<RegistrySoftware>> {
+        val site = URLEncoder.encode(siteId, StandardCharsets.UTF_8)
+        return get("/diag/software?site=$site") { json.readValue<List<RegistrySoftware>?>(it) }
+    }
+
+    override fun submit(document: ByteArray, actor: String): RegistryWrite =
+        sendBody("POST", "/operations/profile-revisions", actor, HttpRequest.BodyPublishers.ofByteArray(document))
+
+    override fun requestTest(profileRevisionId: Long, actor: String): RegistryWrite =
+        send("POST", "/operations/profile-revisions/$profileRevisionId/test-requests", actor, null)
+
+    override fun activate(profileRevisionId: Long, actor: String): RegistryWrite =
+        send("POST", "/operations/profile-revisions/$profileRevisionId/activation", actor, null)
+
+    override fun bind(robotId: String, adapterVersionId: Long, profileRevisionId: Long, actor: String): RegistryWrite =
+        send(
+            "POST", "/operations/robots/${segment(robotId)}/binding", actor,
+            json.writeValueAsString(
+                json.createObjectNode().put("adapter_version_id", adapterVersionId).put("profile_revision_id", profileRevisionId),
+            ),
+        )
+
+    override fun recordSiteNames(robotId: String, actor: String): RegistryWrite =
+        send("POST", "/operations/site-names?robot=${URLEncoder.encode(robotId, StandardCharsets.UTF_8)}", actor, null)
+
     /** [read] 가 널을 내면(본문 `null`) 값을 모르는 것이다. `OK` 인데 목록이 널인 보기를 만들지 않는다. */
     private fun <T : Any> get(path: String, read: (String) -> T?): RegistryCall<T> {
         val request = HttpRequest.newBuilder(URI.create(base + path))
@@ -252,13 +290,16 @@ class RegistryClient(
         }
     }
 
-    private fun send(method: String, path: String, actor: String, body: String?): RegistryWrite {
+    private fun send(method: String, path: String, actor: String, body: String?): RegistryWrite =
+        sendBody(method, path, actor, body?.let(HttpRequest.BodyPublishers::ofString))
+
+    private fun sendBody(method: String, path: String, actor: String, body: HttpRequest.BodyPublisher?): RegistryWrite {
         val request = HttpRequest.newBuilder(URI.create(base + path))
             .timeout(REQUEST_TIMEOUT)
             .header("Authorization", "Bearer $token")
             .header("X-Actor", actor)
             .header("Content-Type", "application/json")
-            .method(method, body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody())
+            .method(method, body ?: HttpRequest.BodyPublishers.noBody())
             .build()
         return try {
             val response = http.send(request, HttpResponse.BodyHandlers.ofString())

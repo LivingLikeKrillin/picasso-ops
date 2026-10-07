@@ -1,4 +1,5 @@
 // 가짜 현장 런처(스펙 §6). registry 스키마 마이그레이션, registry 기동, mimic 기동과 시간 진행을 맡는다.
+// 개정판 시험 실행기도 여기서 뜬다. 적재 토큰을 가진 것이 이 모듈뿐이다(P2·S1d 스펙 §7).
 plugins {
     application
 }
@@ -11,6 +12,7 @@ application {
 dependencies {
     implementation("dev.picasso:registry")
     implementation("dev.picasso:mimic")
+    implementation("dev.picasso:harness")
 
     // registry 는 Spring Boot·Flyway 를 implementation 으로만 쓴다. 런처가 직접 부르므로 여기서도 적는다.
     implementation(platform(libs.spring.boot.bom))

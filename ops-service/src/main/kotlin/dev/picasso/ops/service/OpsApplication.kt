@@ -1,5 +1,7 @@
 package dev.picasso.ops.service
 
+import dev.picasso.ops.service.operations.ProfileOperations
+import dev.picasso.ops.service.profiles.ProfileListService
 import dev.picasso.ops.service.adapters.AdapterListService
 import dev.picasso.ops.service.log.OperationLog
 import dev.picasso.ops.service.operations.AdapterOperations
@@ -54,7 +56,7 @@ open class OpsApplication {
         siteId: SiteId,
         clock: Clock,
         @Value("\${ops.connection.threshold}") threshold: Duration,
-    ): RobotListService = RobotListService(registry, registry, siteId.value, clock, threshold)
+    ): RobotListService = RobotListService(registry, registry, siteId.value, clock, threshold, commissioning = registry)
 
     @Bean
     open fun adapterList(registry: RegistryClient, siteId: SiteId, clock: Clock): AdapterListService =
@@ -75,6 +77,17 @@ open class OpsApplication {
         siteId: SiteId,
         clock: Clock,
     ): AdapterOperations = AdapterOperations(registry, registry, log, siteId.value, clock)
+
+    @Bean
+    open fun profileList(registry: RegistryClient, clock: Clock): ProfileListService = ProfileListService(registry, clock)
+
+    @Bean
+    open fun profileOperations(
+        registry: RegistryClient,
+        log: OperationLog,
+        siteId: SiteId,
+        clock: Clock,
+    ): ProfileOperations = ProfileOperations(registry, registry, registry, registry, log, siteId.value, clock)
 
     /** [migrated] 는 쓰지 않는다. 받는 것만으로 ops 마이그레이션 뒤에 이 빈이 만들어진다. */
     @Bean

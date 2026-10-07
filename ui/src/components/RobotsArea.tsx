@@ -1,24 +1,26 @@
 import { useState } from 'react'
-import { declareRobot, reinstateRobot, retireRobot } from '../api'
-import type { AdapterListView, RobotListView, Sent, Session } from '../api'
-import { CONNECTION_LABEL } from '../labels'
+import { bindRobot, declareRobot, recordSiteNames, reinstateRobot, retireRobot } from '../api'
+import type { AdapterListView, ProfileListView, RobotListView, Sent, Session } from '../api'
+import { COMMISSIONING_LABEL, CONNECTION_LABEL } from '../labels'
 import { AdaptersSection } from './AdaptersSection'
 import { DeclareForm } from './DeclareForm'
 import { OutcomeNotice } from './OutcomeNotice'
+import { ProfilesSection } from './ProfilesSection'
 import { RobotDetail } from './RobotDetail'
 
 interface Props {
   view: RobotListView | null
   adapters: AdapterListView | null
-  /** 운영 서비스에 닿지 않으면 [view]·[adapters] 는 직전 값이다. */
+  profiles: ProfileListView | null
+  /** 운영 서비스에 닿지 않으면 [view]·[adapters]·[profiles] 는 직전 값이다. */
   opsError: string | null
   session: Session
   /** 조작이 끝나면 부른다. 목록을 다시 읽는다. */
   onChanged: () => void
 }
 
-/** 로봇·연결 영역. 왼쪽 목록(기체, 어댑터)과 오른쪽 상세(스펙 §8, 결정 6). 조작 결과는 상세 위에 보인다. */
-export function RobotsArea({ view, adapters, opsError, session, onChanged }: Props) {
+/** 로봇·연결 영역. 왼쪽 목록(기체, 어댑터, 프로파일)과 오른쪽 상세(스펙 §8, 결정 6). 조작 결과는 상세 위에 보인다. */
+export function RobotsArea({ view, adapters, profiles, opsError, session, onChanged }: Props) {
   const [selected, setSelected] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [last, setLast] = useState<{ what: string; sent: Sent } | null>(null)
@@ -56,6 +58,7 @@ export function RobotsArea({ view, adapters, opsError, session, onChanged }: Pro
           </p>
         </section>
         <AdaptersSection view={adapters} opsError={opsError} session={session} busy={busy} run={run} />
+        <ProfilesSection view={profiles} opsError={opsError} session={session} busy={busy} run={run} />
       </div>
       <section aria-label="상세">
         <h2>상세</h2>
@@ -77,6 +80,16 @@ export function RobotsArea({ view, adapters, opsError, session, onChanged }: Pro
             }
             onReinstate={() =>
               run(`${current.robot.robotId} 복귀`, () => reinstateRobot(session, current.robot.robotId))
+            }
+            adapters={adapters?.adapters ?? []}
+            revisions={profiles?.revisions ?? []}
+            onBind={(adapterVersionId, profileRevisionId) =>
+              run(`${current.robot.robotId} 바인딩`, () =>
+                bindRobot(session, current.robot.robotId, adapterVersionId, profileRevisionId),
+              )
+            }
+            onRecordSiteNames={() =>
+              run(`${current.robot.robotId} 명칭 기록`, () => recordSiteNames(session, current.robot.robotId))
             }
           />
         )}
@@ -111,11 +124,12 @@ function RobotList({ view, opsError, selected, onSelect }: ListProps) {
               <th>robot_id</th>
               <th>원장 상태</th>
               <th>연결</th>
+              <th>시운전</th>
               <th>막힘</th>
             </tr>
           </thead>
           <tbody>
-            {view.robots.map(({ robot, connection, blockers }) => (
+            {view.robots.map(({ robot, connection, blockers, commissioning }) => (
               <tr key={robot.robotId} className={robot.robotId === selected ? 'selected' : undefined}>
                 <td>
                   <button type="button" className="link" onClick={() => onSelect(robot.robotId)}>
@@ -124,6 +138,7 @@ function RobotList({ view, opsError, selected, onSelect }: ListProps) {
                 </td>
                 <td>{robot.status}</td>
                 <td>{CONNECTION_LABEL[connection]}</td>
+                <td>{commissioning != null ? COMMISSIONING_LABEL[commissioning.state] : '-'}</td>
                 <td>{blockers.length}</td>
               </tr>
             ))}
