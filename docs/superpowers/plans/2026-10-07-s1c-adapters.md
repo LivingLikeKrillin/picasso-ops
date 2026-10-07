@@ -3373,4 +3373,4 @@ git push
   - Minor 시험 빈틈 3건: 인스턴스 재조회의 제품 이름 대조, 빌드 재조회의 제품 id 대조, 어댑터 목록의 읽기 순서. 앞의 둘은 픽스처가 제품 하나뿐이라 해당 조건을 지워도 통과, 읽기 순서는 시험이 호출 순서를 보지 않아 두 줄을 바꿔도 통과. 시험 3개 추가(ops-service 73 → 76), 각각 결함 주입으로 확인
   - Minor 한계 1건(코드 주석에 기록): 인스턴스 목록은 제품을 `vendor/name` 으로만 이름 짓고 registry 는 두 칸 모두 `/` 를 허용하므로 버전이 같은 두 제품(`a/b` + `c` 와 `a` + `b/c`)을 재조회에서 가를 수 없음. registry 가 인스턴스에 빌드 id 를 내야 해소 가능
 - 새 클론 검증: 커밋된 파일만으로 짧은 경로에 새로 클론해 `./gradlew build`, `npm ci` 와 vitest, Playwright `1 passed`
-- CI: PR 뒤 확인 대기
+- CI: PR #3 의 `gradle`·`ui`·`playwright` job 3개 초록. Linux 의 Playwright `1 passed`(시험 1.0분, Playwright 가 보고한 실행 1.4분). Gradle 시험 XML(아티팩트 `test-results`) site 12, ops-service 76, e2e 20, 실패 0
