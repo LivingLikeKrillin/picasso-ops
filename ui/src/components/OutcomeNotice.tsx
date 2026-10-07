@@ -2,7 +2,7 @@ import type { Sent } from '../api'
 import { FindingCard } from './FindingCard'
 
 interface Props {
-  /** 어느 기체의 어느 조작인지. 예: `humanoid-01 퇴역` */
+  /** 어느 대상의 어느 조작인지. 예: `humanoid-01 퇴역`, `acme/fleet 1.0.0 빌드 선언` */
   what: string
   sent: Sent
   onSelect: (robotId: string) => void

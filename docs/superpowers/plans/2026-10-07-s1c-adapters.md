@@ -3359,3 +3359,18 @@ git push
 ```
 - 빨가면 `playwright` job 은 아티팩트 `playwright-report` 와 로그의 `[WebServer]` 줄을, `gradle` job 은 `test-results` 의 XML 실패 이름을 읽고 고친다. 고친 것은 새 커밋으로 올린다.
 머지는 사용자 승인 뒤다.
+
+## 실행 결과 (2026-10-07)
+
+- 브랜치 `feat/s1c-adapters`, 계획 커밋 `33beeb9` 위에 구현. 계획 커밋은 S1b 머지 뒤의 `main` `d94a5e6` 위. 기준 브랜치 `main`, PR base `main`
+- 실행 방식: 작업을 6묶음(Task 1~2, 3~4, 5, 6, 7, 8~9)으로 나눠 Task 7 까지는 묶음마다 구현자 1명, Task 8~9 는 컨트롤러. 묶음마다 커밋된 파일을 계획 작성 때 돌린 스크래치 빌드의 파일과 기계 대조, 26개 파일 모두 일치. README 와 스펙 정정 문장은 Codex·Fable 초안 취합
+- 기준선: site 12, ops-service 55, e2e 13, vitest 23(Gradle 이 건너뛰어 `--rerun` 으로 다시 실행)
+- 시험 결과(JUnit XML): site 12, ops-service 76(`ActorTest` 4, `AdapterListServiceTest` 6, `AdapterOperationsTest` 9, `AdapterRejectionsTest` 3, `BlockersTest` 7, `EnvBoundaryTest` 1, `OperationLogTest` 7, `RegistryAdaptersTest` 3, `RegistryClientTest` 6, `RegistryWritesTest` 6, `RejectionsTest` 3, `RobotListServiceTest` 9, `RobotOperationsTest` 12), e2e 20(`AdapterTest` 7, `LifecycleTest` 10, `SkeletonTest` 3), 실패 0. vitest 30개 통과, `tsc` 와 `npm run build` 성공. `checkNoPicassoOnMain` 성공
+- Playwright(Windows): `1 passed`, 시험 53.3초, 스택 기동 포함 1.5분. 종료 뒤 스택 프로세스와 `site-` 컨테이너 0개
+- 결함 주입: 계획의 22건(Kotlin 16, 화면 5, Playwright 1)과 최종 검토 반영 3건을 하나씩 넣고 되돌림. 매번 지정한 시험이 실패, 이름은 JUnit XML·vitest·Playwright 출력에서 확인. 같은 이름의 시험이 `AdapterTest` 와 `LifecycleTest` 에 있어 클래스별 XML 로 확인
+- 계획과 달라진 점: 작업 중에는 없음
+- 최종 코드 품질 검토(Critical 0, Important 0)에서 반영한 것:
+  - Minor 시험 빈틈 3건: 인스턴스 재조회의 제품 이름 대조, 빌드 재조회의 제품 id 대조, 어댑터 목록의 읽기 순서. 앞의 둘은 픽스처가 제품 하나뿐이라 해당 조건을 지워도 통과, 읽기 순서는 시험이 호출 순서를 보지 않아 두 줄을 바꿔도 통과. 시험 3개 추가(ops-service 73 → 76), 각각 결함 주입으로 확인
+  - Minor 한계 1건(코드 주석에 기록): 인스턴스 목록은 제품을 `vendor/name` 으로만 이름 짓고 registry 는 두 칸 모두 `/` 를 허용하므로 버전이 같은 두 제품(`a/b` + `c` 와 `a` + `b/c`)을 재조회에서 가를 수 없음. registry 가 인스턴스에 빌드 id 를 내야 해소 가능
+- 새 클론 검증: 커밋된 파일만으로 짧은 경로에 새로 클론해 `./gradlew build`, `npm ci` 와 vitest, Playwright `1 passed`
+- CI: PR 뒤 확인 대기

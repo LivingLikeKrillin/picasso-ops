@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { Finding, OperationOutcome, RobotListView, RobotView } from '../api'
+import type { AdapterListView, Finding, OperationOutcome, RobotListView, RobotView } from '../api'
 
 /** 운영 서비스 대역이 받은 요청 한 건. */
 export interface Call {
@@ -13,7 +13,13 @@ export interface Call {
 export interface FakeOps {
   calls: Call[]
   view: RobotListView
+  adapters: AdapterListView
   answer: { status: number; body: unknown }
+}
+
+/** 어댑터 목록. 기본은 제품도 인스턴스도 없는 «없음» 이다. */
+export function adapterView(partial: Partial<AdapterListView> = {}): AdapterListView {
+  return { registry: 'OK', checkedAt: 't1', adapters: [], instances: [], asOf: 't1', ...partial }
 }
 
 export function robotView(robotId: string, status: string, blockers: Finding[] = []): RobotView {
@@ -47,8 +53,8 @@ export function outcome(partial: Partial<OperationOutcome>): OperationOutcome {
 }
 
 /** 브라우저처럼 ISO-8859-1 밖의 문자가 헤더에 있으면 보내기 전에 던지는 fetch 대역을 끼운다. */
-export function installFakeOps(view: RobotListView): FakeOps {
-  const fake: FakeOps = { calls: [], view, answer: { status: 200, body: outcome({}) } }
+export function installFakeOps(view: RobotListView, adapters: AdapterListView = adapterView()): FakeOps {
+  const fake: FakeOps = { calls: [], view, adapters, answer: { status: 200, body: outcome({}) } }
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -61,7 +67,7 @@ export function installFakeOps(view: RobotListView): FakeOps {
       const method = init?.method ?? 'GET'
       fake.calls.push({ method, url, headers, body: init?.body ? JSON.parse(init.body as string) : undefined })
       if (method === 'GET') {
-        const body = url === '/api/robots' ? fake.view : []
+        const body = url === '/api/robots' ? fake.view : url === '/api/adapters' ? fake.adapters : []
         return new Response(JSON.stringify(body), { status: 200 })
       }
       return new Response(JSON.stringify(fake.answer.body), { status: fake.answer.status })

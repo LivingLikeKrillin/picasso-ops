@@ -1,22 +1,24 @@
 import { useState } from 'react'
 import { declareRobot, reinstateRobot, retireRobot } from '../api'
-import type { RobotListView, Sent, Session } from '../api'
+import type { AdapterListView, RobotListView, Sent, Session } from '../api'
 import { CONNECTION_LABEL } from '../labels'
+import { AdaptersSection } from './AdaptersSection'
 import { DeclareForm } from './DeclareForm'
 import { OutcomeNotice } from './OutcomeNotice'
 import { RobotDetail } from './RobotDetail'
 
 interface Props {
   view: RobotListView | null
-  /** 운영 서비스에 닿지 않으면 [view] 는 직전 값이다. */
+  adapters: AdapterListView | null
+  /** 운영 서비스에 닿지 않으면 [view]·[adapters] 는 직전 값이다. */
   opsError: string | null
   session: Session
   /** 조작이 끝나면 부른다. 목록을 다시 읽는다. */
   onChanged: () => void
 }
 
-/** 로봇·연결 영역. 왼쪽 목록과 오른쪽 상세(스펙 §8, 결정 6). */
-export function RobotsArea({ view, opsError, session, onChanged }: Props) {
+/** 로봇·연결 영역. 왼쪽 목록(기체, 어댑터)과 오른쪽 상세(스펙 §8, 결정 6). 조작 결과는 상세 위에 보인다. */
+export function RobotsArea({ view, adapters, opsError, session, onChanged }: Props) {
   const [selected, setSelected] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [last, setLast] = useState<{ what: string; sent: Sent } | null>(null)
@@ -35,23 +37,26 @@ export function RobotsArea({ view, opsError, session, onChanged }: Props) {
 
   return (
     <div className="split">
-      <section aria-label="기체 목록">
-        <h2>기체</h2>
-        {session.mode === 'engineer' ? (
-          <DeclareForm
-            busy={busy}
-            onDeclare={(robotId, serial, displayName) =>
-              run(`${robotId} 선언`, () => declareRobot(session, robotId, serial, displayName))
-            }
-          />
-        ) : (
-          <p>선언은 엔지니어 모드에서 합니다</p>
-        )}
-        <RobotList view={view} opsError={opsError} selected={selected} onSelect={setSelected} />
-        <p className="offscreen">
-          화면 밖 작업: 로봇 내부 지도와 웨이포인트 티칭, mimic 기동(site/ 런처). 화면은 완료를 대신 체크하지 않습니다
-        </p>
-      </section>
+      <div>
+        <section aria-label="기체 목록">
+          <h2>기체</h2>
+          {session.mode === 'engineer' ? (
+            <DeclareForm
+              busy={busy}
+              onDeclare={(robotId, serial, displayName) =>
+                run(`${robotId} 선언`, () => declareRobot(session, robotId, serial, displayName))
+              }
+            />
+          ) : (
+            <p>선언은 엔지니어 모드에서 합니다</p>
+          )}
+          <RobotList view={view} opsError={opsError} selected={selected} onSelect={setSelected} />
+          <p className="offscreen">
+            화면 밖 작업: 로봇 내부 지도와 웨이포인트 티칭, mimic 기동(site/ 런처). 화면은 완료를 대신 체크하지 않습니다
+          </p>
+        </section>
+        <AdaptersSection view={adapters} opsError={opsError} session={session} busy={busy} run={run} />
+      </div>
       <section aria-label="상세">
         <h2>상세</h2>
         {last !== null && <OutcomeNotice what={last.what} sent={last.sent} onSelect={setSelected} />}
