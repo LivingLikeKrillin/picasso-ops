@@ -4026,4 +4026,10 @@ Expected: XML 기준 site 17, ops-service 107, e2e 30, 실패 0.
 
 ## 실행 결과
 
-(실행 뒤 채운다)
+- 수행: 묶음 둘(Task 1·2·3, Task 4·5·6)을 하위 에이전트가 수행, 묶음마다 커밋된 파일을 스크래치 코드와 바이트 대조해 37개 모두 동일
+- 결함 주입: 26건(ops-service·site 18, 화면 8) 모두 지정 시험이 탐지, Playwright 주입 P1 은 Playwright 가 32행(바인딩 전 `바인딩 없음`)에서 탐지
+- 새 클론 빌드: site 17, ops-service 107, e2e 30 모두 실패 0, vitest 47 통과, 로컬 Playwright 1 통과(1.9분)
+- 병합: 묶음 커밋 여섯을 계획 커밋 위에서 하나로 합침(`575efd2`, 트리 동일), picasso-ops PR #6 으로 올림
+- CI: picasso-ops PR #6 의 `gradle`·`ui`·`playwright` job 3개 초록, Linux 의 Playwright `1 passed`(1.9분), job 시간은 gradle 2분 30초, ui 20초, playwright 4분 25초
+- 걸린 것: 스파이크에서 통합 시험을 새 시험 클래스만 돌려, 바인딩 안 된 기체에 붙은 `UNBOUND` 가 기존 e2e `LifecycleTest` 와 Playwright 의 막힘 없음 기대를 깨는 것을 전체 e2e 에서 늦게 발견해 기대값 갱신. 화면 대역의 기본 바인딩이 기록 시각과 보고 시각을 둘 다 가져 칸 바꿔 읽기가 등가 변이였으므로 시험 보강. Playwright 는 compose 프로젝트 `site` 를 볼륨째 내리므로 돌리기 전에 그 프로젝트의 컨테이너·볼륨 부재 확인 필요
+- 다음: S2(현장 값 데이터화), S3(임무 판과 배정, 배정 가능), S4(장애 주입), 설계 문서는 아직 없음
