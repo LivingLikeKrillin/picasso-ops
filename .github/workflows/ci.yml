@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Gradle 과 npm 을 따로 돌린다(스펙 §10). job 이 둘이라 한쪽이 실패해도 다른 쪽이 돈다.
+jobs:
+  gradle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      # Testcontainers 는 러너의 Docker 를 쓴다.
+      - name: Gradle build
+        run: ./gradlew build --console=plain
+      # 판정은 종료 코드가 아니라 XML 의 실패 시험 이름으로 한다. 실패해도 올린다.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/build/test-results/test/*.xml'
+
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: UI test and build
+        working-directory: ui
+        run: |
+          npm ci
+          npm test
+          npm run build

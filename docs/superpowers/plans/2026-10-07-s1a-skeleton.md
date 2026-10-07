@@ -2850,3 +2850,21 @@ gh pr create --repo LivingLikeKrillin/picasso-ops --base main --head feat/s1a-sk
 - [ ] **Step 7: CI 결과 한 번 읽기**
 
 CI 를 폴링하지 않는다. PR 을 만든 뒤 앱의 PR 도구(`get_status`, 필요하면 `bind_pr`)로 CI 상태를 한 번 읽거나 사용자의 보고를 받는다. 두 job(`gradle`, `ui`)이 모두 초록이면 S1a 완료 판정(스펙 §3)의 셋째 조건이 닫힌다. 빨가면 `test-results` 아티팩트의 XML 에서 실패 이름을 읽는다. 결과는 «실행 결과» 절의 «CI 대기» 를 바꾸는 후속 커밋으로 남긴다. 머지는 사용자 승인 뒤다.
+
+## 실행 결과 (2026-10-07)
+
+- 브랜치 `feat/s1a-skeleton`, 계획 커밋 `b5e2577` 위에 구현. 작업 임시 커밋은 하나로 합쳐 PR 로 올림(커밋 해시는 합친 뒤 정해지므로 적지 않음)
+- 실행 방식: 작업을 6묶음(Task 1, 2~3, 4~5, 6~7, 8, 9)으로 나눠 묶음마다 구현자 1명. 묶음마다 커밋된 파일을 계획의 코드 블록과 기계 대조, 43개 파일과 `ci.yml`·`smoke.sh` 모두 일치. README 는 Codex·Fable 초안 취합
+- 시험 결과(JUnit XML): site 12(`RobotRosterTest` 5, `SiteConfigTest` 5, `SiteTest` 2), ops-service 23(`ActorTest` 4, `OperationLogTest` 7, `EnvBoundaryTest` 1, `RegistryClientTest` 6, `RobotListServiceTest` 5), e2e 3(`SkeletonTest`), 실패 0. vitest 9개 통과. `checkNoPicassoOnMain` 성공
+- 커밋된 파일만으로 짧은 경로에 새로 클론해 `./gradlew build` 와 `npm ci && npm test` 통과. 서브모듈은 GitHub 에서 `6b1a255` 로 받아짐
+- 결함 주입 16건(계획 15건, 최종 검토 반영 1건) 모두 넣고 되돌림. 매번 지정한 시험이 실패, 시험 이름은 JUnit XML 과 vitest 출력에서 확인
+- 손 기동 `bash site/smoke.sh`: 기체 선언 16~17초 뒤 `CONFIRMED`, 종료 코드 0, 끝난 뒤 컨테이너 없음
+- 최종 코드 품질 검토(Critical 0)에서 S1a 안의 결함 1건과 작은 항목 반영, 계획과 달라진 점:
+  - 화면이 사용자 이름을 `USER_PATTERN`(`[A-Za-z0-9._-]` 1~64자)으로 검증하고 어긋난 이름은 요청에 싣지 않음. 한글 이름이 브라우저 `fetch` 의 헤더 검사에 걸려 화면 전체가 운영 서비스에 닿지 않는 것으로 잘못 바뀌던 결함. 시험 스텁도 브라우저처럼 ISO-8859-1 밖 헤더에서 던지게 바꾸고 vitest 1개 추가(8→9), 결함 주입으로 확인
+  - `RegistryClient` 의 `HttpClient` 닫기, `Site.close` 의 try/finally, 런처 종료 훅의 `awaitTermination`, e2e 의 입력을 되풀이하던 단언 삭제, 시험 변수 `@Volatile`, `smoke.sh` 의 `down -v` 와 준비 확인 `curl -f`
+- 스펙 정정: §3(서브모듈 `6b1a255` 고정, S1c 첫 커밋 없음), §4(`.env` 값 범위, 토큰 표를 부르는 쪽·검증하는 쪽으로), §6·§12(선언 전 보고 거절은 어디에도 안 보임), §7.1(`OpsSchema`, 트리거, 사용자 이름 규칙), §7.4(`REGISTRY_UNAUTHORIZED` 는 `/operations` 이하에서만), §10(미뤘던 물음 2개의 답), §11(기준 커밋 문단과 사실 2행)
+- S1b 로 넘긴 것(최종 검토):
+  - 쓰기에서 받은 401 이 다음 목록 읽기에 `OK` 로 덮이지 않게 하는 방법(관문 안 GET 을 함께 읽기, 또는 401 을 공유 상태로 유지) 결정과 결함 주입 시험
+  - 쓰기 API 의 교차 출처 방어: `X-Ops-Mode`·`X-Ops-User` 가 없으면 registry 호출 전 400, `application/json` 만 받음
+  - 동시 읽기에서 오래된 결과가 최신 값을 덮는 경우, 잘못된 registry URL 의 기동 검사, e2e 공용 픽스처, 운영 서비스 `Clock` 교체 방법, mimic gRPC 포트 노출
+- CI: PR 뒤 확인 대기

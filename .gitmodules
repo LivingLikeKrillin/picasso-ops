@@ -1,0 +1,3 @@
+[submodule "picasso"]
+	path = picasso
+	url = https://github.com/LivingLikeKrillin/picasso.git
