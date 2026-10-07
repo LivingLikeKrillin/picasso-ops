@@ -2,16 +2,22 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import type { OperationRecord, RobotListView } from './api'
+import type { OperationRecord, RobotListView, RobotView } from './api'
 
-const robot = {
-  robotId: 'humanoid-01',
-  siteId: 'site-01',
-  serialNumber: 'HA-0001',
-  status: 'CLAIMED',
-  lastReportedAt: null,
-  retiredAt: null,
-  reportingAfterRetirement: false,
+const robot: RobotView = {
+  robot: {
+    robotId: 'humanoid-01',
+    siteId: 'site-01',
+    serialNumber: 'HA-0001',
+    displayName: null,
+    status: 'CLAIMED',
+    lastReportedAt: null,
+    retiredAt: null,
+    retiredReason: null,
+    reportingAfterRetirement: false,
+  },
+  connection: 'NO_REPORT',
+  blockers: [],
 }
 
 function serve(view: RobotListView, records: OperationRecord[] = []) {

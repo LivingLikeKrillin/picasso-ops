@@ -18,10 +18,10 @@ import java.time.Duration
  * registry 호출 한 번의 결과. «없음» 과 «모름» 을 접지 않는다(스펙 §9).
  *
  * 읽기에서는 401 이 아닌 실패를 모두 [Silent] 로 둔다. 연결 실패·시간 초과·5xx·해석 불가 어느 것이든
- * 값을 모른다는 점이 같다. 조작의 거절 대응(400/404/409)은 S1b 에서 더한다(스펙 §7.4).
+ * 값을 모른다는 점이 같다. 조작은 [RegistryWrite] 로 따로 돌려준다.
  *
- * [Unauthorized] 는 운영자 토큰 관문(`/operations` 이하) 안의 호출에서만 나온다. S1a 의 유일한 읽기인
- * `/diag/robots` 는 관문 밖이라 토큰이 틀려도 401 이 오지 않는다. 토큰 불일치는 S1b 의 첫 조작에서 드러난다.
+ * [Unauthorized] 는 운영자 토큰 관문(`/operations` 이하) 안의 호출에서만 나온다. 목록 읽기 `/diag/robots` 는
+ * 관문 밖이라 토큰을 [TokenProbe] 가 관문 안의 읽기로 따로 확인한다.
  */
 sealed interface RegistryCall<out T> {
     data class Ok<T>(val value: T) : RegistryCall<T>
@@ -55,15 +55,39 @@ fun interface RobotSource {
     fun robots(siteId: String): RegistryCall<List<RegistryRobot>>
 }
 
+/** 운영자 토큰 확인. 목록 읽기는 관문 밖이라 401 이 오지 않으므로 관문 안의 읽기를 따로 부른다. */
+fun interface TokenProbe {
+    fun operatorToken(): RegistryCall<Unit>
+}
+
+/**
+ * 조작 한 번의 결과. 응답이 오면 코드와 본문을 그대로 넘기고, 분류는 부르는 쪽이 대응표로 한다(스펙 §7.4).
+ * 응답이 오지 않으면 반영 여부를 모르는 것이며, 거절과 섞지 않는다(스펙 §9).
+ */
+sealed interface RegistryWrite {
+    data class Answered(val status: Int, val body: String) : RegistryWrite
+
+    data class NoResponse(val cause: String) : RegistryWrite
+}
+
+/** 기체 조작 3가지(스펙 §7.2). 시험이 registry 없이 대신 끼운다. */
+interface RobotWrites {
+    fun declare(siteId: String, robotId: String, serialNumber: String, displayName: String?, actor: String): RegistryWrite
+
+    fun retire(robotId: String, reason: String, actor: String): RegistryWrite
+
+    fun reinstate(robotId: String, actor: String): RegistryWrite
+}
+
 /** registry REST 클라이언트. 운영 서비스만 운영자 토큰을 쥔다(스펙 §4). DB 에 직결하지 않는다. */
 class RegistryClient(
     baseUrl: String,
-    private val operatorToken: String,
+    private val token: String,
     private val http: HttpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(),
     private val json: ObjectMapper = jacksonObjectMapper(),
-) : RobotSource, AutoCloseable {
+) : RobotSource, TokenProbe, RobotWrites, AutoCloseable {
 
-    private val base = baseUrl.trimEnd('/')
+    private val base = checkBaseUrl(baseUrl)
 
     /** JDK 21 의 HttpClient 는 닫아야 셀렉터 스레드가 끝난다. 스프링이 빈을 내릴 때 부른다. */
     override fun close() = http.close()
@@ -74,11 +98,38 @@ class RegistryClient(
         return get("/diag/robots?retired=true&site=$site") { json.readValue<List<RegistryRobot>?>(it) }
     }
 
+    /** 관문 안의 읽기 하나로 토큰을 본다. 읽은 값은 쓰지 않는다. */
+    override fun operatorToken(): RegistryCall<Unit> = get("/operations/adapters") { }
+
+    override fun declare(
+        siteId: String,
+        robotId: String,
+        serialNumber: String,
+        displayName: String?,
+        actor: String,
+    ): RegistryWrite {
+        val body = json.createObjectNode()
+            .put("robot_id", robotId)
+            .put("site", siteId)
+            .put("serial_number", serialNumber)
+        if (displayName != null) body.put("display_name", displayName)
+        return send("POST", "/operations/robots", actor, json.writeValueAsString(body))
+    }
+
+    override fun retire(robotId: String, reason: String, actor: String): RegistryWrite =
+        send(
+            "POST", "/operations/robots/${segment(robotId)}/retirement", actor,
+            json.writeValueAsString(json.createObjectNode().put("reason", reason)),
+        )
+
+    override fun reinstate(robotId: String, actor: String): RegistryWrite =
+        send("DELETE", "/operations/robots/${segment(robotId)}/retirement", actor, null)
+
     /** [read] 가 널을 내면(본문 `null`) 값을 모르는 것이다. `OK` 인데 목록이 널인 보기를 만들지 않는다. */
     private fun <T : Any> get(path: String, read: (String) -> T?): RegistryCall<T> {
         val request = HttpRequest.newBuilder(URI.create(base + path))
             .timeout(REQUEST_TIMEOUT)
-            .header("Authorization", "Bearer $operatorToken")
+            .header("Authorization", "Bearer $token")
             .GET()
             .build()
         val response = try {
@@ -97,8 +148,36 @@ class RegistryClient(
         }
     }
 
+    private fun send(method: String, path: String, actor: String, body: String?): RegistryWrite {
+        val request = HttpRequest.newBuilder(URI.create(base + path))
+            .timeout(REQUEST_TIMEOUT)
+            .header("Authorization", "Bearer $token")
+            .header("X-Actor", actor)
+            .header("Content-Type", "application/json")
+            .method(method, body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody())
+            .build()
+        return try {
+            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+            RegistryWrite.Answered(response.statusCode(), response.body())
+        } catch (e: IOException) {
+            RegistryWrite.NoResponse("응답 없음: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun segment(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20")
+
     companion object {
         val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(2)
         val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(3)
+
+        /** 형식이 틀린 주소를 기동에서 잡는다. 그대로 두면 요청마다 500 이 되어 화면에는 운영 서비스 불통으로 보인다. */
+        fun checkBaseUrl(baseUrl: String): String {
+            val trimmed = baseUrl.trimEnd('/')
+            val uri = runCatching { URI(trimmed) }.getOrNull()
+            require(uri != null && uri.scheme in setOf("http", "https") && !uri.host.isNullOrBlank()) {
+                "registry 주소가 http(s)://호스트[:포트] 꼴이 아니다: '$baseUrl'"
+            }
+            return trimmed
+        }
     }
 }

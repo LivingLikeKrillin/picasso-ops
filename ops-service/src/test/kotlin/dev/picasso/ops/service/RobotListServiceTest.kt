@@ -2,9 +2,12 @@ package dev.picasso.ops.service
 
 import dev.picasso.ops.service.registry.RegistryCall
 import dev.picasso.ops.service.registry.RegistryRobot
+import dev.picasso.ops.service.robots.Blockers
+import dev.picasso.ops.service.robots.Connection
 import dev.picasso.ops.service.robots.RegistryState
 import dev.picasso.ops.service.robots.RobotListService
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -25,17 +28,33 @@ class RobotListServiceTest {
     private val clock = MovableClock(t1)
     private val r1 = RegistryRobot(robotId = "r1", siteId = "site-01", status = "CLAIMED")
     private var next: RegistryCall<List<RegistryRobot>> = RegistryCall.Ok(emptyList())
+    private var token: RegistryCall<Unit> = RegistryCall.Ok(Unit)
     private var askedSite: String? = null
-    private val service = RobotListService({ site -> askedSite = site; next }, "site-01", clock)
+    private val service = RobotListService(
+        { site -> askedSite = site; next },
+        { token },
+        "site-01",
+        clock,
+        Duration.ofSeconds(90),
+    )
 
     @Test
     fun `registry 가 답하면 목록과 읽은 시각을 낸다`() {
         next = RegistryCall.Ok(listOf(r1))
         val view = service.read()
         assertEquals(RegistryState.OK, view.registry)
-        assertEquals(listOf(r1), view.robots)
+        assertEquals(listOf(r1), view.robots!!.map { it.robot })
         assertEquals(t1, view.robotsAsOf)
         assertEquals("site-01", askedSite)
+    }
+
+    @Test
+    fun `기체마다 읽은 시각 기준의 연결 칸과 막힘을 붙인다`() {
+        next = RegistryCall.Ok(listOf(r1))
+        val robot = service.read().robots!!.single()
+        assertEquals(Connection.NO_REPORT, robot.connection)
+        assertEquals(listOf(Blockers.AWAITING_FIRST_REPORT), robot.blockers.map { it.kind })
+        assertEquals(t1, robot.blockers.single().checkedAt)
     }
 
     @Test
@@ -56,7 +75,7 @@ class RobotListServiceTest {
         val view = service.read()
         assertEquals(RegistryState.REGISTRY_SILENT, view.registry)
         assertEquals(t2, view.checkedAt)
-        assertEquals(listOf(r1), view.robots)
+        assertEquals(listOf(r1), view.robots!!.map { it.robot })
         assertEquals(t1, view.robotsAsOf)
     }
 
@@ -75,6 +94,37 @@ class RobotListServiceTest {
         next = RegistryCall.Unauthorized
         val view = service.read()
         assertEquals(RegistryState.REGISTRY_UNAUTHORIZED, view.registry)
-        assertEquals(listOf(r1), view.robots)
+        assertEquals(listOf(r1), view.robots!!.map { it.robot })
+    }
+
+    @Test
+    fun `목록은 읽혀도 관문 안 확인이 401 이면 토큰 불일치이고 목록은 새 값이다`() {
+        next = RegistryCall.Ok(listOf(r1))
+        token = RegistryCall.Unauthorized
+        val view = service.read()
+        assertEquals(RegistryState.REGISTRY_UNAUTHORIZED, view.registry)
+        assertEquals(view.checkedAt, view.robotsAsOf)
+        assertEquals(listOf(r1), view.robots!!.map { it.robot })
+    }
+
+    @Test
+    fun `관문 안 확인이 답하지 않는 것은 토큰 불일치가 아니다`() {
+        next = RegistryCall.Ok(listOf(r1))
+        token = RegistryCall.Silent("HTTP 503")
+        assertEquals(RegistryState.OK, service.read().registry)
+    }
+
+    @Test
+    fun `늦게 끝난 옛 읽기는 더 새 목록을 덮지 않는다`() {
+        clock.now = t2
+        next = RegistryCall.Ok(listOf(r1))
+        service.read()
+        clock.now = t1
+        next = RegistryCall.Ok(emptyList())
+        val view = service.read()
+        assertEquals(listOf(r1), view.robots!!.map { it.robot })
+        assertEquals(t2, view.robotsAsOf)
+        // 확인 시각도 남긴 값의 시각으로 맞춘다. 화면은 두 시각이 다르면 직전 값으로 보인다.
+        assertEquals(t2, view.checkedAt)
     }
 }

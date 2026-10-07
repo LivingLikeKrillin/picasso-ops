@@ -6,3 +6,8 @@ nav button[aria-current='page'] { font-weight: 700; }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .stale { color: #6f6f6f; }
 .invalid { color: #b23a1d; }
+.finding { border-left: 3px solid #b23a1d; padding-left: 8px; }
+.finding dt { font-weight: 700; }
+.link { background: none; border: none; color: #2b3f6b; text-decoration: underline; cursor: pointer; padding: 0; }
+.offscreen { color: #6f6f6f; }
+tr.selected { background: #e8ebf3; }

@@ -2,7 +2,7 @@
 
 picasso 를 라이브러리로 쓰는 담는 측 저장소입니다. 로봇, 임무, 엔드포인트의 운영 가능성을 PoC 로 입증합니다. 실물 현장은 없습니다. 보안과 인증은 생략합니다. 운영 중 변경은 코드 수정이 아니라 관리 화면에서 처리합니다.
 
-지금 단계는 S1a 골격입니다. 설계 스펙은 `docs/superpowers/specs/2026-10-07-s1-skeleton-robot-lifecycle-design.md` 에 있습니다. 구현 계획은 `docs/superpowers/plans/` 아래에 있습니다.
+지금 단계는 S1b 로봇 생애주기입니다. 화면에서 엔지니어 모드는 기체를 선언합니다. 운영자 모드는 퇴역과 복귀를 합니다. 설계 스펙은 `docs/superpowers/specs/2026-10-07-s1-skeleton-robot-lifecycle-design.md` 에 있습니다. 구현 계획은 `docs/superpowers/plans/` 아래에 있습니다.
 
 ## 구성
 
@@ -17,7 +17,7 @@ picasso 를 라이브러리로 쓰는 담는 측 저장소입니다. 로봇, 임
 ## 선행 도구
 
 - Docker: 시험과 Postgres 에 씁니다.
-- JDK 17 이상: Gradle 이 JDK 21 툴체인을 받습니다.
+- JDK 21 이상: 화면 시험(Playwright)과 `site/smoke.sh` 가 배포본을 이 JDK 로 바로 띄웁니다. Gradle 이 JDK 21 툴체인을 받습니다.
 - Node 22
 
 ## 받기
@@ -55,6 +55,24 @@ cd ui && npm ci && npm test
 ```
 
 판정은 종료 코드로 하지 않습니다. `*/build/test-results/test/*.xml` 의 실패 시험 이름으로 합니다.
+
+화면 시험(Playwright)은 따로 돌립니다. 먼저 아래 2개를 한 번 합니다.
+
+```bash
+./gradlew :site:installDist :ops-service:installDist
+```
+
+```bash
+cd ui && npx playwright install chromium
+```
+
+그다음 돌립니다.
+
+```bash
+cd ui && npx playwright test
+```
+
+Playwright 가 Postgres, 런처, 운영 서비스, 화면을 띄웁니다. 시험이 끝나면 모두 끕니다. 시계는 실제 1초에 가상 1초가 갑니다. 시험은 약 1~2분 걸립니다. Playwright 판정은 출력의 `N passed`, `N failed` 줄과 실패 시험 이름으로 합니다.
 
 ## 띄우기
 
@@ -106,3 +124,4 @@ Gradle 의 run 작업 2개를 한 작업 트리에서 겹쳐 띄우지 않습니
 - registry 와 운영 서비스는 `127.0.0.1` 에만 엽니다.
 - 선언 전 mimic 의 생존 보고는 registry 가 거절합니다. 거절한 보고는 어디에도 남지 않습니다. 기체를 선언하면 보고가 붙습니다.
 - registry 가 답하지 않으면 화면은 목록을 비우지 않습니다. 직전 값과 함께 모름을 보입니다.
+- 손으로 띄운 compose 스택이 있으면 화면 시험이 시작할 때 그것을 볼륨째 내립니다. 같은 compose 프로젝트라서입니다. 데이터가 지워집니다. 남은 컨테이너는 `docker compose -f site/compose.yaml --env-file .env down -v` 로 걷습니다.
