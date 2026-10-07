@@ -604,7 +604,6 @@ Expected: 401 시험을 뺀 나머지가 404(경로 없음)로 실패한다. 실
 package dev.picasso.registry.web
 
 import dev.picasso.registry.adapter.AdapterDeclared
-import dev.picasso.registry.adapter.AdapterRow
 import dev.picasso.registry.adapter.AdapterService
 import dev.picasso.registry.adapter.VersionDeclared
 import org.springframework.http.HttpStatus
@@ -660,8 +659,44 @@ class AdapterOperationsController(private val adapters: AdapterService) {
 
     /** 조작 문 뒤의 읽기다 — 등록하러 온 사람이 **조작 직전에** 고를 빌드를 보는 흐름이라 같은 문에 둔다. */
     @GetMapping("/operations/adapters")
-    fun list(): List<AdapterRow> = adapters.list()
+    fun list(): List<AdapterResponse> = adapters.list().map { row ->
+        AdapterResponse(
+            adapter_id = row.adapterId,
+            vendor = row.vendor,
+            name = row.name,
+            versions = row.versions.map { v ->
+                AdapterVersionResponse(
+                    adapter_version_id = v.adapterVersionId,
+                    version = v.version,
+                    contract_semver = v.contractSemver,
+                    conformance = v.conformance,
+                    registered_at = v.registeredAt,
+                    registered_by = v.registeredBy,
+                )
+            },
+        )
+    }
 }
+
+/**
+ * `GET /operations/adapters` 의 행. **응답 모양(snake_case)은 이 문이 정한다** — 서비스의 `AdapterRow` 는 HTTP 를
+ * 모르는 camelCase 다(같은 패키지의 `AdapterInstanceRow` 와 같은 배치). 키는 picasso-ops S1 스펙 §5 의 응답 모양 그대로다.
+ */
+data class AdapterResponse(
+    val adapter_id: Long,
+    val vendor: String,
+    val name: String,
+    val versions: List<AdapterVersionResponse>,
+)
+
+data class AdapterVersionResponse(
+    val adapter_version_id: Long,
+    val version: String,
+    val contract_semver: String,
+    val conformance: String,
+    val registered_at: String,
+    val registered_by: String,
+)
 
 /** `POST /operations/adapters` 의 본문. */
 data class DeclareAdapterRequest(val vendor: String = "", val name: String = "")
@@ -805,3 +840,12 @@ EOF
 
 - [ ] **Step 1: 정정 문장 초안 받기** — Fable 과 Codex 에 같은 브리프로. 사실: 옛 `registerVersion` 의 같은 버전 재등록 거절은 유지하고 `AdapterLifecycleTest` 는 고치지 않는다, 멱등은 새 조작 문(`declareVersion`)에만, 옛 메서드가 바뀌는 2곳(모르는 제품 → `Rejected`, 빈 version → `Rejected`), 이유(옛 호출자가 멱등을 기대하지 않음), 결정 일자와 근거(P1 계획), §5 의 «`registerAdapter(` 를 부르는 시험이 14곳» 을 실측 «호출 18곳, 시험 파일 14개(그중 harness 3)» 로. 취합해 반영한다.
 - [ ] **Step 2: 커밋** — picasso-ops 에서 `docs(specs): <취합한 제목>`, 같은 트레일러. P1 PR 링크를 본문 불릿에 넣는다. 푸시는 사용자 승인 뒤.
+
+## 실행 결과 (2026-10-07)
+
+- picasso PR #79 구현 완료, 커밋 `8b3442d`
+- 계획과 달라진 응답 배치: 서비스 행 `AdapterRow`·`AdapterVersionRow` 의 camelCase 유지, 컨트롤러 응답 DTO 에서 `GET /operations/adapters` 의 snake_case 결정, 409 본문 키 `error`·`existing_contract_semver` 사용
+- 계획 대비 새 시험 17→18개(`AdapterDeclarationTest` 10개, `AdapterEndpointTest` 8개), 결함 주입 4→8건 모두 이름 있는 시험이 탐지, 옛 `registerVersion` 의 위임으로 바뀐 동작 2→3곳
+- 시험 결과: registry 351, harness 194, gate 276, picasso 297, 실패 0, 전체 1,871
+- 작업마다 스펙 준수·코드 품질 검토 및 최종 검토 통과
+- 남긴 후보: 계약 SemVer 문자열 정규화, 현재 앞뒤 공백·앞자리 0처럼 뜻이 같은 다른 표기에 409 반환

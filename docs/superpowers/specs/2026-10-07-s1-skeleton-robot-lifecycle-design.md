@@ -118,15 +118,17 @@ P1 이 더하는 API 는 3개입니다.
 
 서비스의 결과 타입을 가릅니다. `registerVersion` 은 지금 SemVer 형식 오류와 중복이 `Rejected` 하나로 접히고, 없는 `adapterId` 는 FK 위반으로 500 이 됩니다. 위 표의 400·404·409 를 내려면 서비스가 이 3가지를 서로 다른 결과로 돌려줘야 하므로, 컨트롤러만 더하는 변경으로는 끝나지 않습니다. `registerAdapter` 도 결과 타입을 가릅니다. 지금은 `ON CONFLICT DO NOTHING` 뒤 `Long` 만 돌려줘 새로 만들었는지 이미 있었는지 구분하지 못합니다. 201/200 을 내려면 «새로 만듦 / 이미 있음» 을 돌려줘야 합니다. vendor·name 이 비면 400 입니다.
 
-**기존 동작 변경이 1건 있습니다.** 같은 버전 재요청은 지금 `Rejected("이미 등록된 버전이다")` 로 거절됩니다. P1 은 같은 내용이면 200(같은 id), 계약값이 다르면 409 로 바꿉니다. 이 동작을 단언하는 기존 시험은 `registry/src/test/kotlin/dev/picasso/registry/AdapterLifecycleTest.kt` 의 `같은 버전을 두 번 등록하면 거부한다` 이며, P1 에서 새 동작에 맞게 고칩니다.
+**옛 `registerVersion` 의 같은 버전 재등록 거절은 유지합니다.** 같은 내용 재요청에 200과 같은 id를 반환하는 멱등 동작은 새 조작 문인 `declareVersion` 과 REST에만 적용합니다. 옛 메서드는 시험·하네스가 호출하며, 이 호출자들은 멱등을 기대하지 않기 때문입니다. `AdapterLifecycleTest` 의 `같은 버전을 두 번 등록하면 거부한다` 는 고치지 않고 그대로 통과합니다. 옛 `registerVersion` 은 새 메서드에 위임하여 SQL 경로를 1개로 유지합니다. 위임에 따라 바뀐 동작은 3곳입니다. 없는 제품은 FK 예외 대신 거절하고, 빈 version 과 빈 actor 는 저장 대신 거절합니다.
 
-`registerAdapter(` 를 부르는 시험이 14곳입니다. 그래서 반환형을 바꾸기보다 «새로 만듦 / 이미 있음» 을 가르는 새 메서드를 더하는 쪽을 먼저 검토합니다.
+`registerAdapter` 는 그대로 두고, «새로 만듦 / 이미 있음» 을 가르는 새 메서드 `declareAdapter` 를 추가합니다. 실측한 `registerAdapter(` 호출은 18곳이며 시험 파일 14개에 있고, 그중 harness 는 3개입니다. 로컬 표준 빌드가 `:harness:test` 를 제외하므로 반환형을 바꾸면 문제가 CI 에서만 드러날 수 있습니다. 이 결정은 2026-10-07 P1 계획과 PR #79의 구현 결과를 근거로 기록합니다.
 
 적합성 기록(`recordConformance`) API 는 열지 않습니다. C-3 비목표이며, 화면은 `UNTESTED` 를 보여 주기만 합니다.
 
 `docs/commissioning.md` 를 갱신하고 도장을 다시 찍습니다. `DocumentClaimsTest` 가 문서 전체에서 `/operations/` 경로를 GET 까지 대조하므로, 새 경로 3개가 문서에 없으면 게이트가 막습니다.
 
 바깥 첫 소비자가 picasso-ops 라는 사실을 이 변경의 근거로 ADR 9 에 맞춰 기록합니다. 소비자 없이 열어 둔 REST 가 아니라, 이 문서의 S1c 가 그 소비자입니다. 기록 자리는 picasso 설계 일지(`docs/superpowers/specs/2026-09-05-picasso-design.md` §15)의 새 항목입니다.
+
+서비스의 행 타입 `AdapterRow`·`AdapterVersionRow` 는 camelCase 를 사용하며, `GET /operations/adapters` 의 snake_case 응답 모양은 컨트롤러가 응답 DTO 로 정합니다. 409 본문에는 `error` 와 기존 값 `existing_contract_semver` 를 싣습니다. 계약 SemVer 문자열 정규화는 후보로 남깁니다. 현재는 정규화하지 않으므로 앞뒤 공백이나 앞자리 0처럼 뜻이 같은 다른 표기도 409로 처리합니다.
 
 ---
 
@@ -288,7 +290,7 @@ registry 거절은 거절 종류에 따라 다르게 보입니다. 이미 다른
 
 | 대상 | 시험 |
 |---|---|
-| P1(picasso) | 컨트롤러 시험으로 201·200·400·404·409 를 각각 확인합니다. 응답 코드를 바꿔 치는 결함 주입으로 시험이 잡는지 봅니다. `AdapterLifecycleTest` 의 `같은 버전을 두 번 등록하면 거부한다` 를 새 동작에 맞게 고칩니다(§5). `DocumentClaimsTest` 통과 |
+| P1(picasso) | 서비스 `AdapterDeclarationTest` 10개와 표면 `AdapterEndpointTest` 8개로 응답 코드 201·200·400·404·409를 검증합니다. 결함 주입 8건 모두 이름 있는 시험이 탐지합니다. `AdapterLifecycleTest` 의 `같은 버전을 두 번 등록하면 거부한다` 는 고치지 않고 통과합니다(§5). `DocumentClaimsTest` 도 통과합니다. |
 | 막힘·거절 판정(ops-service) | 표 형식 단위 시험. 상태 막힘은 종류마다 경계(기준 시간 직전·직후)를 넣고, 조작 거절은 §7.4 대응표의 행마다 응답 코드와 본문을 넣습니다. 결함 주입으로 확인합니다 |
 | 통합(e2e, S1a·S1b) | 한 JVM 에서 Testcontainers Postgres → registry 스키마 마이그레이션 → ops 스키마 마이그레이션 → registry → mimic 2대 → 운영 서비스 API 로 선언(`CLAIMED`) → 보고(`CONFIRMED`) → 퇴역 → 퇴역 뒤 보고 감지 → 복귀 → 조작 기록 확인. registry 를 멈췄을 때 «모름» 이 나오는지도 확인합니다 |
 | 통합(e2e, S1c) | 같은 스택에서 제품 등록 → 빌드 등록 → 인스턴스 등록 → 목록에 `UNTESTED` 표시. P1 거절(400/404/409)이 대응표대로 보이는지 확인합니다 |
