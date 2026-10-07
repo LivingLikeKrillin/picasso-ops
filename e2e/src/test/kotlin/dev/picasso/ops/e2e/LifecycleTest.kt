@@ -40,6 +40,7 @@ class LifecycleTest {
 
     private fun robot(): JsonNode = stack.get("/api/robots")["robots"].single { it["robot"]["robotId"].asText() == ROBOT }
 
+    /** S1d 부터 바인딩 안 된 기체에는 `UNBOUND` 가 붙는다(P2·S1d 스펙 §8.5). 이 시험은 바인딩을 하지 않으므로 늘 그것이 있다. */
     private fun blockers(robot: JsonNode) = robot["blockers"].map { it["kind"].asText() }
 
     /** 프로파일의 상태 발행 주기 상한 30초를 넘겨 민다. 상태 발행이 곧 생존 보고다. */
@@ -54,17 +55,17 @@ class LifecycleTest {
         val robot = robot()
         assertEquals("CLAIMED", robot["robot"]["status"].asText())
         assertEquals("NO_REPORT", robot["connection"].asText())
-        assertEquals(listOf("AWAITING_FIRST_REPORT"), blockers(robot))
+        assertEquals(listOf("AWAITING_FIRST_REPORT", "UNBOUND"), blockers(robot))
     }
 
     @Test
     @Order(2)
-    fun `보고가 오면 CONFIRMED 이고 막힘이 없다`() {
+    fun `보고가 오면 CONFIRMED 이고 바인딩 말고는 막힘이 없다`() {
         report()
         val robot = robot()
         assertEquals("CONFIRMED", robot["robot"]["status"].asText())
         assertEquals("FRESH", robot["connection"].asText())
-        assertEquals(listOf(), blockers(robot))
+        assertEquals(listOf("UNBOUND"), blockers(robot))
     }
 
     @Test
@@ -98,12 +99,12 @@ class LifecycleTest {
 
     @Test
     @Order(6)
-    fun `복귀하면 퇴역이 풀리고 막힘이 사라진다`() {
+    fun `복귀하면 퇴역이 풀리고 바인딩 말고는 막힘이 사라진다`() {
         val reply = stack.send("DELETE", "/api/robots/$ROBOT/retirement", "operator")
         assertEquals("SUCCEEDED", reply.body!!["result"].asText())
         val robot = robot()
         assertEquals("CONFIRMED", robot["robot"]["status"].asText())
-        assertEquals(listOf(), blockers(robot))
+        assertEquals(listOf("UNBOUND"), blockers(robot))
     }
 
     @Test

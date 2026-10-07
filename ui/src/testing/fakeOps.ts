@@ -1,5 +1,16 @@
 import { vi } from 'vitest'
-import type { AdapterListView, Finding, OperationOutcome, RobotListView, RobotView } from '../api'
+import type {
+  AdapterListView,
+  Binding,
+  Finding,
+  OperationOutcome,
+  ProfileListView,
+  Revision,
+  RevisionView,
+  RobotListView,
+  RobotView,
+  TestRequestState,
+} from '../api'
 
 /** 운영 서비스 대역이 받은 요청 한 건. */
 export interface Call {
@@ -14,12 +25,75 @@ export interface FakeOps {
   calls: Call[]
   view: RobotListView
   adapters: AdapterListView
+  profiles: ProfileListView
+  /** 여기 든 경로의 GET 은 503 이다. 운영 서비스의 일부 읽기만 실패하는 경우를 만든다. */
+  failing: Set<string>
   answer: { status: number; body: unknown }
 }
 
 /** 어댑터 목록. 기본은 제품도 인스턴스도 없는 «없음» 이다. */
 export function adapterView(partial: Partial<AdapterListView> = {}): AdapterListView {
   return { registry: 'OK', checkedAt: 't1', adapters: [], instances: [], asOf: 't1', ...partial }
+}
+
+/** 프로파일 목록. 기본은 카탈로그만 있고 개정판이 없는 «없음» 이다. */
+export function profileView(partial: Partial<ProfileListView> = {}): ProfileListView {
+  return {
+    registry: 'OK',
+    checkedAt: 't1',
+    catalog: { contractSemver: '0.9.0', skillTypes: [] },
+    revisions: [],
+    asOf: 't1',
+    ...partial,
+  }
+}
+
+export function revisionView(partial: Partial<Revision> = {}, testRequest: TestRequestState = 'NONE'): RevisionView {
+  return {
+    revision: {
+      profileRevisionId: 5,
+      vendor: 'picasso-ref',
+      model: 'humanoid-a',
+      revision: 2,
+      status: 'VALIDATED',
+      reasons: [],
+      documentHash: 'h',
+      createdBy: 'engineer/kim',
+      createdAt: 't0',
+      activatedBy: null,
+      activatedAt: null,
+      suites: {},
+      latestTestRequest: null,
+      ...partial,
+    },
+    testRequest,
+  }
+}
+
+/** 활성 바인딩 한 줄. 기본은 명칭이 확인된 바인딩이다. */
+export function binding(partial: Partial<Binding> = {}): Binding {
+  return {
+    robotId: 'humanoid-01',
+    vendor: 'picasso-ref',
+    model: 'humanoid-a',
+    profileRevisionId: 5,
+    revision: 2,
+    adapterName: 'acme/fleet',
+    adapterVersion: '1.0.0',
+    conformanceStatus: 'UNTESTED',
+    active: true,
+    siteNames: 'CONFIRMED',
+    siteNameKeys: ['destination', 'location'],
+    adapterVersionId: 10,
+    boundBy: 'engineer/kim',
+    boundAt: 't0',
+    siteNamesRegisteredBy: 'engineer/kim',
+    siteNamesRegisteredAt: 't0',
+    siteNamesReportedAt: 't1',
+    siteNamesCount: 2,
+    siteNamesUnsupported: false,
+    ...partial,
+  }
 }
 
 export function robotView(robotId: string, status: string, blockers: Finding[] = []): RobotView {
@@ -53,8 +127,12 @@ export function outcome(partial: Partial<OperationOutcome>): OperationOutcome {
 }
 
 /** 브라우저처럼 ISO-8859-1 밖의 문자가 헤더에 있으면 보내기 전에 던지는 fetch 대역을 끼운다. */
-export function installFakeOps(view: RobotListView, adapters: AdapterListView = adapterView()): FakeOps {
-  const fake: FakeOps = { calls: [], view, adapters, answer: { status: 200, body: outcome({}) } }
+export function installFakeOps(
+  view: RobotListView,
+  adapters: AdapterListView = adapterView(),
+  profiles: ProfileListView = profileView(),
+): FakeOps {
+  const fake: FakeOps = { calls: [], view, adapters, profiles, failing: new Set(), answer: { status: 200, body: outcome({}) } }
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -67,7 +145,15 @@ export function installFakeOps(view: RobotListView, adapters: AdapterListView = 
       const method = init?.method ?? 'GET'
       fake.calls.push({ method, url, headers, body: init?.body ? JSON.parse(init.body as string) : undefined })
       if (method === 'GET') {
-        const body = url === '/api/robots' ? fake.view : url === '/api/adapters' ? fake.adapters : []
+        if (fake.failing.has(url)) return new Response('', { status: 503 })
+        const body =
+          url === '/api/robots'
+            ? fake.view
+            : url === '/api/adapters'
+              ? fake.adapters
+              : url === '/api/profiles'
+                ? fake.profiles
+                : []
         return new Response(JSON.stringify(body), { status: 200 })
       }
       return new Response(JSON.stringify(fake.answer.body), { status: fake.answer.status })

@@ -1,4 +1,4 @@
 [
-  { "robot_id": "humanoid-01", "serial": "HA-0001", "profile": "picasso/profile/profiles/humanoid-a.json" },
-  { "robot_id": "quadruped-01", "serial": "QB-0001", "profile": "picasso/profile/profiles/quadruped-b.json" }
+  { "robot_id": "humanoid-01", "serial": "HA-0001", "profile": "picasso/profile/profiles/humanoid-a.json", "site_names": ["dock-3", "bay-7"] },
+  { "robot_id": "quadruped-01", "serial": "QB-0001", "profile": "picasso/profile/profiles/quadruped-b.json", "site_names": [] }
 ]

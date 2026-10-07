@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import type { Mode, RobotView } from '../api'
+import type { Adapter, Mode, RevisionView, RobotView } from '../api'
 import { CONNECTION_LABEL } from '../labels'
+import { CommissioningCards } from './CommissioningCards'
 import { FindingCard } from './FindingCard'
 
 interface Props {
@@ -9,13 +10,27 @@ interface Props {
   busy: boolean
   onRetire: (reason: string) => void
   onReinstate: () => void
+  adapters: Adapter[]
+  revisions: RevisionView[]
+  onBind: (adapterVersionId: number, profileRevisionId: number) => void
+  onRecordSiteNames: () => void
 }
 
 /**
  * 기체 상세. 상태 2칸(원장 상태, 연결)을 합치지 않고 따로 보인다(스펙 §7.3). 퇴역·복귀는 운영자 모드에서 한다(스펙 §8).
  * 퇴역 사유는 필수다. 사유가 비면 요청을 보내지 않는다.
  */
-export function RobotDetail({ view, mode, busy, onRetire, onReinstate }: Props) {
+export function RobotDetail({
+  view,
+  mode,
+  busy,
+  onRetire,
+  onReinstate,
+  adapters,
+  revisions,
+  onBind,
+  onRecordSiteNames,
+}: Props) {
   const [reason, setReason] = useState('')
   const { robot } = view
   const retired = robot.status === 'RETIRED'
@@ -44,6 +59,15 @@ export function RobotDetail({ view, mode, busy, onRetire, onReinstate }: Props) 
       ) : (
         view.blockers.map((finding) => <FindingCard key={finding.kind} finding={finding} />)
       )}
+      <CommissioningCards
+        view={view}
+        adapters={adapters}
+        revisions={revisions}
+        mode={mode}
+        busy={busy}
+        onBind={onBind}
+        onRecordSiteNames={onRecordSiteNames}
+      />
       {mode !== 'operator' ? (
         <p>퇴역과 복귀는 운영자 모드에서 합니다</p>
       ) : retired ? (

@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
  * 기체는 site/robots.json 의 humanoid-01 이다. 런처가 mimic 을 띄워 두었으므로 선언하면 보고가 붙는다.
  *
  * 이어서 S1c 의 화면 쪽(스펙 §3). 제품 선언 → 빌드 선언 → 인스턴스 등록 → 인스턴스 목록에 UNTESTED.
+ * 이어서 S1d 의 화면 쪽(P2·S1d 스펙 §3·§11). 개정판 제출(파일 고르기) → 시험 요청 → 현장 실행기가 TESTED → 활성화 →
+ * 바인딩 → 명칭 기록 → «시운전 완료»(humanoid-01). quadruped-01 은 명칭을 티칭하지 않아 «기체가 아는 명칭 없음» 으로 막힌다.
  * registry 를 멈추는 것은 맨 끝이다. 그 뒤로는 조작이 registry 에 닿지 않는다.
  *
  * 선언 직후의 CLAIMED 는 여기서 단언하지 않는다. 실시간 1:1 시계에서는 다음 보고가 1초 안에 올 수도 있어
@@ -27,7 +29,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   // 보고를 기다려 CONFIRMED 를 본다
   await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
   await expect(detail.getByText('CONFIRMED', { exact: true })).toBeVisible()
-  await expect(detail.getByText('막힘 없음', { exact: true })).toBeVisible()
+  await expect(detail.getByText('바인딩 없음', { exact: true })).toBeVisible()
 
   // 운영자 모드에서 사유를 넣어 퇴역
   await page.getByLabel('운영자').check()
@@ -42,7 +44,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   // 복귀
   await detail.getByRole('button', { name: '복귀' }).click()
   await expect(detail.getByText('CONFIRMED', { exact: true })).toBeVisible()
-  await expect(detail.getByText('막힘 없음', { exact: true })).toBeVisible()
+  await expect(detail.getByText('바인딩 없음', { exact: true })).toBeVisible()
 
   // 조작 기록
   await page.getByRole('button', { name: '이력' }).click()
@@ -74,6 +76,54 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   const instances = page.getByRole('table', { name: '인스턴스 목록' })
   await expect(instances.getByRole('row', { name: /fleet-gw-01/ })).toContainText('UNTESTED')
 
+  // 프로파일: 개정판 둘을 제출하고 시험을 요청하면 현장 실행기가 TESTED 로 올린다. 그 뒤 활성화.
+  const declareQuadruped = page.getByRole('form', { name: '기체 선언' })
+  await declareQuadruped.getByLabel('robot_id').fill('quadruped-01')
+  await declareQuadruped.getByLabel('일련번호').fill('QB-0001')
+  await declareQuadruped.getByRole('button', { name: '선언' }).click()
+  await expect(page.getByText('quadruped-01 선언: 반영됨', { exact: true })).toBeVisible()
+
+  const profiles = page.getByRole('region', { name: '프로파일' })
+  const revisions = profiles.getByRole('table', { name: '개정판 목록' })
+  for (const [model, revision] of [['humanoid-a', 2], ['quadruped-b', 1]] as const) {
+    const submit = profiles.getByRole('form', { name: '개정판 제출' })
+    await submit.getByLabel('프로파일 문서').setInputFiles(fileURLToPath(new URL(`../../picasso/profile/profiles/${model}.json`, import.meta.url)))
+    await submit.getByRole('button', { name: '제출' }).click()
+    await expect(page.getByText(`picasso-ref/${model}#${revision} 제출: 반영됨`, { exact: true })).toBeVisible()
+    const row = revisions.getByRole('row', { name: new RegExp(`picasso-ref/${model} ${revision}`) })
+    await row.getByRole('button', { name: '시험 요청' }).click()
+    await expect(page.getByText(`picasso-ref/${model}#${revision} 시험 요청: 반영됨`, { exact: true })).toBeVisible()
+    await expect(row).toContainText('TESTED')
+    await expect(row).toContainText('PASS (site-runner)')
+    await row.getByRole('button', { name: '활성화' }).click()
+    await expect(page.getByText(`picasso-ref/${model}#${revision} 활성화: 반영됨`, { exact: true })).toBeVisible()
+    await expect(row).toContainText('ACTIVE')
+  }
+
+  // 바인딩과 명칭 기록. humanoid-01 은 현장에서 명칭을 티칭했으므로 기록하면 시운전 완료다.
+  for (const [robotId, model, revision] of [['humanoid-01', 'humanoid-a', 2], ['quadruped-01', 'quadruped-b', 1]] as const) {
+    await page.getByRole('button', { name: robotId, exact: true }).click()
+    const robot = page.getByRole('region', { name: `${robotId} 상세` })
+    const bind = robot.getByRole('form', { name: '바인딩' })
+    await bind.getByLabel('빌드').selectOption('acme/fleet 1.0.0')
+    await bind.getByLabel('개정판').selectOption(`picasso-ref/${model}#${revision}`)
+    await bind.getByRole('button', { name: '바인딩' }).click()
+    await expect(page.getByText(`${robotId} 바인딩: 반영됨`, { exact: true })).toBeVisible()
+    await expect(robot.getByText('명칭 기록 없음', { exact: true })).toBeVisible()
+    await robot.getByRole('button', { name: '명칭 등록 기록' }).click()
+    await expect(page.getByText(`${robotId} 명칭 기록: 반영됨`, { exact: true })).toBeVisible()
+  }
+  await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
+  await expect(detail.getByRole('heading', { name: '시운전: 완료' })).toBeVisible()
+  await expect(detail.getByText('막힘 없음', { exact: true })).toBeVisible()
+
+  // quadruped-01 은 명칭을 티칭하지 않았다. 사람은 기록했는데 기체가 아는 명칭이 없다.
+  await page.getByRole('button', { name: 'quadruped-01', exact: true }).click()
+  const quadruped = page.getByRole('region', { name: 'quadruped-01 상세' })
+  await expect(quadruped.getByRole('heading', { name: '시운전: 미완' })).toBeVisible()
+  await expect(quadruped.getByText('기체가 아는 명칭 없음', { exact: true })).toBeVisible()
+  await expect(quadruped.getByText(/현장\(화면 밖\): 현장에서 명칭 티칭을 다시/)).toBeVisible()
+
   // registry 를 멈춘다. 런처(registry 와 mimic 이 든 프로세스)를 끈다.
   const pidFile = fileURLToPath(new URL('../../build/site.pid', import.meta.url))
   process.kill(Number(readFileSync(pidFile, 'utf8')))
@@ -85,4 +135,5 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   const adapters = page.getByRole('region', { name: '어댑터' })
   await expect(adapters.getByText(/직전 값입니다/)).toBeVisible()
   await expect(adapters.getByRole('row', { name: /fleet-gw-01/ })).toBeVisible()
+  await expect(profiles.getByText(/직전 값입니다/)).toBeVisible()
 })

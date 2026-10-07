@@ -1,5 +1,8 @@
 package dev.picasso.ops.site
 
+import dev.picasso.harness.revision.HttpTestDesk
+import dev.picasso.harness.revision.RevisionSuites
+import dev.picasso.harness.revision.RevisionTestRunner
 import dev.picasso.mimic.cli.MimicCli
 import dev.picasso.registry.web.RegistryApplication
 import dev.picasso.uplink.report.RegistryLink
@@ -18,6 +21,7 @@ import java.time.Duration
 class Site private constructor(
     private val registry: ConfigurableApplicationContext,
     private val mimic: MimicCli.Started,
+    private val runner: AutoCloseable,
     val registryUrl: String,
     val robotIds: Set<String>,
 ) : AutoCloseable {
@@ -25,14 +29,27 @@ class Site private constructor(
     /** mimic 의 가상 시계를 민다. 상태 발행이 이 시계로 정해지고, 상태 발행이 곧 생존 보고다. */
     fun advance(by: Duration) = mimic.server.advance(by)
 
-    /** registry 만 멈춘다. 운영 서비스가 «모름» 을 보이는지 볼 때 쓴다(스펙 §3 S1a). */
+    /** registry 만 멈춘다. 운영 서비스가 «모름» 을 보이는지 볼 때 쓴다(스펙 §3 S1a). 실행기는 집기 실패를 로그에 남기며 폴링을 이어 간다. */
     fun stopRegistry() = registry.close()
+
+    /**
+     * 현장에서 이 기체에 명칭을 다시 티칭한다(P2·S1d 스펙 §7). 기체가 아는 명칭은 생존 보고마다 실리므로 다음 [advance] 의
+     * 상태 발행부터 registry 에 닿는다.
+     */
+    fun teach(robotId: String, siteNames: List<String>) {
+        val instance = requireNotNull(mimic.instance(robotId)) { "이 현장에 없는 기체다: $robotId" }
+        instance.knownSiteNames = siteNames
+    }
 
     override fun close() {
         try {
-            mimic.server.shutdown()
+            runner.close()
         } finally {
-            if (registry.isActive) registry.close()
+            try {
+                mimic.server.shutdown()
+            } finally {
+                if (registry.isActive) registry.close()
+            }
         }
     }
 
@@ -82,8 +99,24 @@ class Site private constructor(
                 registry.close()
                 error("mimic 기동 거부: $err")
             }
-            return Site(registry, mimic, registryUrl, mimic.robotIds)
+            // ⑤ 현장에서 티칭한 명칭을 기체에 넣는다. 명칭은 프로파일이 아니라 현장의 것이다(ADR 35).
+            config.roster.forEach { mimic.instance(it.robotId)?.knownSiteNames = it.siteNames }
+
+            // ⑥ 개정판 시험 실행기. 적재 토큰을 가진 것이 이 프로세스뿐이다(P2·S1d 스펙 §7). 시험에 쓰는 mimic 은
+            // 실행기가 시험마다 따로 띄우므로 현장 기체의 보고와 상태를 바꾸지 않는다.
+            val runner = RevisionTestRunner(
+                HttpTestDesk(registryUrl, config.ingestToken),
+                RevisionSuites(config.schema),
+                RUNNER_NAME,
+            ).start(RUNNER_INTERVAL)
+            return Site(registry, mimic, runner, registryUrl, mimic.robotIds)
         }
+
+        /** 실행기 이름. 시험 결과의 실행 주체로 화면에 보인다. */
+        const val RUNNER_NAME = "site-runner"
+
+        /** 실행기의 폴링 간격(실제 시간). */
+        val RUNNER_INTERVAL: Duration = Duration.ofSeconds(1)
 
         /** registry jar 의 `classpath:db/migration` 을 기본 스키마(public)에 올린다. registry 시험 픽스처와 같은 설정이다. */
         fun migrateRegistrySchema(db: DbConfig): Int =
