@@ -1,0 +1,8 @@
+body { font-family: system-ui, sans-serif; margin: 0 16px; }
+header { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+nav button[aria-current='page'] { font-weight: 700; }
+.banner { padding: 8px; margin: 8px 0; border: 1px solid #999; }
+.banner.unknown { border-color: #b23a1d; }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.stale { color: #6f6f6f; }
+.invalid { color: #b23a1d; }

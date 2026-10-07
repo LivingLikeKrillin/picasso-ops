@@ -1,1 +1,4 @@
 .superpowers/
+.gradle/
+.kotlin/
+build/

@@ -1,0 +1,4 @@
+[
+  { "robot_id": "humanoid-01", "serial": "HA-0001", "profile": "picasso/profile/profiles/humanoid-a.json" },
+  { "robot_id": "quadruped-01", "serial": "QB-0001", "profile": "picasso/profile/profiles/quadruped-b.json" }
+]

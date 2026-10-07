@@ -54,11 +54,11 @@ S1 은 결정 9 에 따라 3단계로 나눕니다. 단계마다 들어가는 �
 
 | 단계 | 들어가는 것 | 완료 판정 |
 |---|---|---|
-| S1a 골격 | 저장소, 서브모듈(`cd688ff` 고정), `includeBuild` 와 좌표 치환, picasso 버전 카탈로그(`picasso/gradle/libs.versions.toml`) 가져오기, docker compose Postgres, `site/` 런처(registry 스키마 Flyway, registry 기동, mimic 기동과 시간 진행, `.env` 의 `SITE_ID`), 운영 서비스 골격(registry 클라이언트, ops 스키마 Flyway, 조작 기록, `X-Actor`), 화면 골격(5영역 메뉴, 모드 전환, 이력 영역), CI | 통합 시험이 전체를 띄우고 운영 서비스의 기체 목록 조회가 빈 목록을 돌려줍니다. registry 를 멈추면 화면 전체 상태가 «모름» 이 됩니다. CI 가 초록입니다 |
+| S1a 골격 | 저장소, 서브모듈(`6b1a255` 고정), `includeBuild` 와 좌표 치환, picasso 버전 카탈로그(`picasso/gradle/libs.versions.toml`) 가져오기, docker compose Postgres, `site/` 런처(registry 스키마 Flyway, registry 기동, mimic 기동과 시간 진행, `.env` 의 `SITE_ID`), 운영 서비스 골격(registry 클라이언트, ops 스키마 Flyway, 조작 기록, `X-Actor`), 화면 골격(5영역 메뉴, 모드 전환, 이력 영역), CI | 통합 시험이 전체를 띄우고 운영 서비스의 기체 목록 조회가 빈 목록을 돌려줍니다. registry 를 멈추면 화면 전체 상태가 «모름» 이 됩니다. CI 가 초록입니다 |
 | S1b 로봇 생애주기 | 기체 선언·퇴역·복귀 API 와 화면(목록 + 상세), 상태 막힘 판정, 조작 거절 대응 | 통합 시험과 Playwright 에서 선언(`CLAIMED`) → 보고(`CONFIRMED`) → 퇴역 → 퇴역 뒤 보고 감지 → 복귀 → 조작 기록 확인이 돕니다. 막힘·거절 판정 단위 시험이 결함 주입을 잡습니다 |
-| S1c P1 소비 | P1 머지 뒤 서브모듈을 P1 머지 커밋으로 옮김, 어댑터 제품·빌드 등록과 목록, 어댑터 인스턴스 등록(`POST /operations/adapter-instances`, P1 의 빌드 id 를 씀) | 통합 시험에서 제품 등록 → 빌드 등록 → 인스턴스 등록 → 목록에 `UNTESTED` 표시가 돌고, P1 거절(400/404/409)이 대응표(§7.4)대로 보입니다 |
+| S1c P1 소비 | 어댑터 제품·빌드 등록과 목록, 어댑터 인스턴스 등록(`POST /operations/adapter-instances`, P1 의 빌드 id 를 씀) | 통합 시험에서 제품 등록 → 빌드 등록 → 인스턴스 등록 → 목록에 `UNTESTED` 표시가 돌고, P1 거절(400/404/409)이 대응표(§7.4)대로 보입니다 |
 
-S1a·S1b 는 P1 머지를 기다리지 않고 서브모듈을 `cd688ff` 에 고정해 진행합니다. P1 이 머지되면 서브모듈 포인터를 그 머지 커밋으로 옮기는 커밋이 S1c 의 첫 커밋입니다. **판은 서브모듈 포인터가 정합니다.** 어느 picasso 커밋을 보고 입증했는지는 결정 2 대로 그 포인터에 남으며, 이 문서의 §11 사실 표도 포인터가 가리키는 커밋 기준으로 다시 확인합니다.
+picasso P1 은 S1a 착수 전에 머지됐습니다(PR #79, 머지 커밋 `6b1a255`). S1a 부터 서브모듈을 `6b1a255` 에 고정하므로 S1c 의 첫 커밋으로 예정했던 포인터 이동은 없어졌습니다. **판은 서브모듈 포인터가 정합니다.** 어느 picasso 커밋을 보고 입증했는지는 결정 2 대로 그 포인터에 남으며, 이 문서의 §11 사실 표도 포인터가 가리키는 커밋 기준으로 다시 확인합니다.
 
 ---
 
@@ -66,7 +66,7 @@ S1a·S1b 는 P1 머지를 기다리지 않고 서브모듈을 `cd688ff` 에 고�
 
 ```
 picasso-ops/
-├─ .env            SITE_ID. 런처와 운영 서비스가 같이 읽습니다
+├─ .env            SITE_ID·DB 접속값·포트 2개·토큰 2개. 런처·운영 서비스·시험·CI 공용
 ├─ picasso/        git 서브모듈(고정 커밋), settings 에서 includeBuild
 ├─ ops-service/    Kotlin, Spring Boot. 화면의 유일한 백엔드
 ├─ ui/             React, Vite, TS
@@ -75,7 +75,7 @@ picasso-ops/
 └─ docs/
 ```
 
-Spring Boot 는 `.env` 를 스스로 읽지 않습니다. 런처와 운영 서비스를 띄우는 Gradle 실행 작업과 docker compose(`env_file`)가 `.env` 의 값을 환경 변수 `SITE_ID` 로 넘깁니다. 통합 시험은 같은 `.env` 를 읽어 속성으로 넣고, CI 도 같은 `.env` 를 씁니다.
+Spring Boot 는 `.env` 를 스스로 읽지 않습니다. Gradle 의 실행 작업과 시험 작업이 `.env` 의 값을 환경 변수로 넘기며, docker compose 는 `--env-file .env` 로 값을 받습니다. 런처·운영 서비스·시험·CI 는 이 파일 하나를 읽습니다. 화면(Vite)은 루트 `.env` 의 `OPS_PORT` 만 읽어 프록시 주소로 씁니다. 통합 시험(e2e)은 `.env` 에서 `SITE_ID` 만 받고, DB 접속값과 토큰은 Testcontainers 와 시험용 토큰을 씁니다.
 
 **picasso 를 고치지 않습니다.** 서브모듈은 읽기만 하며, picasso 쪽에 필요한 변경은 picasso 저장소의 PR 로 냅니다. 이 문서의 P1 이 그 첫 PR 입니다(§5).
 
@@ -83,14 +83,14 @@ Spring Boot 는 `.env` 를 스스로 읽지 않습니다. 런처와 운영 서�
 
 운영 서비스는 registry REST 만 부릅니다. registry DB 에 직결하지 않습니다. 직결하면 운영자 토큰 경계를 우회하게 됩니다. mimic 과도 직접 이야기하지 않습니다. mimic 은 `site/` 가 띄우고 registry 로만 보고합니다(§6). 운영 서비스가 쓰는 DB 는 같은 Postgres 의 ops 스키마뿐이며, 그 스키마의 마이그레이션은 운영 서비스 자신이 맡습니다(§7.1).
 
-토큰은 2개이며 쥐는 곳이 다릅니다.
+토큰은 2개이며 부르는 쪽과 검증하는 쪽이 다릅니다.
 
-| 토큰 | 쥐는 곳 |
-|---|---|
-| 운영자 토큰(`picasso.operator.token`) | 운영 서비스만 |
-| 적재 토큰(`picasso.ingest.token`) | `site/` 의 mimic 만 |
+| 토큰 | 부르는 쪽 | 검증하는 쪽 |
+|---|---|---|
+| 운영자 토큰(`picasso.operator.token`) | 운영 서비스만 | `site/` 안의 registry |
+| 적재 토큰(`picasso.ingest.token`) | `site/` 의 mimic 만 | `site/` 안의 registry |
 
-어느 토큰도 브라우저에는 가지 않습니다. 인증을 생략하는 PoC 에서도 이 경계는 지킵니다.
+그래서 `site/` 프로세스는 토큰 2개를 다 받고 운영 서비스는 운영자 토큰만 받습니다. 빌드가 운영 서비스 쪽에서 적재 토큰을 지우며, 셸에서 상속된 값도 지웁니다. registry 와 운영 서비스는 127.0.0.1 에만 엽니다. 어느 토큰도 브라우저에는 가지 않습니다. 인증을 생략하는 PoC 에서도 이 경계는 지킵니다.
 
 ---
 
@@ -157,7 +157,7 @@ mimic CLI 를 그대로 쓰지 않고 Kotlin 런처 하나가 코드로 띄웁�
 
 카탈로그 초기화는 P2 뒤에 합니다. S1 의 런처는 카탈로그를 건드리지 않습니다.
 
-선언 전 mimic 의 생존 보고는 registry 가 «등록되지 않은 기체» 로 거절하며 registry 에 남지 않습니다. 이 거절은 `site/` 로그에서만 보입니다. 운영 서비스는 registry 만 보므로 이 거절을 알 수 없고, 화면에는 보고 0회로만 나타납니다. 이것을 registry 에 남기는 일은 §12 의 변경 후보입니다.
+선언 전 mimic 의 생존 보고는 registry 가 «등록되지 않은 기체» 로 거절하며 registry 에 남지 않습니다. uplink 의 `IngestBridge` 가 생존 보고 결과를 `runCatching` 으로 버리므로 `site/` 로그에도 남지 않습니다. 그래서 이 거절은 어디에도 보이지 않으며, 운영 서비스와 화면에는 보고 0회로만 나타납니다. 이것을 registry 에 남기는 일은 §12 의 변경 후보입니다.
 
 ---
 
@@ -170,6 +170,8 @@ mimic CLI 를 그대로 쓰지 않고 Kotlin 런처 하나가 코드로 띄웁�
 **조작 기록은 덧붙이기만 합니다.** 고치지 않고 삭제하지 않습니다. «응답 없음» 뒤 재조회 결과는 같은 요청 id 로 새 행을 붙이며, 그 행의 결과 칸은 «확인: 반영됨 / 반영 안 됨» 입니다. 처음 남긴 «응답 없음» 행은 그대로 둡니다. 칸 이름 목록은 위 9칸 그대로이며 재조회 행이라고 칸을 더하지 않습니다.
 
 ops 스키마는 운영 서비스가 기동 때 Flyway 로 마이그레이션합니다. 위치는 `classpath:db/ops`, 스키마는 `ops` 이며, Flyway 이력 테이블도 `ops` 스키마 안에 둡니다. registry jar 의 마이그레이션은 `classpath:db/migration` 에 있으므로, 위치를 나눠야 서로의 마이그레이션을 집어 오지 않습니다. 운영 서비스의 설정 파일 이름은 `ops-service`(`spring.config.name`)로 두어 registry 의 `application.properties` 와 가리지 않게 합니다. registry 스키마는 `site/` 런처가 마이그레이션하며(§6 ①), 운영 서비스는 registry 스키마에 손대지 않습니다.
+
+ops 스키마는 Spring Boot 의 Flyway 자동설정이 아니라 코드(`OpsSchema`)로 올립니다. 자동설정의 기본 위치 `classpath:db/migration` 은 registry 가 같은 클래스패스에 있는 통합 시험 JVM 에서 registry 마이그레이션을 집어 오기 때문입니다. 기동과 시험이 같은 `OpsSchema` 를 씁니다. 조작 기록의 덧붙이기만 규칙은 스키마가 막습니다. 행 트리거가 UPDATE·DELETE 를, 문장 트리거가 TRUNCATE 를 막습니다. 사용자 이름은 `[A-Za-z0-9._-]` 1~64자만 받습니다. `X-Actor` 헤더가 ASCII 만 실을 수 있고 `/` 가 모드와 사용자를 가르는 자리이기 때문입니다. 화면도 같은 규칙으로 막고, 어긋난 이름은 요청에 싣지 않습니다.
 
 registry 에는 `X-Actor: <모드>/<사용자>` 로 보냅니다. registry `audit_log` 의 `actor` 와 조작 기록을 맞대 볼 수 있게 하기 위해서입니다. 모드는 인증 없이 화면이 요청 헤더로 싣습니다.
 
@@ -212,7 +214,7 @@ registry 에는 `X-Actor: <모드>/<사용자>` 로 보냅니다. registry `audi
 
 앞의 2개는 화면 밖에서 풀립니다. 화면은 무엇이 부족한지와 누가 채우는지를 보입니다. `REPORTING_AFTER_RETIREMENT` 만 운영자가 화면 안에서 복귀로 풀 수 있습니다.
 
-화면 전체 상태는 2종입니다. `REGISTRY_SILENT` 는 registry 가 답하지 않을 때이고, `REGISTRY_UNAUTHORIZED` 는 registry 가 401 로 답할 때입니다. 둘 다 기체별이 아니라 전역으로 표시합니다. `REGISTRY_SILENT` 에서 화면은 «없음» 이 아니라 «모름» 을 보이고, 해결 담당은 엔지니어, 후속 행동은 registry 상태 확인입니다. `REGISTRY_UNAUTHORIZED` 의 해결 담당은 엔지니어, 후속 행동은 운영자 토큰 설정 확인입니다. 기체 행마다 이 값을 반복하지 않습니다(§8).
+화면 전체 상태는 2종입니다. `REGISTRY_SILENT` 는 registry 가 답하지 않을 때이고, `REGISTRY_UNAUTHORIZED` 는 registry 가 401 로 답할 때입니다. 둘 다 기체별이 아니라 전역으로 표시합니다. `REGISTRY_SILENT` 에서 화면은 «없음» 이 아니라 «모름» 을 보이고, 해결 담당은 엔지니어, 후속 행동은 registry 상태 확인입니다. `REGISTRY_UNAUTHORIZED` 의 해결 담당은 엔지니어, 후속 행동은 운영자 토큰 설정 확인입니다. 기체 행마다 이 값을 반복하지 않습니다(§8). `REGISTRY_UNAUTHORIZED` 는 `/operations` 이하 호출에서만 나옵니다. picasso `6b1a255` 의 운영자 토큰 관문은 `/operations` 이하만 덮고 `/diag` 이하는 관문 밖이기 때문입니다(`OperatorToken.kt` 의 `GUARDED`). S1a 의 유일한 읽기 `/diag/robots` 에서는 나오지 않으므로 토큰이 틀려도 S1a 화면은 정상으로 보이며, 토큰 불일치는 S1b 의 첫 조작에서 드러납니다.
 
 조작 거절은 조작별입니다. registry 가 응답한 400/404/409 를 아래 대응표로 옮깁니다. 409 는 본문으로 가르며 하나로 다루지 않습니다.
 
@@ -301,7 +303,7 @@ registry 거절은 거절 종류에 따라 다르게 보입니다. 이미 다른
 
 **통합 시험의 Postgres 와 Flyway 는 registry 의 `testFixtures` 를 재사용합니다.** registry 의 `testFixtures` 는 Testcontainers 와 Flyway 를 api 로 내보냅니다(§11). 컨테이너 기동기를 picasso-ops 에 복사하지 않습니다. registry 의 `build.gradle.kts` 가 복사본을 «두 번째 진실» 로 막고 있으므로, 복사하면 picasso 쪽 규율과 어긋납니다. 통합 시험이 `site/` 런처와 같은 Flyway 로 registry 스키마를 올리고, 운영 서비스 기동으로 ops 스키마를 올린 뒤 흐름에 들어갑니다.
 
-통합 시험은 한 JVM 에서 registry 와 운영 서비스를 각각 무작위 포트로 띄웁니다. registry 설정은 실행 인자로만 넣습니다. mimic 의 가상 시계는 시험이 직접 전진시켜, 실시간 대기 없이 보고를 만듭니다(§6 ③). registry `testFixtures` 를 포함 빌드로 쓸 수 있는지(좌표 치환과 testFixtures 의 맞물림)와 `PostgresSupport` 의 `reset()` 이 지우는 범위에 ops 스키마가 들어가는지는 S1a 의 첫 작업으로 먼저 확인합니다.
+통합 시험은 한 JVM 에서 registry 와 운영 서비스를 각각 무작위 포트로 띄웁니다. registry 설정은 실행 인자로만 넣습니다. mimic 의 가상 시계는 시험이 직접 전진시켜, 실시간 대기 없이 보고를 만듭니다(§6 ③). registry `testFixtures` 는 좌표 치환과 맞물려 포함 빌드에서 `testFixtures("dev.picasso:registry")` 로 쓸 수 있습니다. `PostgresSupport.reset()` 은 기본 스키마(public)만 지우고 ops 스키마는 남깁니다. 통합 시험은 ops 스키마를 따로 지운 뒤 운영 서비스를 띄웁니다.
 
 Playwright 는 실행 중인 전체 스택 앞에서 돕니다. 스택은 docker compose 의 Postgres, `site/` 런처(registry 와 mimic), 운영 서비스, Vite 미리보기 순으로 띄웁니다. 각 단계는 준비 확인(registry 와 운영 서비스의 응답, Vite 의 페이지 응답)을 거친 뒤 다음 단계로 갑니다. Playwright 는 1:1 시계(§6 ③)로 돌므로 보고를 기다리는 단계마다 최대 60초를 기다립니다. S1a 완료 판정(§3)의 «registry 를 멈추면 모름» 은 통합 시험(API)으로 보고, 화면 표시는 S1b 의 Playwright 가 봅니다.
 
@@ -311,7 +313,7 @@ Playwright 는 실행 중인 전체 스택 앞에서 돕니다. 스택은 docker
 
 ## 11. 코드로 확인한 사실과 근거
 
-picasso 저장소 2026-10-07 main `cd688ff` 기준입니다. 이 문서의 판단은 아래 사실에 기대며, picasso 가 바뀌면 다시 확인합니다. S1c 에서 서브모듈 포인터를 옮기면(§3) 그 커밋 기준으로 다시 확인합니다.
+아래 사실 표는 picasso 저장소 2026-10-07 main `cd688ff` 에서 확인했습니다. S1a 부터 서브모듈을 고정한 `6b1a255` 에서도 S1a 의 런처와 운영 서비스가 쓰는 사실인 §6 의 3가지, `/diag/robots` 의 칸, 선언 본문, `PostgresSupport` 를 다시 확인했습니다. 이 문서의 판단은 아래 사실에 기대며, picasso 가 바뀌어 서브모듈 포인터를 옮기면(§3) 그 커밋 기준으로 다시 확인합니다.
 
 | 사실 | 근거 |
 |---|---|
@@ -334,6 +336,8 @@ picasso 저장소 2026-10-07 main `cd688ff` 기준입니다. 이 문서의 판�
 | 서브프로젝트에 Gradle `group` 없음 | picasso 루트와 모듈 `build.gradle.kts` |
 | 판: Kotlin 2.4.20, Spring Boot 3.4.0 | `gradle/libs.versions.toml` |
 | registry 의 보고 신선도 기본값 24시간(능력 축소 판정용) | `registry/.../ledger/RobotObservability.kt` 의 `DEFAULT_FRESHNESS` |
+| `/diag` 이하는 운영자 토큰 관문 밖 | `registry/.../web/OperatorToken.kt` 의 `GUARDED` |
+| 선언 전 생존 보고 거절은 uplink 가 버림 | `uplink/.../report/IngestBridge.kt` 의 `runCatching` |
 
 ---
 
@@ -345,7 +349,7 @@ picasso 저장소 2026-10-07 main `cd688ff` 기준입니다. 이 문서의 판�
 
 | 후보 | 비고 |
 |---|---|
-| 선언 안 된 기체의 보고 거절을 registry 에 남기기 | 지금은 `site/` 로그에서만 보입니다(§6) |
+| 선언 안 된 기체의 보고 거절을 registry 에 남기기 | 지금은 어디에도 보이지 않습니다(§6) |
 | 사이트 id 일치 대조 | 지금은 registry 가 대조하지 않아 `.env` 의 `SITE_ID` 한 출처와 운영 서비스의 사전 거절로 맞춥니다(§6·§9) |
 | P2 의 카탈로그·개정판·바인딩 REST | S1d 의 선행 변경입니다(§1) |
 
