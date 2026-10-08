@@ -3,6 +3,9 @@ package dev.picasso.ops.service
 import dev.picasso.ops.service.operations.ProfileOperations
 import dev.picasso.ops.service.profiles.ProfileListService
 import dev.picasso.ops.service.adapters.AdapterListService
+import dev.picasso.ops.service.host.HostClient
+import dev.picasso.ops.service.joborders.JobOrderEligibility
+import dev.picasso.ops.service.joborders.JobOrderOperations
 import dev.picasso.ops.service.log.OperationLog
 import dev.picasso.ops.service.operations.AdapterOperations
 import dev.picasso.ops.service.operations.RobotOperations
@@ -108,6 +111,23 @@ open class OpsApplication {
         clock: Clock,
     ): SiteSettingsOperations =
         SiteSettingsOperations(settings, log, TransactionTemplate(DataSourceTransactionManager(dataSource)), clock)
+
+    /** 실행 호스트 클라이언트(S3a 스펙 §8). 주소 형식은 [HostClient.checkBaseUrl] 이 기동에서 본다. */
+    @Bean
+    open fun hostClient(@Value("\${ops.host.url}") url: String): HostClient = HostClient(url)
+
+    /** 시운전·연결은 기체 목록의 판정을 그대로 쓴다(T3). 기체 목록 빈을 같이 써서 그 직전 값도 같다. */
+    @Bean
+    open fun jobOrderEligibility(robots: RobotListService, host: HostClient, clock: Clock): JobOrderEligibility =
+        JobOrderEligibility(robots, host, clock)
+
+    @Bean
+    open fun jobOrderOperations(
+        eligibility: JobOrderEligibility,
+        host: HostClient,
+        log: OperationLog,
+        clock: Clock,
+    ): JobOrderOperations = JobOrderOperations(eligibility, host, host, log, clock)
 
     /** [migrated] 는 쓰지 않는다. 받는 것만으로 ops 마이그레이션 뒤에 이 빈이 만들어진다. */
     @Bean
