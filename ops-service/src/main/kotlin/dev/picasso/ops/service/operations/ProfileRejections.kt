@@ -65,7 +65,7 @@ object ProfileRejections {
             op == ProfileOp.BIND && status == 404 && reason == "UNKNOWN_ROBOT" -> finding(Rejections.UNKNOWN_ROBOT, "목록 새로 읽기")
             op == ProfileOp.BIND && status == 404 && reason == "UNKNOWN_REVISION" -> finding(UNKNOWN_REVISION, "프로파일 목록 새로 읽기")
             op == ProfileOp.BIND && status == 404 && reason == "UNKNOWN_BUILD" -> finding(UNKNOWN_BUILD, "빌드 목록 새로 읽기")
-            op == ProfileOp.BIND && status == 409 && reason == "REVISION_NOT_ACTIVE" -> finding(REVISION_NOT_ACTIVE, "활성 개정판 고르기")
+            op == ProfileOp.BIND && status == 409 && reason == "REVISION_NOT_ACTIVE" -> finding(REVISION_NOT_ACTIVE, "활성 리비전 고르기")
             op == ProfileOp.BIND && status == 409 && reason == "ROBOT_RETIRED" -> finding(ROBOT_RETIRED, "복귀 뒤 다시", Owner.OPERATOR)
             op == ProfileOp.BIND && status == 409 && reason == "CONTRACT_TOO_OLD" ->
                 finding(CONTRACT_TOO_OLD, "계약 semver 가 높은 빌드 고르기")

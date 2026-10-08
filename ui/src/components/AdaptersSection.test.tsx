@@ -143,7 +143,7 @@ describe('어댑터', () => {
     expect(await screen.findByText('fleet-gw-02 인스턴스 등록: 반영됨')).toBeInTheDocument()
   })
 
-  it('409 거절은 기존 계약값과 엔지니어의 후속 행동으로 보이고 기체 상세로 가는 바로 가기는 없다', async () => {
+  it('409 거부는 기존 계약값과 엔지니어의 후속 행동으로 보이고 기체 상세로 가는 바로 가기는 없다', async () => {
     const fake = installFakeOps(robots, listed())
     fake.answer = { status: 200, body: outcome({ result: 'REJECTED', registryStatus: 409, rejection: conflict }) }
     const form = within(await section()).getByRole('form', { name: '빌드 선언' })

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** picasso-ops 에서 엔지니어가 화면으로 개정판을 제출하고, 현장의 실행기가 시험해 `TESTED` 로 올리고, 활성화·바인딩·명칭 기록을 거쳐 기체가 «시운전 완료» 가 되는 흐름을 코드 수정 없이 돈다. 명칭을 티칭하지 않은 기체는 `SITE_NAMES_CONTRADICTED` 로 막히고, 현장에서 다시 티칭하면 풀린다.
+**Goal:** picasso-ops 에서 엔지니어가 화면으로 리비전을 제출하고, 현장의 실행기가 시험해 `TESTED` 로 올리고, 활성화·바인딩·명칭 기록을 거쳐 기체가 «시운전 완료» 가 되는 흐름을 코드 수정 없이 돈다. 명칭을 티칭하지 않은 기체는 `SITE_NAMES_CONTRADICTED` 로 막히고, 현장에서 다시 티칭하면 풀린다.
 
-**Architecture:** 서브모듈을 P2b 머지 커밋(`41beedb`)으로 옮긴다. `site/` 런처가 개정판 시험 실행기(`site-runner`, picasso `harness`)를 같은 프로세스에서 띄우고 `robots.json` 의 `site_names` 를 기체에 넣는다(`Site.teach` 로 재티칭). 운영 서비스는 registry 읽기 4개(`/operations/skill-types`, `/operations/profile-revisions`, `/diag/bindings`, `/diag/software`)와 조작 5개(제출, 시험 요청, 활성화, 바인딩, 명칭 기록)를 더하고, 기체 목록이 기체 → 바인딩 → 소프트웨어 대조를 셋 다 읽혀야 갱신하며, 시운전 판정(`CommissioningJudge`)과 새 막힘 4종을 계산한다. 화면은 «프로파일» 구역, 기체 목록의 «시운전» 칸, 기체 상세의 카드 3개(바인딩, 사이트 명칭, 시운전)를 더한다.
+**Architecture:** 서브모듈을 P2b 머지 커밋(`41beedb`)으로 옮긴다. `site/` 런처가 리비전 시험 실행기(`site-runner`, picasso `harness`)를 같은 프로세스에서 띄우고 `robots.json` 의 `site_names` 를 기체에 넣는다(`Site.teach` 로 재티칭). 운영 서비스는 registry 읽기 4개(`/operations/skill-types`, `/operations/profile-revisions`, `/diag/bindings`, `/diag/software`)와 조작 5개(제출, 시험 요청, 활성화, 바인딩, 명칭 기록)를 더하고, 기체 목록이 기체 → 바인딩 → 소프트웨어 대조를 셋 다 읽혀야 갱신하며, 시운전 판정(`CommissioningJudge`)과 새 막힘 4종을 계산한다. 화면은 «프로파일» 구역, 기체 목록의 «시운전» 칸, 기체 상세의 카드 3개(바인딩, 사이트 명칭, 시운전)를 더한다.
 
 **Tech Stack:** Kotlin 2.4.20, Spring Boot 3.4.0, JUnit5 + kotlin.test, Testcontainers(picasso registry `testFixtures` 의 `PostgresSupport`), JDK `HttpServer`(registry 대역), React 19 + Vite 8 + TypeScript, vitest 5 + Testing Library, Playwright 1.63.
 
@@ -18,7 +18,7 @@
 - 제출 본문은 운영 서비스와 화면 모두 바이트(글자) 그대로 넘긴다. JSON 으로 읽히지 않는 본문도 그대로 registry 에 가서 400(`PROFILE_UNREADABLE`)이다. 비어 있으면 운영 서비스가 400(`PROFILE_REQUIRED`)으로 먼저 막는다.
 - 실측으로 정한 것: 명칭 상태는 앞선 생존 보고가 이미 답했으면 기록 즉시 `CONFIRMED`/`CONTRADICTED` 다. 그래서 통합 시험은 `SITE_NAMES_UNANSWERED` 를 거치지 않고, 그 갈래는 단위 시험(`CommissioningJudgeTest`)이 본다. registry 는 `{"vendor":"x"}` 를 읽히는 문서로 보고 `DRAFT` 로 저장하므로, 읽을 수 없는 문서의 시험은 JSON 이 아닌 본문으로 한다.
 - 기존 시험 셋의 기대값이 바뀐다. S1d 부터 바인딩 안 된 기체에는 `UNBOUND` 막힘이 있기 때문이다. Playwright 의 «막힘 없음» 단언 둘은 «바인딩 없음» 으로, e2e `LifecycleTest` 의 막힘 기대값 셋은 `UNBOUND` 를 넣은 값으로 바뀌고 그 시험 이름 둘도 «바인딩 말고는» 으로 고친다.
-- 화면에서 정한 작은 것: 소프트웨어 대조는 «일치·불일치·보고 없음» 으로 보인다. 제출 알림의 대상은 문서에서 읽은 기종·번호(`vendor/model#revision`)이고, 읽지 못하면 파일 이름이다. `DRAFT` 의 «저장됨: 검증 실패» 와 사유는 조작 알림이 아니라 개정판 목록 행에서 펼쳐 본다(조작 결과에는 registry 의 본문이 없다). 퇴역 기체에는 바인딩 폼을 그리지 않는다. «기체가 아는 명칭 없음» 중 기체가 명칭을 지원하지 않는다고 답한 갈래는 엔지니어가 화면 안에서 본다(프로파일과 명칭 기록을 확인).
+- 화면에서 정한 작은 것: 소프트웨어 대조는 «일치·불일치·보고 없음» 으로 보인다. 제출 알림의 대상은 문서에서 읽은 기종·번호(`vendor/model#revision`)이고, 읽지 못하면 파일 이름이다. `DRAFT` 의 «저장됨: 검증 실패» 와 사유는 조작 알림이 아니라 리비전 목록 행에서 펼쳐 본다(조작 결과에는 registry 의 본문이 없다). 퇴역 기체에는 바인딩 폼을 그리지 않는다. «기체가 아는 명칭 없음» 중 기체가 명칭을 지원하지 않는다고 답한 갈래는 엔지니어가 화면 안에서 본다(프로파일과 명칭 기록을 확인).
 - 알려진 한계: 명칭 기록의 재조회 판정을 스펙 §8.4 글자대로 두었으므로, 명칭이 필요 없는 기체(`NOT_REQUIRED`)에 대한 기록이 응답 없이 끝나면 registry 는 409 였을 것을 재조회는 «반영됨» 으로 본다. 화면의 명칭 상태는 그대로 `NOT_REQUIRED` 라 오해는 기록 한 줄에 그친다.
 
 **작업 위치 규칙(필수):**
@@ -1431,7 +1431,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
-### Task 3: 조작 5개, 거절 대응표, 화면 API
+### Task 3: 조작 5개, 거부 대응표, 화면 API
 
 **Files:**
 - Create: `ops-service/src/main/kotlin/dev/picasso/ops/service/operations/ProfileRejections.kt`, `ops-service/src/main/kotlin/dev/picasso/ops/service/operations/ProfileOperations.kt`, `ops-service/src/main/kotlin/dev/picasso/ops/service/web/ProfileOperationsController.kt`
@@ -4032,4 +4032,4 @@ Expected: XML 기준 site 17, ops-service 107, e2e 30, 실패 0.
 - 병합: 묶음 커밋 여섯을 계획 커밋 위에서 하나로 합침(`575efd2`, 트리 동일), picasso-ops PR #6 으로 올림
 - CI: picasso-ops PR #6 의 `gradle`·`ui`·`playwright` job 3개 초록, Linux 의 Playwright `1 passed`(1.9분), job 시간은 gradle 2분 30초, ui 20초, playwright 4분 25초
 - 걸린 것: 스파이크에서 통합 시험을 새 시험 클래스만 돌려, 바인딩 안 된 기체에 붙은 `UNBOUND` 가 기존 e2e `LifecycleTest` 와 Playwright 의 막힘 없음 기대를 깨는 것을 전체 e2e 에서 늦게 발견해 기대값 갱신. 화면 대역의 기본 바인딩이 기록 시각과 보고 시각을 둘 다 가져 칸 바꿔 읽기가 등가 변이였으므로 시험 보강. Playwright 는 compose 프로젝트 `site` 를 볼륨째 내리므로 돌리기 전에 그 프로젝트의 컨테이너·볼륨 부재 확인 필요
-- 다음: S2(현장 값 데이터화), S3(임무 판과 배정, 배정 가능), S4(장애 주입), 설계 문서는 아직 없음
+- 다음: S2(현장 값 데이터화), S3(임무 버전과 배정, 배정 가능), S4(장애 주입), 설계 문서는 아직 없음

@@ -84,9 +84,9 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(page.getByText('quadruped-01 선언: 반영됨', { exact: true })).toBeVisible()
 
   const profiles = page.getByRole('region', { name: '프로파일' })
-  const revisions = profiles.getByRole('table', { name: '개정판 목록' })
+  const revisions = profiles.getByRole('table', { name: '리비전 목록' })
   for (const [model, revision] of [['humanoid-a', 2], ['quadruped-b', 1]] as const) {
-    const submit = profiles.getByRole('form', { name: '개정판 제출' })
+    const submit = profiles.getByRole('form', { name: '리비전 제출' })
     await submit.getByLabel('프로파일 문서').setInputFiles(fileURLToPath(new URL(`../../picasso/profile/profiles/${model}.json`, import.meta.url)))
     await submit.getByRole('button', { name: '제출' }).click()
     await expect(page.getByText(`picasso-ref/${model}#${revision} 제출: 반영됨`, { exact: true })).toBeVisible()
@@ -106,7 +106,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
     const robot = page.getByRole('region', { name: `${robotId} 상세` })
     const bind = robot.getByRole('form', { name: '바인딩' })
     await bind.getByLabel('빌드').selectOption('acme/fleet 1.0.0')
-    await bind.getByLabel('개정판').selectOption(`picasso-ref/${model}#${revision}`)
+    await bind.getByLabel('리비전').selectOption(`picasso-ref/${model}#${revision}`)
     await bind.getByRole('button', { name: '바인딩' }).click()
     await expect(page.getByText(`${robotId} 바인딩: 반영됨`, { exact: true })).toBeVisible()
     await expect(robot.getByText('명칭 기록 없음', { exact: true })).toBeVisible()

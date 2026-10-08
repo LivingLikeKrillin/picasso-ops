@@ -79,12 +79,12 @@ describe('시운전', () => {
     expect(within(list).getByRole('row', { name: /quadruped-01/ })).toHaveTextContent('quadruped-01CONFIRMED신선미완1')
   })
 
-  it('상세의 카드 3개가 바인딩, 사람의 기록과 기체의 답, 세 조건의 체크 목록을 보인다', async () => {
+  it('상세의 카드 3개가 바인딩, 사람의 기록과 기체의 응답, 세 조건의 체크 목록을 보인다', async () => {
     installFakeOps(view(), adapterView({ adapters: [fleet] }), profiles())
     const detail = await open('humanoid-01')
     const bindingCard = within(detail).getByRole('region', { name: '바인딩' })
     expect(field(bindingCard, '빌드')).toBe('acme/fleet 1.0.0')
-    expect(field(bindingCard, '개정판')).toBe('picasso-ref/humanoid-a#2')
+    expect(field(bindingCard, '리비전')).toBe('picasso-ref/humanoid-a#2')
     const names = within(detail).getByRole('region', { name: '사이트 명칭' })
     expect(field(names, '사람이 기록함')).toBe('engineer/kim t0')
     expect(field(names, '기체가 답함')).toBe('아는 명칭 2개 (t1)')
@@ -118,7 +118,7 @@ describe('시운전', () => {
     expect(field(names, '기체가 답함')).toBe('아는 명칭 2개 (t1)')
   })
 
-  it('기체의 답은 아직 답 없음과 명칭을 지원하지 않음을 가른다', async () => {
+  it('기체의 응답은 아직 응답 없음과 명칭을 지원하지 않음을 가른다', async () => {
     const robots = ['humanoid-04', 'humanoid-05'].map<RobotView>((robotId, index) => ({
       ...robotView(robotId, 'CONFIRMED'),
       binding:
@@ -130,18 +130,18 @@ describe('시운전', () => {
     }))
     installFakeOps({ ...view(), robots }, adapterView({ adapters: [fleet] }), profiles())
     const first = await open('humanoid-04')
-    expect(field(within(first).getByRole('region', { name: '사이트 명칭' }), '기체가 답함')).toBe('아직 답 없음')
+    expect(field(within(first).getByRole('region', { name: '사이트 명칭' }), '기체가 답함')).toBe('아직 응답 없음')
     expect(within(first).getByText(/소프트웨어 대조 불일치/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'humanoid-05' }))
     const second = screen.getByRole('region', { name: 'humanoid-05 상세' })
     expect(field(within(second).getByRole('region', { name: '사이트 명칭' }), '기체가 답함')).toBe('명칭을 지원하지 않음 (t1)')
   })
 
-  it('바인딩 폼은 활성 개정판만 고르게 하고 고른 빌드·개정판 id 를 보낸다', async () => {
+  it('바인딩 폼은 활성 리비전만 고르게 하고 고른 빌드·리비전 id 를 보낸다', async () => {
     const fake = installFakeOps(view(), adapterView({ adapters: [fleet] }), profiles())
     const detail = await open('humanoid-02')
     const form = within(detail).getByRole('form', { name: '바인딩' })
-    const revisions = within(form).getByLabelText('개정판')
+    const revisions = within(form).getByLabelText('리비전')
     expect(within(revisions).getAllByRole('option').map((option) => option.textContent)).toEqual(['고르십시오', 'picasso-ref/humanoid-a#2'])
     await userEvent.selectOptions(within(form).getByLabelText('빌드'), 'acme/fleet 1.0.0')
     await userEvent.selectOptions(revisions, 'picasso-ref/humanoid-a#2')

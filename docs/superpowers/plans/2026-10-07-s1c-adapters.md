@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** S1b 위에서 picasso P1 의 어댑터 REST 를 화면에서 쓴다. 엔지니어가 어댑터 제품을 선언하고, 그 제품의 빌드를 선언하고, 빌드를 골라 이 사이트에 인스턴스를 등록하면 목록에 `UNTESTED` 로 보인다. 완료 판정은 스펙 §3 의 S1c 행이다. 통합 시험에서 제품 등록 → 빌드 등록 → 인스턴스 등록 → 목록에 `UNTESTED` 표시가 돌고, P1·인스턴스 거절(400/404/409)이 대응표(스펙 §7.4)대로 보인다.
+**Goal:** S1b 위에서 picasso P1 의 어댑터 REST 를 화면에서 쓴다. 엔지니어가 어댑터 제품을 선언하고, 그 제품의 빌드를 선언하고, 빌드를 골라 이 사이트에 인스턴스를 등록하면 목록에 `UNTESTED` 로 보인다. 완료 판정은 스펙 §3 의 S1c 행이다. 통합 시험에서 제품 등록 → 빌드 등록 → 인스턴스 등록 → 목록에 `UNTESTED` 표시가 돌고, P1·인스턴스 거부(400/404/409)이 대응표(스펙 §7.4)대로 보인다.
 
-**Architecture:** 운영 서비스에 어댑터 조작 서비스 `AdapterOperations`, 거절 대응표 `AdapterRejections`, 목록 서비스 `AdapterListService`, 조작 API `AdapterOperationsController` 를 더하고, `RegistryClient` 에 어댑터 읽기 2개와 조작 3개를 더한다. 조작 기록과 응답 없음 뒤 재조회는 S1b 의 `RobotOperations` 에서 공용 실행기 `OperationRunner` 로 빼내 기체 조작과 어댑터 조작이 같이 쓴다. 화면은 로봇·연결 영역 왼쪽의 기체 목록 아래에 «어댑터» 구역(인스턴스, 제품·빌드, 등록 폼 3개)을 더한다. 통합 시험은 S1b 의 `E2eStack` 위에 `AdapterTest` 를 얹고, Playwright 생애주기 시험에 어댑터 흐름을 더한다.
+**Architecture:** 운영 서비스에 어댑터 조작 서비스 `AdapterOperations`, 거부 대응표 `AdapterRejections`, 목록 서비스 `AdapterListService`, 조작 API `AdapterOperationsController` 를 더하고, `RegistryClient` 에 어댑터 읽기 2개와 조작 3개를 더한다. 조작 기록과 응답 없음 뒤 재조회는 S1b 의 `RobotOperations` 에서 공용 실행기 `OperationRunner` 로 빼내 기체 조작과 어댑터 조작이 같이 쓴다. 화면은 로봇·연결 영역 왼쪽의 기체 목록 아래에 «어댑터» 구역(인스턴스, 제품·빌드, 등록 폼 3개)을 더한다. 통합 시험은 S1b 의 `E2eStack` 위에 `AdapterTest` 를 얹고, Playwright 생애주기 시험에 어댑터 흐름을 더한다.
 
 **Tech Stack:** S1b 와 같다(Kotlin 2.4.20, Spring Boot 3.4.0 BOM, Gradle 9.7.1, PostgreSQL 16, Testcontainers, JUnit5, React 19, Vite 8, TypeScript 6, vitest 5, `@playwright/test` 1.63.0). 더하는 의존성은 없다.
 
@@ -14,7 +14,7 @@
 1. **조작 기록과 응답 없음 뒤 재조회를 공용 실행기 `OperationRunner` 로 뺀다.** S1b 의 `RobotOperations` 안에 있던 흐름이다. 동작은 바뀌지 않으며 S1b 의 `RobotOperationsTest` 12개가 그대로 지킨다. 재조회는 «반영됐는가» 와 «무엇을 보았나» 를 함께 내는 `Recheck` 하나로 넘긴다.
 2. **어댑터 조작 3가지는 엔지니어 모드이고 운영 서비스가 403 으로 집행한다**(스펙 §8 «등록과 어댑터 관련 조작은 엔지니어 모드», S1b 결정 1 의 연장). 행위자·모드 관문은 기체 조작과 같은 함수(`Guard.kt`)를 쓴다. registry 에 보내기 전에 막은 요청은 조작 기록에 남지 않는다(S1b 결정 2). 사이트 대조는 인스턴스 등록에만 있다. 제품과 빌드는 사이트에 매이지 않는다.
 3. **인스턴스 등록 본문의 빌드 id 가 비면 운영 서비스가 `BUILD_REQUIRED` 400 으로 막는다.** 널이 안 되는 `Long` 칸으로 두면 Jackson 이 빈 칸을 0 으로 읽어 registry 에 보내고, registry 의 400 이 조작 기록에 남는다(스크래치 실측). 그래서 칸을 널 허용으로 받는다.
-4. **거절 종류 값은 `ADAPTER_BAD_REQUEST`(제품·빌드 400), `UNKNOWN_ADAPTER`(빌드 404), `VERSION_CONFLICT`(빌드 409), `INSTANCE_BAD_REQUEST`(인스턴스 400) 이다.** 모두 엔지니어가 화면 안에서 푼다. 표에 없는 응답은 S1b 와 같이 `UNCLASSIFIED`(화면 밖)다. 409 의 관측값에 registry 가 준 기존 계약값(`existing_contract_semver`)을 싣는다. «바로 갈 링크» 칸은 비운다. 링크는 기체 상세를 여는 버튼이고, 어댑터 목록은 같은 영역에 늘 보인다.
+4. **거부 종류 값은 `ADAPTER_BAD_REQUEST`(제품·빌드 400), `UNKNOWN_ADAPTER`(빌드 404), `VERSION_CONFLICT`(빌드 409), `INSTANCE_BAD_REQUEST`(인스턴스 400) 이다.** 모두 엔지니어가 화면 안에서 푼다. 표에 없는 응답은 S1b 와 같이 `UNCLASSIFIED`(화면 밖)다. 409 의 관측값에 registry 가 준 기존 계약값(`existing_contract_semver`)을 싣는다. «바로 갈 링크» 칸은 비운다. 링크는 기체 상세를 여는 버튼이고, 어댑터 목록은 같은 영역에 늘 보인다.
 5. **응답 없음 뒤 «반영됨» 판정을 스펙 §9 의 «목록에 있음» 보다 좁힌다.** 제품은 그 제품이 목록에 있으면 반영된 것이다(registry 는 이미 있는 제품을 그대로 둔다). 빌드는 그 버전이 같은 계약값으로 있어야 한다(같은 버전에 다른 계약값은 registry 가 409 로 거절한다). 인스턴스는 그 인스턴스가 이 사이트에 요청한 빌드와 플릿 주소로 있어야 한다(같은 id 의 재등록은 registry 가 덮어쓴다). 인스턴스 목록에는 빌드 id 가 없어 제품 목록에서 빌드의 제품 이름과 버전을 찾아 맞대며, 재조회는 두 목록을 다 읽어야 하고 하나라도 못 읽으면 확인 행을 붙이지 않는다.
 6. **화면의 어댑터 읽기는 `GET /api/adapters` 하나다.** 제품·빌드(`GET /operations/adapters`)와 이 사이트의 인스턴스(`GET /diag/adapter-instances?site=`)를 같은 시각으로 읽고, 둘 다 읽혀야 새 값으로 바꾼다. 인스턴스는 빌드를 이름과 버전으로만 가리키므로 다른 시각의 둘을 섞으면 서로 맞지 않는 목록이 보일 수 있다. 인스턴스를 먼저, 제품·빌드를 나중에 읽는다. 제품과 빌드는 지워지지 않으므로 이 순서면 보이는 인스턴스의 빌드가 늘 목록에 있다(registry 의 `AdapterService.list` 가 빌드를 먼저 읽는 것과 같은 이유). 제품·빌드 읽기는 관문 안이라 토큰이 틀리면 `REGISTRY_UNAUTHORIZED` 이고 직전 값을 지킨다. 그래서 어댑터 목록은 토큰 불일치 때 «직전 값» 으로 보인다. 기체 목록은 관문 밖에서 새로 읽으므로 그렇지 않다(S1b 결정 7). 화면 전체 상태 배너는 S1b 처럼 기체 목록의 상태로 보인다. 화면은 기체 목록, 어댑터 목록, 조작 기록을 한 번에 읽으므로 셋 중 하나라도 운영 서비스가 답하지 않으면 셋 다 직전 값이 된다.
 7. **화면 배치.** 로봇·연결 영역 왼쪽의 기체 목록 아래에 «어댑터» 구역을 두고, 인스턴스, 제품·빌드 순으로 보인다(스펙 §8 의 목록 순서). 등록 폼 3개(제품 선언, 빌드 선언, 인스턴스 등록)는 엔지니어 모드에서만 보이고, 운영자 모드에서는 «어댑터 등록은 엔지니어 모드에서 합니다» 를 적는다. 빌드와 인스턴스의 대상은 목록에서 고른다. 결과 알림은 기체 조작과 같은 자리(상세 위)에 보이며 «acme/fleet 1.0.0 빌드 선언: 반영됨» 처럼 대상과 조작을 함께 적는다. 적합성은 registry 값 그대로(`UNTESTED`) 보인다. 운영 서비스가 목록 칸을 주지 않으면(널이거나 없으면) «모름» 이다.
@@ -22,7 +22,7 @@
 9. **Playwright 생애주기 시험에 어댑터 흐름을 더한다.** 스펙 §10 의 화면 행 «위 흐름을 1회» 에 S1c 의 흐름도 넣는다. registry 정지는 맨 끝에 그대로 두고, 그때 어댑터 목록도 직전 값으로 남는지 본다. 기체 목록과 어댑터 목록이 같은 «직전 값» 문구를 쓰므로 영역별로 확인한다.
 
 **스크래치에서 미리 확인한 것(2026-10-07, main `d94a5e6` 위, Docker 26.1.4):** 이 계획의 코드는 같은 내용으로 스크래치 빌드에서 돌렸고, 계획의 코드 블록은 그 파일에서 기계로 옮겼다. Kotlin 시험 105개(site 12, ops-service 73, e2e 20)와 vitest 30개가 통과했다. Playwright 시험 1개가 Windows 에서 통과했다(53.3초, 스택 기동 포함 1.5분). 끝난 뒤 남은 프로세스와 컨테이너는 0개였다. 각 작업의 결함 주입은 적힌 실패 이름 그대로 잡혔다(Kotlin 16건, 화면 5건, Playwright 1건). 계획 검토는 청크별 3명이 한 번 보았고 지적을 반영했다. 반영으로 바뀐 코드(어댑터 목록의 읽기 순서, 화면 시험의 첫 읽기 대기, 통합 시험의 토큰 불일치 확인)는 마지막 코드로 시험·결함 주입·Playwright 를 다시 실측했다.
-- 덧붙여 드러난 것: 인스턴스 등록 본문의 빌드 id 를 널이 안 되는 `Long` 으로 받으면, 칸이 없을 때 Jackson 이 0 으로 읽는다. 스프링의 400 이 나지 않고 registry 까지 가서 조작 기록에 거절 행이 남았다(머리말 결정 3).
+- 덧붙여 드러난 것: 인스턴스 등록 본문의 빌드 id 를 널이 안 되는 `Long` 으로 받으면, 칸이 없을 때 Jackson 이 0 으로 읽는다. 스프링의 400 이 나지 않고 registry 까지 가서 조작 기록에 거부 행이 남았다(머리말 결정 3).
 - 덧붙여 드러난 것: S1b 의 Playwright 마지막 확인 `getByText(/직전 값입니다/)` 는 어댑터 목록이 같은 문구를 보이자 두 요소에 걸려 실패했다(머리말 결정 9).
 
 **작업 위치 규칙(필수):**
@@ -782,7 +782,7 @@ EOF
 
 ## Chunk 2: 어댑터 조작과 목록
 
-### Task 3: 어댑터 거절 대응표와 조작 서비스
+### Task 3: 어댑터 거부 대응표와 조작 서비스
 
 **Files:**
 - Create: `ops-service/src/main/kotlin/dev/picasso/ops/service/operations/AdapterRejections.kt`
@@ -1789,7 +1789,7 @@ EOF
 **Files:**
 - Test: `e2e/src/test/kotlin/dev/picasso/ops/e2e/AdapterTest.kt`
 
-S1b 의 `E2eStack` 이 스택을 띄운다. 시험 순서가 있다. 제품 선언(201, 다시 선언하면 200) → 빌드 선언 → 인스턴스 등록 → 목록에 `UNTESTED` → 거절 5가지가 대응표대로 → 사전 거절은 기록되지 않음 → 조작 기록과 registry 감사 기록의 행위자 → 틀린 토큰의 운영 서비스. 감사 기록에는 새로 만든 것만 남는다(registry 는 같은 제품의 두 번째 선언에 감사 기록을 더하지 않는다).
+S1b 의 `E2eStack` 이 스택을 띄운다. 시험 순서가 있다. 제품 선언(201, 다시 선언하면 200) → 빌드 선언 → 인스턴스 등록 → 목록에 `UNTESTED` → 거부 5가지가 대응표대로 → 사전 거부는 기록되지 않음 → 조작 기록과 registry 감사 기록의 행위자 → 틀린 토큰의 운영 서비스. 감사 기록에는 새로 만든 것만 남는다(registry 는 같은 제품의 두 번째 선언에 감사 기록을 더하지 않는다).
 
 - [ ] **Step 1: 시험 쓰기**
 
@@ -1987,7 +1987,7 @@ Expected: XML 에서 `AdapterTest` 7개, `LifecycleTest` 10개, `SkeletonTest` 3
 
 - [ ] **Step 3: 결함 주입 5건(하나씩)**
 
-① `AdapterOperationsController.registerInstance` 의 `?: return@guarded reject(HttpStatus.BAD_REQUEST, "BUILD_REQUIRED", "adapterVersionId 가 없다")` 를 `?: 0L` 로 바꾼다(빈 빌드 id 를 0 으로 보낸다). Expected 실패 이름: `AdapterTest` 의 `registry 에 보내기 전에 막는 요청은 조작 기록에 남지 않는다()`, `조작 기록에 어댑터 조작이 대상과 결과와 함께 남고 registry 도 같은 행위자를 적었다()`. 뒤의 것은 빌드 id 0 으로 registry 에 간 요청의 거절 행이 조작 기록에 남아서다.
+① `AdapterOperationsController.registerInstance` 의 `?: return@guarded reject(HttpStatus.BAD_REQUEST, "BUILD_REQUIRED", "adapterVersionId 가 없다")` 를 `?: 0L` 로 바꾼다(빈 빌드 id 를 0 으로 보낸다). Expected 실패 이름: `AdapterTest` 의 `registry 에 보내기 전에 막는 요청은 조작 기록에 남지 않는다()`, `조작 기록에 어댑터 조작이 대상과 결과와 함께 남고 registry 도 같은 행위자를 적었다()`. 뒤의 것은 빌드 id 0 으로 registry 에 간 요청의 거부 행이 조작 기록에 남아서다.
 ② `AdapterOperationsController` 의 `siteMismatch(body.site, siteId)` 를 `siteMismatch(null, siteId)` 로 바꾼다(인스턴스의 사이트를 대조하지 않는다). Expected 실패 이름: `AdapterTest` 의 `registry 에 보내기 전에 막는 요청은 조작 기록에 남지 않는다()`, `조작 기록에 어댑터 조작이 대상과 결과와 함께 남고 registry 도 같은 행위자를 적었다()`. 다른 사이트를 실은 등록이 이 사이트로 들어가 조작 기록에 남는다.
 ③ `AdapterRejections.of` 의 `finding(VERSION_CONFLICT, "다른 버전 번호로")` 를 `finding(Rejections.UNCLASSIFIED, "다른 버전 번호로")` 로 바꾼다. Expected 실패 이름: ops-service 의 `빌드 선언의 409 는 대응표로 옮기고 거절 행으로 남긴다()`, `대응표의 행마다 종류와 후속 행동이 맞고 엔지니어가 화면 안에서 푼다()`, e2e 의 `P1 과 인스턴스의 거절은 대응표대로 엔지니어가 화면 안에서 풀 종류로 보인다()`.
 ④ `AdapterListService.read` 의 `source.instances(siteId)` 를 `source.instances("other-site")` 로 바꾼다(다른 사이트의 인스턴스를 읽는다). Expected 실패 이름: ops-service 의 `둘 다 읽히면 제품·빌드와 이 사이트의 인스턴스를 같은 시각으로 낸다()`, e2e 의 `인스턴스를 등록하면 이 사이트의 인스턴스 목록에 UNTESTED 로 보인다()`, `P1 과 인스턴스의 거절은 대응표대로 엔지니어가 화면 안에서 풀 종류로 보인다()`, `registry 에 보내기 전에 막는 요청은 조작 기록에 남지 않는다()`.
@@ -2016,7 +2016,7 @@ EOF
 - Modify(전체): `ui/src/api.ts`, `ui/src/App.tsx`, `ui/src/labels.ts`, `ui/src/components/RobotsArea.tsx`, `ui/src/components/OutcomeNotice.tsx`(주석 한 줄), `ui/src/testing/fakeOps.ts`
 - Test: `ui/src/components/AdaptersSection.test.tsx`
 
-배치와 문구는 머리말 결정 7 이다. 조작은 `RobotsArea` 의 `run` 을 받아 보내므로, 결과 알림과 목록 다시 읽기는 기체 조작과 같은 길을 쓴다. `App.test.tsx` 는 고치지 않는다. 그 시험의 대역은 `/api/robots` 가 아닌 주소에 배열(빈 배열이나 조작 기록)을 돌려주므로 `/api/adapters` 의 답에 목록 칸이 없다. 화면은 없는 목록 칸을 «모름» 으로 보이므로 그대로 통과한다. 새 시험은 첫 읽기가 끝난 뒤(기체 목록의 «선언된 기체가 없습니다» 가 보인 뒤) 확인한다. 화면은 읽기 전에도 «모름» 을 보이므로, 기다리지 않으면 읽은 값과 상관없이 통과할 수 있다.
+배치와 문구는 머리말 결정 7 이다. 조작은 `RobotsArea` 의 `run` 을 받아 보내므로, 결과 알림과 목록 다시 읽기는 기체 조작과 같은 길을 쓴다. `App.test.tsx` 는 고치지 않는다. 그 시험의 대역은 `/api/robots` 가 아닌 주소에 배열(빈 배열이나 조작 기록)을 돌려주므로 `/api/adapters` 의 응답에 목록 칸이 없다. 화면은 없는 목록 칸을 «모름» 으로 보이므로 그대로 통과한다. 새 시험은 첫 읽기가 끝난 뒤(기체 목록의 «선언된 기체가 없습니다» 가 보인 뒤) 확인한다. 화면은 읽기 전에도 «모름» 을 보이므로, 기다리지 않으면 읽은 값과 상관없이 통과할 수 있다.
 
 - [ ] **Step 1: 시험 쓰기와 대역 고치기(실패하게)**
 
@@ -3294,11 +3294,11 @@ Expected: 모두 성공(Playwright `1 passed`).
 - [ ] **Step 3: 스펙 정정(컨트롤러가 한다)**
 
 문장은 Fable·Codex 초안 취합이다. 고칠 사실(머리말 결정과 대응):
-- §3: S1c 행의 완료 판정 «P1 거절(400/404/409)» 에 인스턴스 등록 거절(400)도 들어간다는 것.
+- §3: S1c 행의 완료 판정 «P1 거절(400/404/409)» 에 인스턴스 등록 거부(400)도 들어간다는 것.
 - §7.2: 어댑터 목록은 `GET /diag/adapter-instances?site=` 와 `GET /operations/adapters` 를 이 순서로 함께 읽고 둘 다 읽혀야 새 값으로 바꾼다. 순서의 이유(결정 6).
-- §7.4: 대응표의 P1·인스턴스 행에 종류 값(`ADAPTER_BAD_REQUEST`, `UNKNOWN_ADAPTER`, `VERSION_CONFLICT`, `INSTANCE_BAD_REQUEST`)과 화면 열(안)을 채우고, «P1 의 행은 S1c 에서 종류 값을 정합니다» 문장을 정해진 것으로 고친다. 409 의 관측값에 기존 계약값이 들어가는 것, 어댑터 거절에는 바로 가기가 없다는 것. `UNCLASSIFIED` 행의 조작 칸을 «선언·퇴역·복귀» 에서 기체 조작과 어댑터 조작 모두로 넓힌다(결정 4).
+- §7.4: 대응표의 P1·인스턴스 행에 종류 값(`ADAPTER_BAD_REQUEST`, `UNKNOWN_ADAPTER`, `VERSION_CONFLICT`, `INSTANCE_BAD_REQUEST`)과 화면 열(안)을 채우고, «P1 의 행은 S1c 에서 종류 값을 정합니다» 문장을 정해진 것으로 고친다. 409 의 관측값에 기존 계약값이 들어가는 것, 어댑터 거부에는 바로 가기가 없다는 것. `UNCLASSIFIED` 행의 조작 칸을 «선언·퇴역·복귀» 에서 기체 조작과 어댑터 조작 모두로 넓힌다(결정 4).
 - §8: 로봇·연결 영역의 «어댑터» 구역과 순서, 등록 폼 3개는 엔지니어 모드에서만, 운영 서비스가 어댑터 조작도 403 으로 집행, 대상은 목록에서 고른다는 것, 적합성은 registry 값 그대로(결정 2·7). «`REGISTRY_UNAUTHORIZED` 는 목록을 새로 읽었으므로 직전 값으로 표시하지 않는다» 는 기체 목록의 일이고, 어댑터 목록은 관문 안에서 읽으므로 토큰 불일치 때 직전 값으로 보인다는 예외(결정 6).
-- §9: 반영 판정 표의 제품·빌드 등록 행과 어댑터 인스턴스 등록 행을 결정 5 대로 고치고 이유를 적는다. 인스턴스 재조회는 두 목록을 다 읽어야 하며 하나라도 못 읽으면 확인 행이 없다는 것. 확인 행의 `registry_response` 에 남는 것은 조작마다 다르다는 것. 기체는 출처와 원장 상태, 제품은 `adapter_id`, 빌드는 그 버전의 `contract_semver`, 인스턴스는 제품 이름·버전·플릿 주소이며, 재조회에서 대상을 못 봤으면 `null` 이다(결정 1·5). 사전 거절에 인스턴스 사이트 대조와 `BUILD_REQUIRED`(결정 2·3). 조작 기록 대상 칸 표기(결정 8).
+- §9: 반영 판정 표의 제품·빌드 등록 행과 어댑터 인스턴스 등록 행을 결정 5 대로 고치고 이유를 적는다. 인스턴스 재조회는 두 목록을 다 읽어야 하며 하나라도 못 읽으면 확인 행이 없다는 것. 확인 행의 `registry_response` 에 남는 것은 조작마다 다르다는 것. 기체는 출처와 원장 상태, 제품은 `adapter_id`, 빌드는 그 버전의 `contract_semver`, 인스턴스는 제품 이름·버전·플릿 주소이며, 재조회에서 대상을 못 봤으면 `null` 이다(결정 1·5). 사전 거부에 인스턴스 사이트 대조와 `BUILD_REQUIRED`(결정 2·3). 조작 기록 대상 칸 표기(결정 8).
 - §10: S1c 통합 시험 행을 실제 구성으로(`AdapterTest` 7개), Playwright 가 어댑터 흐름도 돈다는 것(결정 9).
 - §11: 표 앞의 기준 커밋 문장에 새 행들은 서브모듈 `6b1a255` 에서 확인했다는 것을 더한다. 행 «어댑터 제품·빌드 등록 컨트롤러 없음» 은 `cd688ff` 의 사실이며 P1(`6b1a255`)로 바뀌었음을 그 행에 적는다(행은 지우지 않는다). 사실 행 셋을 더한다. 인스턴스 등록은 같은 id 면 빌드·사이트·플릿 주소를 덮어쓰고, 없는 빌드 id 는 서비스가 거절해 400 이 된다(`registry/.../adapter/AdapterInstanceService.kt` 의 `register`, `registry/.../web/OperationsController.kt` 의 `registerInstance`). 같은 제품의 두 번째 선언은 감사 기록을 남기지 않는다(`registry/.../adapter/AdapterService.kt` 의 `declareAdapter`). `/diag/adapter-instances` 의 행에는 빌드 id 가 없고 제품 이름과 버전이 있다(`AdapterInstanceRow`).
 
