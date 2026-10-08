@@ -101,21 +101,63 @@ export interface RobotListView {
   connectionThresholdSeconds?: number | null
 }
 
-/** 현장 설정 버전 한 행(S2 스펙 §5). `mode` 는 운영 서비스의 열거 값(`ENGINEER`)이다. */
-export interface SiteSettingsRecord {
-  version: number
+/** 미들웨어 시간값 넷(S3c JSON 계약 공통 규칙). 초 단위 정수다. */
+export interface SiteTimingValues {
+  evidenceBeforeSeconds: number
+  evidenceAfterSeconds: number
+  inDoubtGraceSeconds: number
+  stallWindowSeconds: number
+}
+
+/** 현장 설정의 값 칸 다섯(S3c JSON 계약 §4). 화면은 PUT 에 늘 다섯을 다 싣는다. */
+export interface SiteSettingValues extends SiteTimingValues {
   connectionThresholdSeconds: number
+}
+
+/** 현장 설정 버전 한 행(S3c JSON 계약 §3). `mode` 는 운영 서비스의 열거 값(`ENGINEER`)이다. */
+export interface SiteSettingsRecord extends SiteSettingValues {
+  version: number
   mode: string
   user: string
   reason: string
   recordedAt: string
 }
 
-/** 운영 서비스의 `GET /api/site-settings`(S2 스펙 §6.1). `history` 는 최신부터다. */
+/** 허용 범위(초, 양 끝 포함). 평평한 한 객체다(S3c JSON 계약 §3·§5). */
+export interface SiteSettingsRange {
+  minConnectionThresholdSeconds: number
+  maxConnectionThresholdSeconds: number
+  minEvidenceBeforeSeconds: number
+  maxEvidenceBeforeSeconds: number
+  minEvidenceAfterSeconds: number
+  maxEvidenceAfterSeconds: number
+  minInDoubtGraceSeconds: number
+  maxInDoubtGraceSeconds: number
+  minStallWindowSeconds: number
+  maxStallWindowSeconds: number
+}
+
+/**
+ * 실행 호스트의 현장 시간값 적용 상태(S3c JSON 계약 §7). 운영 서비스가 호스트 본문을 그대로 넘긴다. `applied` 가 null 이면
+ * 미적용이고, `rejected` 는 범위 밖이라 적용하지 않은 버전과 이유다. 시각은 호스트 시계다.
+ */
+export interface HostTimings {
+  applied: ({ version: number } & SiteTimingValues) | null
+  appliedAt: string | null
+  lastReadAt: string | null
+  readError: string | null
+  rejected: { version: number; reasons: string[] } | null
+}
+
+/**
+ * 운영 서비스의 `GET /api/site-settings`(S3c JSON 계약 §3). `history` 는 최신부터다. `hostTimings` 는 호스트가 닿지 않으면
+ * null 이다.
+ */
 export interface SiteSettingsView {
   current: SiteSettingsRecord
-  range: { minConnectionThresholdSeconds: number; maxConnectionThresholdSeconds: number }
+  range: SiteSettingsRange
   history: SiteSettingsRecord[]
+  hostTimings: HostTimings | null
 }
 
 /** 어댑터 빌드 하나. `conformance` 는 registry 값 그대로다(S1 은 `UNTESTED` 만 본다). */
@@ -332,12 +374,8 @@ const retirementPath = (robotId: string) => `/api/robots/${encodeURIComponent(ro
 
 export const fetchRobots = (session: Session) => getJson<RobotListView>('/api/robots', session)
 export const fetchSiteSettings = (session: Session) => getJson<SiteSettingsView>('/api/site-settings', session)
-export const changeSiteSettings = (
-  session: Session,
-  baseVersion: number,
-  connectionThresholdSeconds: number,
-  reason: string,
-) => send('PUT', '/api/site-settings', session, { baseVersion, connectionThresholdSeconds, reason })
+export const changeSiteSettings = (session: Session, baseVersion: number, values: SiteSettingValues, reason: string) =>
+  send('PUT', '/api/site-settings', session, { baseVersion, ...values, reason })
 export const fetchOperations = (session: Session) =>
   getJson<OperationRecord[]>('/api/operations', session)
 export const declareRobot = (
