@@ -13,14 +13,18 @@ dependencyResolutionManagement {
 
 // picasso 서브프로젝트에는 Gradle group 이 없어 좌표가 자동으로 맞지 않는다(스펙 §11).
 // 쓰는 모듈만 명시한다. uplink 는 mimic 의 api 로 따라온다. harness 는 가짜 현장이 개정판 시험 실행기를 띄우려고 쓴다.
+// picasso(미들웨어)와 client 는 실행 호스트가 쓴다(S3a 스펙 §7.1).
 includeBuild("picasso") {
     dependencySubstitution {
         substitute(module("dev.picasso:registry")).using(project(":registry"))
         substitute(module("dev.picasso:mimic")).using(project(":mimic"))
         substitute(module("dev.picasso:harness")).using(project(":harness"))
+        substitute(module("dev.picasso:picasso")).using(project(":picasso"))
+        substitute(module("dev.picasso:client")).using(project(":client"))
     }
 }
 
 include("site")
 include("ops-service")
+include("mission-host")
 include("e2e")
