@@ -45,19 +45,25 @@ subprojects {
 
     // 토큰을 쥐는 곳은 스펙 §4 의 표대로다. 적재 토큰은 mimic 이 있는 site 만 받는다.
     // site 가 운영자 토큰도 받는 것은 같은 프로세스에서 registry(토큰을 검증하는 쪽)를 띄우기 때문이다.
-    val env = if (name == "site") dotenv else dotenv - "PICASSO_INGEST_TOKEN"
+    // 실행 호스트는 registry 를 부르지 않으므로 두 토큰 다 받지 않는다(S3a 스펙 §7.1).
+    val withheld = when (name) {
+        "site" -> emptySet()
+        "mission-host" -> setOf("PICASSO_INGEST_TOKEN", "PICASSO_OPERATOR_TOKEN")
+        else -> setOf("PICASSO_INGEST_TOKEN")
+    }
+    val env = dotenv - withheld
 
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
         environment(env)
-        // environment(...) 는 더하기만 한다. 셸에서 상속된 적재 토큰도 site 밖에서는 지운다.
-        if (project.name != "site") environment.remove("PICASSO_INGEST_TOKEN")
+        // environment(...) 는 더하기만 한다. 셸에서 상속된 토큰도 받지 않는 모듈에서는 지운다.
+        withheld.forEach { environment.remove(it) }
         // 환경 변수는 Gradle 의 시험 입력 추적에 들어가지 않는다. 선언하지 않으면 .env 를 고쳐도 UP-TO-DATE 다.
         inputs.file(rootProject.file(".env")).withPropertyName("dotenv")
     }
 
     tasks.withType<JavaExec>().configureEach {
         environment(env)
-        if (project.name != "site") environment.remove("PICASSO_INGEST_TOKEN")
+        withheld.forEach { environment.remove(it) }
     }
 }

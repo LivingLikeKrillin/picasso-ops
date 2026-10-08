@@ -1,5 +1,6 @@
-// 배포본 하나(site 또는 ops-service)를 루트 .env 를 환경 변수로 넣어 띄운다. Playwright 의 webServer 가 부르고,
-// 끝낼 때 프로세스 트리째 끈다. 배포본이 먼저 있어야 한다: ./gradlew :site:installDist :ops-service:installDist
+// 배포본 하나(site, mission-host 또는 ops-service)를 루트 .env 를 환경 변수로 넣어 띄운다. Playwright 의 webServer 가
+// 부르고, 끝낼 때 프로세스 트리째 끈다. 배포본이 먼저 있어야 한다:
+// ./gradlew :site:installDist :mission-host:installDist :ops-service:installDist
 //
 // 시작 스크립트(bin/)를 거치지 않고 java 를 바로 띄운다. Windows 의 .bat 은 클래스패스를 한 줄로 펼쳐 cmd 의
 // 줄 길이 한도를 넘는다(실측). 클래스패스 와일드카드(lib/*)는 그 한도에 걸리지 않고 셸도 필요 없다.
@@ -14,12 +15,13 @@ import { fileURLToPath } from 'node:url'
 // 각 모듈 build.gradle.kts 의 application.mainClass 와 같다. 어긋나면 기동이 바로 실패한다.
 const MAIN = {
   site: 'dev.picasso.ops.site.SiteLauncherKt',
+  'mission-host': 'dev.picasso.ops.host.MissionHostApplicationKt',
   'ops-service': 'dev.picasso.ops.service.OpsApplicationKt',
 }
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
 const name = process.argv[2]
-if (!(name in MAIN)) throw new Error(`site 또는 ops-service 만 띄운다: ${name}`)
+if (!(name in MAIN)) throw new Error(`site, mission-host, ops-service 만 띄운다: ${name}`)
 
 const env = { ...process.env }
 for (const raw of readFileSync(path.join(root, '.env'), 'utf8').split(/\r?\n/)) {
@@ -29,8 +31,10 @@ for (const raw of readFileSync(path.join(root, '.env'), 'utf8').split(/\r?\n/)) 
   if (at < 0) throw new Error(`.env 줄에 '=' 가 없다: ${line}`)
   env[line.slice(0, at).trim()] = line.slice(at + 1).trim()
 }
-// 적재 토큰은 site 만 쥔다(스펙 §4). 셸에서 상속된 값도 지운다.
+// 적재 토큰은 site 만 쥔다(스펙 §4). 실행 호스트는 registry 를 부르지 않아 운영자 토큰도 받지 않는다(S3a 스펙 §7.1).
+// 셸에서 상속된 값도 지운다.
 if (name !== 'site') delete env.PICASSO_INGEST_TOKEN
+if (name === 'mission-host') delete env.PICASSO_OPERATOR_TOKEN
 
 const lib = path.join(root, name, 'build', 'install', name, 'lib')
 if (!existsSync(lib)) throw new Error(`배포본이 없다: ${lib} (installDist 먼저)`)

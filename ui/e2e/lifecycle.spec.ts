@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url'
  * 바인딩 → 명칭 기록 → «시운전 완료»(humanoid-01). quadruped-01 은 명칭을 티칭하지 않아 «기체가 아는 명칭 없음» 으로 막힌다.
  * 이어서 S2 의 화면 쪽(S2 스펙 §3). 현장·자원 영역에서 연결 기준 시간을 바꾸면 버전 2 와 이력 행이 보이고, 운영자 모드는
  * 바꾸지 못하며, 기체 상세가 버전 2 의 기준으로 판정한다.
+ * 이어서 S3a 의 화면 쪽(S3a 스펙 §3). 운영자 모드로 «운영» 영역에서 InspectAsset 작업 지시를 내면 시운전을 마친 humanoid-01 에
+ * 배정되고 실행 목록에 «코드 정의» 행이 보인다. 실행 호스트는 실제 시각을 쓰고 런처가 가상 시계를 실제 시각까지 따라잡게 민다.
  * registry 를 멈추는 것은 맨 끝이다. 그 뒤로는 조작이 registry 에 닿지 않는다.
  *
  * 선언 직후의 CLAIMED 는 여기서 단언하지 않는다. 실시간 1:1 시계에서는 다음 보고가 1초 안에 올 수도 있어
@@ -143,6 +145,28 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await page.getByRole('button', { name: '로봇·연결' }).click()
   await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
   await expect(detail.getByText('기준 120초, 현장 설정 버전 2', { exact: true })).toBeVisible()
+
+  // 운영(S3a 스펙 §3). 시운전 완료는 humanoid-01 하나다. quadruped-01 은 명칭 막힘으로 시운전 미완이라 배정 불가다.
+  await page.getByLabel('운영자').check()
+  await page.getByRole('button', { name: '운영', exact: true }).click()
+  const order = page.getByRole('form', { name: '작업 지시 폼' })
+  await order.getByLabel('임무').selectOption('InspectAsset')
+  await order.getByLabel('대상 1 id').fill('T1')
+  await order.getByLabel('대상 1 장소').fill('bay-7')
+  const eligibility = page.getByRole('table', { name: '기체별 배정 가능' })
+  await expect(eligibility.getByRole('row', { name: /^humanoid-01 / }).getByRole('cell').nth(5)).toHaveText('가능')
+  const quadrupedRow = eligibility.getByRole('row', { name: /^quadruped-01 / })
+  await expect(quadrupedRow.getByRole('cell').nth(5)).toHaveText('불가')
+  await expect(quadrupedRow).toContainText('시운전이 끝나지 않았다')
+  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  const notice = page.getByRole('status', { name: '제출 결과' })
+  await expect(notice).toContainText('InspectAsset 작업 지시: 배정됨')
+  await expect(notice.locator('dt', { hasText: '배정된 기체' }).locator('xpath=following-sibling::dd[1]')).toHaveText('humanoid-01')
+  const executions = page.getByRole('table', { name: '실행 목록' })
+  const run = executions.getByRole('row').filter({ hasText: 'InspectAsset' })
+  await expect(run).toContainText('코드 정의')
+  // 이동 20초와 점검 12초(±10%)를 실제 시간으로 돈다.
+  await expect(run).toContainText('PHYSICALLY_DONE', { timeout: 90_000 })
 
   // registry 를 멈춘다. 런처(registry 와 mimic 이 든 프로세스)를 끈다.
   const pidFile = fileURLToPath(new URL('../../build/site.pid', import.meta.url))

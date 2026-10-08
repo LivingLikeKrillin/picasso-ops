@@ -2,13 +2,14 @@ package dev.picasso.ops.site
 
 import java.nio.file.Path
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * 실제 1초마다 가상 1초를 민다(1:1, 스펙 §6 ③). 비율을 바꾸면 운영 서비스의 연결 기준 시간 버전 1 의 90초와
- * 허용 범위 하한 60초(S2 스펙 §5)도 다시 정한다.
- * 주기와 전진량이 같은 값이어야 1:1 이므로 하나로 둔다.
+ * 가상 시계를 실제 시각까지 따라잡게 미는 주기(S3a 스펙 §6.1). 밀 때마다 실제 시각까지 미므로 가상 시각은 실제 시각보다
+ * 앞서지 않고 차이는 한 주기 이내다. 그래서 시간 흐름이 1:1 이다(스펙 §6 ③). 1:1 이 깨지면 운영 서비스의 연결 기준 시간
+ * 버전 1 의 90초와 허용 범위 하한 60초(S2 스펙 §5)도 다시 정한다.
  */
 val TICK: Duration = Duration.ofSeconds(1)
 
@@ -17,13 +18,14 @@ fun main() {
     val config = SiteConfig.fromEnv(System.getenv(), root)
     val site = Site.start(config)
     println("registry: ${site.registryUrl} (site=${config.siteId})")
-    println("mimic: ${site.robotIds.sorted()}")
+    println("mimic: ${site.robotIds.sorted()} (gRPC 포트 ${site.mimicPort})")
+    println("셀 대역: http://127.0.0.1:${site.cellPort}/cell")
     // uplink 가 거절 결과를 버리고 registry 도 남기지 않아서, 선언 전 보고의 거절은 어디에도 안 보인다.
     println("선언 전 mimic 의 생존 보고는 registry 가 거절하며 이 로그에도 남지 않는다. 기체를 선언하면 보고가 붙는다")
 
     val ticker = Executors.newSingleThreadScheduledExecutor()
     ticker.scheduleAtFixedRate(
-        { runCatching { site.advance(TICK) }.onFailure { System.err.println("시간 진행 실패: $it") } },
+        { runCatching { site.advanceTo(Instant.now()) }.onFailure { System.err.println("시간 진행 실패: $it") } },
         TICK.toMillis(),
         TICK.toMillis(),
         TimeUnit.MILLISECONDS,

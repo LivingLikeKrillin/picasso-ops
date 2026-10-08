@@ -67,7 +67,7 @@ class SiteSettingsOperationsTest {
         assertEquals(SiteSettingsOperations.TARGET, record.target)
         assertEquals(OperationResult.SUCCEEDED, record.result)
         assertEquals("시험", record.reason)
-        assertNull(record.registryResponse)
+        assertNull(record.targetResponse)
         assertEquals(
             json.readTree("""{"op":"CHANGE_SITE_SETTINGS","baseVersion":1,"connectionThresholdSeconds":60}"""),
             json.readTree(record.request),

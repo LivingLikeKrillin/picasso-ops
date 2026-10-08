@@ -11,23 +11,61 @@ import org.springframework.boot.builder.SpringApplicationBuilder
 import org.springframework.boot.web.context.WebServerApplicationContext
 import org.springframework.context.ConfigurableApplicationContext
 import java.time.Duration
+import java.time.Instant
 
 /**
  * 띄운 가짜 현장 하나. registry 와 mimic 을 이 프로세스 안에 둔다(스펙 §6).
  *
  * mimic CLI 를 쓰지 않는 이유는 스펙 §6 첫 문단이다. CLI 에는 시간을 진행시키는 루프가 없고,
  * registry 는 실행 jar 가 없으며 기동 때 Flyway 를 돌리지 않는다.
+ *
+ * ## 시계(S3a 스펙 §6.1, T1)
+ *
+ * 기동 직후 mimic 가상 시계를 실제 시각까지 한 번 민다. 미들웨어는 E2 시간 윈도우의 기준 시각을 mimic 응답 헤더의
+ * `state_as_of` 에서 가져오고 마감은 자기 시계로 보므로, EPOCH 에서 시작하면 둘이 어긋난다. 그 뒤 런처는 [advanceTo] 로
+ * 실제 시각을 따라잡는다. [now]·시계 밀기·셀 대역의 훑기·[teach] 는 모두 `MimicServer.exclusive` 아래에서 돈다. 가상
+ * 시계는 다른 스레드에서 읽을 때 최신 값이 보인다는 보장이 없으므로 잠금이 그 가시성도 맡는다.
  */
 class Site private constructor(
     private val registry: ConfigurableApplicationContext,
     private val mimic: MimicCli.Started,
+    private val cell: SiteCell,
     private val runner: AutoCloseable,
     val registryUrl: String,
     val robotIds: Set<String>,
 ) : AutoCloseable {
 
-    /** mimic 의 가상 시계를 민다. 상태 발행이 이 시계로 정해지고, 상태 발행이 곧 생존 보고다. */
-    fun advance(by: Duration) = mimic.server.advance(by)
+    /** 기체들이 함께 보는 가상 시계. `MimicCli` 가 시계 하나를 만들어 모든 기체에 넘긴다. */
+    private val clock = requireNotNull(mimic.instance(robotIds.first())) { "기체가 없는 현장이다" }.clock
+
+    /** mimic gRPC 가 열린 포트. 시험은 0 을 주고 여기서 읽는다(S3a 스펙 §6.2). */
+    val mimicPort: Int get() = mimic.server.port
+
+    /** 셀 대역 `GET /cell` 이 열린 루프백 포트(S3a 스펙 §6.3). */
+    val cellPort: Int get() = cell.port
+
+    /** 셀 대역의 지금 스냅숏. `GET /cell` 이 내는 것과 같다. */
+    val cellSnapshot: CellSnapshot get() = cell.snapshot
+
+    /** mimic 의 가상 시각. */
+    fun now(): Instant = mimic.server.exclusive { clock.now() }
+
+    /**
+     * mimic 의 가상 시계를 민다. 상태 발행이 이 시계로 정해지고, 상태 발행이 곧 생존 보고다. 민 직후 같은 잠금 아래에서
+     * 셀 대역이 태스크를 훑는다.
+     *
+     * 시험용으로 남긴다. 이것으로 밀면 가상 시각이 실제 시각보다 앞서며, 그때 실행 호스트도 이 현장의 시계를 써야 한다.
+     */
+    fun advance(by: Duration) = mimic.server.exclusive {
+        mimic.server.advance(by)
+        cell.scan()
+    }
+
+    /** [target] 이 가상 시각보다 뒤일 때만 그 차이만큼 민다. 같거나 앞이면 아무것도 하지 않는다(되감지 않는다). */
+    fun advanceTo(target: Instant) = mimic.server.exclusive {
+        val now = clock.now()
+        if (target.isAfter(now)) advance(Duration.between(now, target))
+    }
 
     /** registry 만 멈춘다. 운영 서비스가 «모름» 을 보이는지 볼 때 쓴다(스펙 §3 S1a). 실행기는 집기 실패를 로그에 남기며 폴링을 이어 간다. */
     fun stopRegistry() = registry.close()
@@ -38,7 +76,8 @@ class Site private constructor(
      */
     fun teach(robotId: String, siteNames: List<String>) {
         val instance = requireNotNull(mimic.instance(robotId)) { "이 현장에 없는 기체다: $robotId" }
-        instance.knownSiteNames = siteNames
+        // 읽는 쪽이 advance 안의 상태 발행이므로 같은 잠금 아래에서 쓴다.
+        mimic.server.exclusive { instance.knownSiteNames = siteNames }
     }
 
     override fun close() {
@@ -46,9 +85,13 @@ class Site private constructor(
             runner.close()
         } finally {
             try {
-                mimic.server.shutdown()
+                cell.close()
             } finally {
-                if (registry.isActive) registry.close()
+                try {
+                    mimic.server.shutdown()
+                } finally {
+                    if (registry.isActive) registry.close()
+                }
             }
         }
     }
@@ -82,7 +125,8 @@ class Site private constructor(
                 MimicCli().start(
                     robots = config.roster.associate { it.robotId to config.profile(it) },
                     schema = config.schema,
-                    port = 0,
+                    // 고정하면 인증 없는 기체 제어 API 표면의 위치가 정해진다(S3a 스펙 §6.2, §12). 실행 호스트가 붙으려면 알아야 한다.
+                    port = config.mimicPort,
                     virtual = true,
                     seed = 0L,
                     err = err,
@@ -102,14 +146,38 @@ class Site private constructor(
             // ⑤ 현장에서 티칭한 명칭을 기체에 넣는다. 명칭은 프로파일이 아니라 현장의 것이다(ADR 35).
             config.roster.forEach { mimic.instance(it.robotId)?.knownSiteNames = it.siteNames }
 
-            // ⑥ 개정판 시험 실행기. 적재 토큰을 가진 것이 이 프로세스뿐이다(P2·S1d 스펙 §7). 시험에 쓰는 mimic 은
+            // ⑥ 셀 대역. 실행 호스트가 루프백 HTTP 로 읽는다(S3a 스펙 §6.3).
+            val cell = try {
+                SiteCell(mimic, config.cell, config.cellPort)
+            } catch (e: Exception) {
+                mimic.server.shutdown()
+                registry.close()
+                throw e
+            }
+
+            // ⑦ 리비전 시험 실행기. 적재 토큰을 가진 것이 이 프로세스뿐이다(P2·S1d 스펙 §7). 시험에 쓰는 mimic 은
             // 실행기가 시험마다 따로 띄우므로 현장 기체의 보고와 상태를 바꾸지 않는다.
-            val runner = RevisionTestRunner(
-                HttpTestDesk(registryUrl, config.ingestToken),
-                RevisionSuites(config.schema),
-                RUNNER_NAME,
-            ).start(RUNNER_INTERVAL)
-            return Site(registry, mimic, runner, registryUrl, mimic.robotIds)
+            val runner = try {
+                RevisionTestRunner(
+                    HttpTestDesk(registryUrl, config.ingestToken),
+                    RevisionSuites(config.schema),
+                    RUNNER_NAME,
+                ).start(RUNNER_INTERVAL)
+            } catch (e: Exception) {
+                cell.close()
+                mimic.server.shutdown()
+                registry.close()
+                throw e
+            }
+            // ⑧ 가상 시계를 실제 시각까지 한 번 민다(S3a 스펙 §6.1). 한 번에 크게 밀어도 된다(MimicServer.advance).
+            val site = Site(registry, mimic, cell, runner, registryUrl, mimic.robotIds)
+            try {
+                site.advanceTo(Instant.now())
+            } catch (e: Exception) {
+                site.close()
+                throw e
+            }
+            return site
         }
 
         /** 실행기 이름. 시험 결과의 실행 주체로 화면에 보인다. */

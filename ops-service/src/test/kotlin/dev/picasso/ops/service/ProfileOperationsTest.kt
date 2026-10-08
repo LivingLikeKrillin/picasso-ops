@@ -118,8 +118,8 @@ class ProfileOperationsTest {
         assertEquals(OperationResult.CONFIRMED_APPLIED, operations.submit(kim, document.toByteArray()).confirmation)
         // 확인 행에는 재조회에서 본 개정판 id 와 상태가 남는다(스펙 §8.4 마지막 문단).
         val confirmed = log.list().first()
-        assertTrue(confirmed.registryResponse!!.contains("\"profile_revision_id\": 5"), confirmed.registryResponse)
-        assertTrue(confirmed.registryResponse!!.contains("\"status\": \"VALIDATED\""), confirmed.registryResponse)
+        assertTrue(confirmed.targetResponse!!.contains("\"profile_revision_id\": 5"), confirmed.targetResponse)
+        assertTrue(confirmed.targetResponse!!.contains("\"status\": \"VALIDATED\""), confirmed.targetResponse)
 
         revisions = RegistryCall.Ok(listOf(revision(5, hash = "other")))
         assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, operations.submit(kim, document.toByteArray()).confirmation)

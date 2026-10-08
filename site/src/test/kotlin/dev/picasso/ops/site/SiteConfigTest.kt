@@ -16,6 +16,8 @@ class SiteConfigTest {
         "PICASSO_DB_USER" to "u",
         "PICASSO_DB_PASSWORD" to "p",
         "REGISTRY_PORT" to "8781",
+        "MIMIC_GRPC_PORT" to "8783",
+        "SITE_CELL_PORT" to "8784",
         "PICASSO_OPERATOR_TOKEN" to "op",
         "PICASSO_INGEST_TOKEN" to "in",
     )
@@ -25,6 +27,9 @@ class SiteConfigTest {
         val config = SiteConfig.fromEnv(env, root)
         assertEquals("site-x", config.siteId)
         assertEquals(8781, config.registryPort)
+        assertEquals(8783, config.mimicPort)
+        assertEquals(8784, config.cellPort)
+        assertEquals(CellFixture.STANDARD, config.cell)
         assertEquals(DbConfig("jdbc:postgresql://h/db", "u", "p"), config.db)
         assertEquals(2, config.roster.size)
         assertEquals(root.resolve(SiteConfig.PROFILE_SCHEMA), config.schema)
@@ -39,6 +44,17 @@ class SiteConfigTest {
     @Test
     fun `포트가 정수가 아니면 기동하지 않는다`() {
         assertFailsWith<IllegalArgumentException> { SiteConfig.fromEnv(env + ("REGISTRY_PORT" to "x"), root) }
+        assertFailsWith<IllegalArgumentException> { SiteConfig.fromEnv(env + ("MIMIC_GRPC_PORT" to "x"), root) }
+        assertFailsWith<IllegalArgumentException> { SiteConfig.fromEnv(env + ("SITE_CELL_PORT" to "x"), root) }
+    }
+
+    @Test
+    fun `mimic 포트나 셀 대역 포트가 없으면 기동하지 않는다`() {
+        // 실행 호스트가 붙을 자리다. 빠진 채 무작위 포트로 뜨면 호스트가 엉뚱한 곳을 두드린다.
+        listOf("MIMIC_GRPC_PORT", "SITE_CELL_PORT").forEach { key ->
+            val e = assertFailsWith<IllegalArgumentException> { SiteConfig.fromEnv(env - key, root) }
+            assertTrue(key in e.message!!, e.message)
+        }
     }
 
     @Test

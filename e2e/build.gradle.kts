@@ -1,6 +1,7 @@
-// 통합 시험만 있는 모듈. 한 JVM 에 Postgres·registry·mimic·운영 서비스를 함께 띄운다(스펙 §10).
+// 통합 시험만 있는 모듈. 한 JVM 에 Postgres·registry·mimic·실행 호스트·운영 서비스를 함께 띄운다(스펙 §10, S3a 스펙 §11).
 dependencies {
     testImplementation(project(":site"))
+    testImplementation(project(":mission-host"))
     testImplementation(project(":ops-service"))
     testImplementation(testFixtures("dev.picasso:registry"))
     testImplementation(platform(libs.spring.boot.bom))
