@@ -1,0 +1,21 @@
+{
+"schemaVersion": 1,
+"workMasterId": "PrepareSequencedRack",
+"maxEvidence": "E2",
+"preferredOptionals": { "verify_grasp": "true" },
+"steps": [
+{
+"kind": "unit",
+"id": "place",
+"skill": "pick_place",
+"forEach": "destination",
+"pairWith": { "equipmentUse": "source", "property": "material" },
+"whenUnpaired": "NO_SOURCE_FOR_MATERIAL",
+"unitId": { "from": "ITEM_ID" },
+"parameters": { "object_id": { "from": "PAIRED_ID", "otherwise": "" }, "destination": { "from": "ITEM_ID" } },
+"expectedIdentity": { "from": "ITEM_PROPERTY", "property": "material" },
+"source": { "from": "PAIRED_ID" },
+"destination": { "from": "ITEM_ID" }
+}
+]
+}

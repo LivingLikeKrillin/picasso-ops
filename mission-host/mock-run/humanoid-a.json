@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0.0",
+  "derived_from": {
+    "software_version": "1.0.0",
+    "observed_at": "2026-09-05",
+    "source": "참조 프로파일이다. 실물 벤더 문서에서 파생하지 않았다(설계 §7.4). 실물 기종이 오면 이 값이 진짜 파생 근거를 담아야 한다."
+  },
+  "vendor": "picasso-ref",
+  "model": "humanoid-a",
+  "revision": 2,
+
+  "skills": [
+    {
+      "skill_type": "navigate_to",
+      "major": 1,
+      "minor": 0,
+      "pause_support": "YES",
+      "cancel_support": "YES",
+      "parameters": [
+        { "key": "location", "value_type": "STRING", "optional": false, "max_length": 256 }
+      ],
+      "preconditions": [
+        { "subject": "HOLD", "requires": "EMPTY" }
+      ]
+    },
+    {
+      "skill_type": "pick_place",
+      "major": 1,
+      "minor": 2,
+      "pause_support": "YES",
+      "cancel_support": "NO",
+      "parameters": [
+        { "key": "object_id", "value_type": "STRING", "optional": false, "max_length": 64 },
+        { "key": "destination", "value_type": "STRING", "optional": false, "max_length": 64 },
+        { "key": "verify_grasp", "value_type": "BOOL", "optional": true },
+        { "key": "grip_force", "value_type": "NUMBER", "optional": true, "min_value": 0, "max_value": 120, "unit": "N" }
+      ]
+    },
+    {
+      "skill_type": "inspect",
+      "major": 1,
+      "minor": 3,
+      "pause_support": "YES",
+      "cancel_support": "YES",
+      "parameters": [
+        { "key": "target", "value_type": "STRING", "optional": false, "max_length": 64 },
+        { "key": "mode", "value_type": "ENUM", "optional": true, "allowed_values": ["VISUAL", "THERMAL"] }
+      ]
+    }
+  ],
+
+  "optional_fields": [
+    { "parameter_path": "task.parameters.grip_force", "support": "SUPPORTED" },
+    { "parameter_path": "task.parameters.verify_grasp", "support": "REQUIRED" }
+  ],
+
+  "publish_interval": { "min_seconds": 1, "max_seconds": 30 },
+  "protocol_limits": { "max_string_length": 256, "max_array_length": 32 },
+  "exclusive_control_required": true,
+
+  "durations": [
+    { "skill_type": "navigate_to", "seconds": 20 },
+    { "skill_type": "pick_place", "seconds": 45, "jitter_ratio": 0.1 },
+    { "skill_type": "inspect", "seconds": 12 }
+  ],
+
+  "failure_modes": [],
+
+  "replay_buffer_size": 256
+}
