@@ -2,6 +2,7 @@
 
 - 문서 상태: 설계 초안 (2026-10-08). 결정은 2026-10-08 사용자 결정(§2)
 - 범위: picasso-ops 의 S3a 와 picasso 의 P4
+- 요청·응답 JSON 의 정확한 모양: `docs/superpowers/specs/2026-10-08-s3a-json-contract.md`(스파이크에서 정함). 스파이크가 정한 세부는 S3a 계획 `docs/superpowers/plans/2026-10-08-s3a-execution-host.md` 머리에 있습니다
 - 근거 문서: P3 스펙(`docs/superpowers/specs/2026-10-08-p3-mission-definition-versions-design.md`) §10 · S2 스펙(`docs/superpowers/specs/2026-10-08-s2-site-settings-design.md`) §1 · picasso 운영 관리 화면 설계 제안(`docs/superpowers/specs/2026-10-07-ops-console-lifecycle-design.md`) §10
 
 ## 1. 목적과 범위
@@ -238,7 +239,7 @@ PrepareSequencedRack 의 E2 가 서는 순서는 이렇습니다. `pick_place` �
 
 호스트의 4xx 는 REJECTED, 5xx·연결 실패·시간 초과는 NO_RESPONSE 입니다(`OperationRunner` 와 같은 구분). NO_RESPONSE 뒤에는 기존 관례대로 기존 `requeryDelay` 만큼 기다린 뒤 재조회합니다. `GET /host/executions` 에서 그 작업 지시 id 의 실행이 있으면 CONFIRMED_APPLIED, 없으면 CONFIRMED_NOT_APPLIED 행을 덧붙입니다. 재조회도 안 닿으면 NO_RESPONSE 행만 남습니다.
 
-제출의 200 응답 본문은 `{requestId, result, confirmation, outcome}` 입니다. `result`·`confirmation` 은 조작 기록의 값이고, `outcome` 은 호스트 응답(결과, 실행 id, 기체 id, 거부 사유, 기체별 미배정 사유, 호스트가 판정에서 뺀 기체와 이유)이며 호스트가 안 닿았으면 null 입니다. 화면은 이 모양을 기존 `OperationOutcome` 과 따로 읽습니다.
+제출의 200 응답 본문은 `{requestId, jobOrderId, result, confirmation, outcome}` 입니다. `result`·`confirmation` 은 조작 기록의 값이고, `outcome` 은 호스트 응답(결과, 실행 id, 기체 id, 거부 사유, 기체별 미배정 사유, 호스트가 판정에서 뺀 기체와 이유)이며 호스트가 안 닿았으면 null 입니다. 화면은 이 모양을 기존 `OperationOutcome` 과 따로 읽습니다.
 
 응답 칸의 이름 `registry_response` 가 registry 를 전제하므로 V3 마이그레이션에서 `target_response` 로 바꾸고 코드의 이름도 함께 바꿉니다. S2 스펙이 S3 로 미룬 자리입니다.
 
@@ -274,7 +275,7 @@ PrepareSequencedRack 의 E2 가 서는 순서는 이렇습니다. `pick_place` �
 | site 셀이 안 닿음 | 셀 신호 `null`(못 물어봄). PrepareSequencedRack 은 E2 를 못 얻어 마감 뒤 UNVERIFIED. 화면 셀 표시는 «모름» |
 | 후보가 하나도 없음 | 400 `NO_ELIGIBLE_ROBOT`, detail 에 기체별 이유. 호스트를 부르지 않고 기록하지 않음 |
 | 단위 id 겹침(대상·슬롯 중복, `.travel` 충돌) | 운영 서비스 400 |
-| 모르는 WorkMaster | 호스트 400, 운영 서비스는 REJECTED 로 기록 |
+| 모르는 WorkMaster | 운영 서비스의 폼 검사가 400 `UNKNOWN_WORK_MASTER`, 기록 없음. 호스트의 400 은 두 쪽의 임무 목록이 어긋날 때만 나며 운영 서비스는 REJECTED 로 기록 |
 | mimic 스트림 끊김 | P4 가 다음 `watch` 에서 이어 붙입니다. 기체가 태스크를 모르는(`NOT_FOUND`) 것처럼 늘 실패하는 경우도 pump 마다 다시 붙으려 합니다(§12) |
 | 실행이 운영자 보류에 섬 | 해소 수단이 없어 그 기체는 도는 실행이 있는 것으로 남아 배정 불가(§12) |
 | 호스트 재기동 | 실행이 사라집니다. `instanceId` 가 바뀌어 화면이 구별합니다 |
