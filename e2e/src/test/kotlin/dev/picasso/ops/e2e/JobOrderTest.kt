@@ -4,14 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import dev.picasso.ops.e2e.Commissioned.HUMANOID
 import dev.picasso.ops.e2e.Commissioned.QUADRUPED
-import dev.picasso.ops.host.MissionHost
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.MethodOrderer
 import org.junit.jupiter.api.Order
 import org.junit.jupiter.api.TestMethodOrder
-import java.time.Duration
-import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -23,10 +20,7 @@ import kotlin.test.assertTrue
  *
  * ## 시계
  *
- * 호스트 시계는 현장 시계다(`E2eStack`). 시험은 [push] 로 가상 시계를 밀 때마다 호스트의 마지막 pump 시각(`pumpedAt`)이 민 뒤의
- * 가상 시각 이상이 될 때까지 기다리고, 한 주기를 더 기다린 뒤 상태를 읽는다. mimic 스트림 갱신은 gRPC 스레드로 비동기로 와서
- * `pumpedAt` 만으로는 그 pump 가 방금 민 전이를 봤다는 보장이 없기 때문이다. E2 마감(`doneAt + 15s`)은 단위를 끝낸 밀기
- * 뒤의 가상 시각부터 센다. 그래서 확인 중(VERIFYING)인 단위가 보이면 시계를 더 밀지 않고 실제 시간으로만 기다린다([drive]).
+ * 호스트 시계는 현장 시계다(`E2eStack`). 가상 시계를 미는 규칙은 [ExecutionDriver] 에 있다.
  *
  * ## 실패 모드
  *
@@ -41,6 +35,7 @@ class JobOrderTest {
 
     companion object {
         private lateinit var stack: E2eStack
+        private lateinit var driver: ExecutionDriver
 
         private const val MATERIAL = "ENGINE-COVER-A"
         private const val PRESENTATION = "SEQ-IN-02.BIN-A"
@@ -50,22 +45,11 @@ class JobOrderTest {
         private val RACK = """{"workMasterId":"PrepareSequencedRack","slots":[${SLOTS.joinToString(",") { "\"$it\"" }}],""" +
             """"material":"$MATERIAL","presentation":"$PRESENTATION"}"""
 
-        /** 한 번에 미는 가상 시간. E2 마감 15초보다 짧아 확인 전에 마감을 넘기지 않는다. */
-        private val STEP: Duration = Duration.ofSeconds(5)
-
-        /** 밀기 상한. 가장 긴 것이 `pick_place` 둘(45초 ±10%)이다. */
-        private const val ROUNDS = 60
-
-        /** 확인 중인 단위를 실제 시간으로 기다리는 상한. 셀 대역은 다음 pump(250ms) 에 읽힌다. */
-        private val VERIFY_WAIT: Duration = Duration.ofSeconds(3)
-
-        /** 정착한 물리 상태(S3a JSON 계약 §5). */
-        private val SETTLED = setOf("PHYSICALLY_DONE", "UNVERIFIED", "FAILED", "ABORTED", "PARTIAL")
-
         @BeforeAll
         @JvmStatic
         fun up() {
             stack = E2eStack.start()
+            driver = ExecutionDriver(stack)
             Commissioned.complete(stack)
         }
 
@@ -110,7 +94,7 @@ class JobOrderTest {
         // 기체별이므로 어느 기체가 무엇을 도는지가 정해져 있어야 한다.
         assertEquals(HUMANOID, outcome["robotId"].asText(), "$outcome")
 
-        val execution = drive(outcome["executionId"].asText())
+        val execution = driver.drive(outcome["executionId"].asText())
         assertEquals(submitted["jobOrderId"].asText(), execution["jobOrderId"].asText())
         assertEquals("InspectAsset", execution["workMasterId"].asText())
         assertTrue(execution.has("missionVersion") && execution["missionVersion"].isNull, "$execution")
@@ -136,7 +120,7 @@ class JobOrderTest {
         val logged = stack.get("/api/operations").first { it["target"].asText() == submitted["jobOrderId"].asText() }
         assertEquals(listOf(HUMANOID), ObjectMapper().readTree(logged["request"].asText())["candidates"].map { it.asText() }, "$logged")
 
-        val execution = drive(outcome["executionId"].asText())
+        val execution = driver.drive(outcome["executionId"].asText())
         assertEquals("PHYSICALLY_DONE", execution["physicalState"].asText(), "$execution")
         assertEquals(
             SLOTS.map { Triple(it, "DONE", "E2") },
@@ -157,42 +141,5 @@ class JobOrderTest {
         val reply = stack.send("POST", "/api/job-orders", "operator", body = form)
         assertEquals(200, reply.status, "${reply.body}")
         return reply.body!!
-    }
-
-    private fun executions(): JsonNode = stack.get("/api/executions")
-
-    private fun execution(executionId: String): JsonNode =
-        checkNotNull(executions()["executions"].firstOrNull { it["executionId"].asText() == executionId }) { "실행이 없다: $executionId" }
-
-    /** 가상 시계를 밀고, 호스트가 민 뒤의 시각에 pump 를 시작할 때까지 기다린 뒤 한 주기 더 기다린다. */
-    private fun push(by: Duration) {
-        stack.site.advance(by)
-        val target = stack.site.now()
-        val deadline = Instant.now().plusSeconds(5)
-        while (true) {
-            val at = executions()["pumpedAt"]
-            if (!at.isNull && !Instant.parse(at.asText()).isBefore(target)) break
-            check(Instant.now().isBefore(deadline)) { "호스트 pump 가 $target 에 이르지 않았다: $at" }
-            Thread.sleep(50)
-        }
-        Thread.sleep(MissionHost.PUMP_PERIOD.toMillis())
-    }
-
-    /**
-     * 실행의 물리 상태가 정착할 때까지 [STEP] 씩 민다. 민 뒤 확인 중(VERIFYING)인 단위가 있으면 더 밀지 않고 [VERIFY_WAIT] 동안
-     * 실제 시간으로 기다린다. 그 안에 정착하지 않으면(셀 신호가 없음) 다시 밀어 마감으로 간다.
-     */
-    private fun drive(executionId: String): JsonNode {
-        repeat(ROUNDS) {
-            push(STEP)
-            var seen = execution(executionId)
-            val until = Instant.now().plus(VERIFY_WAIT)
-            while (seen["units"].any { it["state"].asText() == "VERIFYING" } && Instant.now().isBefore(until)) {
-                Thread.sleep(MissionHost.PUMP_PERIOD.toMillis())
-                seen = execution(executionId)
-            }
-            if (seen["physicalState"].asText() in SETTLED) return seen
-        }
-        error("실행 $executionId 가 ${ROUNDS}번 밀어도 정착하지 않았다: ${execution(executionId)}")
     }
 }

@@ -14,4 +14,5 @@ tasks.withType<Test>().configureEach {
     inputs.file(rootProject.file("site/robots.json")).withPropertyName("roster")
     inputs.dir(rootProject.file("picasso/profile/profiles")).withPropertyName("profiles")
     inputs.dir(rootProject.file("picasso/profile/schema")).withPropertyName("profileSchema")
+    inputs.dir(rootProject.file("mission-host/mock-run")).withPropertyName("mockRunProfile")
 }

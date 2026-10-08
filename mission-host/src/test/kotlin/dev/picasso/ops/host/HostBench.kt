@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.HttpServer
 import dev.picasso.mimic.cli.MimicCli
+import dev.picasso.registry.PostgresSupport
 import org.springframework.boot.web.context.WebServerApplicationContext
 import org.springframework.context.ConfigurableApplicationContext
 import java.net.InetAddress
@@ -15,14 +16,24 @@ import java.net.http.HttpResponse
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * 호스트 시험 세트. 이 JVM 의 Netty 포트에 mimic(humanoid-01·quadruped-01, 가상 시계, registry 없음)을 띄우고, 고정 본문을
  * 내는 셀 대역 대역(stub)과 실행 호스트를 띄운다. 호스트 시계는 mimic 의 가상 시계다(통합 시험이 현장 시계를 넣는 것과 같은 배선).
  *
  * 셀 대역은 현장 모듈에 의존하지 않고 같은 본문 모양을 직접 낸다. 현장 쪽 모양은 현장 시험이 본다.
+ *
+ * 임무 버전 저장은 registry 시험 픽스처의 Postgres 다(S3b 스펙 §6.1). 띄울 때마다 `mission` 스키마를 지운다. 덧붙이기 전용
+ * 트리거가 DELETE·TRUNCATE 를 막으므로 스키마째 지운다. [restartHost] 는 DB 를 그대로 두고 호스트만 다시 띄운다.
+ *
+ * @param mockVirtualLimit 주면 모의 실행의 가상 시간 상한을 이것으로 덮는다.
  */
-class HostBench : AutoCloseable {
+class HostBench(private val mockVirtualLimit: Duration? = null) : AutoCloseable {
+
+    init {
+        PostgresSupport.execute("DROP SCHEMA IF EXISTS mission CASCADE")
+    }
 
     val mimic: MimicCli.Started = checkNotNull(
         MimicCli().start(
@@ -42,24 +53,62 @@ class HostBench : AutoCloseable {
     @Volatile
     var cellBody: String = STANDARD_CELL
 
+    /** 셀 대역 대역이 신호 쓰기에 답할 상태 코드와 본문. */
+    @Volatile
+    var signalReply: Pair<Int, String> = 200 to """{"name":"rack_present","value":"true"}"""
+
+    /** 셀 대역 대역이 받은 신호 쓰기(경로의 이름, Content-Type, 본문). */
+    val signalWrites = CopyOnWriteArrayList<Triple<String, String?, String>>()
+
     private val cell: HttpServer = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0).apply {
         createContext("/cell") { exchange ->
-            val bytes = cellBody.toByteArray()
+            val path = exchange.requestURI.path
+            val (status, body) = if (path.startsWith("/cell/signals/") && exchange.requestMethod == "POST") {
+                signalWrites += Triple(
+                    path.removePrefix("/cell/signals/"),
+                    exchange.requestHeaders.getFirst("Content-Type"),
+                    exchange.requestBody.readAllBytes().toString(Charsets.UTF_8),
+                )
+                signalReply
+            } else {
+                200 to cellBody
+            }
+            val bytes = body.toByteArray()
             exchange.responseHeaders.add("Content-Type", "application/json")
-            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.sendResponseHeaders(status, bytes.size.toLong())
             exchange.responseBody.write(bytes)
             exchange.close()
         }
         start()
     }
 
-    private val context: ConfigurableApplicationContext = MissionHostApplication.builder(HostClock { now() }).run(
-        "--server.port=0",
-        "--host.mimic.port=${mimic.server.port}",
-        "--host.cell.url=http://127.0.0.1:${cell.address.port}",
+    private var context: ConfigurableApplicationContext = startHost()
+
+    val url: String get() = "http://127.0.0.1:${(context as WebServerApplicationContext).webServer.port}"
+
+    /** 지금 뜬 호스트의 빈. */
+    val host: MissionHost get() = context.getBean(MissionHost::class.java)
+
+    /** 이 세트와 같은 인자로 호스트를 하나 띄운다. 기동이 실패하면 예외가 그대로 나간다. */
+    fun startHost(): ConfigurableApplicationContext = MissionHostApplication.builder(HostClock { now() }).run(
+        *buildList {
+            add("--server.port=0")
+            add("--host.mimic.port=${mimic.server.port}")
+            add("--host.cell.url=http://127.0.0.1:${cell.address.port}")
+            add("--spring.datasource.url=${PostgresSupport.jdbcUrl}")
+            add("--spring.datasource.username=${PostgresSupport.username}")
+            add("--spring.datasource.password=${PostgresSupport.password}")
+            add("--host.mock-run.profile=$MOCK_PROFILE")
+            add("--host.mock-run.schema=$SCHEMA")
+            mockVirtualLimit?.let { add("--host.mock-run.virtual-limit=$it") }
+        }.toTypedArray(),
     )
 
-    val url = "http://127.0.0.1:${(context as WebServerApplicationContext).webServer.port}"
+    /** 호스트만 닫고 같은 DB 로 다시 띄운다(재기동). mimic 과 셀 대역은 그대로다. */
+    fun restartHost() {
+        context.close()
+        context = startHost()
+    }
 
     fun now(): Instant = mimic.server.exclusive { mimic.instance(HUMANOID)!!.clock.now() }
 
@@ -68,9 +117,14 @@ class HostBench : AutoCloseable {
     data class Reply(val status: Int, val body: JsonNode?)
 
     fun get(path: String): JsonNode {
+        val reply = fetch(path)
+        check(reply.status == 200) { "$path: ${reply.status} ${reply.body}" }
+        return reply.body!!
+    }
+
+    fun fetch(path: String): Reply {
         val response = HTTP.send(HttpRequest.newBuilder(URI.create(url + path)).build(), HttpResponse.BodyHandlers.ofString())
-        check(response.statusCode() == 200) { "$path: ${response.statusCode()} ${response.body()}" }
-        return JSON.readTree(response.body())
+        return Reply(response.statusCode(), response.body().takeIf { it.isNotBlank() }?.let { runCatching { JSON.readTree(it) }.getOrNull() })
     }
 
     fun post(path: String, body: String, contentType: String = "application/json"): Reply {
@@ -135,13 +189,20 @@ class HostBench : AutoCloseable {
         val HTTP: HttpClient = HttpClient.newHttpClient()
         val JSON = ObjectMapper()
 
-        /** 현장 셀 대역 `CellFixture.STANDARD` 의 처음 모양. */
+        /** 모의 실행용 프로파일과 프로파일 스키마. 호스트 시험은 절대 경로를 실행 인자로 넘긴다(S3b 스펙 §6.4). */
+        val MOCK_PROFILE: Path = ROOT.resolve("mission-host/mock-run/humanoid-a.json")
+        val SCHEMA: Path = ROOT.resolve("picasso/profile/schema/capability-profile.schema.json")
+
+        /** 현장 셀 대역 `CellFixture.STANDARD` 의 처음 모양. 신호 셋은 현장 표준 픽스처의 사양과 처음 값이다. */
         val STANDARD_CELL = """
             {"presentations":[{"id":"$SOURCE","occupied":true,"material":"$MATERIAL","observedAt":null}],
              "slots":[{"id":"RACK-204.S01","occupied":false,"material":null,"observedAt":null},
                       {"id":"RACK-204.S02","occupied":false,"material":null,"observedAt":null},
                       {"id":"RACK-204.S03","occupied":false,"material":null,"observedAt":null},
-                      {"id":"RACK-204.S04","occupied":false,"material":null,"observedAt":null}]}
+                      {"id":"RACK-204.S04","occupied":false,"material":null,"observedAt":null}],
+             "signals":[{"name":"rack_present","location":"RACK-204","kind":"BOOLEAN","safety":false,"value":"false","observedAt":null},
+                        {"name":"guard_closed","location":null,"kind":"BOOLEAN","safety":true,"value":"true","observedAt":null},
+                        {"name":"lot_code","location":null,"kind":"TEXT","safety":false,"value":"LOT-0001","observedAt":null}]}
         """.trimIndent()
 
         fun inspect(jobOrderId: String, vararg targets: Pair<String, String>, evidence: String = "E0"): String =

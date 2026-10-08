@@ -14,6 +14,9 @@ import { fileURLToPath } from 'node:url'
  * 바꾸지 못하며, 기체 상세가 버전 2 의 기준으로 판정한다.
  * 이어서 S3a 의 화면 쪽(S3a 스펙 §3). 운영자 모드로 «운영» 영역에서 InspectAsset 작업 지시를 내면 시운전을 마친 humanoid-01 에
  * 배정되고 실행 목록에 «코드 정의» 행이 보인다. 실행 호스트는 실제 시각을 쓰고 런처가 가상 시계를 실제 시각까지 따라잡게 민다.
+ * 이어서 S3b 의 화면 쪽(S3b 스펙 §3). 엔지니어 모드로 «임무·정책» 영역에서 데이터 정의 템플릿을 불러와 초안 저장 → 검증 → 모의
+ * 실행 → 활성화(사유)하면 버전 이력에 «버전 1 (활성)» 이 보인다. 운영 영역의 셀 대역 신호 표에서 rack_present 를 켜면 신호 조작
+ * 결과와 신호 값이 보인다.
  * registry 를 멈추는 것은 맨 끝이다. 그 뒤로는 조작이 registry 에 닿지 않는다.
  *
  * 선언 직후의 CLAIMED 는 여기서 단언하지 않는다. 실시간 1:1 시계에서는 다음 보고가 1초 안에 올 수도 있어
@@ -167,6 +170,34 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(run).toContainText('코드 정의')
   // 이동 20초와 점검 12초(±10%)를 실제 시간으로 돈다.
   await expect(run).toContainText('PHYSICALLY_DONE', { timeout: 90_000 })
+
+  // 임무·정책(S3b 스펙 §3). 엔지니어 모드로 데이터 정의를 초안 저장 → 검증 → 모의 실행 → 활성화한다. 시운전 완료 기체는
+  // humanoid-01 하나이고 pick_place 를 가지므로 검증을 지난다. 모의 실행은 실행 호스트 안의 별도 mimic 으로 1~3초 돈다.
+  await page.getByLabel('엔지니어').check()
+  await page.getByRole('button', { name: '임무·정책' }).click()
+  const editor = page.getByRole('region', { name: '임무 편집' })
+  const missionNotice = editor.getByRole('status', { name: '임무 조작 결과' })
+  await editor.getByRole('button', { name: '데이터 정의 템플릿 불러오기' }).click()
+  await editor.getByRole('button', { name: '초안 저장' }).click()
+  await expect(missionNotice).toHaveText('초안 저장: 초안 1 저장됨')
+  await editor.getByRole('button', { name: '검증', exact: true }).click()
+  await expect(missionNotice).toHaveText('초안 1 검증: 통과')
+  await editor.getByRole('button', { name: '모의 실행', exact: true }).click()
+  await expect(missionNotice).toContainText('초안 1 모의 실행: 통과')
+  await editor.getByLabel('활성화 사유').fill('데이터 정의로 옮김')
+  await editor.getByRole('button', { name: '활성화', exact: true }).click()
+  await expect(missionNotice).toHaveText('초안 1 활성화: 버전 1 활성화됨. 다음 작업 지시부터 이 버전을 씁니다')
+  const missionVersions = page.getByRole('table', { name: '임무 버전 이력' })
+  await expect(missionVersions.getByRole('row', { name: /^버전 1 \(활성\) 초안 1 local 데이터 정의로 옮김 / })).toBeVisible()
+
+  // 셀 대역 신호(S3b 스펙 §8). 사람이 PLC 역할을 하는 정상 조작이라 운영자 모드에서도 한다.
+  await page.getByLabel('운영자').check()
+  await page.getByRole('button', { name: '운영', exact: true }).click()
+  const signals = page.getByRole('table', { name: '셀 대역 신호' })
+  await expect(signals.getByRole('row', { name: /^rack_present BOOLEAN false / })).toBeVisible()
+  await signals.getByRole('button', { name: 'rack_present 켜기' }).click()
+  await expect(page.getByRole('status', { name: '신호 조작 결과' })).toHaveText('rack_present 켜기: 반영됨(값 true)')
+  await expect(signals.getByRole('row', { name: /^rack_present BOOLEAN true / })).toBeVisible()
 
   // registry 를 멈춘다. 런처(registry 와 mimic 이 든 프로세스)를 끈다.
   const pidFile = fileURLToPath(new URL('../../build/site.pid', import.meta.url))

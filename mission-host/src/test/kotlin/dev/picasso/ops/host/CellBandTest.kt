@@ -1,9 +1,13 @@
 package dev.picasso.ops.host
 
+import dev.picasso.middleware.NamedSignal
 import dev.picasso.middleware.SlotSignal
+import dev.picasso.middleware.mission.SignalKind
+import dev.picasso.middleware.mission.SignalSpec
 import dev.picasso.ops.host.cell.CellBandClient
 import dev.picasso.ops.host.cell.CellBandSignals
 import dev.picasso.ops.host.cell.CellPlace
+import dev.picasso.ops.host.cell.CellSignal
 import dev.picasso.ops.host.cell.CellSnapshot
 import java.time.Instant
 import kotlin.test.Test
@@ -11,7 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
-/** 셀 대역 클라이언트의 셀 신호(S3a 스펙 §7.4). */
+/** 셀 대역 클라이언트의 셀 신호(S3a 스펙 §7.4, S3b 스펙 §6.6). */
 class CellBandTest {
 
     private val filledAt = Instant.parse("2026-10-08T00:01:00Z")
@@ -61,6 +65,49 @@ class CellBandTest {
         )
         assertEquals(CellPlace("S", true, "M", filledAt), filled.slots.single())
         assertFailsWith<IllegalArgumentException> { CellBandClient.parse(HostBench.JSON.readTree("""{"slots":[]}""")) }
+    }
+
+    @Test
+    fun `signal 은 스냅숏의 신호 값과 관측 시각을 내고 모르는 이름이나 스냅숏이 없으면 null 이다`() {
+        val signals = CellBandSignals().apply {
+            snapshot = this@CellBandTest.snapshot.copy(
+                signals = listOf(
+                    CellSignal("rack_present", "RACK-204", SignalKind.BOOLEAN, false, "true", filledAt),
+                    CellSignal("lot_code", null, SignalKind.TEXT, false, "LOT-0001", null),
+                ),
+            )
+        }
+        assertEquals(NamedSignal("true", filledAt), signals.signal("rack_present"))
+        assertEquals(NamedSignal("LOT-0001", null), signals.signal("lot_code"))
+        assertNull(signals.signal("rack_ready"))
+        // 신호 목록이 없는 스냅숏(모르는 사양)과 스냅숏 없음은 둘 다 못 읽음이다.
+        assertNull(CellBandSignals().apply { snapshot = this@CellBandTest.snapshot }.signal("rack_present"))
+        assertNull(CellBandSignals().signal("rack_present"))
+    }
+
+    @Test
+    fun `현장 본문의 신호 목록을 사양과 값으로 읽고 칸이 없으면 모르는 사양이다`() {
+        val read = CellBandClient.parse(HostBench.JSON.readTree(HostBench.STANDARD_CELL))
+        assertEquals(
+            listOf(
+                SignalSpec("rack_present", "RACK-204", SignalKind.BOOLEAN, false),
+                SignalSpec("guard_closed", null, SignalKind.BOOLEAN, true),
+                SignalSpec("lot_code", null, SignalKind.TEXT, false),
+            ),
+            read.signalSpecs(),
+        )
+        assertEquals(listOf("false", "true", "LOT-0001"), read.signals!!.map { it.value })
+
+        assertNull(CellBandClient.parse(HostBench.JSON.readTree("""{"presentations":[],"slots":[]}""")).signals)
+        assertEquals(emptyList(), CellBandClient.parse(HostBench.JSON.readTree("""{"presentations":[],"slots":[],"signals":[]}""")).signalSpecs())
+        listOf(
+            """{"presentations":[],"slots":[],"signals":{}}""",
+            """{"presentations":[],"slots":[],"signals":[{"name":"a","kind":"NUMBER","safety":false,"value":"1"}]}""",
+            """{"presentations":[],"slots":[],"signals":[{"name":"a","kind":"BOOLEAN","safety":false,"value":true}]}""",
+            """{"presentations":[],"slots":[],"signals":[{"name":"a","kind":"BOOLEAN","value":"true"}]}""",
+        ).forEach { body ->
+            assertFailsWith<IllegalArgumentException>(body) { CellBandClient.parse(HostBench.JSON.readTree(body)) }
+        }
     }
 
     @Test

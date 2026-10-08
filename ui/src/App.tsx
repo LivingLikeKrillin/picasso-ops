@@ -4,6 +4,7 @@ import type { AdapterListView, OperationRecord, ProfileListView, RobotListView, 
 import { AREAS } from './areas'
 import type { AreaId } from './areas'
 import { HistoryArea } from './components/HistoryArea'
+import { MissionsArea } from './components/MissionsArea'
 import { ModeSwitch } from './components/ModeSwitch'
 import { OperationsArea } from './components/OperationsArea'
 import { RegistryBanner } from './components/RegistryBanner'
@@ -28,8 +29,8 @@ export default function App() {
   useEffect(() => {
     let alive = true
     // 실패해도 직전 값을 지우지 않는다. 대신 opsError 로 직전 값임을 표시한다(스펙 §9). 다섯 중 하나라도 못 읽으면 다섯 다
-    // 직전 값이다(P2·S1d 스펙 §8.1, S2 스펙 §7). 실행 목록·셀·배정 가능은 실행 호스트를 거치므로 여기 넣지 않는다. 호스트가
-    // 멈춰도 다섯이 직전 값이 되지 않게 «운영» 영역이 따로 읽는다(S3a 스펙 §9.3).
+    // 직전 값이다(P2·S1d 스펙 §8.1, S2 스펙 §7). 실행 목록·셀·배정 가능·임무 버전은 실행 호스트를 거치므로 여기 넣지 않는다.
+    // 호스트가 멈춰도 다섯이 직전 값이 되지 않게 «운영»·«임무·정책» 영역이 따로 읽는다(S3a 스펙 §9.3).
     const load = () => {
       Promise.all([
         fetchRobots(session),
@@ -99,6 +100,9 @@ export default function App() {
             session={session}
             onChanged={() => setTick((value) => value + 1)}
           />
+        )}
+        {current.id === 'missions' && (
+          <MissionsArea session={session} onChanged={() => setTick((value) => value + 1)} />
         )}
         {current.id === 'operations' && (
           <OperationsArea session={session} onChanged={() => setTick((value) => value + 1)} />

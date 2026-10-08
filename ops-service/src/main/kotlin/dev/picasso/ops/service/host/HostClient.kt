@@ -12,7 +12,10 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.time.Duration
+import java.util.UUID
 
 /**
  * 실행 호스트 읽기 한 번의 결과(S3a 스펙 §8). «없음» 과 «모름» 을 접지 않는다.
@@ -116,17 +119,70 @@ fun interface HostWrites {
 }
 
 /**
- * 실행 호스트 REST 클라이언트(S3a 스펙 §8). 호스트는 루프백·무인증이라 토큰을 싣지 않는다.
+ * 요청 id 재조회 한 번의 결과(S3b 스펙 T9). «남은 행이 없다» 는 호스트의 응답(404 `REQUEST_NOT_FOUND`)이고 «못 읽음» 과
+ * 다르다. 앞의 것은 반영 안 됨으로 확인되고, 뒤의 것은 확인하지 못한 것이다. 호스트가 그 조작을 아직 처리 중이라는 응답
+ * (409 `REQUEST_IN_PROGRESS`)도 확인하지 못한 것이라 [Silent] 다.
+ */
+sealed interface HostRequery {
+    /** 그 요청 id 로 남은 행. 본문은 S3b JSON 계약 §4.7 의 모양 그대로다. */
+    data class Found(val body: JsonNode) : HostRequery
+
+    data object NotFound : HostRequery
+
+    data class Silent(val cause: String) : HostRequery
+}
+
+/**
+ * 호스트의 임무 버전 REST(S3b 스펙 §6.6). 시험이 호스트 없이 대신 끼운다.
+ *
+ * 두 읽기는 본문을 해석하지 않고 넘긴다. 쓰기 넷은 응답이 오면 코드와 본문을 그대로 넘기고 분류는 부르는 쪽이 한다. 검증은
+ * 아무것도 남기지 않지만 판정 결과가 200 본문에 있어 같은 모양으로 받는다. `requestId` 는 운영 서비스가 조작마다 만든
+ * 요청 id 이며 호스트가 행에 남긴다(T9).
+ */
+interface HostMissions {
+    /** `GET /host/missions/{workMasterId}` 본문 그대로. 200 아님은 모름이다. */
+    fun overview(workMasterId: String): HostCall<JsonNode>
+
+    /** `GET /host/missions/templates/{workMasterId}` 본문 그대로. */
+    fun templates(workMasterId: String): HostCall<JsonNode>
+
+    fun saveDraft(workMasterId: String, definition: String, actor: String, requestId: UUID): HostWrite
+
+    fun validate(draftId: Long, robotIds: List<String>): HostWrite
+
+    /** 호스트가 요청 안에서 동기로 돌리므로 요청 제한이 따로 길다(T10). */
+    fun mockRun(draftId: Long, robotIds: List<String>, requestId: UUID): HostWrite
+
+    fun activate(draftId: Long, actor: String, reason: String, robotIds: List<String>, requestId: UUID): HostWrite
+
+    /** `GET /host/missions/requests/{requestId}`. 응답 없음 뒤 재조회에만 쓴다. */
+    fun missionRequest(requestId: UUID): HostRequery
+}
+
+/** 셀 대역 신호 조작 전달(S3b 스펙 §7, 결정 3). 시험이 호스트 없이 대신 끼운다. */
+fun interface HostSignals {
+    /** `POST /host/cell/signals/{name}`. 호스트는 현장의 상태 코드와 본문을 그대로 돌려준다. */
+    fun writeSignal(name: String, value: String): HostWrite
+}
+
+/**
+ * 실행 호스트 REST 클라이언트(S3a 스펙 §8, S3b 스펙 §7). 호스트는 루프백·무인증이라 토큰을 싣지 않는다.
  *
  * 연결 제한은 registry 와 같고 요청 제한은 더 길다. 호스트는 판정과 제출을 자기 잠금 아래에서 하며, 그 안에서 mimic 에
  * gRPC 를 부르고, mimic 은 엔진 잠금 아래에서 registry 로 태스크 관측을 동기 HTTP 로 적재한다(요청 제한 3초, 스펙 §5.3).
  * 호스트가 registry 장애 한 번을 기다리는 동안 운영 서비스가 먼저 끊으면, 받은 제출을 응답 없음으로 남기게 된다.
+ *
+ * 모의 실행만 요청 제한이 [mockRunTimeout](60초)이다(S3b 스펙 T10). 호스트가 요청 안에서 동기로 돌리고 실제 시간 상한이
+ * 30초라, 5초에서 끊으면 돌고 있는 모의 실행을 응답 없음으로 남기게 된다. 60초를 기다리면 호스트는 이미 끝냈으므로 그래도
+ * 응답이 없을 때 재조회가 그 결과를 본다.
  */
 class HostClient(
     baseUrl: String,
     private val http: HttpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(),
     private val json: ObjectMapper = jacksonObjectMapper(),
-) : HostReads, HostWrites, AutoCloseable {
+    private val requestTimeout: Duration = REQUEST_TIMEOUT,
+    private val mockRunTimeout: Duration = MOCK_RUN_TIMEOUT,
+) : HostReads, HostWrites, HostMissions, HostSignals, AutoCloseable {
 
     private val base = checkBaseUrl(baseUrl)
 
@@ -156,31 +212,93 @@ class HostClient(
         return post("/host/job-orders", body)
     }
 
-    /** 객체 본문만 받는다. 호스트의 두 GET 은 늘 객체를 준다(S3a JSON 계약 §5·§6). */
-    private fun get(path: String): HostCall<JsonNode> {
-        val request = HttpRequest.newBuilder(URI.create(base + path)).timeout(REQUEST_TIMEOUT).GET().build()
-        val response = try {
-            http.send(request, HttpResponse.BodyHandlers.ofString())
-        } catch (e: IOException) {
-            return HostCall.Silent("응답 없음: ${e.javaClass.simpleName}")
-        }
-        if (response.statusCode() != 200) return HostCall.Silent("HTTP ${response.statusCode()}")
-        return read(response.body()) { body -> json.readTree(body).takeIf { it.isObject } }
+    override fun overview(workMasterId: String): HostCall<JsonNode> = get("/host/missions/${segment(workMasterId)}")
+
+    override fun templates(workMasterId: String): HostCall<JsonNode> = get("/host/missions/templates/${segment(workMasterId)}")
+
+    override fun saveDraft(workMasterId: String, definition: String, actor: String, requestId: UUID): HostWrite {
+        val body = json.createObjectNode()
+            .put("definition", definition)
+            .put("actor", actor)
+            .put("requestId", requestId.toString())
+        return post("/host/missions/${segment(workMasterId)}/drafts", body)
     }
 
-    private fun post(path: String, body: ObjectNode): HostWrite {
-        val request = HttpRequest.newBuilder(URI.create(base + path))
-            .timeout(REQUEST_TIMEOUT)
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)))
-            .build()
-        return try {
-            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
-            HostWrite.Answered(response.statusCode(), response.body())
-        } catch (e: IOException) {
-            HostWrite.NoResponse("응답 없음: ${e.javaClass.simpleName}")
+    override fun validate(draftId: Long, robotIds: List<String>): HostWrite =
+        post("/host/missions/drafts/$draftId/validate", robots(json.createObjectNode(), robotIds))
+
+    override fun mockRun(draftId: Long, robotIds: List<String>, requestId: UUID): HostWrite {
+        val body = robots(json.createObjectNode(), robotIds).put("requestId", requestId.toString())
+        return post("/host/missions/drafts/$draftId/mock-run", body, mockRunTimeout)
+    }
+
+    override fun activate(draftId: Long, actor: String, reason: String, robotIds: List<String>, requestId: UUID): HostWrite {
+        val body = robots(json.createObjectNode().put("actor", actor).put("reason", reason), robotIds)
+            .put("requestId", requestId.toString())
+        return post("/host/missions/drafts/$draftId/activate", body)
+    }
+
+    /**
+     * 남은 행이 없다는 응답은 404 와 `REQUEST_NOT_FOUND` 가 함께일 때만이다. 다른 404(그 경로가 없는 서버 등)는 호스트의
+     * 판단이 아니므로 못 읽음이다. 409 `REQUEST_IN_PROGRESS` 는 호스트가 그 조작을 아직 처리 중이라는 응답이다. 행이 없다는
+     * 응답으로 접으면, 처리가 끝나 행이 남기 전에 반영 안 됨으로 확인하게 된다.
+     */
+    override fun missionRequest(requestId: UUID): HostRequery {
+        val request = HttpRequest.newBuilder(URI.create("$base/host/missions/requests/$requestId")).GET()
+        val response = when (val write = send(request, requestTimeout)) {
+            is HostWrite.NoResponse -> return HostRequery.Silent(write.cause)
+            is HostWrite.Answered -> write
+        }
+        val body = objectOrNull(response.body)
+        return when {
+            response.status == 200 && body != null -> HostRequery.Found(body)
+            response.status == 404 && body?.get("error")?.asText() == REQUEST_NOT_FOUND -> HostRequery.NotFound
+            response.status == 409 && body?.get("error")?.asText() == REQUEST_IN_PROGRESS -> HostRequery.Silent("호스트가 그 요청을 아직 처리 중이다")
+            response.status == 200 -> HostRequery.Silent("본문 모양이 다르다")
+            else -> HostRequery.Silent("HTTP ${response.status}")
         }
     }
+
+    override fun writeSignal(name: String, value: String): HostWrite =
+        post("/host/cell/signals/${segment(name)}", json.createObjectNode().put("value", value))
+
+    /** 객체 본문만 받는다. 호스트의 GET 은 늘 객체를 준다(S3a JSON 계약 §5·§6, S3b JSON 계약 §4). */
+    private fun get(path: String): HostCall<JsonNode> {
+        val response = when (val write = send(HttpRequest.newBuilder(URI.create(base + path)).GET(), requestTimeout)) {
+            is HostWrite.NoResponse -> return HostCall.Silent(write.cause)
+            is HostWrite.Answered -> write
+        }
+        if (response.status != 200) return HostCall.Silent("HTTP ${response.status}")
+        return read(response.body) { body -> json.readTree(body).takeIf { it.isObject } }
+    }
+
+    private fun post(path: String, body: ObjectNode, timeout: Duration = requestTimeout): HostWrite {
+        val request = HttpRequest.newBuilder(URI.create(base + path))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)))
+        return send(request, timeout)
+    }
+
+    private fun send(request: HttpRequest.Builder, timeout: Duration): HostWrite = try {
+        val response = http.send(request.timeout(timeout).build(), HttpResponse.BodyHandlers.ofString())
+        HostWrite.Answered(response.statusCode(), response.body())
+    } catch (e: IOException) {
+        HostWrite.NoResponse("응답 없음: ${e.javaClass.simpleName}")
+    }
+
+    private fun robots(body: ObjectNode, robotIds: List<String>): ObjectNode {
+        body.putArray("robotIds").apply { robotIds.forEach(::add) }
+        return body
+    }
+
+    private fun objectOrNull(body: String): JsonNode? = try {
+        json.readTree(body)?.takeIf { it.isObject }
+    } catch (e: JacksonException) {
+        null
+    }
+
+    /** 경로 조각 하나로 인코딩한다. 신호 이름은 화면이 경로로 실어 온 값이라 그대로 붙이면 경로가 바뀔 수 있다. */
+    private fun segment(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20")
 
     /** [parse] 가 널을 내면(본문 `null`, 모양 어긋남) 값을 모르는 것이다. */
     private fun <T : Any> read(body: String, parse: (String) -> T?): HostCall<T> = try {
@@ -192,6 +310,15 @@ class HostClient(
     companion object {
         val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(2)
         val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(5)
+
+        /** 모의 실행 요청 제한(T10). 호스트의 실제 시간 상한 30초보다 길어야 한다. */
+        val MOCK_RUN_TIMEOUT: Duration = Duration.ofSeconds(60)
+
+        /** 재조회에서 남은 행이 없다는 호스트 오류 이름(S3b JSON 계약 §3). */
+        const val REQUEST_NOT_FOUND = "REQUEST_NOT_FOUND"
+
+        /** 재조회에서 호스트가 그 요청을 아직 처리 중이라는 오류 이름(S3b JSON 계약 §3). */
+        const val REQUEST_IN_PROGRESS = "REQUEST_IN_PROGRESS"
 
         /** 형식이 틀린 주소를 기동에서 잡는다. 그대로 두면 요청마다 호스트 불통으로 보인다. */
         fun checkBaseUrl(baseUrl: String): String {

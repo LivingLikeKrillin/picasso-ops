@@ -302,11 +302,18 @@ function sendDocument(path: string, session: Session, text: string): Promise<Sen
   })
 }
 
-async function deliver<T = OperationOutcome>(path: string, init: RequestInit): Promise<Delivered<T>> {
+/** 운영 서비스가 registry·실행 호스트에 보내기 전에 막는 상태 코드(스펙 §9). */
+const preRejected = (status: number) => status === 400 || status === 403
+
+async function deliver<T = OperationOutcome>(
+  path: string,
+  init: RequestInit,
+  refused: (status: number) => boolean = preRejected,
+): Promise<Delivered<T>> {
   try {
     const response = await fetch(path, init)
     if (response.ok) return { kind: 'outcome', outcome: (await response.json()) as T }
-    if (response.status === 400 || response.status === 403) {
+    if (refused(response.status)) {
       // 스프링이 직접 막은 400 의 본문에는 detail 이 없다. 그때도 사유 칸을 비우지 않는다.
       const refusal = (await response.json()) as Partial<PreRejection>
       const detail =
@@ -498,9 +505,27 @@ export interface CellPlace {
   observedAt: string | null
 }
 
-/** 운영 서비스의 `GET /api/cell`. `cell` 이 null 이면 실행 호스트가 셀 대역을 못 읽은 모름이다. */
+export type SignalKind = 'BOOLEAN' | 'TEXT'
+
+/**
+ * 셀 대역의 이름 있는 신호 하나(S3b JSON 계약 §1). 값은 종류와 상관없이 늘 문자열이다(`"true"`). 안전 신호는 현장이 쓰기를
+ * 거부한다(ADR 32). `observedAt` 이 null 이면 현장이 시각을 주지 않은 처음 값이다.
+ */
+export interface CellSignal {
+  name: string
+  location: string | null
+  kind: SignalKind
+  safety: boolean
+  value: string
+  observedAt: string | null
+}
+
+/**
+ * 운영 서비스의 `GET /api/cell`. `cell` 이 null 이면 실행 호스트가 셀 대역을 못 읽은 모름이다. `signals` 가 null 이면 셀 대역이
+ * 신호 목록을 싣지 않은 것이고 이것도 모름이다(S3b JSON 계약 §6).
+ */
 export interface CellView {
-  cell: { presentations: CellPlace[]; slots: CellPlace[] } | null
+  cell: { presentations: CellPlace[]; slots: CellPlace[]; signals: CellSignal[] | null } | null
 }
 
 /**
@@ -529,3 +554,205 @@ export const checkEligibility = (session: Session, form: JobOrderForm) =>
   postJobOrderForm<EligibilityView>('/api/job-orders/eligibility', session, form)
 export const submitJobOrder = (session: Session, form: JobOrderForm) =>
   postJobOrderForm<JobOrderOutcome>('/api/job-orders', session, form)
+
+/** 화면이 편집하는 임무. 작업 지시 폼과 실행 호스트가 두 임무로 고정이라 하나만 편집한다(S3b 스펙 T6). */
+export const EDITABLE_WORK_MASTER = 'PrepareSequencedRack'
+
+/** 모의 실행의 단위 하나(S3b JSON 계약 §4.5). `route` 가 `SIGNAL` 이면 설비 대기 단위다. */
+export interface MockRunUnit {
+  unitId: string
+  route: 'ROBOT' | 'SIGNAL'
+  skillType: string
+  state: string
+  reached: string
+  failureClass: string | null
+}
+
+/** 모의 실행 실패의 하위 범주(S3b JSON 계약 §4.5). 통과면 null 이다. */
+export type MockRunFailure = 'DEFINITION' | 'SUBMISSION_REJECTED' | 'NOT_SETTLED' | 'WALL_CLOCK_LIMIT' | 'EXECUTION_FAILED'
+
+/**
+ * 모의 실행 결과(S3b JSON 계약 §4.5). 가상 기체 하나와 이상적 현장으로 표본 작업 지시 하나를 끝까지 돌린 것이다. 실행이 서지
+ * 않았으면(`DEFINITION`·`SUBMISSION_REJECTED`) `physicalState` 가 null 이고 `units` 가 비었다.
+ */
+export interface MockRunResult {
+  passed: boolean
+  failure: MockRunFailure | null
+  detail: string | null
+  robotId: string
+  sample: { jobOrderId: string; requiredEvidence: string; slots: string[]; material: string; presentation: string } | null
+  physicalState: string | null
+  units: MockRunUnit[]
+  virtualElapsedSeconds: number
+  wallElapsedMillis: number
+}
+
+/** 모의 실행 한 행(S3b JSON 계약 §3.3). 시각은 DB 시각이다. */
+export interface MockRunView {
+  mockRunId: number
+  draftId: number
+  passed: boolean
+  result: MockRunResult
+  requestId: string
+  startedAt: string
+  finishedAt: string
+}
+
+/** 초안 한 행(S3b JSON 계약 §3.3). `definition` 은 저장한 글자 그대로이고 읽을 수 없는 문서일 수도 있다. */
+export interface DraftView {
+  draftId: number
+  workMasterId: string
+  definition: string
+  savedBy: string
+  requestId: string
+  savedAt: string
+  lastMockRun: MockRunView | null
+}
+
+/** 임무 버전 한 행(S3b JSON 계약 §3.3). 번호는 WorkMaster 마다 1부터다. */
+export interface VersionView {
+  workMasterId: string
+  version: number
+  draftId: number
+  definition: string
+  activatedBy: string
+  reason: string
+  requestId: string
+  activatedAt: string
+}
+
+/**
+ * 운영 서비스의 `GET /api/missions/{workMasterId}`(S3b JSON 계약 §4.1). 활성 버전이 없으면 `source` 가 `CODE` 이고 정의 JSON 이
+ * 없다(코드 정의). `versions` 는 높은 번호부터, `drafts` 는 최근 것부터다.
+ */
+export interface MissionOverview {
+  workMasterId: string
+  active: { version: number | null; source: 'CODE' | 'DATA'; detail: VersionView | null }
+  versions: VersionView[]
+  drafts: DraftView[]
+}
+
+/** 시작용 정의 하나(S3b JSON 계약 §4.2). */
+export interface MissionTemplate {
+  id: string
+  title: string
+  definition: string
+}
+
+export interface MissionTemplates {
+  workMasterId: string
+  templates: MissionTemplate[]
+}
+
+/**
+ * 판정 입력을 몰라 판정하지 않은 것(S3b JSON 계약 §3.2). 거부가 아니라 모름이다. `inputs` 는 `SIGNAL_SPEC`·`SITE_SKILLS`·
+ * `SAMPLE_ORDER` 이고 `detail` 은 화면용 한국어다.
+ */
+export interface InputUnknown {
+  inputs: string[]
+  robots: string[]
+  detail: string
+}
+
+/** 실행 호스트 판정의 공통 칸(S3b JSON 계약 §4.4~§4.6). 결과는 `result` 로 가린다. 거부 목록은 운영 서비스가 `findings` 로 옮긴다. */
+interface HostJudgment<R extends string> {
+  result: R
+  draftId: number
+  workMasterId: string
+  checkedAt: string
+  unknown: InputUnknown | null
+}
+
+export type HostValidation = HostJudgment<'PASSED' | 'REFUSED' | 'INPUT_UNKNOWN'>
+
+export interface HostMockRun extends HostJudgment<'PASSED' | 'FAILED' | 'REFUSED' | 'INPUT_UNKNOWN'> {
+  mockRun: MockRunView | null
+}
+
+export interface HostActivation extends HostJudgment<'ACTIVATED' | 'REFUSED' | 'MOCK_RUN_REQUIRED' | 'INPUT_UNKNOWN'> {
+  version: number | null
+  lastMockRun: MockRunView | null
+  activated: VersionView | null
+}
+
+/** 초안 저장의 호스트 본문(S3b JSON 계약 §4.3). */
+export interface DraftSaved {
+  draft: DraftView
+}
+
+/** 호스트가 4xx 로 막은 쓰기(S3b JSON 계약 §10.1). 200 본문에 실린다. */
+export interface HostRejection {
+  status: number
+  error: string
+  detail: string
+}
+
+/**
+ * 초안 저장·모의 실행·활성화의 200 응답(S3b JSON 계약 §10.4). `result` 는 조작 기록의 결과이고 호스트의 판단은 `outcome` 에
+ * 있다. 거부 카드는 호스트 결과가 `REFUSED` 일 때만 `findings` 에 온다.
+ */
+export interface MissionOperationOutcome<T> {
+  requestId: string
+  workMasterId: string
+  result: 'SUCCEEDED' | 'REJECTED' | 'NO_RESPONSE'
+  confirmation: 'CONFIRMED_APPLIED' | 'CONFIRMED_NOT_APPLIED' | null
+  outcome: T | null
+  findings: Finding[]
+  rejection: HostRejection | null
+}
+
+/** 검증의 200 응답(S3b JSON 계약 §10.5). 검증은 조작이 아니라 요청 id·결과·확인이 없다. */
+export interface MissionValidationReply {
+  workMasterId: string
+  outcome: HostValidation
+  findings: Finding[]
+}
+
+/** 신호 조작의 200 응답(S3b JSON 계약 §10.8). 현장의 거부(안전 신호, 틀린 값)는 `rejection` 에 온다. */
+export interface SignalWriteOutcome {
+  requestId: string
+  name: string
+  value: string
+  result: 'SUCCEEDED' | 'REJECTED' | 'NO_RESPONSE'
+  confirmation: 'CONFIRMED_APPLIED' | 'CONFIRMED_NOT_APPLIED' | null
+  signal: CellSignal | null
+  rejection: HostRejection | null
+}
+
+/**
+ * 임무·신호 조작의 사전 거부(S3b JSON 계약 §10.1). 400·403 에 더해, 시운전 완료 기체를 몰라 실행 호스트를 부르지 않은 503
+ * (`COMMISSIONED_ROBOTS_UNKNOWN`)과 검증이 넘기는 호스트 4xx·`HOST_SILENT` 도 `{error, detail}` 본문의 사전 거부다.
+ */
+const missionPreRejected = (status: number) => (status >= 400 && status < 500) || status === 503
+
+const postMission = <T>(path: string, session: Session, body: unknown) =>
+  deliver<T>(
+    path,
+    {
+      method: 'POST',
+      headers: { ...actorHeaders(session), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    missionPreRejected,
+  )
+
+const missionPath = (workMasterId: string) => `/api/missions/${encodeURIComponent(workMasterId)}`
+const draftPath = (workMasterId: string, draftId: number) => `${missionPath(workMasterId)}/drafts/${draftId}`
+
+export const fetchMission = (session: Session, workMasterId: string) =>
+  getHostJson<MissionOverview>(missionPath(workMasterId), session)
+export const fetchMissionTemplates = (session: Session, workMasterId: string) =>
+  getHostJson<MissionTemplates>(`/api/missions/templates/${encodeURIComponent(workMasterId)}`, session)
+/** 편집기의 글자 그대로 보낸다. 초안은 자유롭다. 읽을 수 없는 문서도 저장되고 검증이 거부한다(S3b 스펙 §9). */
+export const saveMissionDraft = (session: Session, workMasterId: string, definition: string) =>
+  postMission<MissionOperationOutcome<DraftSaved>>(`${missionPath(workMasterId)}/drafts`, session, { definition })
+export const validateMissionDraft = (session: Session, workMasterId: string, draftId: number) =>
+  postMission<MissionValidationReply>(`${draftPath(workMasterId, draftId)}/validate`, session, {})
+export const mockRunMissionDraft = (session: Session, workMasterId: string, draftId: number) =>
+  postMission<MissionOperationOutcome<HostMockRun>>(`${draftPath(workMasterId, draftId)}/mock-run`, session, {})
+export const activateMissionDraft = (session: Session, workMasterId: string, draftId: number, reason: string) =>
+  postMission<MissionOperationOutcome<HostActivation>>(`${draftPath(workMasterId, draftId)}/activate`, session, {
+    reason,
+  })
+export const writeCellSignal = (session: Session, name: string, value: string) =>
+  postMission<SignalWriteOutcome>(`/api/cell/signals/${encodeURIComponent(name)}`, session, { value })

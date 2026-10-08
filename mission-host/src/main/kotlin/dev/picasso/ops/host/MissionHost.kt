@@ -8,10 +8,11 @@ import dev.picasso.middleware.PrepareSequencedRack
 import dev.picasso.middleware.Route
 import dev.picasso.middleware.RobotPort
 import dev.picasso.middleware.Unassigned
-import dev.picasso.middleware.mission.InMemoryMissionCatalog
 import dev.picasso.ops.host.cell.CellBandClient
 import dev.picasso.ops.host.cell.CellBandSignals
 import dev.picasso.ops.host.cell.CellSnapshot
+import dev.picasso.ops.host.mission.SiteInputs
+import dev.picasso.ops.host.mission.StoredMissionCatalog
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
@@ -114,6 +115,9 @@ data class ExecutionsView(val instanceId: String, val pumpedAt: Instant?, val ex
  * 미들웨어에는 스레드도 잠금도 없다. pump, 판정, 제출, 조회를 모두 [lock] 하나 아래에서 돈다. 잠금 순서는 호스트 잠금에서
  * mimic 엔진 잠금으로 한 방향뿐이다(gRPC 호출이 잠금 아래에서 나간다).
  *
+ * 임무 버전 활성화도 이 잠금 아래에서 한다([exclusive], S3b 스펙 T2). 판정과 배정 사이에 활성화가 끼면 한 제출 안에서 판정
+ * 계획과 실행 계획의 버전이 갈린다. DB 는 잠금 안에서 부를 수 있으나 그 반대(DB 연결을 쥔 채 이 잠금을 기다림)는 없다.
+ *
  * 공정 잠금이다. 제출이 mimic 을 기다리느라 운영 서비스의 요청 제한을 넘기면 운영 서비스가 실행 목록으로 재조회하는데,
  * 먼저 기다린 제출이 먼저 잡아야 재조회가 제출보다 앞서 «반영 안 됨» 을 남기지 않는다. `synchronized` 는 순서를 보장하지
  * 않고, 가상 스레드가 그것을 기다리면 캐리어 스레드를 붙잡는다.
@@ -132,19 +136,20 @@ data class ExecutionsView(val instanceId: String, val pumpedAt: Instant?, val ex
  *
  * 상위 시스템이 없어 `ack` 하지 않는다(스펙 §7.7). 아웃박스가 계속 자라는 것은 한계다(스펙 §12).
  *
- * @param robots 하류 포트. 판정의 케이퍼빌리티도 이것으로 묻는다(`PicassoClient` 가 세대별로 캐시한다).
+ * @param robots 하위 포트. 판정의 케이퍼빌리티도 이것으로 묻는다(`PicassoClient` 가 세대별로 캐시한다). 그 캐시는 잠금 밖에서
+ *   안전하지 않으므로 케이퍼빌리티는 늘 [lock] 아래에서 묻는다.
+ * @param catalog 임무 카탈로그(S3b 스펙 T1). 미들웨어에 넘긴 것과 같은 참조로 스킬 적합을 판정한다. 기동 때 DB 의 활성 버전으로
+ *   세운 것을 받는다.
  */
 class MissionHost(
     private val robots: RobotPort,
     private val cellBand: CellBandClient,
     private val clock: HostClock,
+    private val catalog: StoredMissionCatalog = StoredMissionCatalog(),
 ) : AutoCloseable {
 
     private val lock = ReentrantLock(true)
     private val signals = CellBandSignals()
-
-    /** 코드 정의 임무의 카탈로그. 미들웨어에 넘긴 것과 같은 참조로 스킬 적합을 판정한다. */
-    private val catalog = InMemoryMissionCatalog(now = clock::now)
 
     private val middleware = Middleware(robots = robots, cell = signals, now = clock::now, missions = catalog)
 
@@ -230,6 +235,24 @@ class MissionHost(
 
     /** 마지막 pump 가 읽은 셀 대역 스냅숏. 못 읽었으면 `null` 이다. */
     fun cell(): CellSnapshot? = lock.withLock { latestCell }
+
+    /** [action] 을 호스트 잠금 아래에서 돈다. 임무 버전 활성화가 쓴다(S3b 스펙 T2). 잠금은 재진입된다. */
+    fun <T> exclusive(action: () -> T): T = lock.withLock(action)
+
+    /** 검증 입력을 잠금 아래에서 한 번에 읽는다(S3b 스펙 T7). 검증과 모의 실행이 쓴다. 그동안 DB 연결을 쥐지 않는다. */
+    fun siteInputs(robotIds: List<String>): SiteInputs = lock.withLock { siteInputsLocked(robotIds) }
+
+    /**
+     * 검증 입력. 신호 사양은 마지막 pump 가 읽은 셀 대역 스냅숏에서, 현장 스킬은 [robotIds] 마다 기체가 선언한 스킬에서
+     * 온다. 케이퍼빌리티를 못 물어본 기체는 `null` 이다. 이미 잠금을 쥔 쪽(활성화)만 부른다.
+     */
+    fun siteInputsLocked(robotIds: List<String>): SiteInputs {
+        check(lock.isHeldByCurrentThread) { "검증 입력은 호스트 잠금 아래에서 읽는다" }
+        return SiteInputs(
+            cell = latestCell,
+            skillsByRobot = robotIds.distinct().associateWith { id -> robots.capabilities(id)?.skillsList?.map { it.skillType }?.toSet() },
+        )
+    }
 
     /**
      * 스킬 적합은 지금 활성 정의로 작업 지시를 계획해, 경로가 로봇인 단위의 스킬이 기체가 선언한 스킬에 다 있는가다.

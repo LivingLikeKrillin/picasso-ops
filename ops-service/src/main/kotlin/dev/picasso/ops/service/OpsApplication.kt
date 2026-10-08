@@ -3,10 +3,12 @@ package dev.picasso.ops.service
 import dev.picasso.ops.service.operations.ProfileOperations
 import dev.picasso.ops.service.profiles.ProfileListService
 import dev.picasso.ops.service.adapters.AdapterListService
+import dev.picasso.ops.service.cell.CellSignalOperations
 import dev.picasso.ops.service.host.HostClient
 import dev.picasso.ops.service.joborders.JobOrderEligibility
 import dev.picasso.ops.service.joborders.JobOrderOperations
 import dev.picasso.ops.service.log.OperationLog
+import dev.picasso.ops.service.missions.MissionOperations
 import dev.picasso.ops.service.operations.AdapterOperations
 import dev.picasso.ops.service.operations.RobotOperations
 import dev.picasso.ops.service.registry.RegistryClient
@@ -128,6 +130,15 @@ open class OpsApplication {
         log: OperationLog,
         clock: Clock,
     ): JobOrderOperations = JobOrderOperations(eligibility, host, host, log, clock)
+
+    /** 시운전 완료 기체는 기체 목록의 판정을 그대로 쓴다(S3b 스펙 §7, T7). */
+    @Bean
+    open fun missionOperations(robots: RobotListService, host: HostClient, log: OperationLog): MissionOperations =
+        MissionOperations(robots, host, log)
+
+    @Bean
+    open fun cellSignalOperations(host: HostClient, log: OperationLog): CellSignalOperations =
+        CellSignalOperations(host, host, log)
 
     /** [migrated] 는 쓰지 않는다. 받는 것만으로 ops 마이그레이션 뒤에 이 빈이 만들어진다. */
     @Bean

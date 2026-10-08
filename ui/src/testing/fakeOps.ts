@@ -2,10 +2,15 @@ import { vi } from 'vitest'
 import type {
   AdapterListView,
   Binding,
+  CellSignal,
   CellView,
+  DraftView,
   EligibilityView,
   ExecutionsView,
   Finding,
+  MissionOverview,
+  MissionTemplates,
+  MockRunView,
   OperationOutcome,
   PreRejection,
   ProfileListView,
@@ -15,6 +20,7 @@ import type {
   RobotListView,
   RobotView,
   TestRequestState,
+  VersionView,
 } from '../api'
 
 /** 운영 서비스 대역이 받은 요청 한 건. */
@@ -35,6 +41,9 @@ export interface FakeOps {
   /** 실행 호스트를 거치는 읽기(S3a). 운영 서비스가 호스트 본문을 그대로 넘기는 모양이다. */
   executions: ExecutionsView
   cell: CellView
+  /** 임무 개요와 템플릿(S3b). 운영 서비스가 호스트 본문을 그대로 넘기는 모양이다. */
+  mission: MissionOverview
+  templates: MissionTemplates
   /** `POST /api/job-orders/eligibility` 의 답. 폼 거부(400)를 만들려면 [eligibilityStatus] 와 본문을 바꾼다. */
   eligibility: EligibilityView | PreRejection
   eligibilityStatus: number
@@ -43,11 +52,16 @@ export interface FakeOps {
    * 서비스처럼 `HOST_SILENT` 본문을 싣는다. 배정 가능 판정은 POST 지만 읽기이므로 여기 들면 503 이다.
    */
   failing: Set<string>
+  /** 조작마다의 응답. 여기 든 경로의 POST 는 이 응답이고, 없으면 [answer] 다. */
+  answers: Map<string, { status: number; body: unknown }>
   answer: { status: number; body: unknown }
 }
 
-/** 실행 호스트를 거치는 경로. 503 일 때 운영 서비스가 `HOST_SILENT` 를 싣는다(S3a JSON 계약 §9.4). */
-const HOST_PATHS = new Set(['/api/executions', '/api/cell'])
+export const MISSION_PATH = '/api/missions/PrepareSequencedRack'
+export const TEMPLATES_PATH = '/api/missions/templates/PrepareSequencedRack'
+
+/** 실행 호스트를 거치는 경로. 503 일 때 운영 서비스가 `HOST_SILENT` 를 싣는다(S3a JSON 계약 §9.4, S3b JSON 계약 §10.3). */
+const HOST_PATHS = new Set(['/api/executions', '/api/cell', MISSION_PATH, TEMPLATES_PATH])
 const ELIGIBILITY_PATH = '/api/job-orders/eligibility'
 
 /** 실행 목록. 기본은 실행이 없는 호스트 인스턴스 하나다. */
@@ -55,14 +69,117 @@ export function executionsView(partial: Partial<ExecutionsView> = {}): Execution
   return { instanceId: 'mw-1', pumpedAt: 't1', executions: [], ...partial }
 }
 
-/** 셀 대역. 기본은 고정 픽스처(제시 자리 하나, 빈 슬롯 넷)다(S3a JSON 계약 §1). */
+/** 셀 대역 신호 셋. 고정 픽스처의 처음 값이다(S3b JSON 계약 §1). */
+export function standardSignals(): CellSignal[] {
+  return [
+    { name: 'rack_present', location: 'RACK-204', kind: 'BOOLEAN', safety: false, value: 'false', observedAt: null },
+    { name: 'guard_closed', location: null, kind: 'BOOLEAN', safety: true, value: 'true', observedAt: null },
+    { name: 'lot_code', location: null, kind: 'TEXT', safety: false, value: 'LOT-0001', observedAt: null },
+  ]
+}
+
+/** 셀 대역. 기본은 고정 픽스처(제시 자리 하나, 빈 슬롯 넷, 신호 셋)다(S3a JSON 계약 §1, S3b JSON 계약 §1). */
 export function cellView(): CellView {
   const slot = (id: string) => ({ id, occupied: false, material: null, observedAt: null })
   return {
     cell: {
       presentations: [{ id: 'SEQ-IN-02.BIN-A', occupied: true, material: 'ENGINE-COVER-A', observedAt: null }],
       slots: ['RACK-204.S01', 'RACK-204.S02', 'RACK-204.S03', 'RACK-204.S04'].map(slot),
+      signals: standardSignals(),
     },
+  }
+}
+
+/** 템플릿 두 정의의 글자. 시험은 글자 그대로 오가는지만 본다. */
+export const DATA_V1 = '{"schemaVersion": 1, "workMasterId": "PrepareSequencedRack", "nodes": ["place"]}'
+export const ARRIVAL_WAIT =
+  '{"schemaVersion": 1, "workMasterId": "PrepareSequencedRack", "nodes": ["rack-arrival", "place"]}'
+
+/** 템플릿 둘(S3b JSON 계약 §4.2). */
+export function missionTemplates(): MissionTemplates {
+  return {
+    workMasterId: 'PrepareSequencedRack',
+    templates: [
+      { id: 'DATA_V1', title: '코드 PrepareSequencedRack 을 옮긴 데이터 정의', definition: DATA_V1 },
+      {
+        id: 'ARRIVAL_WAIT',
+        title: '랙 도착 대기(rack_present = true, 기한 120초, 기한 뒤 ABORTED)',
+        definition: ARRIVAL_WAIT,
+      },
+    ],
+  }
+}
+
+/** 임무 개요. 기본은 버전도 초안도 없는 코드 정의다(S3b JSON 계약 §4.1). */
+export function missionOverview(partial: Partial<MissionOverview> = {}): MissionOverview {
+  return {
+    workMasterId: 'PrepareSequencedRack',
+    active: { version: null, source: 'CODE', detail: null },
+    versions: [],
+    drafts: [],
+    ...partial,
+  }
+}
+
+/** 버전 한 행. 기본은 데이터 정의를 버전 1 로 올린 것이다. */
+export function versionRow(partial: Partial<VersionView> = {}): VersionView {
+  return {
+    workMasterId: 'PrepareSequencedRack',
+    version: 1,
+    draftId: 1,
+    definition: DATA_V1,
+    activatedBy: 'lee',
+    reason: '데이터 정의로 전환',
+    requestId: 'r-v1',
+    activatedAt: 't1',
+    ...partial,
+  }
+}
+
+/** 모의 실행 한 행. 기본은 단위 둘이 E2 로 완료되어 통과한 것이다. */
+export function mockRunRow(partial: Partial<MockRunView> = {}): MockRunView {
+  return {
+    mockRunId: 5,
+    draftId: 7,
+    passed: true,
+    result: {
+      passed: true,
+      failure: null,
+      detail: null,
+      robotId: 'mock-01',
+      sample: {
+        jobOrderId: 'MOCK-7',
+        requiredEvidence: 'E2',
+        slots: ['RACK-204.S01', 'RACK-204.S02'],
+        material: 'ENGINE-COVER-A',
+        presentation: 'SEQ-IN-02.BIN-A',
+      },
+      physicalState: 'PHYSICALLY_DONE',
+      units: [
+        { unitId: 'rack-arrival', route: 'SIGNAL', skillType: 'equipment_wait', state: 'DONE', reached: 'E2', failureClass: null },
+        { unitId: 'RACK-204.S01', route: 'ROBOT', skillType: 'pick_place', state: 'DONE', reached: 'E2', failureClass: null },
+      ],
+      virtualElapsedSeconds: 105,
+      wallElapsedMillis: 812,
+    },
+    requestId: 'r-m5',
+    startedAt: 't2',
+    finishedAt: 't3',
+    ...partial,
+  }
+}
+
+/** 초안 한 행. 기본은 모의 실행이 없는 초안 7 이다. */
+export function draftRow(partial: Partial<DraftView> = {}): DraftView {
+  return {
+    draftId: 7,
+    workMasterId: 'PrepareSequencedRack',
+    definition: ARRIVAL_WAIT,
+    savedBy: 'local',
+    requestId: 'r-d7',
+    savedAt: 't1',
+    lastMockRun: null,
+    ...partial,
   }
 }
 
@@ -199,9 +316,12 @@ export function installFakeOps(
     settings,
     executions: executionsView(),
     cell: cellView(),
+    mission: missionOverview(),
+    templates: missionTemplates(),
     eligibility: eligibilityView(),
     eligibilityStatus: 200,
     failing: new Set(),
+    answers: new Map(),
     answer: { status: 200, body: outcome({}) },
   }
   vi.stubGlobal(
@@ -235,13 +355,18 @@ export function installFakeOps(
                     ? fake.executions
                     : url === '/api/cell'
                       ? fake.cell
-                      : []
+                      : url === MISSION_PATH
+                        ? fake.mission
+                        : url === TEMPLATES_PATH
+                          ? fake.templates
+                          : []
         return new Response(JSON.stringify(body), { status: 200 })
       }
       if (url === ELIGIBILITY_PATH) {
         return new Response(JSON.stringify(fake.eligibility), { status: fake.eligibilityStatus })
       }
-      return new Response(JSON.stringify(fake.answer.body), { status: fake.answer.status })
+      const answer = fake.answers.get(url) ?? fake.answer
+      return new Response(JSON.stringify(answer.body), { status: answer.status })
     }),
   )
   return fake

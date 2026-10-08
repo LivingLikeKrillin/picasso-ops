@@ -11,3 +11,7 @@ nav button[aria-current='page'] { font-weight: 700; }
 .link { background: none; border: none; color: #2b3f6b; text-decoration: underline; cursor: pointer; padding: 0; }
 .offscreen { color: #6f6f6f; }
 tr.selected { background: #e8ebf3; }
+.editor { display: flex; flex-direction: column; }
+.editor textarea, pre { font-family: ui-monospace, monospace; font-size: 13px; }
+pre { white-space: pre-wrap; border: 1px solid #ccc; padding: 8px; margin: 0; }
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
