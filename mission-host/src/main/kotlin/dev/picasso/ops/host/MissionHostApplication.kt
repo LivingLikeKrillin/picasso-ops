@@ -11,6 +11,7 @@ import dev.picasso.ops.host.mission.StoredMissionCatalog
 import dev.picasso.ops.host.store.HostSchema
 import dev.picasso.ops.host.store.HostSchemaMigrated
 import dev.picasso.ops.host.store.MissionStore
+import dev.picasso.ops.host.timings.SiteTimingsReader
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
 import org.springframework.beans.factory.annotation.Value
@@ -71,9 +72,25 @@ open class MissionHostApplication {
     open fun missionCatalog(store: MissionStore): StoredMissionCatalog =
         StoredMissionCatalog().apply { restore(store.activeVersions()) }
 
+    /**
+     * 현장 시간값 읽기 주기(S3c 스펙 §7.1). 기동 안에서 운영 서비스의 뷰를 한 번 동기로 읽고, 실패하면 미적용으로 뜬 뒤
+     * [interval](`host.site-timings.read-interval`, 기본 1초)마다 다시 읽는다. ops 스키마가 아직 없어도 기동은 멈추지 않는다.
+     */
     @Bean(destroyMethod = "close")
-    open fun missionHost(robots: RobotPort, cellBand: CellBandClient, clock: HostClock, catalog: StoredMissionCatalog): MissionHost =
-        MissionHost(robots, cellBand, clock, catalog).start()
+    open fun siteTimingsReader(
+        jdbc: JdbcClient,
+        clock: HostClock,
+        @Value("\${host.site-timings.read-interval}") interval: Duration,
+    ): SiteTimingsReader = SiteTimingsReader(jdbc, clock).start(interval)
+
+    @Bean(destroyMethod = "close")
+    open fun missionHost(
+        robots: RobotPort,
+        cellBand: CellBandClient,
+        clock: HostClock,
+        catalog: StoredMissionCatalog,
+        timings: SiteTimingsReader,
+    ): MissionHost = MissionHost(robots, cellBand, clock, catalog, timings).start()
 
     /**
      * 모의 실행기(S3b 스펙 §6.4). 프로파일과 스키마 경로는 작업 디렉터리 기준으로 푼다. `:mission-host:run` 은 저장소 루트에서

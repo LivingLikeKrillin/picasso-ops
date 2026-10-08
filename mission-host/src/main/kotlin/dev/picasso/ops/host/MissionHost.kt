@@ -7,6 +7,7 @@ import dev.picasso.middleware.Middleware
 import dev.picasso.middleware.PrepareSequencedRack
 import dev.picasso.middleware.Route
 import dev.picasso.middleware.RobotPort
+import dev.picasso.middleware.SiteTimingsSource
 import dev.picasso.middleware.Unassigned
 import dev.picasso.ops.host.cell.CellBandClient
 import dev.picasso.ops.host.cell.CellBandSignals
@@ -108,6 +109,36 @@ data class ExecutionView(
 data class ExecutionsView(val instanceId: String, val pumpedAt: Instant?, val executions: List<ExecutionView>)
 
 /**
+ * 인시던트 하나(S3c 스펙 §7.2). 미들웨어 `IncidentBundle` 에서 통합 시험과 화면이 쓰는 칸만 옮긴다. 시간값은 picasso 의 ISO-8601
+ * 문자열(`Duration.toString()`, 60초면 `PT1M`)을 초 단위 정수로 되돌린 것이다.
+ *
+ * @param at 봉인 라운드의 미들웨어 시각(호스트 시계)
+ * @param missionVersion 임무 버전. `null` 이면 코드 정의다
+ * @param siteSettingsVersion 봉인 라운드의 현장 설정 버전. 현장 시간값 없이 봉인했으면 `null` 이다
+ * @param evidenceBeforeSeconds·evidenceAfterSeconds 봉인 라운드의 근거 윈도우 앞·뒤 폭. 늘 있다
+ * @param inDoubtGraceSeconds·stallWindowSeconds 봉인 라운드의 값. 현장 시간값 없이 봉인했으면 `null` 이다
+ */
+data class IncidentView(
+    val incidentId: String,
+    val executionId: String,
+    val jobOrderId: String,
+    val robotId: String,
+    val unitId: String,
+    val at: Instant,
+    val failureClass: String?,
+    val route: String,
+    val missionVersion: Int?,
+    val siteSettingsVersion: Long?,
+    val evidenceBeforeSeconds: Long,
+    val evidenceAfterSeconds: Long,
+    val inDoubtGraceSeconds: Long?,
+    val stallWindowSeconds: Long?,
+)
+
+/** `GET /host/incidents` 의 본문. [incidents] 는 최신부터 많아야 limit 개이고 [total] 은 자르기 전의 수다. */
+data class IncidentsView(val instanceId: String, val total: Int, val incidents: List<IncidentView>)
+
+/**
  * 미들웨어 실행 호스트(S3a 스펙 §7).
  *
  * ## 잠금 하나
@@ -140,18 +171,27 @@ data class ExecutionsView(val instanceId: String, val pumpedAt: Instant?, val ex
  *   안전하지 않으므로 케이퍼빌리티는 늘 [lock] 아래에서 묻는다.
  * @param catalog 임무 카탈로그(S3b 스펙 T1). 미들웨어에 넘긴 것과 같은 참조로 스킬 적합을 판정한다. 기동 때 DB 의 활성 버전으로
  *   세운 것을 받는다.
+ * @param siteTimings 현장 시간값(S3c 스펙 §7.1). 미들웨어에 그대로 넘긴다. `null` 을 주는 동안은 미적용이라 작업 지시를 받지 않는다.
+ *   모의 실행의 별도 미들웨어에는 주지 않는다(T10).
+ *
+ * ## 미적용(S3c 스펙 T8)
+ *
+ * 첫 읽기가 성공하기 전에는 판정이 기체마다 [UNAPPLIED_REASON] 을 더해 통과시키지 않는다. 그래서 제출은 `assign` 에 기체를 하나도
+ * 넘기지 않고, 미들웨어는 기체 없는 채택을 사유 없는 UNASSIGNED 로 돌려준다(이유는 [SubmitOutcome.excluded], S3a JSON 계약 그대로).
+ * 기본값으로 대신하지 않는다. 나머지 경로는 시간값을 쓰지 않으므로 그대로 동작한다.
  */
 class MissionHost(
     private val robots: RobotPort,
     private val cellBand: CellBandClient,
     private val clock: HostClock,
     private val catalog: StoredMissionCatalog = StoredMissionCatalog(),
+    private val siteTimings: SiteTimingsSource,
 ) : AutoCloseable {
 
     private val lock = ReentrantLock(true)
     private val signals = CellBandSignals()
 
-    private val middleware = Middleware(robots = robots, cell = signals, now = clock::now, missions = catalog)
+    private val middleware = Middleware(robots = robots, cell = signals, now = clock::now, missions = catalog, siteTimings = siteTimings)
 
     private var pumpedAt: Instant? = null
     private var latestCell: CellSnapshot? = null
@@ -183,7 +223,8 @@ class MissionHost(
 
     /** 기체마다 호스트 판정을 낸다. [order] 의 WorkMaster 는 부르는 쪽이 [WORK_MASTERS] 로 거른다. */
     fun eligibility(order: JobOrder, robotIds: List<String>): List<HostEligibility> = lock.withLock {
-        robotIds.distinct().map { judge(order, it) }
+        val applied = siteTimings.current() != null
+        robotIds.distinct().map { judge(order, it, applied) }
     }
 
     /**
@@ -192,9 +233,13 @@ class MissionHost(
      *
      * 도는 실행과 같은 작업 지시 id 로 다시 내면 판정이 그 기체를 도는 실행으로 빼므로 IDEMPOTENT 가 아니라 UNASSIGNED 다.
      * 운영 서비스는 작업 지시 id 를 다시 쓰지 않는다.
+     *
+     * 미적용 판단은 한 번만 읽어 모든 기체의 판정에 같은 값을 쓴다. 미적용이면 통과한 기체가 없어 UNASSIGNED 다. 미들웨어의 채택은
+     * 기체마다 관문을 걸므로 기체가 없으면 요구 근거 등급 검사도 하지 않는다.
      */
     fun submit(order: JobOrder, candidates: List<String>): SubmitOutcome = lock.withLock {
-        val judged = candidates.distinct().map { judge(order, it) }
+        val applied = siteTimings.current() != null
+        val judged = candidates.distinct().map { judge(order, it, applied) }
         val excluded = judged.filter { !it.passed }
         when (val submission = middleware.assign(order, judged.filter { it.passed }.map { it.robotId })) {
             is Middleware.Submission.Accepted -> SubmitOutcome(
@@ -233,6 +278,36 @@ class MissionHost(
         )
     }
 
+    /**
+     * 봉인된 인시던트(S3c 스펙 §7.2). 최신부터 많아야 [limit] 개다. 번들은 미들웨어 안의 값이라 호스트 잠금 아래에서 옮긴다.
+     */
+    fun incidents(limit: Int): IncidentsView = lock.withLock {
+        val all = middleware.incidents()
+        IncidentsView(
+            instanceId = middleware.instanceId,
+            total = all.size,
+            incidents = all.asReversed().take(limit).map { bundle ->
+                val intent = bundle.intent
+                IncidentView(
+                    incidentId = bundle.incidentId,
+                    executionId = bundle.executionId,
+                    jobOrderId = bundle.jobOrderId,
+                    robotId = bundle.robotId,
+                    unitId = bundle.unitId,
+                    at = bundle.at,
+                    failureClass = bundle.failureClass,
+                    route = bundle.route,
+                    missionVersion = intent.missionVersion,
+                    siteSettingsVersion = intent.siteSettingsVersion,
+                    evidenceBeforeSeconds = seconds(intent.evidenceWindowBefore),
+                    evidenceAfterSeconds = seconds(intent.evidenceWindowAfter),
+                    inDoubtGraceSeconds = intent.inDoubtGrace?.let(::seconds),
+                    stallWindowSeconds = intent.stallWindow?.let(::seconds),
+                )
+            },
+        )
+    }
+
     /** 마지막 pump 가 읽은 셀 대역 스냅숏. 못 읽었으면 `null` 이다. */
     fun cell(): CellSnapshot? = lock.withLock { latestCell }
 
@@ -258,7 +333,7 @@ class MissionHost(
      * 스킬 적합은 지금 활성 정의로 작업 지시를 계획해, 경로가 로봇인 단위의 스킬이 기체가 선언한 스킬에 다 있는가다.
      * 도는 실행은 그 기체의 실행 중 물리 상태가 정착하지 않은 것이다. 운영자 보류에 선 실행도 도는 실행이다(스펙 §12).
      */
-    private fun judge(order: JobOrder, robotId: String): HostEligibility {
+    private fun judge(order: JobOrder, robotId: String, applied: Boolean): HostEligibility {
         val active = requireNotNull(catalog.active(order.workMasterId)) { "카탈로그에 없는 WorkMaster 다: ${order.workMasterId}" }
         val needed = active.capability.plan(order).filter { it.route == Route.ROBOT }.map { it.skillType }.toSortedSet()
         val declared = robots.capabilities(robotId)?.skillsList?.map { it.skillType }?.toSet()
@@ -277,9 +352,13 @@ class MissionHost(
                 SkillFit.UNKNOWN -> add("기체 케이퍼빌리티를 못 물어봤다")
             }
             if (running != null) add("도는 실행이 있다: $running")
+            if (!applied) add(UNAPPLIED_REASON)
         }
         return HostEligibility(robotId, fit, missing, running, passed = reasons.isEmpty(), reasons = reasons)
     }
+
+    /** picasso 의 ISO-8601 기간 문자열을 초로 되돌린다. 60초는 `PT1M` 으로 접혀 온다. */
+    private fun seconds(iso: String): Long = Duration.parse(iso).seconds
 
     private fun view(response: JobResponse) = JobResponseView(
         jobResponseId = response.jobResponseId,
@@ -307,6 +386,9 @@ class MissionHost(
 
         /** pump 주기(T5). 셀 대역이 채운 슬롯을 E2 마감(15초)보다 훨씬 짧게 다시 읽는다. */
         val PUMP_PERIOD: Duration = Duration.ofMillis(250)
+
+        /** 현장 시간값 미적용 동안 판정이 기체마다 더하는 이유(S3c 스펙 T8). 화면에 그대로 보인다. */
+        const val UNAPPLIED_REASON = "현장 시간값 미적용: 실행 호스트가 현장 설정을 아직 읽지 못했다"
 
         /** 받는 WorkMaster. DeliverContainer 는 플릿 포트 구현이 없어 받지 않는다(스펙 §1). */
         val WORK_MASTERS: Set<String> = setOf(InspectAsset.WORK_MASTER, PrepareSequencedRack.WORK_MASTER)
