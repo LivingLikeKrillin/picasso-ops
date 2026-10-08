@@ -17,20 +17,26 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Path
+import java.time.Duration
+import java.time.Instant
 
 /**
  * 통합 시험 한 세트. 한 JVM 에 Postgres(registry testFixtures)·registry·mimic·실행 호스트·운영 서비스를 띄운다(스펙 §10,
  * S3a 스펙 §11).
  *
  * 시험 클래스마다 새로 띄우고 닫는다. 클래스 사이에 registry 를 멈추는 시험이 있어 공유하지 않는다.
- * DB 는 띄울 때마다 비운다. `PostgresSupport.reset()` 은 public 만 지우므로 ops 스키마는 따로 지운다.
+ * DB 는 띄울 때마다 비운다. `PostgresSupport.reset()` 은 public 만 지우므로 ops·mission 스키마는 따로 지운다. 두 스키마의
+ * 덧붙이기 전용 트리거가 DELETE·TRUNCATE 를 막으므로 스키마째 지운다.
+ *
+ * [restartHost] 는 DB 를 지우지 않고 실행 호스트만 같은 포트로 다시 띄운다. 운영 서비스는 기동 때 호스트 주소를 한 번 받으므로
+ * 포트가 같아야 다시 띄운 호스트에 닿는다(S3b 스펙 §10 통합 행).
  *
  * 실행 호스트의 시계는 현장 시계(`Site.now()`)다. 시험은 `Site.advance` 로 가상 시각을 실제 시각보다 앞으로 밀고, 미들웨어는
  * E2 시간 윈도우의 기준 시각을 mimic 응답 헤더에서 가져오면서 마감은 호스트 시계로 보므로 둘이 같아야 한다(S3a 스펙 §7.2).
  */
 class E2eStack private constructor(
     val site: Site,
-    private val host: ConfigurableApplicationContext,
+    private var host: ConfigurableApplicationContext,
     private val ops: ConfigurableApplicationContext,
     val hostUrl: String,
     val opsUrl: String,
@@ -51,6 +57,25 @@ class E2eStack private constructor(
         body: String? = null,
         contentType: String = "application/json",
     ): Reply = send(opsUrl, method, path, mode, user, body, contentType)
+
+    /**
+     * 실행 호스트만 닫고 같은 DB·현장으로 같은 포트에 다시 띄운다(재기동). 임무 버전은 DB 에 남고, 미들웨어의 실행은 새 인스턴스라
+     * 비어 있다. 닫은 포트를 곧바로 다시 여는 것이 막히면(운영체제가 아직 놓지 않음) 짧게 다시 시도한다.
+     */
+    fun restartHost() {
+        val port = (host as WebServerApplicationContext).webServer.port
+        host.close()
+        val deadline = Instant.now().plus(RESTART_WAIT)
+        while (true) {
+            try {
+                host = startHost(site, port)
+                return
+            } catch (e: Exception) {
+                if (Instant.now().isAfter(deadline)) throw IllegalStateException("실행 호스트를 포트 $port 에 다시 띄우지 못했다", e)
+                Thread.sleep(200)
+            }
+        }
+    }
 
     /** 같은 registry 에 운영자 토큰만 다른 운영 서비스를 하나 더 띄운다. 닫는 것은 부르는 쪽이다. */
     fun opsWithToken(token: String): Pair<ConfigurableApplicationContext, String> {
@@ -73,6 +98,9 @@ class E2eStack private constructor(
     companion object {
         const val OPERATOR_TOKEN = "e2e-operator"
         val root: Path = Path.of("..").toAbsolutePath().normalize()
+
+        /** [restartHost] 가 같은 포트를 다시 여는 상한(실제 시간). */
+        private val RESTART_WAIT: Duration = Duration.ofSeconds(10)
         private val http = HttpClient.newHttpClient()
         private val json = ObjectMapper()
 
@@ -80,6 +108,7 @@ class E2eStack private constructor(
             val siteId = checkNotNull(System.getenv("SITE_ID")) { "SITE_ID 가 없다(루트 .env)" }
             PostgresSupport.reset()
             PostgresSupport.execute("DROP SCHEMA IF EXISTS ops CASCADE")
+            PostgresSupport.execute("DROP SCHEMA IF EXISTS mission CASCADE")
             val site = Site.start(
                 SiteConfig(
                     root = root,
@@ -152,13 +181,25 @@ class E2eStack private constructor(
             )
         }
 
-        /** 실행 호스트를 이 현장의 mimic gRPC 포트·셀 대역에 붙이고 현장 시계로 띄운다(S3a 계약 공통 규칙). */
-        private fun startHost(site: Site): ConfigurableApplicationContext =
-            MissionHostApplication.builder(HostClock { site.now() }).run(
-                "--server.port=0",
+        /**
+         * 실행 호스트를 이 현장의 mimic gRPC 포트·셀 대역에 붙이고 현장 시계로 띄운다(S3b JSON 계약 공통 규칙). 임무 버전 저장은
+         * 같은 Postgres 이고, 모의 실행 프로파일·스키마는 절대 경로로 넘긴다(시험의 작업 디렉터리는 모듈 폴더다).
+         *
+         * @param port 0 이면 무작위다. 다시 띄울 때는 앞 호스트의 포트다.
+         */
+        private fun startHost(site: Site, port: Int = 0): ConfigurableApplicationContext {
+            val db = db()
+            return MissionHostApplication.builder(HostClock { site.now() }).run(
+                "--server.port=$port",
                 "--host.mimic.port=${site.mimicPort}",
                 "--host.cell.url=http://127.0.0.1:${site.cellPort}",
+                "--spring.datasource.url=${db.url}",
+                "--spring.datasource.username=${db.user}",
+                "--spring.datasource.password=${db.password}",
+                "--host.mock-run.profile=${root.resolve("mission-host/mock-run/humanoid-a.json")}",
+                "--host.mock-run.schema=${root.resolve(SiteConfig.PROFILE_SCHEMA)}",
             )
+        }
 
         private fun call(method: String, url: String, headers: Map<String, String>, body: String?): Reply {
             val builder = HttpRequest.newBuilder(URI.create(url))
