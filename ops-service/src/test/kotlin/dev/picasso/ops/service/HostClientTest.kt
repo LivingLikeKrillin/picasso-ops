@@ -115,6 +115,20 @@ class HostClientTest {
     }
 
     @Test
+    fun `현장 시간값 적용 상태는 GET host site-timings 본문 그대로이고 200 아님과 닿지 않음은 모름이다`() {
+        val body = """{"applied":{"version":2,"evidenceBeforeSeconds":30},"readError":null}"""
+        val client = serve("/host/site-timings" to (200 to body))
+        assertEquals(json.readTree(body), assertIs<HostCall.Ok<*>>(client.siteTimings()).value)
+        assertEquals("GET", seen.getValue("/host/site-timings").first)
+        stop()
+        assertEquals(HostCall.Silent("HTTP 404"), serve("/host/site-timings" to (404 to "")).siteTimings())
+        stop()
+        val gone = serve("/host/site-timings" to (200 to body))
+        stop()
+        assertIs<HostCall.Silent>(gone.siteTimings())
+    }
+
+    @Test
     fun `호스트 주소 형식이 틀리면 기동에서 멈춘다`() {
         assertFailsWith<IllegalArgumentException> { HostClient("127.0.0.1:8785") }
         assertEquals("http://127.0.0.1:8785", HostClient.checkBaseUrl("http://127.0.0.1:8785/"))
