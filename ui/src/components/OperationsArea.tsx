@@ -1,9 +1,17 @@
-import { useEffect, useState } from 'react'
-import { checkEligibility, fetchCell, fetchExecutions, submitJobOrder } from '../api'
-import type { CellView, Delivered, ExecutionsView, JobOrderForm, JobOrderOutcome, Session } from '../api'
+import { useEffect, useRef, useState } from 'react'
+import { checkEligibility, fetchCell, fetchExecutions, submitJobOrder, writeCellSignal } from '../api'
+import type {
+  CellView,
+  Delivered,
+  ExecutionsView,
+  JobOrderForm,
+  JobOrderOutcome,
+  Session,
+  SignalWriteOutcome,
+} from '../api'
 import { EMPTY_DRAFT, buildForm } from '../jobOrderDraft'
 import type { JobOrderDraft } from '../jobOrderDraft'
-import { ELIGIBILITY_DEBOUNCE_MS, POLL_MS } from '../poll'
+import { ELIGIBILITY_DEBOUNCE_MS, POLL_MS, SIGNAL_SETTLE_MS } from '../poll'
 import { CellBand } from './CellBand'
 import { EligibilityTable } from './EligibilityTable'
 import type { EligibilityRead } from './EligibilityTable'
@@ -11,6 +19,7 @@ import { ExecutionList } from './ExecutionList'
 import type { HostRead } from './ExecutionList'
 import { JobOrderFormView } from './JobOrderFormView'
 import { JobOrderNotice } from './JobOrderNotice'
+import { SignalNotice } from './SignalNotice'
 
 interface Props {
   session: Session
@@ -23,7 +32,7 @@ const NO_ELIGIBILITY: EligibilityRead = { view: null, refusal: null, error: null
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /**
- * «운영» 영역(S3a 스펙 §9). 작업 지시 폼, 기체별 배정 가능 표, 실행 목록, 셀 대역 표시.
+ * «운영» 영역(S3a 스펙 §9). 작업 지시 폼, 기체별 배정 가능 표, 실행 목록, 셀 대역 표시와 신호 조작(S3b 스펙 §8).
  *
  * 실행 목록·셀·배정 가능은 실행 호스트를 거친다. 그래서 App 의 다섯 조회(`Promise.all`)와 따로, 이 영역이 열려 있을 때만
  * 읽는다(S3a 스펙 §9.3). 호스트가 멈춰도 다섯 조회가 직전 값이 되지 않게 하기 위해서다. 셋은 서로도 따로 실패하고, 못 읽으면
@@ -43,10 +52,24 @@ export function OperationsArea({ session, onChanged }: Props) {
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [last, setLast] = useState<{ what: string; sent: Delivered<JobOrderOutcome> } | null>(null)
+  const [signalBusy, setSignalBusy] = useState(false)
+  const [signalLast, setSignalLast] = useState<{ what: string; sent: Delivered<SignalWriteOutcome> } | null>(null)
 
   useEffect(() => {
     const timer = setInterval(() => setTick((value) => value + 1), POLL_MS)
     return () => clearInterval(timer)
+  }, [])
+
+  // 신호 조작 뒤 pump 가 돈 다음에 한 번 더 읽는 타이머. 영역을 닫으면 치우고, 닫은 뒤에 끝난 조작은 타이머를 걸지 않는다.
+  const mounted = useRef(true)
+  const settle = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      if (settle.current !== null) clearTimeout(settle.current)
+      settle.current = null
+    }
   }, [])
 
   useEffect(() => {
@@ -118,6 +141,27 @@ export function OperationsArea({ session, onChanged }: Props) {
       })
   }
 
+  // 바뀐 값은 실행 호스트의 다음 pump 부터 보인다. 곧바로 한 번, pump 가 돈 뒤 한 번 더 읽는다. 조작이 잇따르면 마지막 조작
+  // 뒤의 한 번이 앞의 것을 대신한다.
+  const writeSignal = (name: string, value: string) => {
+    const what = `${name} ${value === 'true' ? '켜기' : '끄기'}`
+    setSignalBusy(true)
+    writeCellSignal(session, name, value)
+      .then((sent) => setSignalLast({ what, sent }))
+      .finally(() => {
+        setSignalBusy(false)
+        setTick((value) => value + 1)
+        if (settle.current !== null) clearTimeout(settle.current)
+        settle.current = mounted.current
+          ? setTimeout(() => {
+              settle.current = null
+              setTick((value) => value + 1)
+            }, SIGNAL_SETTLE_MS)
+          : null
+        onChanged()
+      })
+  }
+
   const submitted = last?.sent.kind === 'outcome' ? last.sent.outcome.jobOrderId : null
 
   return (
@@ -147,7 +191,8 @@ export function OperationsArea({ session, onChanged }: Props) {
       </section>
       <section aria-label="셀 대역">
         <h2>셀 대역</h2>
-        <CellBand read={cell} />
+        {signalLast !== null && <SignalNotice what={signalLast.what} sent={signalLast.sent} />}
+        <CellBand read={cell} busy={signalBusy} onWrite={writeSignal} />
       </section>
     </>
   )

@@ -2,9 +2,16 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
-import type { Execution, HostEligibility, JobOrderOutcome, RobotEligibility, Session } from '../api'
-import { ELIGIBILITY_DEBOUNCE_MS, POLL_MS } from '../poll'
-import { eligibilityView, executionsView, installFakeOps } from '../testing/fakeOps'
+import type {
+  Execution,
+  HostEligibility,
+  JobOrderOutcome,
+  RobotEligibility,
+  Session,
+  SignalWriteOutcome,
+} from '../api'
+import { ELIGIBILITY_DEBOUNCE_MS, POLL_MS, SIGNAL_SETTLE_MS } from '../poll'
+import { cellView, eligibilityView, executionsView, installFakeOps, standardSignals } from '../testing/fakeOps'
 import type { FakeOps } from '../testing/fakeOps'
 import { OperationsArea } from './OperationsArea'
 
@@ -82,6 +89,22 @@ function submitted(partial: Partial<JobOrderOutcome> = {}): JobOrderOutcome {
     ...partial,
   }
 }
+
+/** 신호 조작 200 본문(S3b JSON 계약 §10.8). 기본은 rack_present 를 켠 것이다. */
+function written(partial: Partial<SignalWriteOutcome> = {}): SignalWriteOutcome {
+  return {
+    requestId: '6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a',
+    name: 'rack_present',
+    value: 'true',
+    result: 'SUCCEEDED',
+    confirmation: null,
+    signal: { name: 'rack_present', location: 'RACK-204', kind: 'BOOLEAN', safety: false, value: 'true', observedAt: 't2' },
+    rejection: null,
+    ...partial,
+  }
+}
+
+const RACK_PRESENT = '/api/cell/signals/rack_present'
 
 /** 칸 이름(dt) 바로 뒤의 값(dd)을 읽는다. */
 function field(region: HTMLElement, name: string) {
@@ -434,6 +457,142 @@ describe('운영 영역', () => {
     expect(within(region).queryByRole('table')).not.toBeInTheDocument()
     await userEvent.selectOptions(screen.getByLabelText('임무'), 'PrepareSequencedRack')
     expect(screen.getByText('모름: 셀 대역을 읽지 못해 슬롯과 자재를 고를 수 없습니다')).toBeInTheDocument()
+  })
+
+  it('셀 대역 신호는 이름·값·관측 시각을 보이고 안전이 아닌 BOOLEAN 신호만 켜기·끄기가 있다', async () => {
+    const fake = installFakeOps(emptyList)
+    const signals = standardSignals()
+    signals[0] = { ...signals[0], value: 'true', observedAt: 't2' }
+    fake.cell = { cell: { ...cellView().cell!, signals } }
+    open()
+    const region = screen.getByRole('region', { name: '셀 대역' })
+    const table = await within(region).findByRole('table', { name: '셀 대역 신호' })
+    expect(within(table).getAllByRole('row').slice(1).map(cells)).toEqual([
+      ['rack_present', 'BOOLEAN', 'true', 't2', '켜기끄기'],
+      ['guard_closed', 'BOOLEAN', 'true', '-', '안전 신호(값만 봅니다)'],
+      ['lot_code', 'TEXT', 'LOT-0001', '-', '-'],
+    ])
+    expect(within(region).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual([
+      'rack_present 켜기',
+      'rack_present 끄기',
+    ])
+  })
+
+  it('신호 켜기·끄기는 두 모드 모두 그 이름과 문자열 값으로 보내고 결과를 보인 뒤 셀 대역을 다시 읽는다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.answers.set(RACK_PRESENT, { status: 200, body: written() })
+    const { rerender } = open(operator)
+    const region = screen.getByRole('region', { name: '셀 대역' })
+    await userEvent.click(await within(region).findByRole('button', { name: 'rack_present 켜기' }))
+    expect(await within(region).findByRole('status', { name: '신호 조작 결과' })).toHaveTextContent(
+      'rack_present 켜기: 반영됨(값 true)',
+    )
+    let post = calls(fake, 'POST', RACK_PRESENT).at(-1)!
+    expect(post.body).toEqual({ value: 'true' })
+    expect(post.headers['X-Ops-Mode']).toBe('operator')
+    expect(post.headers['Content-Type']).toBe('application/json')
+    const reads = calls(fake, 'GET', '/api/cell').length
+    await waitFor(() => expect(calls(fake, 'GET', '/api/cell').length).toBeGreaterThanOrEqual(reads + 1))
+
+    fake.answers.set(RACK_PRESENT, {
+      status: 200,
+      body: written({ value: 'false', signal: { ...written().signal!, value: 'false' } }),
+    })
+    rerender(<OperationsArea session={engineer} onChanged={() => undefined} />)
+    await userEvent.click(within(region).getByRole('button', { name: 'rack_present 끄기' }))
+    await waitFor(() =>
+      expect(within(region).getByRole('status', { name: '신호 조작 결과' })).toHaveTextContent(
+        'rack_present 끄기: 반영됨(값 false)',
+      ),
+    )
+    post = calls(fake, 'POST', RACK_PRESENT).at(-1)!
+    expect(post.body).toEqual({ value: 'false' })
+    expect(post.headers['X-Ops-Mode']).toBe('engineer')
+  })
+
+  it.each([
+    [
+      written({
+        result: 'REJECTED',
+        signal: null,
+        rejection: { status: 400, error: 'SIGNAL_VALUE_INVALID', detail: 'BOOLEAN 신호 값은 true 나 false 다' },
+      }),
+      'rack_present 켜기: 현장이 거부함(신호 종류에 맞지 않는 값). BOOLEAN 신호 값은 true 나 false 다',
+    ],
+    [
+      written({ result: 'NO_RESPONSE', confirmation: 'CONFIRMED_APPLIED', signal: null }),
+      'rack_present 켜기: 응답은 없었으나 다시 읽어 보니 그 값임',
+    ],
+    [
+      written({ result: 'NO_RESPONSE', confirmation: 'CONFIRMED_NOT_APPLIED', signal: null }),
+      'rack_present 켜기: 응답 없음. 다시 읽어 보니 그 값이 아님',
+    ],
+    [
+      written({ result: 'NO_RESPONSE', confirmation: null, signal: null }),
+      'rack_present 켜기: 반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다',
+    ],
+  ])('현장의 거부와 응답 없음은 반영됨으로 보이지 않는다(%#)', async (body, text) => {
+    const fake = installFakeOps(emptyList)
+    fake.answers.set(RACK_PRESENT, { status: 200, body })
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: 'rack_present 켜기' }))
+    const shown = await screen.findByRole('status', { name: '신호 조작 결과' })
+    expect(shown).toHaveTextContent(text)
+    expect(shown).not.toHaveTextContent('반영됨')
+  })
+
+  it('신호 조작 뒤 다시 읽기 타이머는 영역을 닫으면 치우고 닫은 뒤에 끝난 조작은 걸지 않는다', async () => {
+    // 시계는 손으로만 민다. 대역의 fetch 는 타이머를 쓰지 않으므로 act 로 약속만 흘려보낸다. 닫힌 영역의 타이머는 다시 읽기를
+    // 부르지 못하므로 읽기 수가 아니라 남은 타이머 수로 본다.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    const fake = installFakeOps(emptyList)
+    fake.answers.set(RACK_PRESENT, { status: 200, body: written() })
+    const reads = () => calls(fake, 'GET', '/api/cell').length
+    const flush = async () => {
+      for (let round = 0; round < 5; round++) await act(async () => undefined)
+    }
+    const toggle = () => fireEvent.click(screen.getByRole('button', { name: 'rack_present 켜기' }))
+
+    // 열려 있으면 pump 가 돈 뒤 한 번 더 읽는다.
+    const first = open()
+    await flush()
+    toggle()
+    await flush()
+    expect(screen.getByRole('status', { name: '신호 조작 결과' })).toHaveTextContent('rack_present 켜기: 반영됨(값 true)')
+    const before = reads()
+    await act(async () => vi.advanceTimersByTime(SIGNAL_SETTLE_MS))
+    expect(reads()).toBe(before + 1)
+
+    // 다시 읽기가 걸린 뒤 닫으면 치운다.
+    toggle()
+    await flush()
+    first.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+
+    // 조작이 끝나기 전에 닫으면 끝난 뒤에도 걸지 않는다.
+    const second = open()
+    await flush()
+    toggle()
+    second.unmount()
+    await flush()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(calls(fake, 'POST', RACK_PRESENT)).toHaveLength(3)
+  })
+
+  it('셀 대역 스냅숏이 없거나 신호 목록이 없으면 신호를 모름으로 보이고 켜기·끄기가 없다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.cell = { cell: null }
+    const { rerender } = open()
+    const region = screen.getByRole('region', { name: '셀 대역' })
+    expect(await within(region).findByText('모름: 신호 값을 읽지 못했습니다')).toBeInTheDocument()
+    expect(within(region).queryByRole('table', { name: '셀 대역 신호' })).not.toBeInTheDocument()
+    expect(within(region).queryByRole('button')).not.toBeInTheDocument()
+
+    fake.cell = { cell: { ...cellView().cell!, signals: null } }
+    rerender(<OperationsArea session={{ ...operator }} onChanged={() => undefined} />)
+    expect(await within(region).findByText('모름: 셀 대역이 신호 목록을 싣지 않았습니다')).toBeInTheDocument()
+    expect(within(region).queryByText('셀 대역에 신호가 없습니다')).not.toBeInTheDocument()
+    expect(within(region).queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('실행 호스트가 503 이면 실행 목록과 셀 대역은 직전 값과 불통을 보인다', async () => {

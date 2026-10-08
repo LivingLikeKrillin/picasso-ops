@@ -43,17 +43,31 @@ function serve(view: RobotListView, records: OperationRecord[] = []) {
 describe('App', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('메뉴가 5영역이고 아직 닫힌 1영역은 다음 단계로 표시한다', () => {
+  it('메뉴가 5영역이고 모두 열려 있다', () => {
     serve({ registry: 'OK', checkedAt: 't1', robots: [], robotsAsOf: 't1' })
     render(<App />)
     const nav = screen.getByRole('navigation', { name: '영역' })
     expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual([
       '현장·자원',
       '로봇·연결',
-      '임무·정책 다음 단계',
+      '임무·정책',
       '운영',
       '이력',
     ])
+  })
+
+  it('임무·정책 영역을 열 때만 임무 버전을 읽는다', async () => {
+    const calls = serve({ registry: 'OK', checkedAt: 't1', robots: [], robotsAsOf: 't1' })
+    render(<App />)
+    expect(await screen.findByText('선언된 기체가 없습니다')).toBeInTheDocument()
+    expect(calls.filter((call) => call.url.startsWith('/api/missions'))).toEqual([])
+    await userEvent.click(screen.getByRole('button', { name: '임무·정책' }))
+    await waitFor(() =>
+      expect(calls.map((call) => call.url)).toEqual(
+        expect.arrayContaining(['/api/missions/PrepareSequencedRack', '/api/missions/templates/PrepareSequencedRack']),
+      ),
+    )
+    expect(screen.getByRole('region', { name: '임무 PrepareSequencedRack' })).toBeInTheDocument()
   })
 
   it('목록을 읽은 적이 없으면 없음이 아니라 모름을 보인다', async () => {
