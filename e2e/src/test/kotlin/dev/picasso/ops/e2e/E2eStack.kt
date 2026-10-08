@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import dev.picasso.ops.host.HostClock
 import dev.picasso.ops.host.MissionHostApplication
 import dev.picasso.ops.service.OpsApplication
+import dev.picasso.ops.service.store.OpsSchema
 import dev.picasso.ops.site.DbConfig
 import dev.picasso.ops.site.RobotRoster
 import dev.picasso.ops.site.Site
@@ -109,6 +110,9 @@ class E2eStack private constructor(
             PostgresSupport.reset()
             PostgresSupport.execute("DROP SCHEMA IF EXISTS ops CASCADE")
             PostgresSupport.execute("DROP SCHEMA IF EXISTS mission CASCADE")
+            // 실행 호스트는 기동 안에서 ops 의 현장 시간값 뷰를 읽는다(S3c 스펙 §7.1). 호스트가 운영 서비스보다 먼저 뜨므로 ops 스키마를
+            // 먼저 올려 둔다. 그러지 않으면 호스트가 미적용으로 뜨고, 운영 서비스가 뜬 뒤 첫 주기 읽기까지 작업 지시를 받지 않는다.
+            OpsSchema.migrate(PostgresSupport.jdbcUrl, PostgresSupport.username, PostgresSupport.password)
             val site = Site.start(
                 SiteConfig(
                     root = root,
