@@ -131,7 +131,7 @@ describe('로봇·연결 영역', () => {
     expect(await screen.findByText('quadruped-01 복귀: 반영됨')).toBeInTheDocument()
   })
 
-  it('거절은 관측값과 기대값, 해결 담당과 후속 행동으로 보인다', async () => {
+  it('거부는 관측값과 기대값, 해결 담당과 후속 행동으로 보인다', async () => {
     const fake = installFakeOps(view([]))
     fake.answer = { status: 200, body: outcome({ result: 'REJECTED', registryStatus: 409, rejection: retiredAlready }) }
     render(<App />)
@@ -142,7 +142,7 @@ describe('로봇·연결 영역', () => {
     expect(screen.getByText('운영자(화면 안): 복귀')).toBeInTheDocument()
   })
 
-  it('거절 알림의 바로 가기를 누르면 그 기체의 상세가 열린다', async () => {
+  it('거부 알림의 바로 가기를 누르면 그 기체의 상세가 열린다', async () => {
     const fake = installFakeOps(view())
     fake.answer = { status: 200, body: outcome({ result: 'REJECTED', registryStatus: 409, rejection: retiredAlready }) }
     render(<App />)

@@ -1,18 +1,18 @@
-# P2b 개정판·바인딩 조작 문 Implementation Plan
+# P2b 리비전·바인딩 조작 문 Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** picasso registry 가 기동할 때 계약 스킬 종류를 채우고, 개정판 제출·목록·활성화와 기체 바인딩을 조작 문으로 열어 PR 로 올린다. 바인딩이 없는 기체·퇴역 기체·같은 조합 재요청을 막고, `/diag/bindings` 행에 빌드 id 와 명칭 기록·보고 칸을, mimic CLI 에 기체가 아는 명칭을 넣을 자리를 둔다.
+**Goal:** picasso registry 가 기동할 때 계약 스킬 종류를 채우고, 리비전 제출·목록·활성화와 기체 바인딩을 조작 문으로 열어 PR 로 올린다. 바인딩이 없는 기체·퇴역 기체·같은 조합 재요청을 막고, `/diag/bindings` 행에 빌드 id 와 명칭 기록·보고 칸을, mimic CLI 에 기체가 아는 명칭을 넣을 자리를 둔다.
 
-**Architecture:** 서비스는 P1·P2a 와 같은 방식으로 결과를 값으로 가르는 새 메서드를 더한다(`RevisionService.submitDocument` → `Submitted`, `BindingService.activateRevision` → `Activation`, `BindingService.bindRobot` → `Binding`). 옛 메서드와 그 시험은 그대로 두고, 옛 `activate` 만 새 메서드에 위임한다(동작 변화 없음). 옛 `submit`·`bind` 는 저장(`store`)과 바인딩 기록(`rebind`)만 새 메서드와 공유한다. 새 `SkillTypeCatalog` 가 기동 동기화(`syncAtBoot`)와 스킬 종류 조회를, 새 `RevisionListing` 이 개정판 목록을 든다. 새 컨트롤러 둘(`RevisionOperationsController`·`BindingOperationsController`)이 `/operations` 아래 문 5개를 낸다. 기동 동기화는 `RegistryApplication` 의 `ApplicationRunner` 빈이 부른다.
+**Architecture:** 서비스는 P1·P2a 와 같은 방식으로 결과를 값으로 가르는 새 메서드를 더한다(`RevisionService.submitDocument` → `Submitted`, `BindingService.activateRevision` → `Activation`, `BindingService.bindRobot` → `Binding`). 옛 메서드와 그 시험은 그대로 두고, 옛 `activate` 만 새 메서드에 위임한다(동작 변화 없음). 옛 `submit`·`bind` 는 저장(`store`)과 바인딩 기록(`rebind`)만 새 메서드와 공유한다. 새 `SkillTypeCatalog` 가 기동 동기화(`syncAtBoot`)와 스킬 종류 조회를, 새 `RevisionListing` 이 리비전 목록을 든다. 새 컨트롤러 둘(`RevisionOperationsController`·`BindingOperationsController`)이 `/operations` 아래 문 5개를 낸다. 기동 동기화는 `RegistryApplication` 의 `ApplicationRunner` 빈이 부른다.
 
 **Tech Stack:** Kotlin 2.4.20, Spring Boot 3.4.0(MVC), PostgreSQL + Flyway(Testcontainers, registry `testFixtures` 의 `PostgresSupport`), JUnit5 + kotlin.test, `TestRestTemplate`, gRPC(mimic CLI 시험).
 
 **근거 스펙:** picasso-ops `docs/superpowers/specs/2026-10-08-p2-s1d-runner-binding-commissioning-design.md` §6(P2b), §3(완료 판정), §11(시험). 2차 스펙 검토 권고 중 P2b 몫(제출 본문을 못 읽으면 registry 400, 동시 요청에서 진 쪽은 500 이 아니라 기존 것, 바인딩 멱등 검사의 순서, 멱등 200 의 감사, 동시 첫 바인딩 시험, 기존 시험의 동기화 영향)을 이 계획이 정한다.
 
 **스펙이 계획에 맡긴 것과 이 계획이 정한 것:**
-- 기동 동기화와 기존 표면 시험(스펙 §6.1): 기존 표면 시험은 스프링 컨텍스트가 뜬 뒤 시험마다 스키마를 지우고(`PostgresSupport.reset()`) 손으로 동기화한다. 그래서 기동 동기화는 그 시험에 영향이 없다. 다만 시험 JVM 에서 컨텍스트가 처음 뜰 때 스키마가 아직 없을 수 있으므로, 스키마(`skill_type` 표)가 없으면 경고를 남기고 건너뛴다. 계약 기술자를 못 읽으면 스펙대로 기동을 거부한다. 스파이크에서 기존 시험 935개(registry 371, mimic 356, harness 208)가 고치지 않고 통과했다.
-- 바인딩 멱등 검사의 순서(검토 권고 5): 같은 조합 검사는 **모든 검사 뒤**다. 묶인 뒤 개정판이 대체됐으면 같은 조합이어도 409 `REVISION_NOT_ACTIVE` 다. 멱등 200 은 감사를 남기지 않는다(제출·활성화·바인딩 모두).
+- 기동 동기화와 기존 API 표면 시험(스펙 §6.1): 기존 API 표면 시험은 스프링 컨텍스트가 뜬 뒤 시험마다 스키마를 지우고(`PostgresSupport.reset()`) 손으로 동기화한다. 그래서 기동 동기화는 그 시험에 영향이 없다. 다만 시험 JVM 에서 컨텍스트가 처음 뜰 때 스키마가 아직 없을 수 있으므로, 스키마(`skill_type` 표)가 없으면 경고를 남기고 건너뛴다. 계약 기술자를 못 읽으면 스펙대로 기동을 거부한다. 스파이크에서 기존 시험 935개(registry 371, mimic 356, harness 208)가 고치지 않고 통과했다.
+- 바인딩 멱등 검사의 순서(검토 권고 5): 같은 조합 검사는 **모든 검사 뒤**다. 묶인 뒤 리비전이 대체됐으면 같은 조합이어도 409 `REVISION_NOT_ACTIVE` 다. 멱등 200 은 감사를 남기지 않는다(제출·활성화·바인딩 모두).
 - 동시 요청(검토 권고 4·9): 바인딩은 기체 행을, 제출과 활성화는 기종(`capability_profile`) 행을 `FOR UPDATE` 로 잠근다.
 - 제출 본문(검토 권고 3): 프로파일 문서로 못 읽으면 registry 가 400 을 낸다.
 - 바인딩 본문에 두 id 중 하나가 빠지면 400 이다(스펙 표에 없던 응답).
@@ -72,7 +72,7 @@ done
 exit $bad
 ```
 
-### Task 1: 결과 타입, 기동 동기화, 개정판 목록
+### Task 1: 결과 타입, 기동 동기화, 리비전 목록
 
 **Files:**
 - Create: `registry/src/main/kotlin/dev/picasso/registry/revision/SkillTypeCatalog.kt`
@@ -1861,11 +1861,11 @@ EOF
 | W9 | 같은 파일 | `siteNamesUnsupported = rs.getBoolean(20).takeUnless { rs.wasNull() },` → `siteNamesUnsupported = null,` | Ep | 위와 같음 |
 | M1 | `mimic/src/main/kotlin/dev/picasso/mimic/cli/Main.kt` | `Started(...)` 의 `built.toMap(),` 줄 지움 | Mimic | `기동한 기체에 넣은 명칭을 그 기체가 답한다` |
 
-| D1 | `docs/commissioning.md` | `activation` 경로가 든 줄을 모두 지움(Step 2b 행, 3절 행, 4절 행) | `./gradlew :gate:test -q`(Task 5 뒤에 돌린다) | `설정 표면 목록이 바꾸는 문을 빠짐없이 적는다`(도장 시험도 함께 빨개진다) |
+| D1 | `docs/commissioning.md` | `activation` 경로가 든 줄을 모두 지움(Step 2b 행, 3절 행, 4절 행) | `./gradlew :gate:test -q`(Task 5 뒤에 돌린다) | `설정 표면 목록이 바꾸는 문을 빠짐없이 적는다`(스탬프 시험도 함께 빨개진다) |
 
-B1·S2 는 경쟁 조건에 기대는 주입이다. 잠금을 지워도 첫 스레드가 커밋한 뒤에 둘째가 닿으면 초록이 될 수 있으므로, 한 번 안 잡히면 같은 주입을 3번까지 다시 돌린다(정상 코드 쪽은 잠금이 있어 결정적이다). D1 은 경로가 문서 어디에든 남아 있으면 통과하는 시험이라, 행 하나만 지우면 등가 변이다(스파이크에서 바인딩 4절 행 하나만 지웠을 때 도장 시험만 빨개졌다).
+B1·S2 는 경쟁 조건에 기대는 주입이다. 잠금을 지워도 첫 스레드가 커밋한 뒤에 둘째가 닿으면 초록이 될 수 있으므로, 한 번 안 잡히면 같은 주입을 3번까지 다시 돌린다(정상 코드 쪽은 잠금이 있어 결정적이다). D1 은 경로가 문서 어디에든 남아 있으면 통과하는 시험이라, 행 하나만 지우면 등가 변이다(스파이크에서 바인딩 4절 행 하나만 지웠을 때 스탬프 시험만 빨개졌다).
 
-스파이크에서 25건(D1 제외) 모두 기대한 이름이 빨개졌고 D1 도 기대대로였다. 처음 돌렸을 때 S2 와 W4 가 안 잡혔다. 기종의 첫 제출은 기종 행의 `INSERT … ON CONFLICT DO NOTHING` 이 둘째를 기다리게 해 잠금 없이도 차례가 지켜졌고(S2), 빈 DB 에서는 빌드 id 와 개정판 id 가 둘 다 1 이라 칸을 바꿔 읽어도 같았다(W4). 시험을 기종이 이미 있는 동시 제출과 두 id 가 갈리는 바인딩으로 고쳤고, 위 시험이 고친 판이다.
+스파이크에서 25건(D1 제외) 모두 기대한 이름이 빨개졌고 D1 도 기대대로였다. 처음 돌렸을 때 S2 와 W4 가 안 잡혔다. 기종의 첫 제출은 기종 행의 `INSERT … ON CONFLICT DO NOTHING` 이 둘째를 기다리게 해 잠금 없이도 차례가 지켜졌고(S2), 빈 DB 에서는 빌드 id 와 리비전 id 가 둘 다 1 이라 칸을 바꿔 읽어도 같았다(W4). 시험을 기종이 이미 있는 동시 제출과 두 id 가 갈리는 바인딩으로 고쳤고, 위 시험이 고친 버전이다.
 
 - [ ] **Step 1: 코드 주입 25건을 하나씩** — 위 표대로(D1 은 Task 5 Step 2 뒤에 한다).
 - [ ] **Step 2: 되돌림 확인**
@@ -1876,9 +1876,9 @@ Expected: 빈 출력.
 ### Task 5: 문서, 시험 수, 전체 빌드
 
 **Files:**
-- Modify: `docs/commissioning.md`(Step 1·2b·6b, 시운전 완료 판정, 3절·4절 표), `docs/superpowers/specs/2026-09-05-picasso-design.md`(§15.208), `docs/limits.md`(소비자 대기 1행, 번호 208), `README.md`(미결 63, 소비자 대기 10), `docs/verification.md`(1,931, `*EndpointTest` 여덟), `registry/README.md`(여덟), `CLAUDE.md`(1,931)
+- Modify: `docs/commissioning.md`(Step 1·2b·6b, 시운전 완료 판정, 3절·4절 표), `docs/superpowers/specs/2026-09-05-picasso-design.md`(§15.208), `docs/limits.md`(소비자 대기 1행, 번호 208), `README.md`(오픈 항목 63, 소비자 대기 10), `docs/verification.md`(1,931, `*EndpointTest` 여덟), `registry/README.md`(여덟), `CLAUDE.md`(1,931)
 
-- [ ] **Step 1: 문서 패치** — 아래를 `C:/Users/Eisen/AppData/Local/Temp/p2b-patches/p2b-4.patch` 로 저장하고 `git apply C:/Users/Eisen/AppData/Local/Temp/p2b-patches/p2b-4.patch`. 도장(`> 마지막 대조` 줄)까지 들어 있으므로 따로 `tools/stamp.py` 를 돌리지 않는다. 문장은 사용자 지시대로 Fable·Codex 초안을 취합한 것이다.
+- [ ] **Step 1: 문서 패치** — 아래를 `C:/Users/Eisen/AppData/Local/Temp/p2b-patches/p2b-4.patch` 로 저장하고 `git apply C:/Users/Eisen/AppData/Local/Temp/p2b-patches/p2b-4.patch`. 스탬프(`> 마지막 대조` 줄)까지 들어 있으므로 따로 `tools/stamp.py` 를 돌리지 않는다. 문장은 사용자 지시대로 Fable·Codex 초안을 취합한 것이다.
 
 ````diff
 diff --git a/CLAUDE.md b/CLAUDE.md
@@ -2100,7 +2100,7 @@ index 2cfa207..2dd362e 100644
 - [ ] **Step 2: 전체 빌드** — 백그라운드로 돌린다.
 
 Run: `./gradlew build --continue -q`
-Expected: XML 기준 1,931개 실패 0(registry 396, mimic 357, gate 276 포함). 실패가 `자동화 시험의 수를 대외 문서가 맞게 적는다` 면 시험 수, `설정 표면 목록이 바꾸는 문을 빠짐없이 적는다` 면 `commissioning.md` 4절, 도장 관련이면 Step 1 패치가 덜 들어간 것이다.
+Expected: XML 기준 1,931개 실패 0(registry 396, mimic 357, gate 276 포함). 실패가 `자동화 시험의 수를 대외 문서가 맞게 적는다` 면 시험 수, `설정 표면 목록이 바꾸는 문을 빠짐없이 적는다` 면 `commissioning.md` 4절, 스탬프 관련이면 Step 1 패치가 덜 들어간 것이다.
 
 - [ ] **Step 3: 커밋과 대조**
 
@@ -2134,5 +2134,5 @@ Expected: 23줄 모두 «같음».
 - 결함 주입: 25건(바인딩 6, 제출 3, 활성화 2, 카탈로그 4, 문 9, mimic 1) 모두 지정 시험이 탐지, 문서 주입 D1 은 게이트가 탐지
 - 전체 빌드: 새 클론에서 시험 XML 1,931개, 실패 0(registry 396, mimic 357, gate 276), 기존 시험은 손대지 않고 통과
 - 병합: 묶음 커밋 넷을 하나로 합침(`9fba89f`, 트리 동일), picasso PR #81 의 CI `build` job 초록, 2026-10-08 05:52 KST 머지(머지 커밋 `41beedb`)
-- 걸린 것: 스파이크 첫 주입에서 두 건이 안 잡혀 시험 보강(기종의 첫 제출은 `INSERT … ON CONFLICT DO NOTHING` 이 잠금 없이도 차례를 지킴, 빈 DB 에서 빌드 id 와 개정판 id 가 둘 다 1), `tools/stamp.py` 가 파일 하나씩만 받고 작업 트리를 LF 로 써서 CRLF 로 되돌림, 같은 기체 경로가 문서에 여러 번 나와 문서 주입은 경로가 든 줄을 모두 지워야 탐지
+- 걸린 것: 스파이크 첫 주입에서 두 건이 안 잡혀 시험 보강(기종의 첫 제출은 `INSERT … ON CONFLICT DO NOTHING` 이 잠금 없이도 차례를 지킴, 빈 DB 에서 빌드 id 와 리비전 id 가 둘 다 1), `tools/stamp.py` 가 파일 하나씩만 받고 작업 트리를 LF 로 써서 CRLF 로 되돌림, 같은 기체 경로가 문서에 여러 번 나와 문서 주입은 경로가 든 줄을 모두 지워야 탐지
 - 다음: 같은 스펙의 S1d(서브모듈을 `41beedb` 로 옮김)

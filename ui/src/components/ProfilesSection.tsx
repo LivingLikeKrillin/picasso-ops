@@ -40,9 +40,9 @@ export function ProfilesSection({ view, opsError, session, busy, run }: Props) {
             스킬 {known.catalog!.skillTypes.length}종, 계약 {known.catalog!.contractSemver}
           </p>
           {known.revisions!.length === 0 ? (
-            <p>제출된 개정판이 없습니다</p>
+            <p>제출된 리비전이 없습니다</p>
           ) : (
-            <table aria-label="개정판 목록">
+            <table aria-label="리비전 목록">
               <thead>
                 <tr>
                   <th>기종</th>
@@ -177,7 +177,7 @@ function SubmitForm({ busy, onSubmit }: { busy: boolean; onSubmit: (fileName: st
   }
 
   return (
-    <form aria-label="개정판 제출" onSubmit={submit}>
+    <form aria-label="리비전 제출" onSubmit={submit}>
       <label>
         프로파일 문서
         <input type="file" accept=".json,application/json" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />

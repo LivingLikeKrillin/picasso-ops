@@ -4,9 +4,9 @@
 
 **Goal:** picasso registry 에 어댑터 제품·빌드를 등록·조회하는 운영자 REST 3개(`POST /operations/adapters`, `POST /operations/adapters/{adapterId}/versions`, `GET /operations/adapters`)를 더해 PR 로 올린다.
 
-**Architecture:** `AdapterService` 에 결과를 가르는 새 메서드 `declareAdapter`·`declareVersion`·`list` 를 더하고, 옛 `registerVersion` 은 새 메서드에 위임해 한 SQL 경로만 남긴다(`registerAdapter` 는 호출 18곳·harness 3파일이 있어 그대로 둔다). 새 컨트롤러 `AdapterOperationsController` 가 `/operations/adapters` 아래를 맡고, 운영자 토큰 관문(`/operations/**`)은 경로로 자동 적용된다. 문서는 `docs/commissioning.md`, 설계 일지 §15.206, 일지 번호를 대는 `docs/limits.md`, 시험 수를 적는 `CLAUDE.md`·`docs/verification.md`, 문 시험 수를 적는 `docs/verification.md`·`registry/README.md` 를 고친다.
+**Architecture:** `AdapterService` 에 결과를 가르는 새 메서드 `declareAdapter`·`declareVersion`·`list` 를 더하고, 옛 `registerVersion` 은 새 메서드에 위임해 한 SQL 경로만 남긴다(`registerAdapter` 는 호출 18곳·harness 3파일이 있어 그대로 둔다). 새 컨트롤러 `AdapterOperationsController` 가 `/operations/adapters` 아래를 맡고, 운영자 토큰 관문(`/operations/**`)은 경로로 자동 적용된다. 문서는 `docs/commissioning.md`, 설계 변경 이력 §15.206, 변경 이력 번호를 대는 `docs/limits.md`, 시험 수를 적는 `CLAUDE.md`·`docs/verification.md`, 문 시험 수를 적는 `docs/verification.md`·`registry/README.md` 를 고친다.
 
-**스펙 §5·§10 과 다른 결정(이 계획이 정함):** 스펙은 옛 `registerVersion` 의 같은 버전 재등록 거절을 바꾸고 `AdapterLifecycleTest` 의 `같은 버전을 두 번 등록하면 거부한다` 를 고친다고 적었다. 이 계획은 **옛 메서드의 그 거절을 유지**하고, 멱등(같은 내용 재요청 200)은 새 조작 문(`declareVersion`)에만 둔다. 이유: 옛 메서드는 시험·하네스가 부르고, 그 호출자들은 멱등을 기대하지 않는다. 대신 옛 `registerVersion` 의 동작이 2곳 바뀐다: 모르는 제품이 FK 예외 대신 `Rejected`, 빈 `version` 이 `Rejected`. picasso-ops 스펙의 정정은 Task 7 이 한다.
+**스펙 §5·§10 과 다른 결정(이 계획이 정함):** 스펙은 옛 `registerVersion` 의 같은 버전 재등록 거부를 바꾸고 `AdapterLifecycleTest` 의 `같은 버전을 두 번 등록하면 거부한다` 를 고친다고 적었다. 이 계획은 **옛 메서드의 그 거부를 유지**하고, 멱등(같은 내용 재요청 200)은 새 조작 문(`declareVersion`)에만 둔다. 이유: 옛 메서드는 시험·하네스가 부르고, 그 호출자들은 멱등을 기대하지 않는다. 대신 옛 `registerVersion` 의 동작이 2곳 바뀐다: 모르는 제품이 FK 예외 대신 `Rejected`, 빈 `version` 이 `Rejected`. picasso-ops 스펙의 정정은 Task 7 이 한다.
 
 **Tech Stack:** Kotlin 2.4.20, Spring Boot 3.4.0(MVC), PostgreSQL + Flyway(Testcontainers, registry `testFixtures` 의 `PostgresSupport`), JUnit5 + kotlin.test, `TestRestTemplate`.
 
@@ -17,7 +17,7 @@
 - `./gradlew --stop` 금지(데몬 풀이 사용자 체크아웃과 공유된다).
 - `git add -A` 금지. 파일을 이름으로 더한다.
 - 시험 판정은 종료 코드가 아니라 `*/build/test-results/test/*.xml` 의 실패 시험 이름으로 한다.
-- 커밋 트레일러: `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`. 커밋·PR 문장은 저장소 형식 훅(`.claude/hooks/check-commit-pr-format.py`)을 통과해야 한다(제목 `type(scope): 명사구`, 불릿 명사형, «~다» 종결 금지, em-dash·en-dash·겹화살괄호·낫표 금지). 문서·일지·커밋·PR 의 문장은 사용자 지시에 따라 Fable 과 Codex 에 같은 브리프로 초안을 받아 취합한다(Gemini 한도 소진 중).
+- 커밋 트레일러: `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`. 커밋·PR 문장은 저장소 형식 훅(`.claude/hooks/check-commit-pr-format.py`)을 통과해야 한다(제목 `type(scope): 명사구`, 불릿 명사형, «~다» 종결 금지, em-dash·en-dash·겹화살괄호·낫표 금지). 문서·변경 이력·커밋·PR 의 문장은 사용자 지시에 따라 Fable 과 Codex 에 같은 브리프로 초안을 받아 취합한다(Gemini 한도 소진 중).
 
 ---
 
@@ -432,7 +432,7 @@ Expected: tests=9 failures=0.
 
 ---
 
-## Chunk 2: 표면, 결함 주입, 문서, PR
+## Chunk 2: API 표면, 결함 주입, 문서, PR
 
 ### Task 4: 컨트롤러와 배선
 
@@ -441,7 +441,7 @@ Expected: tests=9 failures=0.
 - Modify: `registry/src/main/kotlin/dev/picasso/registry/web/RegistryApplication.kt`(빈 1개)
 - Create: `registry/src/test/kotlin/dev/picasso/registry/web/AdapterEndpointTest.kt`
 
-- [ ] **Step 1: 실패하는 표면 시험 쓰기**
+- [ ] **Step 1: 실패하는 API 표면 시험 쓰기**
 
 ```kotlin
 package dev.picasso.registry.web
@@ -752,27 +752,27 @@ Expected: 실패 0. `git diff --stat` 에 주입 흔적이 없다.
 ### Task 6: 문서와 시험 수, 검증, PR
 
 **Files:**
-- Modify: `docs/commissioning.md`(§2 Step 2 행, §3 표 행 1개, §4 표 행 3개, 도장)
-- Modify: `docs/superpowers/specs/2026-09-05-picasso-design.md`(§15 일지 새 항목 206, 205 위에)
-- Modify: `docs/limits.md`(5행 «번호가 205 까지 갔고» → 206, 도장)
-- Modify: `CLAUDE.md`(시험 수 1,853 → 1,870, 도장)
-- Modify: `docs/verification.md`(3행 시험 수 1,853 → 1,870, 33행 «`*EndpointTest` 넷» → 다섯, 도장)
-- Modify: `registry/README.md`(42행 «`web/*EndpointTest` 넷이» → 다섯이, 도장)
+- Modify: `docs/commissioning.md`(§2 Step 2 행, §3 표 행 1개, §4 표 행 3개, 스탬프)
+- Modify: `docs/superpowers/specs/2026-09-05-picasso-design.md`(§15 변경 이력 새 항목 206, 205 위에)
+- Modify: `docs/limits.md`(5행 «번호가 205 까지 갔고» → 206, 스탬프)
+- Modify: `CLAUDE.md`(시험 수 1,853 → 1,870, 스탬프)
+- Modify: `docs/verification.md`(3행 시험 수 1,853 → 1,870, 33행 «`*EndpointTest` 넷» → 다섯, 스탬프)
+- Modify: `registry/README.md`(42행 «`web/*EndpointTest` 넷이» → 다섯이, 스탬프)
 
 - [ ] **Step 1: 문서 문장 초안 받기** — Fable 과 Codex 에 같은 브리프로(사실만 담는다):
   - commissioning.md §2 Step 2 의 «실행 위치 / API» 칸: `POST /operations/adapters` · `POST /operations/adapters/{adapterId}/versions`
   - §3 표 새 행: 어댑터 제품·빌드 추가 | 두 POST | 라인 정지 불필요(같은 내용 재요청은 같은 id)
   - §4 표 새 행 3개: 두 POST(조작) · `GET /operations/adapters`(조작 문 뒤의 읽기, 제품·빌드 목록과 적합성)
-  - 일지 206: `206. **제목**` 꼴의 제목 한 줄(이 꼴이어야 `설계 일지의 마지막 번호를 한계 대장이 맞게 적는다` 의 정규식 `^(\d+)\. \*\*` 가 센다) + 본문 2~3문단, 205 항목 바로 위에(최신이 위). 사실: 첫 바깥 소비자 picasso-ops(S1 스펙 §5)가 근거(ADR 9), 서비스가 결과를 가르게 된 이유(옛 `registerAdapter` 는 `Long` 만, 옛 `registerVersion` 은 형식 오류·중복을 `Rejected` 하나로 접고 모르는 제품은 FK 예외), 옛 `registerVersion` 은 새 메서드에 위임하되 같은 버전 재등록 거절은 유지, `registerAdapter` 는 호출 18곳(harness 3파일) 때문에 그대로 둠, 새 시험 17개와 결함 주입 4건.
-  - 금지: `handoff/narrator/ground-truth.jsonl` 의 `narrowable: false` 행의 `cause`·`candidates` 낱말 전부(지금은 «안 좁혀», «좁혀지지 않», «가르지 않», «진단 로그», «배터리 셀 불균형», «모터 드라이버 과열»)를 쓰지 않는다 — `GroundTruthTest` 가 docs/ 전체를 훑는다. 브리프를 쓰기 전에 그 파일에서 다시 뽑는다.
+  - 변경 이력 206: `206. **제목**` 꼴의 제목 한 줄(이 꼴이어야 `설계 일지의 마지막 번호를 한계 대장이 맞게 적는다` 의 정규식 `^(\d+)\. \*\*` 가 센다) + 본문 2~3문단, 205 항목 바로 위에(최신이 위). 사실: 첫 바깥 소비자 picasso-ops(S1 스펙 §5)가 근거(ADR 9), 서비스가 결과를 가르게 된 이유(옛 `registerAdapter` 는 `Long` 만, 옛 `registerVersion` 은 형식 오류·중복을 `Rejected` 하나로 접고 모르는 제품은 FK 예외), 옛 `registerVersion` 은 새 메서드에 위임하되 같은 버전 재등록 거부는 유지, `registerAdapter` 는 호출 18곳(harness 3파일) 때문에 그대로 둠, 새 시험 17개와 결함 주입 4건.
+  - 금지: `handoff/narrator/ground-truth.jsonl` 의 `narrowable: false` 행의 `cause`·`candidates` 용어 전부(지금은 «안 좁혀», «좁혀지지 않», «가르지 않», «진단 로그», «배터리 셀 불균형», «모터 드라이버 과열»)를 쓰지 않는다 — `GroundTruthTest` 가 docs/ 전체를 훑는다. 브리프를 쓰기 전에 그 파일에서 다시 뽑는다.
   취합해 반영한다. 경로 문자열은 `@...Mapping` 의 문자열과 글자 그대로 같아야 한다(`DocumentClaimsTest` 의 `설정 표면 목록이 바꾸는 문을 빠짐없이 적는다`).
 
 - [ ] **Step 2: 수 갱신**
-  - `CLAUDE.md` 11줄 `총 1,853개 테스트` 와 `docs/verification.md` 3줄 `1,853개` 를 실측으로. 새 `@Test` 는 17개(서비스 9 + 표면 8)이므로 1,870 을 기대하되, 기준이 된 main 이 그 사이 바뀌었으면 `자동화 시험의 수를 대외 문서가 맞게 적는다` 실패 메시지의 실측값을 쓴다.
+  - `CLAUDE.md` 11줄 `총 1,853개 테스트` 와 `docs/verification.md` 3줄 `1,853개` 를 실측으로. 새 `@Test` 는 17개(서비스 9 + API 표면 8)이므로 1,870 을 기대하되, 기준이 된 main 이 그 사이 바뀌었으면 `자동화 시험의 수를 대외 문서가 맞게 적는다` 실패 메시지의 실측값을 쓴다.
   - `docs/verification.md` 33행과 `registry/README.md` 42행의 «넷» 을 «다섯» 으로(`레지스트리 문 시험의 수를 검증 근거 표가 맞게 적는다`, `모듈 문이 적은 수가 코드와 같다` 가 `*EndpointTest` 파일 수를 센다).
   - `docs/limits.md` 5행 «번호가 205 까지 갔고» 를 206 으로.
 
-- [ ] **Step 3: 도장과 줄 끝**
+- [ ] **Step 3: 스탬프와 줄 끝**
 
 ```bash
 python tools/stamp.py docs/commissioning.md
@@ -781,13 +781,13 @@ python tools/stamp.py docs/verification.md
 python tools/stamp.py docs/limits.md
 python tools/stamp.py registry/README.md
 ```
-(`--open` 없이 돌리면 기존 열림 목록을 그대로 옮긴다.)
-`stamp.py` 는 LF 로 쓴다. 워크트리의 이 파일들은 CRLF 이므로 diff 잡음을 막으려고 CRLF 로 되돌린다(해시는 `\r\n` 을 정규화하므로 영향 없음). 파이썬으로 `\r\n` 수와 `\n` 수가 같은지 본다. 설계 일지는 `## 15.` 아래라 도장 해시에 안 들어간다 — 도장을 다시 찍지 않는다.
+(`--open` 없이 돌리면 기존 오픈 항목 목록을 그대로 옮긴다.)
+`stamp.py` 는 LF 로 쓴다. 워크트리의 이 파일들은 CRLF 이므로 diff 잡음을 막으려고 CRLF 로 되돌린다(해시는 `\r\n` 을 정규화하므로 영향 없음). 파이썬으로 `\r\n` 수와 `\n` 수가 같은지 본다. 설계 변경 이력은 `## 15.` 아래라 스탬프 해시에 안 들어간다 — 스탬프를 다시 찍지 않는다.
 
 - [ ] **Step 4: 전체 검증**
 
 Run: `./gradlew :registry:test :harness:test :gate:test :picasso:test --continue -q`
-Expected: XML 기준 네 모듈 실패 0. 특히 통과해야 하는 시험: `CompletionCriterionTest`(도장·해시), `DocumentClaimsTest` 의 `설정 표면 목록이 바꾸는 문을 빠짐없이 적는다`·`자동화 시험의 수를 대외 문서가 맞게 적는다`·`설계 일지의 마지막 번호를 한계 대장이 맞게 적는다`·`레지스트리 문 시험의 수를 검증 근거 표가 맞게 적는다`·`모듈 문이 적은 수가 코드와 같다`, `picasso` 의 `GroundTruthTest`(정답 누수). 하나라도 빨가면 이름으로 원인을 찾고 고친다.
+Expected: XML 기준 네 모듈 실패 0. 특히 통과해야 하는 시험: `CompletionCriterionTest`(스탬프·해시), `DocumentClaimsTest` 의 `설정 표면 목록이 바꾸는 문을 빠짐없이 적는다`·`자동화 시험의 수를 대외 문서가 맞게 적는다`·`설계 일지의 마지막 번호를 한계 대장이 맞게 적는다`·`레지스트리 문 시험의 수를 검증 근거 표가 맞게 적는다`·`모듈 문이 적은 수가 코드와 같다`, `picasso` 의 `GroundTruthTest`(정답 누수). 하나라도 빨가면 이름으로 원인을 찾고 고친다.
 
 - [ ] **Step 5: 커밋**(문장은 Fable·Codex 초안 취합, 훅 형식)
 
@@ -807,7 +807,7 @@ feat(registry): <취합한 제목>
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
-(`<…>` 자리는 실행 때 취합한 문장으로 채운다. 계획의 빈칸이 아니라 실행 시점 산출물이다. 커밋·PR 브리프에 넣을 사실: 새 REST 3개와 응답 코드, 서비스 결과 타입 `AdapterDeclared`·`VersionDeclared`, 옛 `registerVersion` 위임과 유지한 거절·바뀐 2곳, `registerAdapter` 를 그대로 둔 이유, 새 시험 17개(서비스 9·표면 8), 결함 주입 4건과 잡은 시험 이름, 고친 문서 6개(commissioning·일지 206·limits·CLAUDE·verification·registry README)와 도장, 네 모듈 시험 결과 수치, 첫 바깥 소비자 picasso-ops(ADR 9).)
+(`<…>` 자리는 실행 때 취합한 문장으로 채운다. 계획의 빈칸이 아니라 실행 시점 산출물이다. 커밋·PR 브리프에 넣을 사실: 새 REST 3개와 응답 코드, 서비스 결과 타입 `AdapterDeclared`·`VersionDeclared`, 옛 `registerVersion` 위임과 유지한 거부·바뀐 2곳, `registerAdapter` 를 그대로 둔 이유, 새 시험 17개(서비스 9·API 표면 8), 결함 주입 4건과 잡은 시험 이름, 고친 문서 6개(commissioning·변경 이력 206·limits·CLAUDE·verification·registry README)와 스탬프, 네 모듈 시험 결과 수치, 첫 바깥 소비자 picasso-ops(ADR 9).)
 
 - [ ] **Step 6: 푸시와 PR**
 
@@ -829,7 +829,7 @@ gh pr create --base main --title "feat(registry): <취합한 제목>" --body-fil
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 ```
-머지는 사용자 승인 뒤. 머지하면 메인 체크아웃이 main 을 당기기 **전에** khala 와 narrator 에 시각과 바뀐 docs/ 파일(commissioning.md, limits.md, verification.md, 설계 일지)을 알린다.
+머지는 사용자 승인 뒤. 머지하면 메인 체크아웃이 main 을 당기기 **전에** khala 와 narrator 에 시각과 바뀐 docs/ 파일(commissioning.md, limits.md, verification.md, 설계 변경 이력)을 알린다.
 
 - [ ] **Step 7: picasso-ops 쪽 후속** — P1 머지 커밋 해시를 picasso-ops S1 의 S1c 첫 커밋(서브모듈 포인터 이동)에 쓴다.
 
@@ -838,7 +838,7 @@ EOF
 **Files:**
 - Modify: picasso-ops `docs/superpowers/specs/2026-10-07-s1-skeleton-robot-lifecycle-design.md`(§5 «기존 동작 변경» 문단, §10 시험 표 P1 행)
 
-- [ ] **Step 1: 정정 문장 초안 받기** — Fable 과 Codex 에 같은 브리프로. 사실: 옛 `registerVersion` 의 같은 버전 재등록 거절은 유지하고 `AdapterLifecycleTest` 는 고치지 않는다, 멱등은 새 조작 문(`declareVersion`)에만, 옛 메서드가 바뀌는 2곳(모르는 제품 → `Rejected`, 빈 version → `Rejected`), 이유(옛 호출자가 멱등을 기대하지 않음), 결정 일자와 근거(P1 계획), §5 의 «`registerAdapter(` 를 부르는 시험이 14곳» 을 실측 «호출 18곳, 시험 파일 14개(그중 harness 3)» 로. 취합해 반영한다.
+- [ ] **Step 1: 정정 문장 초안 받기** — Fable 과 Codex 에 같은 브리프로. 사실: 옛 `registerVersion` 의 같은 버전 재등록 거부는 유지하고 `AdapterLifecycleTest` 는 고치지 않는다, 멱등은 새 조작 문(`declareVersion`)에만, 옛 메서드가 바뀌는 2곳(모르는 제품 → `Rejected`, 빈 version → `Rejected`), 이유(옛 호출자가 멱등을 기대하지 않음), 결정 일자와 근거(P1 계획), §5 의 «`registerAdapter(` 를 부르는 시험이 14곳» 을 실측 «호출 18곳, 시험 파일 14개(그중 harness 3)» 로. 취합해 반영한다.
 - [ ] **Step 2: 커밋** — picasso-ops 에서 `docs(specs): <취합한 제목>`, 같은 트레일러. P1 PR 링크를 본문 불릿에 넣는다. 푸시는 사용자 승인 뒤.
 
 ## 실행 결과 (2026-10-07)

@@ -36,7 +36,7 @@ export function CommissioningCards({ view, adapters, revisions, mode, busy, onBi
             <dd>
               {binding.adapterName} {binding.adapterVersion}
             </dd>
-            <dt>개정판</dt>
+            <dt>리비전</dt>
             <dd>
               {binding.vendor}/{binding.model}#{binding.revision}
             </dd>
@@ -68,7 +68,7 @@ export function CommissioningCards({ view, adapters, revisions, mode, busy, onBi
             <dt>기체가 답함</dt>
             <dd>
               {binding.siteNamesReportedAt === null
-                ? '아직 답 없음'
+                ? '아직 응답 없음'
                 : binding.siteNamesUnsupported
                   ? `명칭을 지원하지 않음 (${binding.siteNamesReportedAt})`
                   : `아는 명칭 ${binding.siteNamesCount ?? 0}개 (${binding.siteNamesReportedAt})`}
@@ -141,7 +141,7 @@ function BindForm({ adapters, revisions, busy, onBind }: BindProps) {
         </select>
       </label>
       <label>
-        개정판
+        리비전
         <select value={revisionId} onChange={(event) => setRevisionId(event.target.value)}>
           <option value="">고르십시오</option>
           {active.map((row) => (

@@ -57,7 +57,7 @@ object CommissioningJudge {
 
         if (binding == null) {
             return listOf(
-                finding(UNBOUND, "활성 바인딩 없음", "빌드와 활성 개정판의 바인딩", Owner.ENGINEER, true, "빌드와 활성 개정판을 골라 바인딩"),
+                finding(UNBOUND, "활성 바인딩 없음", "빌드와 활성 리비전의 바인딩", Owner.ENGINEER, true, "빌드와 활성 리비전을 골라 바인딩"),
             )
         }
         val keys = binding.siteNameKeys.joinToString(", ")
@@ -70,7 +70,7 @@ object CommissioningJudge {
             )
             "CLAIMED" -> listOf(
                 finding(
-                    SITE_NAMES_UNANSWERED, "기록 ${binding.siteNamesRegisteredAt}, 기체 답 없음", "기체가 아는 명칭 1개 이상",
+                    SITE_NAMES_UNANSWERED, "기록 ${binding.siteNamesRegisteredAt}, 기체 응답 없음", "기체가 아는 명칭 1개 이상",
                     Owner.SITE, false, "기체 보고 확인",
                 ),
             )

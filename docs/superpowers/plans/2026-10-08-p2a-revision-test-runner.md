@@ -1,8 +1,8 @@
-# P2a 개정판 시험 실행기 Implementation Plan
+# P2a 리비전 시험 실행기 Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** picasso 에 개정판 시험의 «요청 → 집기 → 3종 실행 → 보고 → `TESTED`» 고리를 짓고 PR 로 올린다. registry 에 문 3개와 `V16` 을, harness 운영 코드에 실행기와 시험 3종(`CONTRACT`·`NEGATIVE`·`DETERMINISM`)을 둔다.
+**Goal:** picasso 에 리비전 시험의 «요청 → 집기 → 3종 실행 → 보고 → `TESTED`» 고리를 짓고 PR 로 올린다. registry 에 문 3개와 `V16` 을, harness 운영 코드에 실행기와 시험 3종(`CONTRACT`·`NEGATIVE`·`DETERMINISM`)을 둔다.
 
 **Architecture:** registry 의 `TestRequestService` 가 요청(`requestTest`)·집기(`claim`)·보고(`report`)를 결과 타입으로 가르고, 새 `TestRequestController` 가 요청은 조작 문(`/operations`, 운영자 토큰), 집기·보고는 적재 문(`/ingest`, 적재 토큰)에 둔다. 보고는 실행 3행·요청의 «끝남»·승격을 한 트랜잭션으로 남기며 `BindingService` 의 기록·승격 규칙(`insertRun`·`promoteIfAllPass`)을 함께 쓴다. harness 의 `dev.picasso.harness.revision` 패키지가 `MinimalParameters`(선언에서 값 만들기)·`RevisionSuites`(3종)·`RevisionTestRunner`(폴링·보고, `HttpTestDesk`)를 든다. harness 운영 코드는 `:registry` 를 모르고 HTTP 로만 닿는다.
 
@@ -381,7 +381,7 @@ index 1d972b3..1a11145 100644
      fun activate(profileRevisionId: Long, actor: String): ActivateOutcome = db.transaction { c ->
 ```
 
-- [ ] **Step 5: `TestRequestService` 를 아래 내용으로 바꾼다.** 옛 `request` 는 `requestTest` 에 위임한다(바뀐 동작 둘: 열린 요청이 있으면 그 id, 없는 개정판·`DRAFT`·`REVOKED` 는 예외).
+- [ ] **Step 5: `TestRequestService` 를 아래 내용으로 바꾼다.** 옛 `request` 는 `requestTest` 에 위임한다(바뀐 동작 둘: 열린 요청이 있으면 그 id, 없는 리비전·`DRAFT`·`REVOKED` 는 예외).
 
 ```kotlin
 package dev.picasso.registry.testing
@@ -1543,7 +1543,7 @@ class RevisionSuites(
 - [ ] **Step 6: 통과 확인**
 
 Run: `./gradlew :harness:test --tests '*RevisionSuitesTest' -q`
-Expected: XML 기준 4개 통과. `humanoid-a` 한 벌이 1초 안쪽이다.
+Expected: XML 기준 4개 통과. `humanoid-a` 한 세트가 1초 안쪽이다.
 
 - [ ] **Step 7: 커밋**
 
@@ -2096,18 +2096,18 @@ Expected: 빈 출력.
 **Files:**
 - Modify: `tools/diagram-gen/components.mjs`(새 간선 `harness>capability` 의 경로)
 - Modify: `docs/diagrams/components.svg`, `docs/diagrams/components.dark.svg`(생성기 출력)
-- Modify: `README.md`, `docs/architecture.md`(구성도 대체 문구 «간선 17개» → 18, §4b 의존 표의 `harness`, 도장)
-- Modify: `registry/README.md`(V1~V16, `*EndpointTest` 여섯, 도장)
-- Modify: `docs/verification.md`(시험 수 1,905, `*EndpointTest` 여섯, 도장)
-- Modify: `CLAUDE.md`(시험 수 1,905, 도장)
-- Modify: `docs/commissioning.md`(§4 REST 표 행 3개, 도장)
+- Modify: `README.md`, `docs/architecture.md`(구성도 대체 문구 «간선 17개» → 18, §4b 의존 표의 `harness`, 스탬프)
+- Modify: `registry/README.md`(V1~V16, `*EndpointTest` 여섯, 스탬프)
+- Modify: `docs/verification.md`(시험 수 1,905, `*EndpointTest` 여섯, 스탬프)
+- Modify: `CLAUDE.md`(시험 수 1,905, 스탬프)
+- Modify: `docs/commissioning.md`(§4 REST 표 행 3개, 스탬프)
 - Create: `docs/adr/0049-revision-tests-have-a-runner.md`
-- Modify: `docs/adr/README.md`(ADR 49 행, 도장)
-- Modify: `docs/superpowers/specs/2026-09-05-picasso-design.md`(§14 행 49, §15 일지 207, 도장)
-- Modify: `docs/limits.md`(«번호가 207 까지», 도장)
-- Modify: `docs/glossary.md`(«네거티브 테스트» 와 개정판 `NEGATIVE` 의 구분, 도장)
-- Modify: `harness/README.md`(실행기 불릿, 도장)
-- Modify: `gate/src/test/kotlin/dev/picasso/gate/CompletionCriterionTest.kt`(주장 문서 64 → 65. ADR 49 가 도장 문서라 한 자리 는다)
+- Modify: `docs/adr/README.md`(ADR 49 행, 스탬프)
+- Modify: `docs/superpowers/specs/2026-09-05-picasso-design.md`(§14 행 49, §15 변경 이력 207, 스탬프)
+- Modify: `docs/limits.md`(«번호가 207 까지», 스탬프)
+- Modify: `docs/glossary.md`(«네거티브 테스트» 와 리비전 `NEGATIVE` 의 구분, 스탬프)
+- Modify: `harness/README.md`(실행기 불릿, 스탬프)
+- Modify: `gate/src/test/kotlin/dev/picasso/gate/CompletionCriterionTest.kt`(주장 문서 64 → 65. ADR 49 가 스탬프 문서라 한 자리 는다)
 
 - [ ] **Step 1: 생성기 패치와 구성도 다시 뽑기** — 아래를 `C:/Users/Eisen/AppData/Local/Temp/p2a-patches/p2a-5.patch` 로 저장하고 `git apply C:/Users/Eisen/AppData/Local/Temp/p2a-patches/p2a-5.patch` 한 뒤 생성기를 돌린다.
 
@@ -2133,7 +2133,7 @@ node docs/diagrams/make-dark.mjs docs/diagrams/components.svg
 ```
 Expected: 첫 줄 출력 `840x560 · 간선 16 경로 · contracts 13 · profile-model 7 · 수로 적은 간선 20`. 경로를 정하지 않으면 생성기가 «경로가 없는 간선: harness -> capability» 로 멈춘다.
 
-- [ ] **Step 2: 문서 패치** — 아래를 `C:/Users/Eisen/AppData/Local/Temp/p2a-patches/p2a-6.patch` 로 저장하고 `git apply C:/Users/Eisen/AppData/Local/Temp/p2a-patches/p2a-6.patch`. 도장(`> 마지막 대조` 줄)까지 들어 있으므로 따로 `tools/stamp.py` 를 돌리지 않는다. 문장은 사용자 지시대로 Fable·Codex 초안을 취합한 것이다.
+- [ ] **Step 2: 문서 패치** — 아래를 `C:/Users/Eisen/AppData/Local/Temp/p2a-patches/p2a-6.patch` 로 저장하고 `git apply C:/Users/Eisen/AppData/Local/Temp/p2a-patches/p2a-6.patch`. 스탬프(`> 마지막 대조` 줄)까지 들어 있으므로 따로 `tools/stamp.py` 를 돌리지 않는다. 문장은 사용자 지시대로 Fable·Codex 초안을 취합한 것이다.
 
 ````diff
 diff --git a/CLAUDE.md b/CLAUDE.md
@@ -2506,7 +2506,7 @@ index d892bbd..2cfa207 100644
 - [ ] **Step 4: 전체 빌드**
 
 Run: `./gradlew build --continue -q`
-Expected: XML 기준 1,905개 실패 0(registry 371, harness 208, gate 276 포함). 스파이크 실측 10분 51초. 실패가 `주장의 자리가 …` 면 도장 문서 수, `자동화 시험의 수를 대외 문서가 맞게 적는다` 면 시험 수, `구성도가 그린 간선이 …` 면 Step 1 이 빠진 것이다.
+Expected: XML 기준 1,905개 실패 0(registry 371, harness 208, gate 276 포함). 스파이크 실측 10분 51초. 실패가 `주장의 자리가 …` 면 스탬프 문서 수, `자동화 시험의 수를 대외 문서가 맞게 적는다` 면 시험 수, `구성도가 그린 간선이 …` 면 Step 1 이 빠진 것이다.
 
 - [ ] **Step 5: G1 주입** — Task 5 표의 G1. Expected: XML 에서 `원본 트리는 모든 검사를 통과한다` 하나만 실패. 되돌린 뒤 `git status --short` 에 `Check11OutboundScope.kt` 가 없어야 한다(Task 4 에서 이미 커밋했으므로 되돌림이 빠지면 여기서만 보인다).
 

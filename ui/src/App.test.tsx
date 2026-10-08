@@ -77,7 +77,7 @@ describe('App', () => {
     expect(screen.getByText('직전 값입니다 (t1 기준)')).toBeInTheDocument()
   })
 
-  it('운영자 토큰 거절은 전체 상태 한 자리에만 보인다', async () => {
+  it('운영자 토큰 거부는 전체 상태 한 자리에만 보인다', async () => {
     serve({ registry: 'REGISTRY_UNAUTHORIZED', checkedAt: 't2', robots: [robot], robotsAsOf: 't1' })
     render(<App />)
     expect(await screen.findByRole('alert')).toHaveTextContent('운영자 토큰 설정 확인')

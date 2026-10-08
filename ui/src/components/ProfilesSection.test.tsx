@@ -64,11 +64,11 @@ const posted = (fake: ReturnType<typeof installFakeOps>) => fake.calls.find((cal
 describe('프로파일', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('카탈로그 한 줄과 개정판마다 상태·스위트 결과와 실행 주체·시험 요청 상태가 보인다', async () => {
+  it('카탈로그 한 줄과 리비전마다 상태·스위트 결과와 실행 주체·시험 요청 상태가 보인다', async () => {
     installFakeOps(robots, adapterView(), tested())
     const profiles = await section()
     expect(await within(profiles).findByText('스킬 2종, 계약 0.9.0')).toBeInTheDocument()
-    const table = within(profiles).getByRole('table', { name: '개정판 목록' })
+    const table = within(profiles).getByRole('table', { name: '리비전 목록' })
     expect(within(table).getByRole('row', { name: /humanoid-a 2 TESTED/ })).toHaveTextContent(
       'PASS (site-runner)PASS (site-runner)PASS (site-runner)끝남',
     )
@@ -90,10 +90,10 @@ describe('프로파일', () => {
     expect(await within(profiles).findByText('모름: 프로파일 목록을 아직 읽지 못했습니다')).toBeInTheDocument()
   })
 
-  it('시험 요청은 엔지니어 모드로 그 개정판의 경로에 보내고 결과가 기종·번호와 함께 보인다', async () => {
+  it('시험 요청은 엔지니어 모드로 그 리비전의 경로에 보내고 결과가 기종·번호와 함께 보인다', async () => {
     const fake = installFakeOps(robots, adapterView(), tested())
     const profiles = await section()
-    const row = within(within(profiles).getByRole('table', { name: '개정판 목록' })).getByRole('row', { name: /humanoid-a 2 TESTED/ })
+    const row = within(within(profiles).getByRole('table', { name: '리비전 목록' })).getByRole('row', { name: /humanoid-a 2 TESTED/ })
     await userEvent.click(within(row).getByRole('button', { name: '시험 요청' }))
     await waitFor(() => expect(fake.calls.some((call) => call.method === 'POST')).toBe(true))
     expect(posted(fake).url).toBe('/api/profile-revisions/5/test-requests')
@@ -101,11 +101,11 @@ describe('프로파일', () => {
     expect(await screen.findByText('picasso-ref/humanoid-a#2 시험 요청: 반영됨')).toBeInTheDocument()
   })
 
-  it('활성화 거절은 상태와 스위트 결과를 관측값으로 보인다', async () => {
+  it('활성화 거부는 상태와 스위트 결과를 관측값으로 보인다', async () => {
     const fake = installFakeOps(robots, adapterView(), tested())
     fake.answer = { status: 200, body: outcome({ result: 'REJECTED', registryStatus: 409, rejection: refused }) }
     const profiles = await section()
-    const row = within(within(profiles).getByRole('table', { name: '개정판 목록' })).getByRole('row', { name: /quadruped-b/ })
+    const row = within(within(profiles).getByRole('table', { name: '리비전 목록' })).getByRole('row', { name: /quadruped-b/ })
     await userEvent.click(within(row).getByRole('button', { name: '활성화' }))
     const notice = (await screen.findByText('picasso-ref/quadruped-b#1 활성화: 거절됨')).closest('[role="status"]') as HTMLElement
     expect(within(notice).getByText('활성화 조건 미달')).toBeInTheDocument()
@@ -114,7 +114,7 @@ describe('프로파일', () => {
 
   it('제출은 고른 파일의 글자를 그대로 보낸다', async () => {
     const fake = installFakeOps(robots)
-    const form = within(await section()).getByRole('form', { name: '개정판 제출' })
+    const form = within(await section()).getByRole('form', { name: '리비전 제출' })
     const text = '{\n  "vendor" : "picasso-ref",  "model": "humanoid-a", "revision": 2\n}\n'
     await userEvent.upload(within(form).getByLabelText('프로파일 문서'), new File([text], 'humanoid-a.json', { type: 'application/json' }))
     await userEvent.click(within(form).getByRole('button', { name: '제출' }))
@@ -128,7 +128,7 @@ describe('프로파일', () => {
 
   it('기종·번호를 읽지 못하는 문서는 알림에 파일 이름을 적고 판정은 registry 에 맡긴다', async () => {
     const fake = installFakeOps(robots)
-    const form = within(await section()).getByRole('form', { name: '개정판 제출' })
+    const form = within(await section()).getByRole('form', { name: '리비전 제출' })
     await userEvent.upload(within(form).getByLabelText('프로파일 문서'), new File(['{"vendor":"x"}'], 'broken.json', { type: 'application/json' }))
     await userEvent.click(within(form).getByRole('button', { name: '제출' }))
     await waitFor(() => expect(fake.calls.some((call) => call.method === 'POST')).toBe(true))
