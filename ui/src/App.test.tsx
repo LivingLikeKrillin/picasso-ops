@@ -43,12 +43,12 @@ function serve(view: RobotListView, records: OperationRecord[] = []) {
 describe('App', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('메뉴가 5영역이고 S1 에서 닫힌 3영역은 다음 단계로 표시한다', () => {
+  it('메뉴가 5영역이고 아직 닫힌 2영역은 다음 단계로 표시한다', () => {
     serve({ registry: 'OK', checkedAt: 't1', robots: [], robotsAsOf: 't1' })
     render(<App />)
     const nav = screen.getByRole('navigation', { name: '영역' })
     expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual([
-      '현장·자원 다음 단계',
+      '현장·자원',
       '로봇·연결',
       '임무·정책 다음 단계',
       '운영 다음 단계',

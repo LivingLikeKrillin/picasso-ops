@@ -45,6 +45,7 @@ export const KIND_LABEL: Record<string, string> = {
   NO_ACTIVE_BINDING: '활성 바인딩 없음',
   NOTHING_TO_REGISTER: '등록할 명칭 없음',
   UNCLASSIFIED: '분류되지 않은 거부',
+  SETTINGS_VERSION_CONFLICT: '현장 설정 버전 충돌',
 }
 
 /** «시운전» 칸(P2·S1d 스펙 §8.5). 연결 칸과 합치지 않는다. */

@@ -6,6 +6,8 @@ import { FindingCard } from './FindingCard'
 
 interface Props {
   view: RobotView
+  /** 연결 칸을 판정한 현장 설정(S2 스펙 §7). 목록이 싣지 않으면 없다. */
+  basis?: { version: number; seconds: number } | null
   mode: Mode
   busy: boolean
   onRetire: (reason: string) => void
@@ -22,6 +24,7 @@ interface Props {
  */
 export function RobotDetail({
   view,
+  basis,
   mode,
   busy,
   onRetire,
@@ -42,6 +45,14 @@ export function RobotDetail({
         <dd>{robot.status}</dd>
         <dt>연결</dt>
         <dd>{CONNECTION_LABEL[view.connection]}</dd>
+        {basis != null && (
+          <>
+            <dt>연결 판정 기준</dt>
+            <dd>
+              기준 {basis.seconds}초, 현장 설정 버전 {basis.version}
+            </dd>
+          </>
+        )}
         <dt>마지막 보고</dt>
         <dd>{robot.lastReportedAt ?? '보고 없음'}</dd>
         {retired && (

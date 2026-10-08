@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url'
  * 이어서 S1c 의 화면 쪽(스펙 §3). 제품 선언 → 빌드 선언 → 인스턴스 등록 → 인스턴스 목록에 UNTESTED.
  * 이어서 S1d 의 화면 쪽(P2·S1d 스펙 §3·§11). 개정판 제출(파일 고르기) → 시험 요청 → 현장 실행기가 TESTED → 활성화 →
  * 바인딩 → 명칭 기록 → «시운전 완료»(humanoid-01). quadruped-01 은 명칭을 티칭하지 않아 «기체가 아는 명칭 없음» 으로 막힌다.
+ * 이어서 S2 의 화면 쪽(S2 스펙 §3). 현장·자원 영역에서 연결 기준 시간을 바꾸면 버전 2 와 이력 행이 보이고, 운영자 모드는
+ * 바꾸지 못하며, 기체 상세가 버전 2 의 기준으로 판정한다.
  * registry 를 멈추는 것은 맨 끝이다. 그 뒤로는 조작이 registry 에 닿지 않는다.
  *
  * 선언 직후의 CLAIMED 는 여기서 단언하지 않는다. 실시간 1:1 시계에서는 다음 보고가 1초 안에 올 수도 있어
@@ -123,6 +125,24 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(quadruped.getByRole('heading', { name: '시운전: 미완' })).toBeVisible()
   await expect(quadruped.getByText('기체가 아는 명칭 없음', { exact: true })).toBeVisible()
   await expect(quadruped.getByText(/현장\(화면 밖\): 현장에서 명칭 티칭을 다시/)).toBeVisible()
+
+  // 현장 설정(S2 스펙 §3). 엔지니어 모드에서 연결 기준 시간을 바꾸면 새 버전과 이력 행이 보이고, 기체 상세가 그 버전으로
+  // 판정한다. 런처가 30초마다 보고하므로 120초면 기체는 계속 신선하다.
+  await page.getByRole('button', { name: '현장·자원' }).click()
+  const settings = page.getByRole('region', { name: '현장 설정' })
+  const change = settings.getByRole('form', { name: '현장 설정 변경' })
+  await change.getByLabel('연결 기준 시간(초)').fill('120')
+  await change.getByLabel('변경 사유').fill('연결 기준 늘림')
+  await change.getByRole('button', { name: '변경' }).click()
+  await expect(page.getByText('연결 기준 시간 120초로 변경: 반영됨', { exact: true })).toBeVisible()
+  const versions = settings.getByRole('table', { name: '현장 설정 버전 이력' })
+  await expect(versions.getByRole('row', { name: /^2 120초 local 엔지니어 연결 기준 늘림/ })).toBeVisible()
+  await page.getByLabel('운영자').check()
+  await expect(settings.getByText('현장 설정 변경은 엔지니어 모드에서 합니다', { exact: true })).toBeVisible()
+  await page.getByLabel('엔지니어').check()
+  await page.getByRole('button', { name: '로봇·연결' }).click()
+  await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
+  await expect(detail.getByText('기준 120초, 현장 설정 버전 2', { exact: true })).toBeVisible()
 
   // registry 를 멈춘다. 런처(registry 와 mimic 이 든 프로세스)를 끈다.
   const pidFile = fileURLToPath(new URL('../../build/site.pid', import.meta.url))

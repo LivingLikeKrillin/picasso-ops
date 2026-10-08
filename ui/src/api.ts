@@ -15,7 +15,10 @@ export interface Robot {
   reportingAfterRetirement: boolean
 }
 
-/** 막힘이나 거절 한 건. 화면에 내는 칸 5개와 맞춘다(스펙 §7.4). */
+/**
+ * 막힘이나 거부 한 건. 화면에 내는 칸 5개와 맞춘다(스펙 §7.4). S2 에서 근거 버전을 더했다(S2 스펙 §6.4).
+ * 근거 버전은 현장 설정에 기대는 판정(오래됨)에만 있고, 나머지는 없거나 null 이다.
+ */
 export interface Finding {
   kind: string
   observed: string
@@ -25,6 +28,7 @@ export interface Finding {
   inScreen: boolean
   action: string
   target: string | null
+  basisVersion?: number | null
 }
 
 /**
@@ -84,12 +88,34 @@ export interface RobotView {
   software?: Software | null
 }
 
-/** 운영 서비스의 `GET /api/robots`. `robots` 가 null 이면 모름, 빈 배열이면 없음이다(스펙 §9). */
+/**
+ * 운영 서비스의 `GET /api/robots`. `robots` 가 null 이면 모름, 빈 배열이면 없음이다(스펙 §9).
+ * `settingsVersion`·`connectionThresholdSeconds` 는 연결 칸과 막힘을 판정한 현장 설정 버전과 그 기준 시간이다(S2 스펙 §6.4).
+ */
 export interface RobotListView {
   registry: RegistryState
   checkedAt: string
   robots: RobotView[] | null
   robotsAsOf: string | null
+  settingsVersion?: number | null
+  connectionThresholdSeconds?: number | null
+}
+
+/** 현장 설정 버전 한 행(S2 스펙 §5). `mode` 는 운영 서비스의 열거 값(`ENGINEER`)이다. */
+export interface SiteSettingsRecord {
+  version: number
+  connectionThresholdSeconds: number
+  mode: string
+  user: string
+  reason: string
+  recordedAt: string
+}
+
+/** 운영 서비스의 `GET /api/site-settings`(S2 스펙 §6.1). `history` 는 최신부터다. */
+export interface SiteSettingsView {
+  current: SiteSettingsRecord
+  range: { minConnectionThresholdSeconds: number; maxConnectionThresholdSeconds: number }
+  history: SiteSettingsRecord[]
 }
 
 /** 어댑터 빌드 하나. `conformance` 는 registry 값 그대로다(S1 은 `UNTESTED` 만 본다). */
@@ -295,6 +321,13 @@ async function deliver(path: string, init: RequestInit): Promise<Sent> {
 const retirementPath = (robotId: string) => `/api/robots/${encodeURIComponent(robotId)}/retirement`
 
 export const fetchRobots = (session: Session) => getJson<RobotListView>('/api/robots', session)
+export const fetchSiteSettings = (session: Session) => getJson<SiteSettingsView>('/api/site-settings', session)
+export const changeSiteSettings = (
+  session: Session,
+  baseVersion: number,
+  connectionThresholdSeconds: number,
+  reason: string,
+) => send('PUT', '/api/site-settings', session, { baseVersion, connectionThresholdSeconds, reason })
 export const fetchOperations = (session: Session) =>
   getJson<OperationRecord[]>('/api/operations', session)
 export const declareRobot = (

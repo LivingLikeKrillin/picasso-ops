@@ -55,6 +55,23 @@ class BlockersTest {
     }
 
     @Test
+    fun `근거 버전은 기준 시간에 기대는 오래됨에만 싣는다`() {
+        val stale = Blockers.of(robot("CONFIRMED", at.minusSeconds(91)), at, threshold, basisVersion = 7).single()
+        assertEquals(Blockers.REPORT_STALE, stale.kind)
+        assertEquals(7L, stale.basisVersion)
+        val others = listOf(
+            robot("CLAIMED"),
+            robot("RETIRED", at.minusSeconds(5), retiredAt = at.minusSeconds(60), reportingAfterRetirement = true),
+            robot("UNREGISTERED"),
+        ).flatMap { Blockers.of(it, at, threshold, basisVersion = 7) }
+        assertEquals(
+            listOf(Blockers.AWAITING_FIRST_REPORT, Blockers.REPORTING_AFTER_RETIREMENT, Blockers.UNREGISTERED_ROW),
+            others.map { it.kind },
+        )
+        assertEquals(listOf(null, null, null), others.map { it.basisVersion })
+    }
+
+    @Test
     fun `퇴역 뒤 보고는 운영자가 화면 안에서 푼다`() {
         val finding = Blockers.of(
             robot("RETIRED", at.minusSeconds(5), retiredAt = at.minusSeconds(60), reportingAfterRetirement = true),

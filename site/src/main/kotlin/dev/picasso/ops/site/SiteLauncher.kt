@@ -6,7 +6,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * 실제 1초마다 가상 1초를 민다(1:1, 스펙 §6 ③). 비율을 바꾸면 운영 서비스의 연결 기준 90초(스펙 §7.3)도 다시 정한다.
+ * 실제 1초마다 가상 1초를 민다(1:1, 스펙 §6 ③). 비율을 바꾸면 운영 서비스의 연결 기준 시간 버전 1 의 90초와
+ * 허용 범위 하한 60초(S2 스펙 §5)도 다시 정한다.
  * 주기와 전진량이 같은 값이어야 1:1 이므로 하나로 둔다.
  */
 val TICK: Duration = Duration.ofSeconds(1)
