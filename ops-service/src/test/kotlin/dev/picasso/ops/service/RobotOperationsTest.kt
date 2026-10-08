@@ -72,7 +72,7 @@ class RobotOperationsTest {
         assertEquals("robot r1", row.target)
         assertEquals("정비", row.reason)
         assertEquals(OperationResult.SUCCEEDED, row.result)
-        assertTrue(row.registryResponse!!.contains("\"status\": 200"), row.registryResponse)
+        assertTrue(row.targetResponse!!.contains("\"status\": 200"), row.targetResponse)
     }
 
     @Test
@@ -112,7 +112,7 @@ class RobotOperationsTest {
         assertEquals(listOf(OperationResult.CONFIRMED_APPLIED, OperationResult.NO_RESPONSE), rows.map { it.result })
         assertEquals(setOf(outcome.requestId), rows.map { it.requestId }.toSet())
         // 확인 행에는 재조회에서 본 원장 상태가 남는다.
-        assertTrue(rows.first().registryResponse!!.contains("\"status\": \"RETIRED\""), rows.first().registryResponse)
+        assertTrue(rows.first().targetResponse!!.contains("\"status\": \"RETIRED\""), rows.first().targetResponse)
     }
 
     @Test

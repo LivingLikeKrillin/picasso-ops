@@ -7,6 +7,7 @@ import dev.picasso.ops.service.log.OperationLog
 import dev.picasso.ops.service.log.OperationResult
 import dev.picasso.ops.service.store.OpsSchema
 import dev.picasso.registry.PostgresSupport
+import org.flywaydb.core.Flyway
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.jdbc.datasource.DriverManagerDataSource
 import java.sql.SQLException
@@ -47,10 +48,26 @@ class OperationLogTest {
         assertEquals(
             listOf(
                 "request_id", "mode", "actor_user", "target", "request",
-                "reason", "result", "registry_response", "recorded_at",
+                "reason", "result", "target_response", "recorded_at",
             ),
             columns,
         )
+    }
+
+    /** S2 까지 쌓인 행이 V3 뒤에도 같은 값으로 읽힌다. 이름만 바꾸고 칸을 새로 만들지 않았다는 뜻이다(S3a 스펙 §8). */
+    @Test
+    fun `V3 는 기존 행의 응답을 그대로 두고 칸 이름만 target_response 로 바꾼다`() {
+        OpsSchema.flyway(dataSource, cleanable = true).clean()
+        Flyway.configure().configuration(OpsSchema.flyway(dataSource).configuration).target("2").load().migrate()
+        val id = UUID.randomUUID()
+        PostgresSupport.execute(
+            "INSERT INTO ops.operation_log (request_id, mode, actor_user, target, request, result, registry_response) " +
+                "VALUES ('$id', 'OPERATOR', 'kim', 'robot r1', '{}', 'SUCCEEDED', '{\"status\": 200}')",
+        )
+        OpsSchema.flyway(dataSource).migrate()
+        val record = log.list().single()
+        assertEquals(id, record.requestId)
+        assertEquals(json.readTree("""{"status":200}"""), json.readTree(record.targetResponse))
     }
 
     @Test
@@ -65,7 +82,7 @@ class OperationLogTest {
         assertEquals(json.readTree("""{"reason":"정비"}"""), json.readTree(record.request))
         assertEquals("정비", record.reason)
         assertEquals(OperationResult.SUCCEEDED, record.result)
-        assertEquals(json.readTree("""{"status":200}"""), json.readTree(record.registryResponse))
+        assertEquals(json.readTree("""{"status":200}"""), json.readTree(record.targetResponse))
     }
 
     @Test

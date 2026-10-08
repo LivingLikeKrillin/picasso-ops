@@ -18,7 +18,7 @@ import java.util.UUID
  * 응답 없음 뒤 재조회의 판정.
  *
  * @param applied 이 조작이 반영됐는가
- * @param observed 재조회에서 본 대상의 모습. 확인 행의 `registry_response` 에 `observed` 로 남는다. 대상이 없으면 널이다
+ * @param observed 재조회에서 본 대상의 모습. 확인 행의 `target_response` 에 `observed` 로 남는다. 대상이 없으면 널이다
  */
 data class Recheck(val applied: Boolean, val observed: JsonNode?)
 
@@ -106,7 +106,7 @@ class OperationRunner(
 
     private fun parse(body: String): JsonNode? = runCatching { json.readTree(body) }.getOrNull()?.takeIf { it.isObject }
 
-    /** 조작 기록의 `registry_response` 칸. 코드와 본문을 남긴다. 본문이 JSON 이 아니면 글자로 남긴다. */
+    /** 조작 기록의 `target_response` 칸. 코드와 본문을 남긴다. 본문이 JSON 이 아니면 글자로 남긴다. */
     private fun responseJson(write: RegistryWrite.Answered): String {
         val node = json.createObjectNode().put("status", write.status)
         val body = parse(write.body)

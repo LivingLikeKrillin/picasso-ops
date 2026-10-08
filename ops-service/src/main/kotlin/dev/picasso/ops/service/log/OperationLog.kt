@@ -14,7 +14,12 @@ import java.util.UUID
  */
 enum class OperationResult { SUCCEEDED, REJECTED, NO_RESPONSE, CONFIRMED_APPLIED, CONFIRMED_NOT_APPLIED }
 
-/** 조작 기록 한 행. 칸 9개(스펙 §7.1). [request]·[registryResponse] 는 JSON 문자열이다. */
+/**
+ * 조작 기록 한 행. 칸 9개(스펙 §7.1). [request]·[targetResponse] 는 JSON 문자열이다.
+ *
+ * [targetResponse] 는 상태를 바꾸는 쪽(registry 또는 실행 호스트)의 응답이다. S2 까지는 registry 만 있어
+ * `registry_response` 였고, S3a 의 V3 마이그레이션이 이름을 바꿨다(S3a 스펙 §8).
+ */
 data class OperationRecord(
     val requestId: UUID,
     val mode: Mode,
@@ -23,7 +28,7 @@ data class OperationRecord(
     val request: String,
     val reason: String?,
     val result: OperationResult,
-    val registryResponse: String?,
+    val targetResponse: String?,
     val recordedAt: Instant,
 )
 
@@ -37,15 +42,15 @@ class OperationLog(private val jdbc: JdbcClient) {
         request: String,
         reason: String?,
         result: OperationResult,
-        registryResponse: String?,
+        targetResponse: String?,
     ) {
         jdbc.sql(
             """
             INSERT INTO ops.operation_log
-                (request_id, mode, actor_user, target, request, reason, result, registry_response)
+                (request_id, mode, actor_user, target, request, reason, result, target_response)
             VALUES
                 (:requestId, :mode, :user, :target, CAST(:request AS JSONB), :reason, :result,
-                 CAST(:registryResponse AS JSONB))
+                 CAST(:targetResponse AS JSONB))
             """.trimIndent(),
         )
             .param("requestId", requestId)
@@ -55,7 +60,7 @@ class OperationLog(private val jdbc: JdbcClient) {
             .param("request", request, Types.VARCHAR)
             .param("reason", reason, Types.VARCHAR)
             .param("result", result.name)
-            .param("registryResponse", registryResponse, Types.VARCHAR)
+            .param("targetResponse", targetResponse, Types.VARCHAR)
             .update()
     }
 
@@ -67,7 +72,7 @@ class OperationLog(private val jdbc: JdbcClient) {
         jdbc.sql(
             """
             SELECT request_id, mode, actor_user, target, request::text AS request, reason, result,
-                   registry_response::text AS registry_response, recorded_at
+                   target_response::text AS target_response, recorded_at
             FROM ops.operation_log
             ORDER BY recorded_at DESC
             LIMIT :limit
@@ -83,7 +88,7 @@ class OperationLog(private val jdbc: JdbcClient) {
                     request = rs.getString("request"),
                     reason = rs.getString("reason"),
                     result = OperationResult.valueOf(rs.getString("result")),
-                    registryResponse = rs.getString("registry_response"),
+                    targetResponse = rs.getString("target_response"),
                     recordedAt = rs.getObject("recorded_at", OffsetDateTime::class.java).toInstant(),
                 )
             }

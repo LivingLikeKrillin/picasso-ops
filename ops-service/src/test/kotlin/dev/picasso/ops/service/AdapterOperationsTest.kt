@@ -110,7 +110,7 @@ class AdapterOperationsTest {
         assertEquals(OperationResult.NO_RESPONSE to OperationResult.CONFIRMED_APPLIED, outcome.result to outcome.confirmation)
         val rows = log.list()
         assertEquals(listOf(OperationResult.CONFIRMED_APPLIED, OperationResult.NO_RESPONSE), rows.map { it.result })
-        assertTrue(rows.first().registryResponse!!.contains("\"adapter_id\": 1"), rows.first().registryResponse)
+        assertTrue(rows.first().targetResponse!!.contains("\"adapter_id\": 1"), rows.first().targetResponse)
     }
 
     @Test
@@ -148,7 +148,7 @@ class AdapterOperationsTest {
         val outcome = operations.registerInstance(lee, "i1", 11, "tcp://fleet:1")
         assertEquals(OperationResult.CONFIRMED_APPLIED, outcome.confirmation)
         val confirmation = log.list().first()
-        assertTrue(confirmation.registryResponse!!.contains("\"version\": \"1.1.0\""), confirmation.registryResponse)
+        assertTrue(confirmation.targetResponse!!.contains("\"version\": \"1.1.0\""), confirmation.targetResponse)
     }
 
     @Test
