@@ -28,9 +28,12 @@ object Blockers {
         return if (Duration.between(last, at) > threshold) Connection.STALE else Connection.FRESH
     }
 
-    fun of(robot: RegistryRobot, at: Instant, threshold: Duration): List<Finding> = buildList {
-        fun add(kind: String, observed: String, expected: String, owner: Owner, inScreen: Boolean, action: String) =
-            add(Finding(kind, observed, expected, at, owner, inScreen, action, robot.robotId))
+    /**
+     * @param basisVersion [threshold] 가 나온 현장 설정 버전(S2 스펙 §6.4). 기준 시간에 기대는 `REPORT_STALE` 에만 싣는다.
+     */
+    fun of(robot: RegistryRobot, at: Instant, threshold: Duration, basisVersion: Long? = null): List<Finding> = buildList {
+        fun add(kind: String, observed: String, expected: String, owner: Owner, inScreen: Boolean, action: String, basis: Long? = null) =
+            add(Finding(kind, observed, expected, at, owner, inScreen, action, robot.robotId, basis))
 
         if (robot.status == "CLAIMED" && robot.lastReportedAt == null) {
             add(AWAITING_FIRST_REPORT, "보고 0회", "생존 보고 1회 이상", Owner.SITE, false, "기체·어댑터 기동과 사이트 id 확인")
@@ -38,7 +41,7 @@ object Blockers {
         if (robot.status == "CONFIRMED" && connection(robot, at, threshold) == Connection.STALE) {
             add(
                 REPORT_STALE, "마지막 보고 ${robot.lastReportedAt}", "${threshold.seconds}초 안의 보고",
-                Owner.SITE, false, "연결 확인",
+                Owner.SITE, false, "연결 확인", basisVersion,
             )
         }
         if (robot.reportingAfterRetirement) {

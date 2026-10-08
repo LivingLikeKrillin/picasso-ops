@@ -8,6 +8,8 @@ import dev.picasso.ops.service.operations.AdapterOperations
 import dev.picasso.ops.service.operations.RobotOperations
 import dev.picasso.ops.service.registry.RegistryClient
 import dev.picasso.ops.service.robots.RobotListService
+import dev.picasso.ops.service.settings.SiteSettingsOperations
+import dev.picasso.ops.service.settings.SiteSettingsStore
 import dev.picasso.ops.service.store.OpsSchema
 import dev.picasso.ops.service.store.OpsSchemaMigrated
 import dev.picasso.ops.service.web.SiteId
@@ -17,8 +19,9 @@ import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
 import org.springframework.boot.builder.SpringApplicationBuilder
 import org.springframework.context.annotation.Bean
 import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.jdbc.datasource.DataSourceTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
-import java.time.Duration
 import javax.sql.DataSource
 
 /** 운영 서비스(스펙 §7). Flyway 자동설정을 끄는 이유는 [OpsSchema] 에 있다. */
@@ -49,14 +52,14 @@ open class OpsApplication {
         return RegistryClient(url, token)
     }
 
-    /** [threshold] 는 연결 칸의 기준 시간이다(스펙 §7.3). S2 에서 데이터로 옮긴다. */
+    /** 연결 칸의 기준 시간은 현장 설정 버전에서 읽는다(S2 스펙 §6.4). S1 에서는 설정 파일 값이었다. */
     @Bean
     open fun robotList(
         registry: RegistryClient,
         siteId: SiteId,
         clock: Clock,
-        @Value("\${ops.connection.threshold}") threshold: Duration,
-    ): RobotListService = RobotListService(registry, registry, siteId.value, clock, threshold, commissioning = registry)
+        settings: SiteSettingsStore,
+    ): RobotListService = RobotListService(registry, registry, siteId.value, clock, settings, commissioning = registry)
 
     @Bean
     open fun adapterList(registry: RegistryClient, siteId: SiteId, clock: Clock): AdapterListService =
@@ -88,6 +91,23 @@ open class OpsApplication {
         siteId: SiteId,
         clock: Clock,
     ): ProfileOperations = ProfileOperations(registry, registry, registry, registry, log, siteId.value, clock)
+
+    /** [migrated] 는 쓰지 않는다. 받는 것만으로 ops 마이그레이션 뒤에 이 빈이 만들어진다. */
+    @Bean
+    open fun siteSettings(
+        jdbc: JdbcClient,
+        @Suppress("UNUSED_PARAMETER") migrated: OpsSchemaMigrated,
+    ): SiteSettingsStore = SiteSettingsStore(jdbc)
+
+    /** 새 버전 행과 조작 기록 행을 한 트랜잭션에 넣는다(S2 스펙 §6.2). */
+    @Bean
+    open fun siteSettingsOperations(
+        settings: SiteSettingsStore,
+        log: OperationLog,
+        dataSource: DataSource,
+        clock: Clock,
+    ): SiteSettingsOperations =
+        SiteSettingsOperations(settings, log, TransactionTemplate(DataSourceTransactionManager(dataSource)), clock)
 
     /** [migrated] 는 쓰지 않는다. 받는 것만으로 ops 마이그레이션 뒤에 이 빈이 만들어진다. */
     @Bean

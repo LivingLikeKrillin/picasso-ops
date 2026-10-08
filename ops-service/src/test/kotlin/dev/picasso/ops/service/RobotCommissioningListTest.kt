@@ -8,6 +8,7 @@ import dev.picasso.ops.service.registry.RegistrySoftware
 import dev.picasso.ops.service.robots.CommissioningState
 import dev.picasso.ops.service.robots.RegistryState
 import dev.picasso.ops.service.robots.RobotListService
+import dev.picasso.ops.service.settings.SiteSettingsValues
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -48,7 +49,7 @@ class RobotCommissioningListTest {
         { RegistryCall.Ok(Unit) },
         "site-01",
         clock,
-        Duration.ofSeconds(90),
+        { SiteSettingsValues(1, Duration.ofSeconds(90)) },
         commissioning = object : CommissioningSource {
             override fun bindings(siteId: String) = bindings.also { asked += "bindings $siteId" }
             override fun software(siteId: String) = software.also { asked += "software $siteId" }

@@ -73,6 +73,11 @@ export function RobotsArea({ view, adapters, profiles, opsError, session, onChan
           <RobotDetail
             key={current.robot.robotId}
             view={current}
+            basis={
+              view?.settingsVersion != null && view.connectionThresholdSeconds != null
+                ? { version: view.settingsVersion, seconds: view.connectionThresholdSeconds }
+                : null
+            }
             mode={session.mode}
             busy={busy}
             onRetire={(reason) =>

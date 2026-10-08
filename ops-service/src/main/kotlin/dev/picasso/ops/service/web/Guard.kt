@@ -5,7 +5,10 @@ import dev.picasso.ops.service.actor.Mode
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 
-/** registry 에 보내기 전에 막은 요청의 답. 조작 기록에 남기지 않는다. registry 에 닿지 않은 요청은 조작이 아니다. */
+/**
+ * 관문에서 막은 요청의 답. 조작 기록에 남기지 않는다. 상태를 바꾸는 쪽(registry, 또는 S2 의 현장 설정)에 닿지 않은 요청은
+ * 조작이 아니다(S2 스펙 §6.2).
+ */
 data class PreRejection(val error: String, val detail: String)
 
 /**

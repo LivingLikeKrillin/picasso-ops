@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { fetchAdapters, fetchOperations, fetchProfiles, fetchRobots } from './api'
-import type { AdapterListView, OperationRecord, ProfileListView, RobotListView, Session } from './api'
+import { fetchAdapters, fetchOperations, fetchProfiles, fetchRobots, fetchSiteSettings } from './api'
+import type { AdapterListView, OperationRecord, ProfileListView, RobotListView, Session, SiteSettingsView } from './api'
 import { AREAS } from './areas'
 import type { AreaId } from './areas'
 import { HistoryArea } from './components/HistoryArea'
 import { ModeSwitch } from './components/ModeSwitch'
 import { RegistryBanner } from './components/RegistryBanner'
 import { RobotsArea } from './components/RobotsArea'
+import { SiteArea } from './components/SiteArea'
 
 const POLL_MS = 5000
 
@@ -19,22 +20,30 @@ export default function App() {
   const [adapters, setAdapters] = useState<AdapterListView | null>(null)
   const [profiles, setProfiles] = useState<ProfileListView | null>(null)
   const [records, setRecords] = useState<OperationRecord[] | null>(null)
+  const [settings, setSettings] = useState<SiteSettingsView | null>(null)
   const [opsError, setOpsError] = useState<string | null>(null)
   // 조작이 끝나면 하나 올린다. 목록을 주기(5초)를 기다리지 않고 다시 읽는다.
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
     let alive = true
-    // 실패해도 직전 값을 지우지 않는다. 대신 opsError 로 직전 값임을 표시한다(스펙 §9). 넷 중 하나라도 못 읽으면 넷 다
-    // 직전 값이다(P2·S1d 스펙 §8.1).
+    // 실패해도 직전 값을 지우지 않는다. 대신 opsError 로 직전 값임을 표시한다(스펙 §9). 다섯 중 하나라도 못 읽으면 다섯 다
+    // 직전 값이다(P2·S1d 스펙 §8.1, S2 스펙 §7).
     const load = () => {
-      Promise.all([fetchRobots(session), fetchAdapters(session), fetchProfiles(session), fetchOperations(session)])
-        .then(([nextView, nextAdapters, nextProfiles, nextRecords]) => {
+      Promise.all([
+        fetchRobots(session),
+        fetchAdapters(session),
+        fetchProfiles(session),
+        fetchOperations(session),
+        fetchSiteSettings(session),
+      ])
+        .then(([nextView, nextAdapters, nextProfiles, nextRecords, nextSettings]) => {
           if (!alive) return
           setView(nextView)
           setAdapters(nextAdapters)
           setProfiles(nextProfiles)
           setRecords(nextRecords)
+          setSettings(nextSettings)
           setOpsError(null)
         })
         .catch((error: unknown) => {
@@ -77,6 +86,14 @@ export default function App() {
             view={view}
             adapters={adapters}
             profiles={profiles}
+            opsError={opsError}
+            session={session}
+            onChanged={() => setTick((value) => value + 1)}
+          />
+        )}
+        {current.id === 'site' && (
+          <SiteArea
+            view={settings}
             opsError={opsError}
             session={session}
             onChanged={() => setTick((value) => value + 1)}

@@ -7,7 +7,10 @@ interface Props {
   onSelect?: (robotId: string) => void
 }
 
-/** 막힘이나 거절 한 건을 5칸으로 보인다(스펙 §7.4): 종류, 관측값과 기대값, 마지막 확인 시각, 해결 담당, 바로 갈 링크. */
+/**
+ * 막힘이나 거부 한 건을 보인다(스펙 §7.4): 종류, 관측값과 기대값, 마지막 확인 시각, 근거 버전(S2 스펙 §7), 해결 담당,
+ * 바로 갈 링크. 근거 버전이 없는 판정(registry 상태에서 나온 막힘, 조작 거부)은 «해당 없음» 이다.
+ */
 export function FindingCard({ finding, onSelect }: Props) {
   return (
     <dl className="finding">
@@ -19,6 +22,8 @@ export function FindingCard({ finding, onSelect }: Props) {
       </dd>
       <dt>마지막 확인</dt>
       <dd>{finding.checkedAt}</dd>
+      <dt>근거 버전</dt>
+      <dd>{finding.basisVersion != null ? `현장 설정 버전 ${finding.basisVersion}` : '해당 없음'}</dd>
       <dt>해결 담당</dt>
       <dd>
         {OWNER_LABEL[finding.owner]}({finding.inScreen ? '화면 안' : '화면 밖'}): {finding.action}

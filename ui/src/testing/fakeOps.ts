@@ -6,6 +6,7 @@ import type {
   OperationOutcome,
   ProfileListView,
   Revision,
+  SiteSettingsView,
   RevisionView,
   RobotListView,
   RobotView,
@@ -26,6 +27,7 @@ export interface FakeOps {
   view: RobotListView
   adapters: AdapterListView
   profiles: ProfileListView
+  settings: SiteSettingsView
   /** 여기 든 경로의 GET 은 503 이다. 운영 서비스의 일부 읽기만 실패하는 경우를 만든다. */
   failing: Set<string>
   answer: { status: number; body: unknown }
@@ -44,6 +46,24 @@ export function profileView(partial: Partial<ProfileListView> = {}): ProfileList
     catalog: { contractSemver: '0.9.0', skillTypes: [] },
     revisions: [],
     asOf: 't1',
+    ...partial,
+  }
+}
+
+/** 현장 설정. 기본은 마이그레이션이 넣는 버전 1 의 90초 하나다(S2 스펙 §5). */
+export function settingsView(partial: Partial<SiteSettingsView> = {}): SiteSettingsView {
+  const first = {
+    version: 1,
+    connectionThresholdSeconds: 90,
+    mode: 'ENGINEER',
+    user: 'system',
+    reason: 'S1 설정값 이전',
+    recordedAt: 't0',
+  }
+  return {
+    current: first,
+    range: { minConnectionThresholdSeconds: 60, maxConnectionThresholdSeconds: 3600 },
+    history: [first],
     ...partial,
   }
 }
@@ -131,8 +151,17 @@ export function installFakeOps(
   view: RobotListView,
   adapters: AdapterListView = adapterView(),
   profiles: ProfileListView = profileView(),
+  settings: SiteSettingsView = settingsView(),
 ): FakeOps {
-  const fake: FakeOps = { calls: [], view, adapters, profiles, failing: new Set(), answer: { status: 200, body: outcome({}) } }
+  const fake: FakeOps = {
+    calls: [],
+    view,
+    adapters,
+    profiles,
+    settings,
+    failing: new Set(),
+    answer: { status: 200, body: outcome({}) },
+  }
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -153,7 +182,9 @@ export function installFakeOps(
               ? fake.adapters
               : url === '/api/profiles'
                 ? fake.profiles
-                : []
+                : url === '/api/site-settings'
+                  ? fake.settings
+                  : []
         return new Response(JSON.stringify(body), { status: 200 })
       }
       return new Response(JSON.stringify(fake.answer.body), { status: fake.answer.status })

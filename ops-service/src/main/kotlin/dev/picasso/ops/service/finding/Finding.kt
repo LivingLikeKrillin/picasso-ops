@@ -10,10 +10,12 @@ enum class Owner { SITE, OPERATOR, ENGINEER, NONE }
  *
  * 화면에 내는 칸 5개와 맞춘다. 종류는 [kind], 관측값과 기대값은 [observed]·[expected], 마지막 확인 시각은
  * [checkedAt], 해결 담당은 [owner]·[inScreen], 바로 갈 링크는 [target] 이다. 링크 모양은 화면이 정한다.
+ * S2 에서 근거 버전 [basisVersion] 칸을 더했다(S2 스펙 §6.4).
  *
  * @param checkedAt 이 판정이 기댄 값을 registry 에서 읽은 시각
  * @param inScreen 화면 안에서 풀 수 있는가. 거짓이면 현장 등 화면 밖에서 풀린다
  * @param target 링크가 가리킬 기체 id. 없으면 널
+ * @param basisVersion 이 판정이 기댄 현장 설정 버전. 현장 설정에 기대지 않는 판정(registry 상태에서 나온 막힘, 조작 거부)은 널
  */
 data class Finding(
     val kind: String,
@@ -24,4 +26,5 @@ data class Finding(
     val inScreen: Boolean,
     val action: String,
     val target: String?,
+    val basisVersion: Long? = null,
 )
