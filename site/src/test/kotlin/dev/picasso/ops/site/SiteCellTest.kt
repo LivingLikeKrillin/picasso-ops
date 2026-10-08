@@ -14,6 +14,9 @@ import java.net.http.HttpResponse
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -21,7 +24,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * 셀 대역(S3a 스펙 §6.3). registry 없이 mimic 하나와 셀 대역만 띄우고, 기체에 `pick_place` 를 직접 걸어 가상 시계로 끝낸다.
+ * 셀 대역(S3a 스펙 §6.3)과 이름 있는 신호(S3b 스펙 §5). registry 없이 mimic 하나와 셀 대역만 띄우고, 기체에 `pick_place` 를 직접 걸어 가상 시계로 끝낸다.
  * 시계를 미는 순서는 [Site.advance] 와 같다(민 직후 훑기).
  */
 class SiteCellTest {
@@ -149,7 +152,7 @@ class SiteCellTest {
             assertEquals(200, got.statusCode())
             assertEquals("application/json", got.headers().firstValue("Content-Type").orElse(null))
             val body = json.readTree(got.body())
-            assertEquals(setOf("presentations", "slots"), body.fieldNames().asSequence().toSet())
+            assertEquals(listOf("presentations", "slots", "signals"), body.fieldNames().asSequence().toList())
 
             val source = body["presentations"].single()
             assertEquals(SOURCE, source["id"].asText())
@@ -185,6 +188,161 @@ class SiteCellTest {
         }
     }
 
+    /** `POST /cell/signals/{name}` 한 번. */
+    private fun Bench.post(name: String, body: String, contentType: String = "application/json"): HttpResponse<String> =
+        http.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:${cell.port}/cell/signals/$name"))
+                .header("Content-Type", contentType)
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+
+    private fun Bench.signal(name: String): CellSignal = cell.snapshot.signals.single { it.name == name }
+
+    @Test
+    fun `표준 픽스처는 신호 셋을 처음 값으로 내고 GET cell 에 사양과 값이 실린다`() {
+        Bench().use { bench ->
+            assertEquals(
+                listOf(
+                    CellSignal(RACK_PRESENT, "RACK-204", SignalKind.BOOLEAN, false, "false", null),
+                    CellSignal(GUARD_CLOSED, null, SignalKind.BOOLEAN, true, "true", null),
+                    CellSignal(LOT_CODE, null, SignalKind.TEXT, false, "LOT-0001", null),
+                ),
+                bench.cell.snapshot.signals,
+            )
+
+            val got = http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:${bench.cell.port}/cell")).build(), HttpResponse.BodyHandlers.ofString())
+            val signals = json.readTree(got.body())["signals"]
+            assertEquals(listOf(RACK_PRESENT, GUARD_CLOSED, LOT_CODE), signals.map { it["name"].asText() })
+            val rack = signals[0]
+            assertEquals(listOf("name", "location", "kind", "safety", "value", "observedAt"), rack.fieldNames().asSequence().toList())
+            assertEquals("RACK-204", rack["location"].asText())
+            assertEquals("BOOLEAN", rack["kind"].asText())
+            assertEquals(false, rack["safety"].asBoolean())
+            // 값은 종류와 상관없이 문자열이다.
+            assertTrue(rack["value"].isTextual, rack.toString())
+            assertEquals("false", rack["value"].asText())
+            assertTrue(rack["observedAt"].isNull)
+            assertTrue(signals[1]["location"].isNull)
+            assertEquals(true, signals[1]["safety"].asBoolean())
+            assertEquals("TEXT", signals[2]["kind"].asText())
+        }
+    }
+
+    @Test
+    fun `BOOLEAN 신호를 쓰면 값과 관측 시각이 지금 가상 시각으로 바뀌고 응답은 바뀐 신호 하나다`() {
+        Bench().use { bench ->
+            bench.advance(Duration.ofSeconds(7))
+            val first = bench.post(RACK_PRESENT, """{"value":"true"}""")
+            assertEquals(200, first.statusCode(), first.body())
+            assertEquals("application/json", first.headers().firstValue("Content-Type").orElse(null))
+            val body = json.readTree(first.body())
+            assertEquals(RACK_PRESENT, body["name"].asText())
+            assertEquals("true", body["value"].asText())
+            assertEquals(bench.now().toString(), body["observedAt"].asText())
+            assertEquals(CellSignal(RACK_PRESENT, "RACK-204", SignalKind.BOOLEAN, false, "true", bench.now()), bench.signal(RACK_PRESENT))
+
+            // 시계를 더 민 뒤 다시 쓰면 관측 시각이 따라온다. 다른 신호와 슬롯은 그대로다.
+            bench.advance(Duration.ofSeconds(30))
+            assertEquals(200, bench.post(RACK_PRESENT, """{"value":"false"}""").statusCode())
+            assertEquals("false", bench.signal(RACK_PRESENT).value)
+            assertEquals(bench.now(), bench.signal(RACK_PRESENT).observedAt)
+            assertEquals("LOT-0001", bench.signal(LOT_CODE).value)
+            assertTrue(bench.cell.snapshot.slots.none { it.occupied })
+        }
+    }
+
+    @Test
+    fun `BOOLEAN 신호에 true 나 false 가 아닌 값은 400 이고 값이 그대로다`() {
+        Bench().use { bench ->
+            listOf("yes", "TRUE", "1", "").forEach { value ->
+                val refused = bench.post(RACK_PRESENT, """{"value":"$value"}""")
+                assertEquals(400, refused.statusCode(), value)
+                assertEquals(SiteCell.SIGNAL_VALUE_INVALID, json.readTree(refused.body())["error"].asText())
+            }
+            assertEquals(CellSignal(RACK_PRESENT, "RACK-204", SignalKind.BOOLEAN, false, "false", null), bench.signal(RACK_PRESENT))
+        }
+    }
+
+    @Test
+    fun `안전 신호는 값이 맞아도 쓰기를 403 으로 거부하고 값이 그대로다`() {
+        Bench().use { bench ->
+            listOf("false", "true").forEach { value ->
+                val refused = bench.post(GUARD_CLOSED, """{"value":"$value"}""")
+                assertEquals(403, refused.statusCode(), refused.body())
+                assertEquals(SiteCell.SAFETY_SIGNAL_READ_ONLY, json.readTree(refused.body())["error"].asText())
+            }
+            assertEquals(CellSignal(GUARD_CLOSED, null, SignalKind.BOOLEAN, true, "true", null), bench.signal(GUARD_CLOSED))
+        }
+    }
+
+    @Test
+    fun `모르는 신호는 404 이고 TEXT 신호는 어떤 문자열이든 받는다`() {
+        Bench().use { bench ->
+            val unknown = bench.post("rack_ready", """{"value":"true"}""")
+            assertEquals(404, unknown.statusCode())
+            assertEquals(SiteCell.UNKNOWN_SIGNAL, json.readTree(unknown.body())["error"].asText())
+
+            val text = bench.post(LOT_CODE, """{"value":"LOT 7 / 두 번째"}""")
+            assertEquals(200, text.statusCode(), text.body())
+            assertEquals("LOT 7 / 두 번째", bench.signal(LOT_CODE).value)
+            assertEquals(200, bench.post(LOT_CODE, """{"value":""}""").statusCode())
+            assertEquals("", bench.signal(LOT_CODE).value)
+        }
+    }
+
+    @Test
+    fun `신호 쓰기는 JSON 객체의 문자열 값만 받고 POST 만 받으며 다른 경로는 404 다`() {
+        Bench().use { bench ->
+            listOf("""{"value":true}""", """{"value":null}""", """{"other":"true"}""", """["true"]""", "{not json").forEach { body ->
+                val reply = bench.post(RACK_PRESENT, body)
+                assertEquals(400, reply.statusCode(), body)
+                assertEquals(SiteCell.BAD_REQUEST, json.readTree(reply.body())["error"].asText(), body)
+            }
+            assertEquals(415, bench.post(RACK_PRESENT, """{"value":"true"}""", contentType = "text/plain").statusCode())
+            assertEquals("false", bench.signal(RACK_PRESENT).value)
+
+            val base = "http://127.0.0.1:${bench.cell.port}"
+            val get = http.send(HttpRequest.newBuilder(URI.create("$base/cell/signals/$RACK_PRESENT")).build(), HttpResponse.BodyHandlers.ofString())
+            assertEquals(405, get.statusCode())
+            assertEquals("POST", get.headers().firstValue("Allow").orElse(null))
+            listOf("$base/cell/signals/", "$base/cell/signals/$RACK_PRESENT/x", "$base/cell/x").forEach { url ->
+                val other = http.send(
+                    HttpRequest.newBuilder(URI.create(url)).header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("""{"value":"true"}""")).build(),
+                    HttpResponse.BodyHandlers.ofString(),
+                )
+                assertEquals(404, other.statusCode(), url)
+            }
+        }
+    }
+
+    @Test
+    fun `신호 쓰기는 mimic 엔진 잠금을 기다린다`() {
+        Bench().use { bench ->
+            val held = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val holder = Thread {
+                bench.mimic.server.exclusive {
+                    held.countDown()
+                    release.await()
+                }
+            }.apply { start() }
+            held.await()
+            val write = CompletableFuture.supplyAsync { bench.post(RACK_PRESENT, """{"value":"true"}""").statusCode() }
+            try {
+                Thread.sleep(300)
+                assertTrue(!write.isDone, "엔진 잠금을 쥔 동안 신호 쓰기가 끝났다")
+            } finally {
+                release.countDown()
+                holder.join()
+            }
+            assertEquals(200, write.get(5, TimeUnit.SECONDS))
+            assertEquals("true", bench.signal(RACK_PRESENT).value)
+        }
+    }
+
     private companion object {
         const val HUMANOID = "humanoid-01"
         const val QUADRUPED = "quadruped-01"
@@ -192,6 +350,9 @@ class SiteCellTest {
         const val MATERIAL = "ENGINE-COVER-A"
         const val S01 = "RACK-204.S01"
         const val S02 = "RACK-204.S02"
+        const val RACK_PRESENT = "rack_present"
+        const val GUARD_CLOSED = "guard_closed"
+        const val LOT_CODE = "lot_code"
         val START: Instant = Instant.parse("2026-10-08T00:00:00Z")
     }
 }
