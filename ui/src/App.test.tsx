@@ -43,7 +43,7 @@ function serve(view: RobotListView, records: OperationRecord[] = []) {
 describe('App', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('메뉴가 5영역이고 아직 닫힌 2영역은 다음 단계로 표시한다', () => {
+  it('메뉴가 5영역이고 아직 닫힌 1영역은 다음 단계로 표시한다', () => {
     serve({ registry: 'OK', checkedAt: 't1', robots: [], robotsAsOf: 't1' })
     render(<App />)
     const nav = screen.getByRole('navigation', { name: '영역' })
@@ -51,7 +51,7 @@ describe('App', () => {
       '현장·자원',
       '로봇·연결',
       '임무·정책 다음 단계',
-      '운영 다음 단계',
+      '운영',
       '이력',
     ])
   })

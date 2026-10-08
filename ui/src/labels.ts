@@ -1,4 +1,4 @@
-import type { CommissioningState, Connection, Owner, TestRequestState } from './api'
+import type { CommissioningState, Connection, HostSubmitResult, Owner, SkillFit, TestRequestState } from './api'
 
 /** 화면에 보이는 이름. 값은 운영 서비스의 열거형 그대로 받고, 이름만 여기서 붙인다. */
 export const CONNECTION_LABEL: Record<Connection, string> = {
@@ -46,6 +46,12 @@ export const KIND_LABEL: Record<string, string> = {
   NOTHING_TO_REGISTER: '등록할 명칭 없음',
   UNCLASSIFIED: '분류되지 않은 거부',
   SETTINGS_VERSION_CONFLICT: '현장 설정 버전 충돌',
+  JOB_ORDER_BAD_REQUEST: '작업 지시 폼 오류',
+  UNKNOWN_WORK_MASTER: '받지 않는 임무',
+  UNIT_ID_CONFLICT: '단위 id 겹침',
+  NO_ELIGIBLE_ROBOT: '배정 가능한 기체 없음',
+  MODE_NOT_ALLOWED: '이 모드에서 할 수 없는 조작',
+  ACTOR_REQUIRED: '행위자 없음',
 }
 
 /** «시운전» 칸(P2·S1d 스펙 §8.5). 연결 칸과 합치지 않는다. */
@@ -72,3 +78,18 @@ export const TEST_REQUEST_LABEL: Record<TestRequestState, string> = {
 }
 
 export const kindLabel = (kind: string) => KIND_LABEL[kind] ?? kind
+
+/** 실행 호스트의 스킬 적합(S3a 스펙 §9.1). `UNKNOWN` 은 기체 케이퍼빌리티를 못 물어본 것이다. */
+export const SKILL_FIT_LABEL: Record<SkillFit, string> = {
+  FIT: '적합',
+  MISSING: '모자람',
+  UNKNOWN: '모름',
+}
+
+/** 작업 지시 제출의 호스트 결과(S3a JSON 계약 §4). */
+export const SUBMIT_RESULT_LABEL: Record<HostSubmitResult, string> = {
+  ACCEPTED: '배정됨',
+  IDEMPOTENT: '같은 작업 지시의 기존 실행',
+  REJECTED: '거부됨',
+  UNASSIGNED: '미배정',
+}

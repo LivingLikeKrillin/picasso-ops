@@ -250,14 +250,17 @@ export interface PreRejection {
 }
 
 /**
- * 조작을 보낸 결과. registry 에 닿았으면 `outcome`, 운영 서비스가 먼저 막았으면 `refused` 다.
- * 그 밖의 실패(연결 끊김, 프록시 오류, 운영 서비스 500)는 `unknown` 이다. 요청이 registry 까지 갔는지 모르므로
- * 보내지 못했다고 단정하지 않는다(스펙 §9).
+ * 요청을 보낸 결과. 운영 서비스가 2xx 로 답했으면 `outcome`, 운영 서비스가 먼저 막았으면(400·403) `refused` 다.
+ * 그 밖의 실패(연결 끊김, 프록시 오류, 운영 서비스 500)는 `unknown` 이다. 요청이 상대(registry, 실행 호스트)까지 갔는지
+ * 모르므로 보내지 못했다고 단정하지 않는다(스펙 §9).
  */
-export type Sent =
-  | { kind: 'outcome'; outcome: OperationOutcome }
+export type Delivered<T> =
+  | { kind: 'outcome'; outcome: T }
   | { kind: 'refused'; refusal: PreRejection }
   | { kind: 'unknown'; cause: string }
+
+/** registry 쓰기 조작을 보낸 결과. registry 에 닿았으면 `outcome` 이다. */
+export type Sent = Delivered<OperationOutcome>
 
 /** 사용자 이름 규칙. 운영 서비스의 `Actor` 와 같다. 헤더는 ASCII 만 실을 수 있고 `/` 는 모드와 사용자를 가르는 자리다. */
 export const USER_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
@@ -299,10 +302,10 @@ function sendDocument(path: string, session: Session, text: string): Promise<Sen
   })
 }
 
-async function deliver(path: string, init: RequestInit): Promise<Sent> {
+async function deliver<T = OperationOutcome>(path: string, init: RequestInit): Promise<Delivered<T>> {
   try {
     const response = await fetch(path, init)
-    if (response.ok) return { kind: 'outcome', outcome: (await response.json()) as OperationOutcome }
+    if (response.ok) return { kind: 'outcome', outcome: (await response.json()) as T }
     if (response.status === 400 || response.status === 403) {
       // 스프링이 직접 막은 400 의 본문에는 detail 이 없다. 그때도 사유 칸을 비우지 않는다.
       const refusal = (await response.json()) as Partial<PreRejection>
@@ -364,3 +367,165 @@ export const bindRobot = (session: Session, robotId: string, adapterVersionId: n
   send('POST', `/api/robots/${encodeURIComponent(robotId)}/binding`, session, { adapterVersionId, profileRevisionId })
 export const recordSiteNames = (session: Session, robotId: string) =>
   send('POST', `/api/robots/${encodeURIComponent(robotId)}/site-names`, session)
+
+/** 작업 지시 폼이 내는 임무(S3a 스펙 §9.1). DeliverContainer 는 플릿 포트 구현이 없어 내지 않는다. */
+export type WorkMasterId = 'InspectAsset' | 'PrepareSequencedRack'
+
+/** InspectAsset 의 점검 대상 하나. `location` 은 기체가 아는 명칭이어야 하나 화면이 검사하지 않는다. */
+export interface InspectionTarget {
+  id: string
+  location: string
+}
+
+/**
+ * 작업 지시 폼 초안(S3a JSON 계약 §9.1). 판정과 제출이 같은 본문을 쓴다. 작업 지시 본문(작업 지시 id, 요구 근거 등급, 장비 요구)은
+ * 운영 서비스가 만든다.
+ */
+export type JobOrderForm =
+  | { workMasterId: 'InspectAsset'; targets: InspectionTarget[] }
+  | { workMasterId: 'PrepareSequencedRack'; slots: string[]; material: string; presentation: string }
+
+export type SkillFit = 'FIT' | 'MISSING' | 'UNKNOWN'
+
+/** 실행 호스트의 기체 판정(S3a JSON 계약 §2.2). `UNKNOWN` 은 호스트가 기체 케이퍼빌리티를 못 물어본 것이고 모름이다. */
+export interface HostEligibility {
+  robotId: string
+  skillFit: SkillFit
+  missingSkills: string[]
+  runningExecutionId: string | null
+  passed: boolean
+  reasons: string[]
+}
+
+/**
+ * 기체 한 대의 배정 가능 판정(S3a JSON 계약 §9.2). 시운전·연결은 운영 서비스가, 스킬 적합·도는 실행은 실행 호스트가 판정한다.
+ * null 은 모름이고, 모름이 하나라도 있으면 배정 가능이 아니다.
+ */
+export interface RobotEligibility {
+  robotId: string
+  commissioning: CommissioningState | null
+  connection: Connection | null
+  settingsVersion: number | null
+  host: HostEligibility | null
+  eligible: boolean
+  reasons: string[]
+}
+
+export type HostState = 'OK' | 'HOST_SILENT'
+
+/** 운영 서비스의 `POST /api/job-orders/eligibility`. `robots` 가 null 이면 기체 목록을 한 번도 못 읽은 모름이다. */
+export interface EligibilityView {
+  checkedAt: string
+  registry: RegistryState
+  robotsAsOf: string | null
+  host: HostState
+  robots: RobotEligibility[] | null
+}
+
+export type HostSubmitResult = 'ACCEPTED' | 'IDEMPOTENT' | 'REJECTED' | 'UNASSIGNED'
+
+/** 실행 호스트의 제출 결과(S3a JSON 계약 §4). `refusals` 는 미배정일 때 기체별 관문 사유, `excluded` 는 호스트가 판정에서 뺀 기체다. */
+export interface HostSubmitOutcome {
+  result: HostSubmitResult
+  executionId: string | null
+  robotId: string | null
+  rejectionReason: string | null
+  refusals: { robotId: string; reason: string }[]
+  excluded: HostEligibility[]
+}
+
+/**
+ * 작업 지시 제출의 200 응답(S3a JSON 계약 §9.3). 기존 [OperationOutcome] 과 모양이 달라 따로 읽는다(S3a 스펙 §8).
+ * `outcome` 은 실행 호스트의 응답이고, 호스트가 안 닿았으면 null 이다.
+ */
+export interface JobOrderOutcome {
+  requestId: string
+  jobOrderId: string
+  result: 'SUCCEEDED' | 'REJECTED' | 'NO_RESPONSE'
+  confirmation: 'CONFIRMED_APPLIED' | 'CONFIRMED_NOT_APPLIED' | null
+  outcome: HostSubmitOutcome | null
+}
+
+/** 실행의 단위 하나(S3a JSON 계약 §5). `reached` 는 그 단위가 얻은 근거 등급이다. */
+export interface ExecutionUnit {
+  unitId: string
+  skillType: string
+  state: string
+  reached: string
+}
+
+/** 실행의 마지막 작업 응답(S3a JSON 계약 §5). 상위 시스템이 없어 실행 호스트의 아웃박스에 남는다. */
+export interface JobResponse {
+  jobResponseId: string
+  version: number
+  physicalState: string
+  requiredEvidence: string
+  reachedEvidence: string
+  completedUnits: string[]
+  unverifiedUnits: string[]
+  incompleteUnits: Record<string, string>
+  inDoubtUnits: string[]
+  operatorRequired: boolean
+  residualHold: string
+  blockedBy: string[]
+  connection: string
+}
+
+/** 실행 하나(S3a JSON 계약 §5). `missionVersion` 이 null 이면 코드 정의 임무다. */
+export interface Execution {
+  executionId: string
+  jobOrderId: string
+  workMasterId: string
+  missionVersion: number | null
+  robotId: string
+  physicalState: string
+  units: ExecutionUnit[]
+  jobResponse: JobResponse | null
+}
+
+/** 운영 서비스의 `GET /api/executions`(실행 호스트 본문 그대로). `instanceId` 가 바뀌면 호스트가 재기동한 것이다. */
+export interface ExecutionsView {
+  instanceId: string
+  pumpedAt: string | null
+  executions: Execution[]
+}
+
+/** 셀 대역의 자리 하나(S3a JSON 계약 §1). 제시 자리의 `observedAt` 은 늘 null 이다. */
+export interface CellPlace {
+  id: string
+  occupied: boolean
+  material: string | null
+  observedAt: string | null
+}
+
+/** 운영 서비스의 `GET /api/cell`. `cell` 이 null 이면 실행 호스트가 셀 대역을 못 읽은 모름이다. */
+export interface CellView {
+  cell: { presentations: CellPlace[]; slots: CellPlace[] } | null
+}
+
+/**
+ * 실행 호스트를 거치는 읽기. 운영 서비스가 호스트에 닿지 못하면 503 과 `{error, detail}` 이므로, 그 detail 을 오류 문구로 쓴다.
+ * 기존 다섯 읽기와 따로 실패한다(S3a 스펙 §9.3).
+ */
+async function getHostJson<T>(path: string, session: Session): Promise<T> {
+  const response = await fetch(path, { headers: actorHeaders(session) })
+  if (response.ok) return (await response.json()) as T
+  const body = (await response.json().catch(() => null)) as Partial<PreRejection> | null
+  throw new Error(
+    typeof body?.detail === 'string' && body.detail !== '' ? body.detail : `운영 서비스 응답 ${response.status}`,
+  )
+}
+
+const postJobOrderForm = <T>(path: string, session: Session, form: JobOrderForm) =>
+  deliver<T>(path, {
+    method: 'POST',
+    headers: { ...actorHeaders(session), 'Content-Type': 'application/json' },
+    body: JSON.stringify(form),
+  })
+
+export const fetchExecutions = (session: Session) => getHostJson<ExecutionsView>('/api/executions', session)
+export const fetchCell = (session: Session) => getHostJson<CellView>('/api/cell', session)
+export const checkEligibility = (session: Session, form: JobOrderForm) =>
+  postJobOrderForm<EligibilityView>('/api/job-orders/eligibility', session, form)
+export const submitJobOrder = (session: Session, form: JobOrderForm) =>
+  postJobOrderForm<JobOrderOutcome>('/api/job-orders', session, form)

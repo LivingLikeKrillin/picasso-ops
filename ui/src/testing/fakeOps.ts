@@ -2,8 +2,12 @@ import { vi } from 'vitest'
 import type {
   AdapterListView,
   Binding,
+  CellView,
+  EligibilityView,
+  ExecutionsView,
   Finding,
   OperationOutcome,
+  PreRejection,
   ProfileListView,
   Revision,
   SiteSettingsView,
@@ -28,9 +32,43 @@ export interface FakeOps {
   adapters: AdapterListView
   profiles: ProfileListView
   settings: SiteSettingsView
-  /** 여기 든 경로의 GET 은 503 이다. 운영 서비스의 일부 읽기만 실패하는 경우를 만든다. */
+  /** 실행 호스트를 거치는 읽기(S3a). 운영 서비스가 호스트 본문을 그대로 넘기는 모양이다. */
+  executions: ExecutionsView
+  cell: CellView
+  /** `POST /api/job-orders/eligibility` 의 답. 폼 거부(400)를 만들려면 [eligibilityStatus] 와 본문을 바꾼다. */
+  eligibility: EligibilityView | PreRejection
+  eligibilityStatus: number
+  /**
+   * 여기 든 경로의 GET 은 503 이다. 운영 서비스의 일부 읽기만 실패하는 경우를 만든다. 실행 호스트를 거치는 경로는 운영
+   * 서비스처럼 `HOST_SILENT` 본문을 싣는다. 배정 가능 판정은 POST 지만 읽기이므로 여기 들면 503 이다.
+   */
   failing: Set<string>
   answer: { status: number; body: unknown }
+}
+
+/** 실행 호스트를 거치는 경로. 503 일 때 운영 서비스가 `HOST_SILENT` 를 싣는다(S3a JSON 계약 §9.4). */
+const HOST_PATHS = new Set(['/api/executions', '/api/cell'])
+const ELIGIBILITY_PATH = '/api/job-orders/eligibility'
+
+/** 실행 목록. 기본은 실행이 없는 호스트 인스턴스 하나다. */
+export function executionsView(partial: Partial<ExecutionsView> = {}): ExecutionsView {
+  return { instanceId: 'mw-1', pumpedAt: 't1', executions: [], ...partial }
+}
+
+/** 셀 대역. 기본은 고정 픽스처(제시 자리 하나, 빈 슬롯 넷)다(S3a JSON 계약 §1). */
+export function cellView(): CellView {
+  const slot = (id: string) => ({ id, occupied: false, material: null, observedAt: null })
+  return {
+    cell: {
+      presentations: [{ id: 'SEQ-IN-02.BIN-A', occupied: true, material: 'ENGINE-COVER-A', observedAt: null }],
+      slots: ['RACK-204.S01', 'RACK-204.S02', 'RACK-204.S03', 'RACK-204.S04'].map(slot),
+    },
+  }
+}
+
+/** 배정 가능 판정. 기본은 기체가 없는 사이트다. */
+export function eligibilityView(partial: Partial<EligibilityView> = {}): EligibilityView {
+  return { checkedAt: 't1', registry: 'OK', robotsAsOf: 't1', host: 'OK', robots: [], ...partial }
 }
 
 /** 어댑터 목록. 기본은 제품도 인스턴스도 없는 «없음» 이다. */
@@ -159,6 +197,10 @@ export function installFakeOps(
     adapters,
     profiles,
     settings,
+    executions: executionsView(),
+    cell: cellView(),
+    eligibility: eligibilityView(),
+    eligibilityStatus: 200,
     failing: new Set(),
     answer: { status: 200, body: outcome({}) },
   }
@@ -173,8 +215,13 @@ export function installFakeOps(
       }
       const method = init?.method ?? 'GET'
       fake.calls.push({ method, url, headers, body: init?.body ? JSON.parse(init.body as string) : undefined })
+      if (fake.failing.has(url) && (method === 'GET' || url === ELIGIBILITY_PATH)) {
+        const body = HOST_PATHS.has(url)
+          ? JSON.stringify({ error: 'HOST_SILENT', detail: '실행 호스트가 답하지 않는다: 응답 없음: ConnectException' })
+          : ''
+        return new Response(body, { status: 503 })
+      }
       if (method === 'GET') {
-        if (fake.failing.has(url)) return new Response('', { status: 503 })
         const body =
           url === '/api/robots'
             ? fake.view
@@ -184,8 +231,15 @@ export function installFakeOps(
                 ? fake.profiles
                 : url === '/api/site-settings'
                   ? fake.settings
-                  : []
+                  : url === '/api/executions'
+                    ? fake.executions
+                    : url === '/api/cell'
+                      ? fake.cell
+                      : []
         return new Response(JSON.stringify(body), { status: 200 })
+      }
+      if (url === ELIGIBILITY_PATH) {
+        return new Response(JSON.stringify(fake.eligibility), { status: fake.eligibilityStatus })
       }
       return new Response(JSON.stringify(fake.answer.body), { status: fake.answer.status })
     }),
