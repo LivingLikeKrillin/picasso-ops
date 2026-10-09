@@ -3,7 +3,13 @@ package dev.picasso.ops.host
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.HttpServer
+import dev.picasso.client.PicassoClient
+import dev.picasso.middleware.ClientRobotPort
+import dev.picasso.middleware.RobotPort
+import dev.picasso.middleware.RobotSnapshot
 import dev.picasso.mimic.cli.MimicCli
+import io.grpc.ManagedChannel
+import io.grpc.ManagedChannelBuilder
 import dev.picasso.ops.host.timings.SiteTimingsView
 import dev.picasso.registry.PostgresSupport
 import org.springframework.boot.web.context.WebServerApplicationContext
@@ -17,6 +23,7 @@ import java.net.http.HttpResponse
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -35,12 +42,34 @@ import java.util.concurrent.CopyOnWriteArrayList
  * @param mockVirtualLimit 주면 모의 실행의 가상 시간 상한을 이것으로 덮는다.
  * @param readInterval 주면 현장 시간값 읽기 주기를 이것으로 덮는다. 길게 주면 기동 안의 첫 읽기만 일어난다.
  * @param timings 대역 뷰의 한 행(버전, 앞 폭, 뒤 폭, inDoubtGrace, stallWindow). `null` 이면 뷰를 만들지 않아 호스트가 미적용으로 뜬다.
+ * @param gated 참이면 호스트의 하위 포트를 [blockedSnapshots] 에 든 기체의 스냅숏을 못 읽는 포트로 넣는다(S4b 의 복원 미룸).
+ *   기동마다 새 채널과 새 `ClientRobotPort` 다(재기동한 호스트가 핸들을 처음부터 다시 받는 것과 같게).
  */
 class HostBench(
     private val mockVirtualLimit: Duration? = null,
     private val readInterval: Duration? = null,
     timings: List<Long>? = STANDARD_TIMINGS,
+    private val gated: Boolean = false,
 ) : AutoCloseable {
+
+    /** [gated] 일 때 스냅숏을 못 읽는 기체. 바꾸면 다음 호출부터 미친다. */
+    val blockedSnapshots: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    private val channels = CopyOnWriteArrayList<ManagedChannel>()
+
+    /** mimic 에 붙는 새 포트. 시험이 미들웨어 밖에서 태스크를 직접 낼 때(고아 태스크) 쓴다. */
+    fun clientPort(clientId: String = MissionHostApplication.CLIENT_ID): ClientRobotPort {
+        val channel = ManagedChannelBuilder.forAddress("127.0.0.1", mimic.server.port).usePlaintext().build()
+        channels += channel
+        return ClientRobotPort(PicassoClient(channel, clientId))
+    }
+
+    private fun gatedPort(): RobotPort {
+        val delegate = clientPort()
+        return object : RobotPort by delegate {
+            override fun snapshot(robotId: String): RobotSnapshot? = if (robotId in blockedSnapshots) null else delegate.snapshot(robotId)
+        }
+    }
 
     init {
         PostgresSupport.execute("DROP SCHEMA IF EXISTS mission CASCADE")
@@ -147,7 +176,7 @@ class HostBench(
     val host: MissionHost get() = context.getBean(MissionHost::class.java)
 
     /** 이 세트와 같은 인자로 호스트를 하나 띄운다. 기동이 실패하면 예외가 그대로 나간다. */
-    fun startHost(): ConfigurableApplicationContext = MissionHostApplication.builder(HostClock { now() }).run(
+    fun startHost(): ConfigurableApplicationContext = MissionHostApplication.builder(HostClock { now() }, if (gated) gatedPort() else null).run(
         *buildList {
             add("--server.port=0")
             add("--host.mimic.port=${mimic.server.port}")
@@ -212,6 +241,18 @@ class HostBench(
         error("pump 가 $target 에 이르지 않았다")
     }
 
+    /** [condition] 이 참이 될 때까지 기다린다(실제 시간 상한 5초). 가상 시계를 밀지 않는 pump 뒤 기록을 기다릴 때 쓴다. */
+    fun eventually(what: String, condition: () -> Boolean) {
+        val deadline = Instant.now().plusSeconds(5)
+        while (!condition()) {
+            check(Instant.now().isBefore(deadline)) { "5초 안에 이르지 않았다: $what" }
+            Thread.sleep(50)
+        }
+    }
+
+    /** pump [count] 번이 돌 만큼 실제 시간을 보낸다. 무엇이 «더 생기지 않음» 을 볼 때 쓴다. */
+    fun idlePumps(count: Int = 3) = Thread.sleep(MissionHost.PUMP_PERIOD.toMillis() * count + 100)
+
     /**
      * 실행이 [states] 중 하나가 될 때까지 가상 시계를 5초씩 민다. 민 뒤에는 스트림 갱신이 클라이언트에 닿을 틈을 주려고
      * pump 두 번을 기다린다.
@@ -232,6 +273,7 @@ class HostBench(
             context.close()
         } finally {
             cell.stop(0)
+            channels.forEach { it.shutdownNow() }
             mimic.server.shutdown()
         }
     }

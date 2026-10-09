@@ -38,18 +38,27 @@ class IncidentController(
         return ResponseEntity.ok(host.incidents(count))
     }
 
-    /** 인시던트 하나의 상세. 없으면 404 `INCIDENT_NOT_FOUND` 다. 호스트를 재기동하면 앞 인시던트는 사라진다(S4b 의 자리). */
+    /**
+     * 인시던트 하나의 상세. 없으면 404 `INCIDENT_NOT_FOUND` 다. 질의 [instanceId] 가 없거나 지금 인스턴스면 지금 인스턴스의 것이고,
+     * 이전 인스턴스면 그 인스턴스의 사본이다(S4b 스펙 T7). 빈 문자열이면 400 `BAD_REQUEST` 다.
+     */
     @GetMapping("/host/incidents/{incidentId}")
-    fun incident(@PathVariable incidentId: String): ResponseEntity<Any> {
-        val detail = host.incident(incidentId)
+    fun incident(@PathVariable incidentId: String, @RequestParam(required = false) instanceId: String?): ResponseEntity<Any> {
+        if (instanceId != null && instanceId.isBlank()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(HostRejection(HostRequests.BAD_REQUEST, "instanceId 가 비어 있다"))
+        }
+        val detail = host.incident(incidentId, instanceId)
             ?: return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(HostRejection(INCIDENT_NOT_FOUND, "그 인시던트가 없다: $incidentId"))
+                .body(HostRejection(INCIDENT_NOT_FOUND, "그 인시던트가 없다: $incidentId" + (instanceId?.let { " (인스턴스 $it)" } ?: "")))
         return ResponseEntity.ok(detail)
     }
 
     /**
      * 운영자 판단. 승인자는 늘 `Approver(approverId, PERSON)` 이다(ADR 43 에 따라 기본값이 없고 approverId 는 필수다). 실행이 없거나
      * 그 단위가 보류가 아니면 NotHeld 이며 404 를 내지 않는다.
+     *
+     * 본문의 `instanceId` 가 지금 인스턴스가 아니면 409 `INSTANCE_MISMATCH` 이고 판단하지 않는다(S4b 스펙 T8). `exec-N` 은 인스턴스마다
+     * 다시 세므로 이전 인스턴스의 실행 id 가 지금 인스턴스의 다른 실행을 가리킬 수 있다.
      */
     @PostMapping("/host/executions/{executionId}/units/{unitId}/resolve", consumes = [MediaType.APPLICATION_JSON_VALUE])
     fun resolve(
@@ -61,6 +70,11 @@ class IncidentController(
             HostRequests.resolution(body?.let { runCatching { json.readTree(it) }.getOrNull() })
         } catch (e: BadRequest) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(HostRejection(e.error, e.message ?: ""))
+        }
+        if (request.instanceId != host.instanceId) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(
+                HostRejection(INSTANCE_MISMATCH, "판단 요청의 인스턴스(${request.instanceId})가 지금 인스턴스(${host.instanceId})가 아니다"),
+            )
         }
         return ResponseEntity.ok(
             host.resolve(executionId, unitId, request.decision, Approver(request.approverId, ApproverKind.PERSON), request.requestId),
@@ -87,5 +101,8 @@ class IncidentController(
 
         /** 오류 이름(S4a JSON 계약 §3). */
         const val INCIDENT_NOT_FOUND = "INCIDENT_NOT_FOUND"
+
+        /** 판단 요청의 인스턴스가 지금 인스턴스가 아니다(S4b 스펙 T8). */
+        const val INSTANCE_MISMATCH = "INSTANCE_MISMATCH"
     }
 }

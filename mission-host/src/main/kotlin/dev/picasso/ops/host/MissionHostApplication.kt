@@ -9,6 +9,7 @@ import dev.picasso.ops.host.mission.MissionVersions
 import dev.picasso.ops.host.mission.MockRunner
 import dev.picasso.ops.host.mission.StoredMissionCatalog
 import dev.picasso.ops.host.store.HostSchema
+import dev.picasso.ops.host.store.HostRecords
 import dev.picasso.ops.host.store.HostSchemaMigrated
 import dev.picasso.ops.host.store.MissionStore
 import dev.picasso.ops.host.timings.SiteTimingsReader
@@ -22,6 +23,8 @@ import org.springframework.context.ApplicationContextInitializer
 import org.springframework.context.ConfigurableApplicationContext
 import org.springframework.context.annotation.Bean
 import org.springframework.jdbc.core.simple.JdbcClient
+import org.springframework.jdbc.datasource.DataSourceTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import java.nio.file.Path
 import java.time.Duration
 import javax.sql.DataSource
@@ -47,7 +50,9 @@ open class MissionHostApplication {
         return ManagedChannelBuilder.forAddress("127.0.0.1", port).usePlaintext().build()
     }
 
+    /** 시험은 [builder] 로 다른 포트를 먼저 넣고, 그러면 이 빈은 만들어지지 않는다. */
     @Bean
+    @ConditionalOnMissingBean(RobotPort::class)
     open fun robotPort(channel: ManagedChannel): RobotPort = ClientRobotPort(PicassoClient(channel, CLIENT_ID))
 
     @Bean
@@ -83,6 +88,16 @@ open class MissionHostApplication {
         @Value("\${host.site-timings.read-interval}") interval: Duration,
     ): SiteTimingsReader = SiteTimingsReader(jdbc, clock).start(interval)
 
+    /** 실행 일지, 송신 기록, 인시던트 사본(S4b 스펙 §6.1). pump 뒤 기록은 이 데이터 소스의 트랜잭션 하나로 묶는다. */
+    @Bean
+    open fun hostRecords(
+        jdbc: JdbcClient,
+        dataSource: DataSource,
+        json: ObjectMapper,
+        @Suppress("UNUSED_PARAMETER") migrated: HostSchemaMigrated,
+    ): HostRecords = HostRecords(jdbc, TransactionTemplate(DataSourceTransactionManager(dataSource)), json)
+
+    /** 빈을 만들 때 일지로 실행을 복원하고 pump 를 켠다(S4b 스펙 T3). 웹 서버는 그 뒤에 열린다. */
     @Bean(destroyMethod = "close")
     open fun missionHost(
         robots: RobotPort,
@@ -90,7 +105,10 @@ open class MissionHostApplication {
         clock: HostClock,
         catalog: StoredMissionCatalog,
         timings: SiteTimingsReader,
-    ): MissionHost = MissionHost(robots, cellBand, clock, catalog, timings).start()
+        records: HostRecords,
+        store: MissionStore,
+        json: ObjectMapper,
+    ): MissionHost = MissionHost(robots, cellBand, clock, catalog, timings, records, store, json).start()
 
     /**
      * 모의 실행기(S3b 스펙 §6.4). 프로파일과 스키마 경로는 작업 디렉터리 기준으로 푼다. `:mission-host:run` 은 저장소 루트에서
@@ -121,14 +139,16 @@ open class MissionHostApplication {
          * 설정 파일 이름을 `mission-host` 로 둔다. 같은 JVM 의 registry `application.properties`·운영 서비스 설정과 가리지 않게.
          *
          * @param clock 주면 기본 시계 대신 이것을 쓴다(통합 시험이 현장 시계를 넣는다).
+         * @param robots 주면 기본 하위 포트 대신 이것을 쓴다(호스트 시험이 기체 스냅숏을 막는 포트를 넣는다).
          */
-        fun builder(clock: HostClock? = null): SpringApplicationBuilder {
+        fun builder(clock: HostClock? = null, robots: RobotPort? = null): SpringApplicationBuilder {
             val builder = SpringApplicationBuilder(MissionHostApplication::class.java)
                 .properties("spring.config.name=mission-host")
-            if (clock != null) {
+            if (clock != null || robots != null) {
                 builder.initializers(
                     ApplicationContextInitializer<ConfigurableApplicationContext> {
-                        it.beanFactory.registerSingleton("hostClock", clock)
+                        clock?.let { c -> it.beanFactory.registerSingleton("hostClock", c) }
+                        robots?.let { r -> it.beanFactory.registerSingleton("testRobotPort", r) }
                     },
                 )
             }

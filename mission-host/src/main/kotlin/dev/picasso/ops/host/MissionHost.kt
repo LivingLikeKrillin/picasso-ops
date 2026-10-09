@@ -1,5 +1,9 @@
 package dev.picasso.ops.host
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import dev.picasso.contracts.v1.TaskState
+import dev.picasso.middleware.ActiveMission
 import dev.picasso.middleware.Approver
 import dev.picasso.middleware.IncidentBundle
 import dev.picasso.middleware.InspectAsset
@@ -7,6 +11,7 @@ import dev.picasso.middleware.JobOrder
 import dev.picasso.middleware.JobResponse
 import dev.picasso.middleware.Middleware
 import dev.picasso.middleware.OperatorDecision
+import dev.picasso.middleware.PhysicalState
 import dev.picasso.middleware.PrepareSequencedRack
 import dev.picasso.middleware.Route
 import dev.picasso.middleware.ResolveOutcome
@@ -14,11 +19,23 @@ import dev.picasso.middleware.RobotPort
 import dev.picasso.middleware.SiteTimingsSource
 import dev.picasso.middleware.Unassigned
 import dev.picasso.middleware.UnitState
+import dev.picasso.middleware.Verification
 import dev.picasso.ops.host.cell.CellBandClient
 import dev.picasso.ops.host.cell.CellBandSignals
 import dev.picasso.ops.host.cell.CellSnapshot
 import dev.picasso.ops.host.mission.SiteInputs
 import dev.picasso.ops.host.mission.StoredMissionCatalog
+import dev.picasso.ops.host.web.BadRequest
+import dev.picasso.ops.host.web.HostRequests
+import dev.picasso.ops.host.store.CopyResolutionRow
+import dev.picasso.ops.host.store.HostRecords
+import dev.picasso.ops.host.store.IncidentCopyRow
+import dev.picasso.ops.host.store.JournalRow
+import dev.picasso.ops.host.store.JournalEventKind
+import dev.picasso.ops.host.store.MissionStore
+import dev.picasso.ops.host.store.ResponseContent
+import dev.picasso.ops.host.store.ResponseDisposition
+import dev.picasso.ops.host.store.ResponseLogRow
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
@@ -105,13 +122,88 @@ data class ExecutionView(
     val physicalState: String,
     val units: List<UnitView>,
     val jobResponse: JobResponseView?,
+    val restoredFrom: RestoredFromView?,
 )
+
+/** 다시 지은 실행의 이전 실행(S4b 스펙 §6.3). 바로 앞 인스턴스에서 그 작업 지시를 들었던 실행이다. */
+data class RestoredFromView(val instanceId: String, val executionId: String)
 
 /**
  * `GET /host/executions` 의 본문. [instanceId] 는 미들웨어가 뜬 한 번을 가리킨다. 재기동하면 바뀌고 `exec-N` 은 1부터
  * 다시 센다. [pumpedAt] 은 마지막 pump 가 셀 대역을 읽고 잠금을 잡은 뒤의 호스트 시계 값이며 아직 한 번도 안 돌았으면 `null` 이다.
  */
-data class ExecutionsView(val instanceId: String, val pumpedAt: Instant?, val executions: List<ExecutionView>)
+data class ExecutionsView(
+    val instanceId: String,
+    val pumpedAt: Instant?,
+    val executions: List<ExecutionView>,
+    val restore: RestoreView?,
+)
+
+/** 복원의 결과(S4b 스펙 T3). DEFERRED 는 pump 마다 다시 시도해 RESTORED 나 GAVE_UP 이 된다. */
+enum class RestoreResult { RESTORED, DEFERRED, GAVE_UP }
+
+/**
+ * 복원 보고의 한 행(S4b 스펙 §6.3).
+ *
+ * @param previousInstanceId·previousExecutionId 바로 앞 인스턴스에서 그 작업 지시를 들었던 실행. 앞서 다시 지었으면 그 실행이다
+ * @param executionId RESTORED 일 때 새 실행 id. 그 밖에는 `null`
+ * @param reason DEFERRED·GAVE_UP 의 사유. RESTORED 면 `null`
+ */
+data class RestoreRowView(
+    val jobOrderId: String,
+    val robotId: String,
+    val previousInstanceId: String,
+    val previousExecutionId: String,
+    val result: String,
+    val executionId: String?,
+    val reason: String?,
+)
+
+/** 이번 기동의 복원 보고. [at] 은 복원한 호스트 시각이고 [rows] 는 일지의 받은 순서다. 다시 지을 것이 없었으면 [rows] 가 비어 있다. */
+data class RestoreView(val at: Instant, val rows: List<RestoreRowView>)
+
+/**
+ * `GET /host/job-responses` 의 행 하나(S4b 스펙 T6). 내용 키의 칸과 처분이다. 단위 id 목록은 정렬돼 있고 [incompleteUnits] 는
+ * 사유 없이 단위 id 만 든다.
+ *
+ * @param disposition `SENT` 또는 `RESTART_DUPLICATE`(적었으나 송신하지 않음)
+ * @param recordedAt 적은 DB 시각(실제 시각)
+ */
+data class JobResponseLogView(
+    val instanceId: String,
+    val jobResponseId: String,
+    val jobOrderId: String,
+    val executionId: String,
+    val version: Int,
+    val physicalState: String,
+    val requiredEvidence: String,
+    val reachedEvidence: String,
+    val completedUnits: List<String>,
+    val unverifiedUnits: List<String>,
+    val incompleteUnits: List<String>,
+    val inDoubtUnits: List<String>,
+    val operatorRequired: Boolean,
+    val residualHold: String,
+    val blockedBy: List<String>,
+    val disposition: String,
+    val recordedAt: Instant,
+) {
+    companion object {
+        fun of(row: ResponseLogRow) = row.content.let {
+            JobResponseLogView(
+                row.instanceId, row.jobResponseId, it.jobOrderId, row.executionId, it.version, it.physicalState, it.requiredEvidence,
+                it.reachedEvidence, it.completedUnits, it.unverifiedUnits, it.incompleteUnits, it.inDoubtUnits, it.operatorRequired,
+                it.residualHold, it.blockedBy, row.disposition.name, row.recordedAt,
+            )
+        }
+    }
+}
+
+/** `GET /host/job-responses` 의 본문. [responses] 는 최근부터 많아야 limit 개이고 [total] 은 자르기 전의 수다. */
+data class JobResponsesView(val instanceId: String, val total: Int, val responses: List<JobResponseLogView>)
+
+/** 일지 쓰기가 실패했다(S4b 스펙 §9). 실행은 미들웨어에 남는다. 제출은 500 이다. */
+class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeException("실행 일지를 적지 못했다: $executionId", cause)
 
 /**
  * 미들웨어 실행 호스트(S3a 스펙 §7).
@@ -161,6 +253,9 @@ class MissionHost(
     private val clock: HostClock,
     private val catalog: StoredMissionCatalog = StoredMissionCatalog(),
     private val siteTimings: SiteTimingsSource,
+    private val records: HostRecords,
+    private val store: MissionStore,
+    private val json: ObjectMapper,
 ) : AutoCloseable {
 
     private val lock = ReentrantLock(true)
@@ -171,14 +266,132 @@ class MissionHost(
     private var pumpedAt: Instant? = null
     private var latestCell: CellSnapshot? = null
 
+    // ── S4b 기록. 모두 호스트 잠금 아래에서만 읽고 쓴다.
+
+    /** 이 인스턴스에서 일지 행이 있는 실행의 작업 지시 id(제출로 적었거나 다시 지은 것). 정착 이벤트는 이것만 적는다. */
+    private val journaled = mutableSetOf<String>()
+
+    /** 이 인스턴스가 정착 이벤트를 적은 작업 지시 id. */
+    private val settledRecorded = mutableSetOf<String>()
+
+    /** 사본을 적은 인시던트 수. 미들웨어의 인시던트 목록은 덧붙이기만 하므로 이 색인 뒤가 새로 봉인된 것이다. */
+    private var copiedIncidents = 0
+
+    /** 판단 행을 적은 인시던트 id. */
+    private val copiedResolutions = mutableSetOf<String>()
+
+    /** 이번 기동의 복원 시각. [start] 전에는 `null` 이다. */
+    private var restoredAt: Instant? = null
+
+    /** 이번 기동의 복원 보고 행. 일지의 받은 순서이고, DEFERRED 행은 결과가 바뀌면 그 자리에서 갈린다. */
+    private val restoreRows = mutableListOf<RestoreRowView>()
+
+    /** 다시 지은 실행 id 에서 바로 앞 인스턴스의 실행으로. */
+    private val restoredFrom = mutableMapOf<String, RestoredFromView>()
+
+    /** 기체 스냅숏을 못 읽어 미룬 일지 행(T3). pump 마다 다시 시도하고 그동안 그 기체를 판정에서 뺀다(T4). */
+    private val deferred = mutableListOf<Deferred>()
+
+    /**
+     * 포기했고 정착하지 않은 일지 행(T4). 그 기체의 스냅숏에 그 작업 지시의 비종착 태스크가 없어질 때까지 그 기체를 판정에서 뺀다.
+     * 이전 기동에서 포기한 행도 든다. 풀린 행은 이 인스턴스에서 다시 빼지 않는다.
+     */
+    private val gaveUp = mutableListOf<JournalRow>()
+
+    /** 미룬 행. [order]·[mission] 은 복원 때 한 번 읽은 것이고 다시 시도할 때 그대로 쓴다. */
+    private class Deferred(val row: JournalRow, val order: JobOrder, val mission: ActiveMission, val index: Int)
+
     private val pumper = Executors.newSingleThreadScheduledExecutor { Thread(it, "mission-host-pump").apply { isDaemon = true } }
 
-    val instanceId: String get() = middleware.instanceId
+    val instanceId: String = middleware.instanceId
 
-    /** pump 를 시작한다. [MissionHostApplication] 이 빈을 만들 때 부른다. */
+    /**
+     * 실행을 복원하고 pump 를 시작한다. [MissionHostApplication] 이 빈을 만들 때 부른다. 복원이 빈 생성 안에서 끝나므로 웹 서버가
+     * 열리기 전에 판정이 도는 실행을 안다(S4b 스펙 T3). 복원 중 DB 가 실패하면 예외가 나가 기동이 멈춘다.
+     */
     fun start(period: Duration = PUMP_PERIOD): MissionHost = apply {
+        restore()
         pumper.scheduleWithFixedDelay(::pumpOnce, 0, period.toMillis(), TimeUnit.MILLISECONDS)
     }
+
+    /**
+     * 기동 복원(S4b 스펙 T3, §6.3). 정착도 포기도 없는 일지 행을 받은 순서대로 다시 짓는다. 결과는 일지 이벤트로 남고 복원 보고에
+     * 실린다. 그 뒤 포기한 행(이전 기동의 것 포함)을 판정 제외 목록으로 읽는다.
+     */
+    private fun restore() = lock.withLock {
+        restoredAt = clock.now()
+        records.openJournal().forEach { row -> restoreRow(row) }
+        gaveUp += records.gaveUpJournal()
+    }
+
+    private fun restoreRow(row: JournalRow) {
+        val previous = records.events(row.jobOrderId).lastOrNull { it.kind == JournalEventKind.RESTORED }
+            ?.let { RestoredFromView(it.instanceId, it.executionId!!) }
+            ?: RestoredFromView(row.instanceId, row.executionId)
+        val index = restoreRows.size
+        restoreRows += RestoreRowView(row.jobOrderId, row.robotId, previous.instanceId, previous.executionId, RestoreResult.GAVE_UP.name, null, null)
+        val prepared = try {
+            val order = HostRequests.jobOrder(json.readTree(row.jobOrder))
+            val version = row.missionVersion?.let {
+                store.version(row.workMasterId, it) ?: throw IllegalStateException("임무 버전 행이 없다: ${row.workMasterId} 버전 $it")
+            }
+            order to catalog.mission(row.workMasterId, version)
+        } catch (e: BadRequest) {
+            settleRestore(row, index, previous, RestoreResult.GAVE_UP, null, "일지의 작업 지시를 읽지 못했다: ${e.message}")
+            return
+        } catch (e: IllegalStateException) {
+            settleRestore(row, index, previous, RestoreResult.GAVE_UP, null, e.message ?: e.toString())
+            return
+        }
+        attempt(Deferred(row, prepared.first, prepared.second, index), previous, first = true)
+    }
+
+    /** 미룬 행을 다시 시도한다(T3). pump 가 미들웨어 pump 전에 잠금 아래에서 부른다. 이벤트를 못 적으면 다음 pump 에 다시 한다. */
+    private fun retryDeferred() {
+        deferred.toList().forEach { waiting ->
+            val previous = restoreRows[waiting.index].let { RestoredFromView(it.previousInstanceId, it.previousExecutionId) }
+            try {
+                attempt(waiting, previous, first = false)
+            } catch (e: Exception) {
+                log.warn("미룬 복원 다시 시도 실패: {} {}", waiting.row.jobOrderId, e.toString())
+            }
+        }
+    }
+
+    private fun attempt(waiting: Deferred, previous: RestoredFromView, first: Boolean) {
+        val (result, executionId, reason) = resumed(waiting)
+        if (result == RestoreResult.DEFERRED) {
+            if (first) {
+                deferred += waiting
+                settleRestore(waiting.row, waiting.index, previous, result, null, reason)
+            }
+            return
+        }
+        settleRestore(waiting.row, waiting.index, previous, result, executionId, reason)
+        deferred.remove(waiting)
+        if (result == RestoreResult.GAVE_UP) gaveUp += waiting.row
+    }
+
+    /** 결과를 일지 이벤트로 적고 보고 행을 갈아 끼운다. 이벤트를 먼저 적는다. 못 적으면 예외가 나가고 보고는 그대로다. */
+    private fun settleRestore(row: JournalRow, index: Int, previous: RestoredFromView, result: RestoreResult, executionId: String?, reason: String?) {
+        val kind = when (result) {
+            RestoreResult.RESTORED -> JournalEventKind.RESTORED
+            RestoreResult.DEFERRED -> JournalEventKind.DEFERRED
+            RestoreResult.GAVE_UP -> JournalEventKind.GAVE_UP
+        }
+        records.event(row.jobOrderId, kind, instanceId, executionId, reason)
+        restoreRows[index] = RestoreRowView(row.jobOrderId, row.robotId, previous.instanceId, previous.executionId, result.name, executionId, reason)
+        if (executionId != null) {
+            restoredFrom[executionId] = previous
+            journaled += row.jobOrderId
+        }
+    }
+
+    /** 미들웨어에 다시 넣는다. P6 `Middleware.resume` 을 기다리는 자리. */
+    private fun resumed(waiting: Deferred): Triple<RestoreResult, String?, String?> =
+        Triple(RestoreResult.GAVE_UP, null, "resume 없음")
+
+    private fun restoreView(): RestoreView? = restoredAt?.let { RestoreView(it, restoreRows.toList()) }
 
     /** pump 한 번. 예외를 삼키고 다음 주기에 다시 돈다. 스케줄러는 작업이 예외를 던지면 다음 실행을 멈춘다. */
     fun pumpOnce() {
@@ -188,8 +401,10 @@ class MissionHost(
                 signals.snapshot = cell
                 latestCell = cell
                 val at = clock.now()
+                retryDeferred()
                 middleware.pump()
                 pumpedAt = at
+                recordAfterPump()
             }
         } catch (e: Exception) {
             log.warn("pump 실패: {}", e.toString())
@@ -211,15 +426,23 @@ class MissionHost(
      *
      * 미적용 판단은 한 번만 읽어 모든 기체의 판정에 같은 값을 쓴다. 미적용이면 통과한 기체가 없어 UNASSIGNED 다. 미들웨어의 채택은
      * 기체마다 관문을 걸므로 기체가 없으면 요구 근거 등급 검사도 하지 않는다.
+     *
+     * 새 실행으로 ACCEPTED 이면 같은 잠금 안에서 응답하기 전에 실행 일지를 적는다(S4b 스펙 T2). 이미 있던 실행의 `revise` 가 낸
+     * Accepted 와 IDEMPOTENT 는 적지 않는다. pump 도 이 잠금을 잡으므로 일지에 없는 실행은 로봇 명령을 낸 적이 없다. 일지 쓰기가
+     * 실패하면 [JournalWriteFailed] 이고 실행은 미들웨어에 남는다(§9, 한계).
      */
     fun submit(order: JobOrder, candidates: List<String>): SubmitOutcome = lock.withLock {
         val applied = siteTimings.current() != null
         val judged = candidates.distinct().map { judge(order, it, applied) }
         val excluded = judged.filter { !it.passed }
+        val existed = middleware.executions().any { it.order.jobOrderId == order.jobOrderId }
         when (val submission = middleware.assign(order, judged.filter { it.passed }.map { it.robotId })) {
-            is Middleware.Submission.Accepted -> SubmitOutcome(
-                SubmitResult.ACCEPTED, submission.execution.executionId, submission.execution.robotId, null, emptyList(), excluded,
-            )
+            is Middleware.Submission.Accepted -> {
+                if (!existed) journal(submission.execution)
+                SubmitOutcome(
+                    SubmitResult.ACCEPTED, submission.execution.executionId, submission.execution.robotId, null, emptyList(), excluded,
+                )
+            }
             is Middleware.Submission.Idempotent -> SubmitOutcome(
                 SubmitResult.IDEMPOTENT, submission.execution.executionId, submission.execution.robotId, null, emptyList(), excluded,
             )
@@ -232,6 +455,36 @@ class MissionHost(
             )
         }
     }
+
+    /** 새 실행의 일지 행을 적는다. 작업 지시는 picasso `JobOrder` 의 칸 그대로의 JSON 이다. */
+    private fun journal(execution: Middleware.Execution) {
+        val order = execution.order
+        try {
+            records.journal(
+                order.jobOrderId, execution.robotId, orderJson(order), order.workMasterId, execution.missionVersion,
+                middleware.instanceId, execution.executionId,
+            )
+        } catch (e: Exception) {
+            throw JournalWriteFailed(execution.executionId, e)
+        }
+        journaled += order.jobOrderId
+    }
+
+    private fun orderJson(order: JobOrder): String = json.writeValueAsString(
+        linkedMapOf(
+            "jobOrderId" to order.jobOrderId,
+            "workMasterId" to order.workMasterId,
+            "version" to order.version,
+            "requiredEvidence" to order.requiredEvidence.name,
+            "parameters" to order.parameters,
+            "materialRequirements" to order.materialRequirements.map {
+                linkedMapOf("materialDefinitionId" to it.materialDefinitionId, "quantity" to it.quantity)
+            },
+            "equipmentRequirements" to order.equipmentRequirements.map {
+                linkedMapOf("id" to it.id, "equipmentUse" to it.equipmentUse, "properties" to it.properties)
+            },
+        ),
+    )
 
     fun executions(): ExecutionsView = lock.withLock {
         val responses = middleware.responses()
@@ -248,31 +501,136 @@ class MissionHost(
                     physicalState = execution.physicalState.name,
                     units = execution.units.map { UnitView(it.unitId, it.skillType, it.state.name, it.reached.name) },
                     jobResponse = responses.lastOrNull { it.executionId == execution.executionId }?.let(::view),
+                    restoredFrom = restoredFrom[execution.executionId],
                 )
             },
+            restore = restoreView(),
         )
     }
 
     /**
      * 봉인된 인시던트(S3c 스펙 §7.2, S4a 스펙 §6). 최신부터 많아야 [limit] 개다. 번들은 미들웨어 안의 값이라 호스트 잠금 아래에서
      * 옮긴다. 보류 중 여부는 자르기 전의 전부로 정한다.
+     *
+     * 이전 인스턴스의 사본은 [IncidentsView.earlier] 에 따로 싣는다(S4b 스펙 T7). 적은 순서의 역순으로 많아야 [limit] 개다. 사본은
+     * 잠금 밖에서 DB 로 읽는다.
      */
-    fun incidents(limit: Int): IncidentsView = lock.withLock {
-        val all = middleware.incidents()
-        val held = heldIncidents(all)
-        IncidentsView(
-            instanceId = middleware.instanceId,
-            total = all.size,
-            incidents = all.asReversed().take(limit).map { IncidentViews.item(it, it.incidentId in held) },
+    fun incidents(limit: Int): IncidentsView {
+        val (total, live) = lock.withLock {
+            val all = middleware.incidents()
+            val held = heldIncidents(all)
+            all.size to all.asReversed().take(limit).map { IncidentViews.item(it, it.incidentId in held) }
+        }
+        return IncidentsView(
+            instanceId = instanceId,
+            total = total,
+            incidents = live,
+            earlierTotal = records.earlierCopyCount(instanceId),
+            earlier = records.earlierCopies(instanceId, limit).map { row ->
+                EarlierIncidentView(row.instanceId, IncidentViews.item(copyDetail(row)))
+            },
         )
     }
 
-    /** 인시던트 하나의 상세(S4a 스펙 §6). 없으면 `null` 이다. 호스트 잠금 아래에서 읽는다. */
-    fun incident(incidentId: String): IncidentDetailView? = lock.withLock {
-        val bundle = middleware.incident(incidentId) ?: return@withLock null
-        val unitState = middleware.executions().firstOrNull { it.executionId == bundle.executionId }
+    /**
+     * 인시던트 하나의 상세(S4a 스펙 §6). 없으면 `null` 이다. [ofInstance] 가 없거나 지금 인스턴스면 호스트 잠금 아래에서 미들웨어의
+     * 번들을 읽는다. 이전 인스턴스면 그 인스턴스의 사본을 돌려준다(S4b 스펙 T7).
+     */
+    fun incident(incidentId: String, ofInstance: String? = null): IncidentDetailView? {
+        if (ofInstance != null && ofInstance != instanceId) return records.incidentCopy(ofInstance, incidentId)?.let(::copyDetail)
+        return lock.withLock { liveDetail(incidentId) }
+    }
+
+    private fun liveDetail(incidentId: String): IncidentDetailView? {
+        val bundle = middleware.incident(incidentId) ?: return null
+        return IncidentViews.detail(middleware.instanceId, bundle, incidentId in heldIncidents(middleware.incidents()), unitStateOf(bundle))
+    }
+
+    private fun unitStateOf(bundle: IncidentBundle): String? =
+        middleware.executions().firstOrNull { it.executionId == bundle.executionId }
             ?.units?.firstOrNull { it.unitId == bundle.unitId }?.state?.name
-        IncidentViews.detail(middleware.instanceId, bundle, incidentId in heldIncidents(middleware.incidents()), unitState)
+
+    /**
+     * 사본의 상세. 판단은 판단 행으로 다시 세우고 근거 없는 완료 확인도 그것으로 다시 계산한다. 이전 인스턴스의 인시던트는 보류 중이
+     * 아니고, 그 실행은 이 인스턴스에 없으므로 단위의 지금 상태는 `null` 이다.
+     */
+    private fun copyDetail(row: IncidentCopyRow): IncidentDetailView {
+        val stored = json.readValue<IncidentDetailView>(row.detail)
+        val resolution = row.resolution?.let { ResolutionView(it.decision, it.at, it.wallClockAt, ApproverView(it.decidedById, it.decidedByKind)) }
+        return stored.copy(
+            resolution = resolution,
+            held = false,
+            confirmedWithoutEvidence = resolution?.decision == OperatorDecision.CONFIRM_DONE.name &&
+                stored.verification != Verification.MATCHED.name,
+            unitState = null,
+        )
+    }
+
+    /** 송신 기록(S4b 스펙 T6). 최근부터 많아야 [limit] 개다. DB 만 읽고 호스트 잠금을 잡지 않는다. */
+    fun jobResponses(jobOrderId: String?, limit: Int): JobResponsesView = JobResponsesView(
+        instanceId = instanceId,
+        total = records.responseLogCount(jobOrderId),
+        responses = records.responseLog(jobOrderId, limit).map(JobResponseLogView::of),
+    )
+
+    /**
+     * pump 뒤 기록(S4b 스펙 §6.2, T6·T7). 같은 잠금 안에서 한 트랜잭션으로 송신 기록, 새로 봉인된 인시던트의 사본, 아직 판단 행이
+     * 없는 판단, 아직 정착 이벤트가 없는 정착한 실행을 적는다. 트랜잭션이 실패하면 아무것도 `ack` 하지 않고 다음 pump 에 다시 한다.
+     *
+     * 송신 기록: 새 인스턴스가 그 작업 지시에 대해 처음 내는 응답이 그 작업 지시의 가장 최근 송신 행(인스턴스 무관)과 내용 키가
+     * 같으면 재기동 중복으로 적고 송신하지 않는다. 그 밖에는 송신으로 적는다. 어느 쪽이든 적은 뒤 `ack` 한다.
+     *
+     * 정착은 pump 가 더 돌리지 않는 상태다(`PARTIAL` 은 미들웨어가 계속 돌리므로 정착으로 적지 않는다).
+     */
+    private fun recordAfterPump() {
+        val pending = middleware.pending()
+        val incidents = middleware.incidents()
+        val fresh = incidents.drop(copiedIncidents)
+        val resolved = incidents.filter { it.resolution != null && it.incidentId !in copiedResolutions }
+        val settled = middleware.executions().filter {
+            it.physicalState.isSettled && it.physicalState != PhysicalState.PARTIAL &&
+                it.order.jobOrderId in journaled && it.order.jobOrderId !in settledRecorded
+        }
+        if (pending.isEmpty() && fresh.isEmpty() && resolved.isEmpty() && settled.isEmpty()) return
+
+        val held = heldIncidents(incidents)
+        val copies = fresh.map { it to json.writeValueAsString(IncidentViews.detail(instanceId, it, it.incidentId in held, unitStateOf(it))) }
+        try {
+            records.inTransaction {
+                pending.forEach(::logResponse)
+                copies.forEach { (bundle, detail) ->
+                    records.copyIncident(instanceId, bundle.incidentId, bundle.executionId, bundle.jobOrderId, bundle.unitId, detail)
+                }
+                resolved.forEach { bundle ->
+                    val resolution = bundle.resolution!!
+                    records.copyResolution(
+                        instanceId, bundle.incidentId,
+                        CopyResolutionRow(
+                            resolution.decision.name, resolution.at, resolution.wallClockAt, resolution.decidedBy.id, resolution.decidedBy.kind.name,
+                        ),
+                    )
+                }
+                settled.forEach {
+                    records.event(it.order.jobOrderId, JournalEventKind.SETTLED, instanceId, it.executionId, it.physicalState.name)
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("pump 뒤 기록 실패, 다음 pump 에 다시 한다: {}", e.toString())
+            return
+        }
+        copiedIncidents = incidents.size
+        copiedResolutions += resolved.map { it.incidentId }
+        settledRecorded += settled.map { it.order.jobOrderId }
+        pending.forEach { middleware.ack(it.jobResponseId) }
+    }
+
+    private fun logResponse(response: JobResponse) {
+        val content = contentOf(response)
+        val duplicate = !records.loggedIn(instanceId, response.jobOrderId) && records.lastSent(response.jobOrderId)?.content == content
+        records.logResponse(
+            instanceId, response.jobResponseId, response.executionId, content,
+            if (duplicate) ResponseDisposition.RESTART_DUPLICATE else ResponseDisposition.SENT,
+        )
     }
 
     /**
@@ -350,10 +708,43 @@ class MissionHost(
                 SkillFit.UNKNOWN -> add("기체 케이퍼빌리티를 못 물어봤다")
             }
             if (running != null) add("도는 실행이 있다: $running")
+            unrestoredOn(robotId).takeIf { it.isNotEmpty() }?.let { add("$UNRESTORED_REASON: ${it.joinToString(", ")}") }
             if (!applied) add(UNAPPLIED_REASON)
         }
         return HostEligibility(robotId, fit, missing, running, passed = reasons.isEmpty(), reasons = reasons)
     }
+
+    /**
+     * 이 기체에서 다시 짓지 못한 작업 지시(T4). 미룬 행은 늘 든다. 포기한 행은 그 기체의 스냅숏을 이번에 한 번 읽어, 그 작업 지시의
+     * 비종착 태스크(id 가 `jobOrderId#` 로 시작, `@rN` 이 붙은 재작업 태스크 포함)가 없으면 풀고 더 빼지 않는다. 스냅숏을 못 읽으면
+     * 계속 뺀다.
+     */
+    private fun unrestoredOn(robotId: String): List<String> {
+        val waiting = deferred.filter { it.row.robotId == robotId }.map { it.row.jobOrderId }
+        val abandoned = gaveUp.filter { it.robotId == robotId }
+        if (abandoned.isEmpty()) return waiting
+        val snapshot = robots.snapshot(robotId) ?: return waiting + abandoned.map { it.jobOrderId }
+        val still = abandoned.filter { row ->
+            snapshot.tasks.any { (taskId, state) -> taskId.startsWith("${row.jobOrderId}#") && state !in TERMINAL_TASK_STATES }
+        }
+        gaveUp.removeAll((abandoned - still.toSet()).toSet())
+        return waiting + still.map { it.jobOrderId }
+    }
+
+    private fun contentOf(response: JobResponse) = ResponseContent(
+        jobOrderId = response.jobOrderId,
+        version = response.version,
+        physicalState = response.physicalState.name,
+        requiredEvidence = response.requiredEvidence.name,
+        reachedEvidence = response.reachedEvidence.name,
+        completedUnits = response.completedUnits.sorted(),
+        unverifiedUnits = response.unverifiedUnits.sorted(),
+        incompleteUnits = response.incompleteUnits.keys.sorted(),
+        inDoubtUnits = response.inDoubtUnits.sorted(),
+        operatorRequired = response.operatorRequired,
+        residualHold = response.residualHold.kind.name,
+        blockedBy = response.blockedBy.sorted(),
+    )
 
     private fun view(response: JobResponse) = JobResponseView(
         jobResponseId = response.jobResponseId,
@@ -384,6 +775,15 @@ class MissionHost(
 
         /** 현장 시간값 미적용 동안 판정이 기체마다 더하는 이유(S3c 스펙 T8). 화면에 그대로 보인다. */
         const val UNAPPLIED_REASON = "현장 시간값 미적용: 실행 호스트가 현장 설정을 아직 읽지 못했다"
+
+        /** 다시 짓지 못한 실행이 있는 기체에 판정이 더하는 이유의 앞부분(S4b 스펙 T4). 뒤에 작업 지시 id 가 붙는다. */
+        const val UNRESTORED_REASON = "복원 못 한 실행이 있다"
+
+        /** 종착한 태스크 상태. 미들웨어가 단위의 종착으로 보는 것과 같다(사람을 기다리는 RETRIABLE·NEEDS_INTERVENTION 포함). */
+        private val TERMINAL_TASK_STATES = setOf(
+            TaskState.TASK_STATE_SUCCEEDED, TaskState.TASK_STATE_FAILED, TaskState.TASK_STATE_CANCELLED,
+            TaskState.TASK_STATE_CANCELLED_RECOVERY_FAILED, TaskState.TASK_STATE_NEEDS_INTERVENTION, TaskState.TASK_STATE_RETRIABLE,
+        )
 
         /** 운영자 판단의 결과 이름. picasso `ResolveOutcome` 의 이름 그대로다(S4a 스펙 T6). */
         const val RESOLVED = "Resolved"

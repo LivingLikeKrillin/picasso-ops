@@ -1,5 +1,6 @@
 package dev.picasso.ops.host
 
+import com.fasterxml.jackson.annotation.JsonUnwrapped
 import dev.picasso.middleware.Approver
 import dev.picasso.middleware.FaultDetail
 import dev.picasso.middleware.IncidentBundle
@@ -132,8 +133,25 @@ data class IncidentView(
     val confirmedWithoutEvidence: Boolean,
 )
 
-/** `GET /host/incidents` 의 본문. [incidents] 는 최신부터 많아야 limit 개이고 [total] 은 자르기 전의 수다. */
-data class IncidentsView(val instanceId: String, val total: Int, val incidents: List<IncidentView>)
+/**
+ * `GET /host/incidents` 의 본문. [incidents] 는 최신부터 많아야 limit 개이고 [total] 은 자르기 전의 수다.
+ *
+ * @param earlier 이전 인스턴스의 인시던트 사본(S4b 스펙 T7). 적은 순서의 역순으로 많아야 limit 개다. 보류 중이 아니다
+ * @param earlierTotal 자르기 전의 사본 수
+ */
+data class IncidentsView(
+    val instanceId: String,
+    val total: Int,
+    val incidents: List<IncidentView>,
+    val earlierTotal: Int,
+    val earlier: List<EarlierIncidentView>,
+)
+
+/** 이전 인스턴스의 인시던트 한 줄. 목록 줄의 19칸 앞에 그 인스턴스를 둔다. 상세는 이 [instanceId] 를 질의로 실어 읽는다. */
+data class EarlierIncidentView(
+    val instanceId: String,
+    @get:JsonUnwrapped val incident: IncidentView,
+)
 
 /**
  * `GET /host/incidents/{incidentId}` 의 본문(S4a 스펙 §6). 목록 줄의 칸에 근거 윈도우, 단계 위치, 필요·도달 근거 등급, 확인 결과,
@@ -217,6 +235,29 @@ internal object IncidentViews {
             confirmedWithoutEvidence = confirmedWithoutEvidence(bundle),
         )
     }
+
+    /** 상세에서 목록 줄을 다시 세운다. 사본이 쓴다. 칸의 값은 [item] 과 같은 출처(봉인 때의 번들)다. */
+    fun item(detail: IncidentDetailView): IncidentView = IncidentView(
+        incidentId = detail.incidentId,
+        executionId = detail.executionId,
+        jobOrderId = detail.jobOrderId,
+        robotId = detail.robotId,
+        unitId = detail.unitId,
+        at = detail.at,
+        failureClass = detail.failureClass,
+        route = detail.route,
+        missionVersion = detail.intent.missionVersion,
+        siteSettingsVersion = detail.intent.siteSettingsVersion,
+        evidenceBeforeSeconds = detail.intent.evidenceBeforeSeconds,
+        evidenceAfterSeconds = detail.intent.evidenceAfterSeconds,
+        inDoubtGraceSeconds = detail.intent.inDoubtGraceSeconds,
+        stallWindowSeconds = detail.intent.stallWindowSeconds,
+        unresolved = detail.unresolved,
+        resolution = detail.resolution,
+        fault = detail.fault?.let { FaultSummaryView(it.failureClass, it.errorType, it.errorHint) },
+        held = detail.held,
+        confirmedWithoutEvidence = detail.confirmedWithoutEvidence,
+    )
 
     fun detail(instanceId: String, bundle: IncidentBundle, held: Boolean, unitState: String?): IncidentDetailView {
         val intent = bundle.intent
