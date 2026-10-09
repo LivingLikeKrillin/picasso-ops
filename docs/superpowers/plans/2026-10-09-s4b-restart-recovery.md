@@ -6208,3 +6208,13 @@ gh pr merge <PR 번호> -R LivingLikeKrillin/picasso-ops --merge
 cd "C:/Users/Eisen/Desktop/Labs/[projects] picasso-ops" && git status --short && git fetch -q origin && git merge --ff-only origin/main && git submodule update --init -q && git log --oneline -1 && git -C picasso log --oneline -1
 ```
 Expected: 머지 커밋(`--delete-branch` 쓰지 않음, 이 저장소는 자동 머지가 꺼져 있다). 메인 체크아웃 `status --short` 에 추적 파일의 변경이 없고(있으면 멈추고 보고), 병합 뒤 `main` 이 머지 커밋, 서브모듈이 `74e4d3d`. 워크트리와 브랜치는 지우지 않는다.
+
+## 실행 결과
+
+- 수행: picasso-ops 워크트리 `picasso-ops-wt/s4b` 에서 묶음 셋(Task 1·2, Task 3·4, Task 5·5b)을 하위 에이전트(Sonnet)가 수행, 블록은 계획에서 기계로 뽑아 둔 파일을 복사·적용, 묶음마다 커밋된 파일을 스파이크와 바이트 대조해 46개 모두 같음(15, 9, 12, 3, 7)과 서브모듈 포인터 같음, 트리(40개 경로)와 커밋 메시지 18개가 스파이크와 같음(스파이크 전용 글자 다섯 곳만 뺌), Expected 와 다른 곳 없음, README 는 워크트리에서 따로 고침
+- 결함 주입: 전체 75건(호스트 33, 운영 서비스 14, 화면 17, Playwright 2, 통합 9)을 스파이크에서 돌려 74건 탐지와 등가 변이 1건(I4, 보류 응답의 미완 사유는 실패 분류라 인스턴스와 무관), 호스트 H1~H27 은 확정 전 P6 스냅숏에서 돌렸고 호스트 시험은 확정 P6 에서 통과, 워크트리는 새 클론 빌드 뒤 대표 5건(H5, O7, U8, I7, P1) 모두 탐지
+- 새 클론 빌드: Gradle 시험 421 실패 0(site 38, mission-host 79, ops-service 241, e2e 63), vitest 151, lint·tsc·build 통과, installDist 셋과 Playwright 1 통과(4.3분)
+- 병합: 코드 커밋을 묶음별로 남겨(스택 보존, 스쿼시 없음) picasso-ops PR #14 로 올림, 선행 picasso PR #86(P6, 머지 커밋 `74e4d3d`)
+- 스파이크: 영역 넷(picasso P6, 실행 호스트, 운영 서비스·화면·Playwright, site·통합 시험)을 하위 에이전트가 차례로 지음, JSON 계약 메모를 다음 영역의 입력으로 넘김, 스펙 검토 2회(배정 관문이 이미 집어 간 자재를 결품으로 읽어 거부, 스냅숏을 못 읽으면 `@rN` 없는 id 로 다시 붙는 고장, 이전 인시던트의 `exec-k` 가 새 인스턴스의 다른 실행을 가리킴, 송신 거르기의 범위), 계획 검토 1회(문서 브랜치 선행 조건, 훅에 걸리는 커밋 메시지 한 줄, 기체를 푸는 상태를 용어집의 종료 넷으로 한정, 칸 순서와 일지 쓰기 실패 시험, V2 트리거 함수 분리, Playwright 처분 칸 정확 일치), 새 시험이 포기한 행의 판정 이유 중복을 잡아 고침
+- 걸린 것: mimic 이 RPC 마다 `ACCEPTED` 를 `RUNNING` 으로 집어 들어 재기동 앞뒤 태스크 로그를 그대로 견주는 비교가 깨져 세 조건(태스크 id 집합, 재기동 전 로그가 앞에 그대로, `ACCEPTED` 한 번)으로 바꿈, Codex 사용 한도로 문장 초안을 Fable 과 Gemini 에서 받음, 긴 한국어 브리프가 Gemini 명령줄 한도에 걸려 둘로 나눠 보냄
+- 다음: picasso-ops 전체 화면의 화면 설계서(디자이너 리터치용)
