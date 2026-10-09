@@ -37,6 +37,7 @@ class IncidentBench {
         val requestId: UUID? = null,
         val limit: Int? = null,
         val incidentId: String? = null,
+        val instanceId: String? = null,
     )
 
     val calls = mutableListOf<Call>()
@@ -47,13 +48,23 @@ class IncidentBench {
             return this@IncidentBench.incidents
         }
 
-        override fun incident(incidentId: String): HostIncident {
-            calls += Call("incident", incidentId = incidentId)
+        override fun incident(incidentId: String, instanceId: String?): HostIncident {
+            calls += Call("incident", incidentId = incidentId, instanceId = instanceId)
             return this@IncidentBench.incident
         }
 
-        override fun resolve(executionId: String, unitId: String, decision: String, approverId: String, requestId: UUID): HostWrite {
-            calls += Call("resolve", executionId = executionId, unitId = unitId, decision = decision, approverId = approverId, requestId = requestId)
+        override fun resolve(
+            executionId: String,
+            unitId: String,
+            decision: String,
+            approverId: String,
+            instanceId: String,
+            requestId: UUID,
+        ): HostWrite {
+            calls += Call(
+                "resolve", executionId = executionId, unitId = unitId, decision = decision, approverId = approverId,
+                requestId = requestId, instanceId = instanceId,
+            )
             onResolve()
             return resolveAnswer
         }
@@ -69,9 +80,19 @@ class IncidentBench {
     /** 호스트가 받은 쓰기 호출(읽기 둘을 뺀 것). */
     fun writes(): List<Call> = calls.filter { it.op in setOf("resolve", "injectFault") }
 
-    /** 인시던트 목록 본문. 줄은 [row] 로 만든다. */
-    fun listed(vararg rows: String): HostCall<JsonNode> =
-        HostCall.Ok(json.readTree("""{"instanceId":"i-1","total":${rows.size},"incidents":[${rows.joinToString(",")}]}"""))
+    /** 인시던트 목록 본문. 줄은 [row] 로 만든다. 이전 인스턴스 사본은 없다. */
+    fun listed(vararg rows: String): HostCall<JsonNode> = listedAt("i-1", rows.toList())
+
+    /**
+     * 인스턴스 [instanceId] 의 인시던트 목록 본문(S4b 계약 H3). [earlier] 는 이전 인스턴스 사본이고 줄은 [copy] 로 만든다.
+     */
+    fun listedAt(instanceId: String, rows: List<String>, earlier: List<String> = emptyList()): HostCall<JsonNode> =
+        HostCall.Ok(
+            json.readTree(
+                """{"instanceId":"$instanceId","total":${rows.size},"incidents":[${rows.joinToString(",")}],""" +
+                    """"earlierTotal":${earlier.size},"earlier":[${earlier.joinToString(",")}]}""",
+            ),
+        )
 
     companion object {
         const val SKILL_RAISED =
@@ -96,5 +117,10 @@ class IncidentBench {
                "at":"1970-01-01T00:00:25Z","failureClass":"SIGNAL_DEADLINE","route":"SIGNAL","missionVersion":2,"siteSettingsVersion":1,
                "evidenceBeforeSeconds":30,"evidenceAfterSeconds":10,"inDoubtGraceSeconds":null,"stallWindowSeconds":null,
                "unresolved":true,"resolution":${resolution ?: "null"},"fault":null,"held":$held,"confirmedWithoutEvidence":false}"""
+
+        /** 이전 인스턴스 사본 한 줄(S4b 계약 H3, 20칸). `instanceId` 를 앞에 두고 보류가 아니다. */
+        fun copy(instanceId: String, incidentId: String, resolution: String? = null, executionId: String = "exec-1"): String =
+            """{"instanceId":"$instanceId",""" +
+                row(incidentId, executionId = executionId, resolution = resolution, held = false).trimStart().removePrefix("{")
     }
 }

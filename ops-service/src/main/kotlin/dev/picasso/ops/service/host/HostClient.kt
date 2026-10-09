@@ -194,11 +194,26 @@ interface HostIncidents {
     /** `GET /host/incidents[?limit=]` 본문 그대로. [limit] 이 널이면 쿼리를 싣지 않는다(호스트 기본 50). */
     fun incidents(limit: Int? = null): HostCall<JsonNode>
 
-    /** `GET /host/incidents/{incidentId}`. */
-    fun incident(incidentId: String): HostIncident
+    /**
+     * `GET /host/incidents/{incidentId}[?instanceId=]`. [instanceId] 가 널이면 쿼리를 싣지 않는다(지금 인스턴스). 이전 인스턴스면
+     * 호스트가 그 인스턴스의 사본을 준다(S4b 계약 H4).
+     */
+    fun incident(incidentId: String, instanceId: String? = null): HostIncident
 
-    /** `POST /host/executions/{executionId}/units/{unitId}/resolve`(S4a JSON 계약 §5.1). */
-    fun resolve(executionId: String, unitId: String, decision: String, approverId: String, requestId: UUID): HostWrite
+    /**
+     * `POST /host/executions/{executionId}/units/{unitId}/resolve`(S4a JSON 계약 §5.1). [instanceId] 는 상세에서 받은 인스턴스이고
+     * 지금 인스턴스가 아니면 호스트가 409 `INSTANCE_MISMATCH` 로 막는다(S4b 계약 H5).
+     */
+    fun resolve(executionId: String, unitId: String, decision: String, approverId: String, instanceId: String, requestId: UUID): HostWrite
+}
+
+/** 작업 응답 송신 기록 읽기(S4b 스펙 T6·T9). 시험이 호스트 없이 대신 끼운다. */
+fun interface HostJobResponses {
+    /**
+     * `GET /host/job-responses[?jobOrderId=&limit=]` 본문 그대로. 널인 인자는 쿼리에 싣지 않는다(호스트 기본은 전체, 50건).
+     * 200 아님과 닿지 않음은 모름이다.
+     */
+    fun jobResponses(jobOrderId: String?, limit: Int?): HostCall<JsonNode>
 }
 
 /** 장애 주입 전달(S4a 스펙 §7, T1). 시험이 호스트 없이 대신 끼운다. */
@@ -208,7 +223,7 @@ fun interface HostFaults {
 }
 
 /**
- * 실행 호스트 REST 클라이언트(S3a 스펙 §8, S3b 스펙 §7, S3c 스펙 §8, S4a 스펙 §7). 호스트는 루프백·무인증이라 토큰을 싣지 않는다.
+ * 실행 호스트 REST 클라이언트(S3a 스펙 §8, S3b 스펙 §7, S3c 스펙 §8, S4a 스펙 §7, S4b 스펙 §7). 호스트는 루프백·무인증이라 토큰을 싣지 않는다.
  *
  * 연결 제한은 registry 와 같고 요청 제한은 더 길다. 호스트는 판정과 제출을 자기 잠금 아래에서 하며, 그 안에서 mimic 에
  * gRPC 를 부르고, mimic 은 엔진 잠금 아래에서 registry 로 태스크 관측을 동기 HTTP 로 적재한다(요청 제한 3초, 스펙 §5.3).
@@ -224,7 +239,8 @@ class HostClient(
     private val json: ObjectMapper = jacksonObjectMapper(),
     private val requestTimeout: Duration = REQUEST_TIMEOUT,
     private val mockRunTimeout: Duration = MOCK_RUN_TIMEOUT,
-) : HostReads, HostWrites, HostMissions, HostSignals, HostSiteTimings, HostIncidents, HostFaults, AutoCloseable {
+) : HostReads, HostWrites, HostMissions, HostSignals, HostSiteTimings, HostIncidents, HostFaults, HostJobResponses,
+    AutoCloseable {
 
     private val base = checkBaseUrl(baseUrl)
 
@@ -314,8 +330,9 @@ class HostClient(
      * 없다는 응답은 404 와 `INCIDENT_NOT_FOUND` 가 함께일 때만이다. 다른 404(그 경로가 없는 서버 등)는 호스트의 판단이
      * 아니므로 못 읽음이다.
      */
-    override fun incident(incidentId: String): HostIncident {
-        val request = HttpRequest.newBuilder(URI.create("$base/host/incidents/${segment(incidentId)}")).GET()
+    override fun incident(incidentId: String, instanceId: String?): HostIncident {
+        val query = instanceId?.let { "?instanceId=${segment(it)}" } ?: ""
+        val request = HttpRequest.newBuilder(URI.create("$base/host/incidents/${segment(incidentId)}$query")).GET()
         val response = when (val write = send(request, requestTimeout)) {
             is HostWrite.NoResponse -> return HostIncident.Silent(write.cause)
             is HostWrite.Answered -> write
@@ -329,12 +346,25 @@ class HostClient(
         }
     }
 
-    override fun resolve(executionId: String, unitId: String, decision: String, approverId: String, requestId: UUID): HostWrite {
+    override fun resolve(
+        executionId: String,
+        unitId: String,
+        decision: String,
+        approverId: String,
+        instanceId: String,
+        requestId: UUID,
+    ): HostWrite {
         val body = json.createObjectNode()
             .put("decision", decision)
             .put("approverId", approverId)
             .put("requestId", requestId.toString())
+            .put("instanceId", instanceId)
         return post("/host/executions/${segment(executionId)}/units/${segment(unitId)}/resolve", body)
+    }
+
+    override fun jobResponses(jobOrderId: String?, limit: Int?): HostCall<JsonNode> {
+        val query = listOfNotNull(jobOrderId?.let { "jobOrderId=${segment(it)}" }, limit?.let { "limit=$it" })
+        return get("/host/job-responses" + if (query.isEmpty()) "" else query.joinToString("&", prefix = "?"))
     }
 
     /** 객체 본문만 받는다. 호스트의 GET 은 늘 객체를 준다(S3a JSON 계약 §5·§6, S3b JSON 계약 §4). */

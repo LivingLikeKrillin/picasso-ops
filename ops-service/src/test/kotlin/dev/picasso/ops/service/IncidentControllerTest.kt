@@ -92,9 +92,9 @@ class IncidentControllerTest {
             """{"robotId":"humanoid-01","kind":"SKILL_EXECUTION_FAILED","reason":3}""",
         )
         val decisions = listOf(
-            """{"decision":"REWORK"}""",
-            """{"decision":"REWORK","reason":""}""",
-            """{"decision":"REWORK","reason":null}""",
+            """{"decision":"REWORK","instanceId":"i-1"}""",
+            """{"decision":"REWORK","instanceId":"i-1","reason":""}""",
+            """{"decision":"REWORK","instanceId":"i-1","reason":null}""",
         )
         (faults.map { inject("engineer", body = it) } + decisions.map { resolve("operator", body = it) }).forEach { reply ->
             assertEquals(400, reply.statusCode.value())
@@ -122,6 +122,27 @@ class IncidentControllerTest {
     }
 
     @Test
+    fun `판단 본문의 instanceId 가 없거나 비었거나 문자열이 아니면 사유보다 먼저 400 RESOLVE_BAD_REQUEST 다`() {
+        listOf(
+            """{"decision":"REWORK","reason":"r"}""",
+            """{"decision":"REWORK","instanceId":" ","reason":"r"}""",
+            """{"decision":"REWORK","instanceId":null,"reason":"r"}""",
+            """{"decision":"REWORK","instanceId":3,"reason":"r"}""",
+            """{"decision":"REWORK"}""",
+        ).forEach { body ->
+            val reply = resolve("operator", body = body)
+            assertEquals(400, reply.statusCode.value(), body)
+            assertEquals(IncidentController.RESOLVE_BAD_REQUEST, reply.rejection().error, body)
+            assertEquals("instanceId 는 비어 있지 않은 문자열이다(인시던트 상세의 instanceId)", reply.rejection().detail)
+        }
+        assertEquals(emptyList(), bench.calls)
+        assertEquals(emptyList(), log.list())
+
+        assertEquals(200, resolve("operator", body = """{"decision":"REWORK","instanceId":"mw-9b1e","reason":"r"}""").statusCode.value())
+        assertEquals("mw-9b1e", bench.writes().single().instanceId)
+    }
+
+    @Test
     fun `맞는 모드와 사유면 호스트에 닿고 결과는 200 본문이다`() {
         val injected = inject("engineer", body = """{"robotId":"quadruped-01","kind":"CONNECTION","state":"OFFLINE","reason":" 묵은 값 "}""")
         assertEquals(200, injected.statusCode.value())
@@ -142,7 +163,10 @@ class IncidentControllerTest {
 
     @Test
     fun `판단 본문에 승인자 칸을 실어도 승인자는 행위자 헤더다`() {
-        val reply = resolve("operator", user = "kim", body = """{"decision":"CONFIRM_DONE","reason":"설비 확인","approverId":"mallory"}""")
+        val reply = resolve(
+            "operator", user = "kim",
+            body = """{"decision":"CONFIRM_DONE","instanceId":"i-1","reason":"설비 확인","approverId":"mallory"}""",
+        )
         assertEquals(200, reply.statusCode.value())
         assertEquals("kim", bench.writes().last().approverId)
         val row = log.list().single()
@@ -152,7 +176,9 @@ class IncidentControllerTest {
 
     @Test
     fun `인시던트 읽기는 호스트 본문 그대로이고 호스트가 안 닿으면 503 HOST_SILENT 이며 상세의 404 는 그대로 넘긴다`() {
-        val listed = bench.listed(IncidentBench.row("incident-1"))
+        val listed = bench.listedAt(
+            "i-2", listOf(IncidentBench.row("incident-1")), listOf(IncidentBench.copy("i-1", "incident-1")),
+        )
         bench.incidents = listed
         val list = controller.incidents(null)
         assertEquals(200, list.statusCode.value())
@@ -174,23 +200,41 @@ class IncidentControllerTest {
 
         val detail = json.readTree("""{"instanceId":"i-1","incidentId":"incident-1"}""")
         bench.incident = HostIncident.Found(detail)
-        assertSame(detail, controller.incident("incident-1").body)
-        assertEquals("incident-1", bench.calls.last().incidentId)
+        assertSame(detail, controller.incident("incident-1", null).body)
+        assertEquals(IncidentBench.Call("incident", incidentId = "incident-1"), bench.calls.last())
 
         val missing = json.readTree("""{"error":"INCIDENT_NOT_FOUND","detail":"없는 인시던트다: incident-9"}""")
         bench.incident = HostIncident.NotFound(missing)
-        val notFound = controller.incident("incident-9")
+        val notFound = controller.incident("incident-9", null)
         assertEquals(404, notFound.statusCode.value())
         assertSame(missing, notFound.body)
 
         bench.incident = HostIncident.Silent("HTTP 500")
-        val down = controller.incident("incident-1")
+        val down = controller.incident("incident-1", null)
         assertEquals(503, down.statusCode.value())
         assertEquals("HOST_SILENT", down.rejection().error)
     }
 
+    @Test
+    fun `상세의 instanceId 쿼리는 그대로 호스트에 넘기고 빈 값이면 호스트를 부르지 않는 400 이다`() {
+        val copy = json.readTree("""{"instanceId":"i-1","incidentId":"incident-1","held":false}""")
+        bench.incident = HostIncident.Found(copy)
+        val reply = controller.incident("incident-1", "i-1")
+        assertEquals(200, reply.statusCode.value())
+        assertSame(copy, reply.body)
+        assertEquals(IncidentBench.Call("incident", incidentId = "incident-1", instanceId = "i-1"), bench.calls.single())
+
+        listOf("", "  ").forEach { raw ->
+            val blank = controller.incident("incident-1", raw)
+            assertEquals(400, blank.statusCode.value())
+            assertEquals(IncidentController.INCIDENT_BAD_REQUEST, blank.rejection().error)
+            assertEquals("instanceId 는 비어 있지 않은 문자열이다", blank.rejection().detail)
+        }
+        assertEquals(1, bench.calls.size)
+    }
+
     companion object {
         const val FAULT = """{"robotId":"humanoid-01","kind":"SKILL_EXECUTION_FAILED","reason":"스킬 실패 시연"}"""
-        const val RESOLVE = """{"decision":"REWORK","reason":"보류 해소"}"""
+        const val RESOLVE = """{"decision":"REWORK","instanceId":"i-1","reason":"보류 해소"}"""
     }
 }

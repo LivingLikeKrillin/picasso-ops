@@ -127,19 +127,27 @@ class IncidentOperationsTest {
 
     @Test
     fun `판단 Resolved 는 성공이고 승인자와 결정과 실행과 단위와 사유와 결과 이름을 기록한다`() {
-        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "랙 재배치 뒤 재작업")
+        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "랙 재배치 뒤 재작업")
         assertEquals(OperationResult.SUCCEEDED, outcome.result)
         assertEquals("Resolved", outcome.outcome)
         assertNull(outcome.confirmation)
         assertNull(outcome.rejection)
         val call = bench.writes().single()
-        assertEquals(IncidentBench.Call("resolve", executionId = "exec-1", unitId = "rack-arrival", decision = "REWORK", approverId = "kim", requestId = outcome.requestId), call)
+        assertEquals(
+            IncidentBench.Call(
+                "resolve", executionId = "exec-1", unitId = "rack-arrival", decision = "REWORK", approverId = "kim",
+                requestId = outcome.requestId, instanceId = "i-1",
+            ),
+            call,
+        )
         val row = log.list().single()
         assertEquals("exec-1/rack-arrival", row.target)
         assertEquals(Mode.OPERATOR, row.mode)
         assertEquals("랙 재배치 뒤 재작업", row.reason)
         assertEquals(
-            json.readTree("""{"op":"${HoldResolutions.OP}","executionId":"exec-1","unitId":"rack-arrival","decision":"REWORK","approverId":"kim"}"""),
+            json.readTree(
+                """{"op":"${HoldResolutions.OP}","executionId":"exec-1","unitId":"rack-arrival","decision":"REWORK","approverId":"kim","instanceId":"i-1"}""",
+            ),
             json.readTree(row.request),
         )
         assertEquals("Resolved", json.readTree(row.targetResponse)["body"]["result"].asText())
@@ -150,7 +158,7 @@ class IncidentOperationsTest {
     fun `판단 NotHeld 와 Refused 는 거부로 남기고 응답 칸에 원래 결과 이름이 있다`() {
         listOf("NotHeld" to null, "Refused" to "에이전트는 운영자 판단을 내지 못한다").forEach { (name, detail) ->
             bench.resolveAnswer = HostWrite.Answered(200, IncidentBench.resolved(null, name, detail))
-            val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "CONFIRM_DONE", "확인")
+            val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "CONFIRM_DONE", "i-1", "확인")
             assertEquals(OperationResult.REJECTED, outcome.result)
             assertEquals(name, outcome.outcome)
             assertNull(outcome.rejection)
@@ -169,7 +177,7 @@ class IncidentOperationsTest {
             row("incident-2"),
             row("incident-1", resolution = resolution("REWORK", "kim", T0.plusSeconds(1))),
         )
-        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "재작업")
+        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업")
         assertEquals(OperationResult.NO_RESPONSE, outcome.result)
         assertEquals(OperationResult.CONFIRMED_APPLIED, outcome.confirmation)
         assertNull(outcome.outcome)
@@ -194,13 +202,13 @@ class IncidentOperationsTest {
         misses.forEach { miss ->
             clock.now = T0
             bench.incidents = bench.listed(miss)
-            val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "재작업")
+            val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업")
             assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, outcome.confirmation, miss)
         }
         // 요청 직전 시각과 같은 판단 시각은 반영이다(경계).
         clock.now = T0
         bench.incidents = bench.listed(row("incident-1", resolution = resolution("REWORK", "kim", T0)))
-        assertEquals(OperationResult.CONFIRMED_APPLIED, resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "재작업").confirmation)
+        assertEquals(OperationResult.CONFIRMED_APPLIED, resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업").confirmation)
     }
 
     @Test
@@ -208,19 +216,19 @@ class IncidentOperationsTest {
         bench.resolveAnswer = HostWrite.NoResponse("응답 없음: HttpTimeoutException")
         // 호스트가 받은 뒤(T0+10초)가 아니라 보내기 직전(T0)과 비교해야 T0+1초의 판단이 반영으로 읽힌다.
         bench.incidents = bench.listed(row("incident-1", resolution = resolution("REWORK", "kim", T0.plusSeconds(1))))
-        assertEquals(OperationResult.CONFIRMED_APPLIED, resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "재작업").confirmation)
+        assertEquals(OperationResult.CONFIRMED_APPLIED, resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업").confirmation)
     }
 
     @Test
     fun `판단 재조회가 목록을 못 읽으면 확인 행이 없고 모르는 결과 이름은 응답 없음이다`() {
         bench.resolveAnswer = HostWrite.NoResponse("응답 없음: ConnectException")
         bench.incidents = HostCall.Silent("응답 없음: ConnectException")
-        assertNull(resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "재작업").confirmation)
+        assertNull(resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업").confirmation)
 
         bench.resolveAnswer = HostWrite.Answered(200, IncidentBench.resolved(null, "RESOLVED"))
         bench.incidents = bench.listed()
         clock.now = T0
-        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "재작업")
+        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업")
         assertEquals(OperationResult.NO_RESPONSE, outcome.result)
         assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, outcome.confirmation)
         assertEquals(
@@ -230,9 +238,82 @@ class IncidentOperationsTest {
     }
 
     @Test
+    fun `이전 인스턴스를 실은 판단의 호스트 409 INSTANCE_MISMATCH 는 거부이고 원래 이름이 응답 칸과 응답에 있다`() {
+        bench.resolveAnswer = HostWrite.Answered(
+            409, """{"error":"INSTANCE_MISMATCH","detail":"판단 요청의 인스턴스(i-0)가 지금 인스턴스(i-1)가 아니다"}""",
+        )
+        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-0", "재작업")
+        assertEquals(OperationResult.REJECTED, outcome.result)
+        assertEquals(HostRejection(409, "INSTANCE_MISMATCH", "판단 요청의 인스턴스(i-0)가 지금 인스턴스(i-1)가 아니다"), outcome.rejection)
+        assertNull(outcome.outcome)
+        assertNull(outcome.confirmation)
+        assertEquals("i-0", bench.writes().single().instanceId)
+        val row = log.list().single()
+        assertEquals(OperationResult.REJECTED, row.result)
+        assertEquals("INSTANCE_MISMATCH", json.readTree(row.targetResponse)["body"]["error"].asText())
+        assertEquals(409, json.readTree(row.targetResponse)["status"].asInt())
+        assertEquals("i-0", json.readTree(row.request)["instanceId"].asText())
+        // 재조회하지 않는다.
+        assertEquals(emptyList(), bench.calls.filter { it.op == "incidents" })
+    }
+
+    @Test
+    fun `판단 재조회는 목록의 인스턴스가 요청한 인스턴스와 다르면 incidents 가 아니라 earlier 의 그 인스턴스 사본만 본다`() {
+        bench.resolveAnswer = HostWrite.NoResponse("응답 없음: HttpTimeoutException")
+        val applied = resolution("REWORK", "kim", T0.plusSeconds(1))
+        // 재기동 뒤 새 인스턴스의 exec-1 은 다른 실행이다. 같은 실행 id·단위·판단자·결정이어도 반영으로 읽지 않는다.
+        bench.incidents = bench.listedAt("i-2", listOf(row("incident-1", resolution = applied)))
+        val newInstance = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업")
+        assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, newInstance.confirmation)
+
+        // 이전 인스턴스 사본 가운데 요청한 인스턴스(i-1)의 것만 본다. 다른 이전 인스턴스(i-0)의 판단은 반영이 아니다.
+        clock.now = T0
+        bench.incidents = bench.listedAt("i-2", emptyList(), listOf(IncidentBench.copy("i-0", "incident-1", applied)))
+        assertEquals(
+            OperationResult.CONFIRMED_NOT_APPLIED,
+            resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업").confirmation,
+        )
+
+        clock.now = T0
+        bench.incidents = bench.listedAt(
+            "i-2",
+            listOf(row("incident-1")),
+            listOf(IncidentBench.copy("i-1", "incident-2"), IncidentBench.copy("i-1", "incident-1", applied)),
+        )
+        val earlier = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업")
+        assertEquals(OperationResult.CONFIRMED_APPLIED, earlier.confirmation)
+        val observed = json.readTree(log.list().first().targetResponse)["observed"]
+        assertEquals("i-1", observed["instanceId"].asText())
+        assertEquals("incident-1", observed["incidentId"].asText())
+
+        // 같은 인스턴스면 지금 목록을 본다(앞 시험들과 같다).
+        clock.now = T0
+        bench.incidents = bench.listedAt("i-1", listOf(row("incident-1", resolution = applied)))
+        assertEquals(
+            OperationResult.CONFIRMED_APPLIED,
+            resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업").confirmation,
+        )
+    }
+
+    @Test
+    fun `판단 재조회의 반영 안 됨 관측은 요청한 인스턴스의 그 단위 가장 최근 사본이다`() {
+        bench.resolveAnswer = HostWrite.NoResponse("응답 없음: HttpTimeoutException")
+        bench.incidents = bench.listedAt(
+            "i-2",
+            listOf(row("incident-9")),
+            listOf(IncidentBench.copy("i-1", "incident-3"), IncidentBench.copy("i-1", "incident-2", executionId = "exec-2")),
+        )
+        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업")
+        assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, outcome.confirmation)
+        val observed = json.readTree(log.list().first().targetResponse)["observed"]
+        assertEquals("incident-3", observed["incidentId"].asText())
+        assertEquals("i-1", observed["instanceId"].asText())
+    }
+
+    @Test
     fun `판단 본문이 틀렸다는 호스트 400 은 거부이고 오류 이름을 넘긴다`() {
         bench.resolveAnswer = HostWrite.Answered(400, """{"error":"BAD_REQUEST","detail":"decision 이 두 값이 아니다"}""")
-        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "재작업")
+        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업")
         assertEquals(OperationResult.REJECTED, outcome.result)
         assertEquals("BAD_REQUEST", outcome.rejection!!.error)
         assertNull(outcome.outcome)
