@@ -10,6 +10,7 @@ import dev.picasso.ops.host.HostBench.Companion.QUADRUPED
 import dev.picasso.ops.host.HostBench.Companion.inspect
 import dev.picasso.ops.host.HostBench.Companion.rack
 import dev.picasso.ops.host.HostBench.Companion.request
+import dev.picasso.ops.host.web.HostController
 import dev.picasso.registry.PostgresSupport
 import java.time.Duration
 import java.util.UUID
@@ -101,6 +102,28 @@ class HostJournalTest {
             assertEquals("exec-1", revised.body["executionId"].asText())
             assertEquals(1, journal().size)
             assertEquals("exec-1", journal().single()["execution_id"])
+        }
+    }
+
+    @Test
+    fun `일지 쓰기가 실패하면 제출은 500 JOURNAL_WRITE_FAILED 이고 실행은 미들웨어에 남는다`() {
+        HostBench().use { bench ->
+            PostgresSupport.execute(
+                """
+                CREATE FUNCTION mission.refuse_journal() RETURNS trigger AS ${'$'}${'$'} BEGIN RAISE EXCEPTION 'journal refused'; END; ${'$'}${'$'} LANGUAGE plpgsql
+                """.trimIndent(),
+            )
+            PostgresSupport.execute("CREATE TRIGGER refuse_journal BEFORE INSERT ON mission.execution_journal FOR EACH ROW EXECUTE FUNCTION mission.refuse_journal()")
+            val failed = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7"), "candidates", HUMANOID))
+            assertEquals(500, failed.status, failed.body.toString())
+            assertEquals(HostController.JOURNAL_WRITE_FAILED, failed.body!!["error"].asText(), failed.body.toString())
+            assertTrue("exec-1" in failed.body["detail"].asText(), failed.body.toString())
+            assertTrue(journal().isEmpty())
+            // 실행은 미들웨어에 남는다(스펙 §9, 한계). 일지에 없으니 다음 기동은 다시 짓지 않는다.
+            val execution = checkNotNull(bench.execution("exec-1")) { bench.get("/host/executions").toString() }
+            assertEquals(listOf("JO-1", HUMANOID), listOf(execution["jobOrderId"].asText(), execution["robotId"].asText()))
+            bench.restartHost()
+            assertTrue(bench.get("/host/executions")["restore"]["rows"].isEmpty)
         }
     }
 
