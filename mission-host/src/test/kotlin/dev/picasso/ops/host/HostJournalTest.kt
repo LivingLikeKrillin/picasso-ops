@@ -54,7 +54,7 @@ class HostJournalTest {
             assertEquals(listOf("JO-1"), journal().map { it["job_order_id"] })
             assertEquals(1, events("JO-1").size)
 
-            // 송신 기록: 응답마다 한 행, 모두 송신이고 ack 했으므로 다시 적지 않는다. 최신 행이 실행의 마지막 작업 응답이다.
+            // 송신 기록: 응답마다 한 행이고 모두 송신이다. 최신 행이 실행의 마지막 작업 응답이다(ack 는 트랜잭션 시험이 본다).
             val log = bench.get("/host/job-responses?jobOrderId=JO-1")
             assertEquals(listOf("instanceId", "total", "responses"), log.fieldNames().asSequence().toList())
             val rows = log["responses"].toList()
