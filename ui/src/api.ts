@@ -718,11 +718,14 @@ export interface DraftSaved {
   draft: DraftView
 }
 
-/** 호스트가 4xx 로 막은 쓰기(S3b JSON 계약 §10.1). 200 본문에 실린다. */
+/**
+ * 호스트가 4xx 로 막은 쓰기(S3b JSON 계약 §10.1). 200 본문에 실린다. 4xx 본문을 `{error, detail}` 로 읽지 못하면(스프링 기본
+ * 415 등) 두 칸이 null 이다(S4a JSON 계약 §9.1).
+ */
 export interface HostRejection {
   status: number
-  error: string
-  detail: string
+  error: string | null
+  detail: string | null
 }
 
 /**
@@ -794,3 +797,231 @@ export const activateMissionDraft = (session: Session, workMasterId: string, dra
   })
 export const writeCellSignal = (session: Session, name: string, value: string) =>
   postMission<SignalWriteOutcome>(`/api/cell/signals/${encodeURIComponent(name)}`, session, { value })
+
+/** 사람이 인시던트의 단위에 낸 판단(S4a JSON 계약 §3). `at` 은 호스트 시계, `wallClockAt` 은 실제 시각이다. */
+export interface IncidentResolution {
+  decision: HoldDecision
+  at: string
+  wallClockAt: string
+  decidedBy: { id: string; kind: string }
+}
+
+/** 인시던트 줄의 결함 요약(S4a JSON 계약 §3). `errorHint` 는 빈 문자열일 수 있다. */
+export interface FaultSummary {
+  failureClass: string
+  errorType: string
+  errorHint: string
+}
+
+/**
+ * 인시던트 한 줄(S4a JSON 계약 §3, 19칸). `unresolved` 는 봉인 때 한 번 정해지고 판단 뒤에도 그대로다. «미해결» 은
+ * `unresolved` 이고 `resolution` 이 없을 때이고, «보류 중» 강조는 `held` 만 본다. `missionVersion` 이 null 이면 코드 정의다.
+ */
+export interface IncidentRow {
+  incidentId: string
+  executionId: string
+  jobOrderId: string
+  robotId: string
+  unitId: string
+  at: string
+  failureClass: string | null
+  route: string
+  missionVersion: number | null
+  siteSettingsVersion: number | null
+  evidenceBeforeSeconds: number
+  evidenceAfterSeconds: number
+  inDoubtGraceSeconds: number | null
+  stallWindowSeconds: number | null
+  unresolved: boolean
+  resolution: IncidentResolution | null
+  fault: FaultSummary | null
+  held: boolean
+  confirmedWithoutEvidence: boolean
+}
+
+/** 운영 서비스의 `GET /api/incidents`(S4a JSON 계약 §9.2). `incidents` 는 최신부터이고 `total` 은 자르기 전의 수다. */
+export interface IncidentsView {
+  instanceId: string
+  total: number
+  incidents: IncidentRow[]
+}
+
+/** 결함 원문(S4a JSON 계약 §4, 9칸). `vendorDetail`·`errorHint`·`activeUntilTime` 은 빈 문자열일 수 있다. */
+export interface FaultDetail {
+  failureClass: string
+  errorType: string
+  vendorDetail: string
+  errorHint: string
+  references: { key: string; value: string }[]
+  canContinueCurrentTask: boolean
+  canAcceptNewTask: boolean
+  activeUntilKind: string
+  activeUntilTime: string
+}
+
+/** 근거 윈도우 안의 관측 하나(S4a JSON 계약 §4). `local` 이면 미들웨어가 적은 관측이다. */
+export interface EvidenceEvent {
+  sequence: number
+  occurredAt: string
+  kind: string
+  detail: string
+  local: boolean
+}
+
+/** 인시던트의 의도 전체(S4a JSON 계약 §4, 17칸). 버전과 시간값은 목록 줄과 같은 뜻이다. */
+export interface IncidentIntent {
+  workMasterId: string
+  orderVersion: number
+  orderParameters: Record<string, string>
+  materials: { materialDefinitionId: string; quantity: number }[]
+  equipment: { id: string; equipmentUse: string; properties: Record<string, string> }[]
+  capabilityMaxEvidence: string
+  evidenceBeforeSeconds: number
+  evidenceAfterSeconds: number
+  skillType: string
+  unitParameters: Record<string, string>
+  source: string | null
+  destination: string | null
+  expectedIdentity: string | null
+  missionVersion: number | null
+  siteSettingsVersion: number | null
+  inDoubtGraceSeconds: number | null
+  stallWindowSeconds: number | null
+}
+
+/**
+ * 운영 서비스의 `GET /api/incidents/{incidentId}`(S4a JSON 계약 §4, 29칸). `unitState` 는 그 단위의 지금 상태이고 나머지 근거
+ * 칸은 봉인 때의 관측이다.
+ */
+export interface IncidentDetail {
+  instanceId: string
+  incidentId: string
+  executionId: string
+  jobOrderId: string
+  robotId: string
+  unitId: string
+  at: string
+  wallClockAt: string
+  failureClass: string | null
+  route: string
+  unresolved: boolean
+  resolution: IncidentResolution | null
+  held: boolean
+  confirmedWithoutEvidence: boolean
+  unitState: string | null
+  fault: FaultDetail | null
+  blockedBy: FaultDetail[]
+  requiredEvidence: string
+  reachedEvidence: string
+  verification: string
+  step: { at: number; plan: string[]; completed: string[] }
+  evidenceWindow: EvidenceEvent[]
+  windowTruncated: boolean
+  preconditionSubjects: string[]
+  expectedHold: string | null
+  observedHold: string
+  effectMismatch: string | null
+  linkBroken: boolean
+  intent: IncidentIntent
+}
+
+/** 상세 읽기의 결과. 실행 호스트가 그 id 를 모르면(재기동으로 사라진 id 포함) `missing` 이다(S4a JSON 계약 §9.3). */
+export type IncidentLookup = { kind: 'found'; detail: IncidentDetail } | { kind: 'missing'; detail: string }
+
+export const fetchIncidents = (session: Session) => getHostJson<IncidentsView>('/api/incidents', session)
+
+/** 404 `INCIDENT_NOT_FOUND` 만 없음이다. 그 밖의 실패(503 `HOST_SILENT` 포함)는 못 읽음이라 던진다. */
+export async function fetchIncident(session: Session, incidentId: string): Promise<IncidentLookup> {
+  const response = await fetch(`/api/incidents/${encodeURIComponent(incidentId)}`, { headers: actorHeaders(session) })
+  if (response.ok) return { kind: 'found', detail: (await response.json()) as IncidentDetail }
+  const body = (await response.json().catch(() => null)) as Partial<PreRejection> | null
+  const detail = typeof body?.detail === 'string' && body.detail !== '' ? body.detail : `운영 서비스 응답 ${response.status}`
+  if (response.status === 404 && body?.error === 'INCIDENT_NOT_FOUND') return { kind: 'missing', detail }
+  throw new Error(detail)
+}
+
+/** 화면이 고르게 하는 장애 종류 둘과 연결 상태 셋(S4a JSON 계약 §1.1). 그 밖의 값은 현장이 거부하므로 두지 않는다. */
+export type FaultKind = 'SKILL_EXECUTION_FAILED' | 'CONNECTION'
+export type ConnectionFaultState = 'OFFLINE' | 'CONNECTION_BROKEN' | 'ONLINE'
+
+/** 현장이 받아들인 장애 주입의 본문(S4a JSON 계약 §1.2). */
+export type SiteFaultAnswer =
+  | { robotId: string; kind: 'SKILL_EXECUTION_FAILED'; taskId: string; taskState: string; raised: boolean }
+  | { robotId: string; kind: 'CONNECTION'; state: string; changed: boolean }
+
+/**
+ * 장애 주입의 200 응답(S4a JSON 계약 §9.4). 재조회하지 않으므로 `confirmation` 은 늘 null 이다. 현장의 거부는 `rejection`
+ * 이고, 현장 불통과 호스트 불통은 둘 다 `NO_RESPONSE` 다.
+ */
+export interface FaultInjectionOutcome {
+  requestId: string
+  robotId: string
+  kind: string
+  state: string | null
+  result: 'SUCCEEDED' | 'REJECTED' | 'NO_RESPONSE'
+  confirmation: null
+  fault: SiteFaultAnswer | null
+  rejection: HostRejection | null
+}
+
+export type HoldDecision = 'CONFIRM_DONE' | 'REWORK'
+
+/** 실행 호스트 판단의 200 본문(S4a JSON 계약 §5.2). */
+export interface HoldResolveAnswer {
+  result: string
+  detail: string | null
+  incidentId: string | null
+  requestId: string | null
+}
+
+/**
+ * 운영자 판단의 200 응답(S4a JSON 계약 §9.5). 화면은 `result` 가 아니라 `outcome`(picasso 이름 그대로)으로 가른다. `outcome`
+ * 은 호스트가 200 으로 답했을 때만 있다.
+ */
+export interface HoldResolveOutcome {
+  requestId: string
+  executionId: string
+  unitId: string
+  decision: HoldDecision
+  result: 'SUCCEEDED' | 'REJECTED' | 'NO_RESPONSE'
+  confirmation: 'CONFIRMED_APPLIED' | 'CONFIRMED_NOT_APPLIED' | null
+  outcome: 'Resolved' | 'NotHeld' | 'Refused' | null
+  answer: HoldResolveAnswer | null
+  rejection: HostRejection | null
+}
+
+/** 사전 거부(400 `REASON_REQUIRED`·403 `MODE_NOT_ALLOWED` 등)는 `refused` 다(S4a JSON 계약 §9.1). */
+const postOps = <T>(path: string, session: Session, body: unknown) =>
+  deliver<T>(path, {
+    method: 'POST',
+    headers: { ...actorHeaders(session), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+/** 연결 상태일 때만 `state` 를 싣는다. 사유는 앞뒤 공백을 뗀 값이다. */
+export const injectFault = (
+  session: Session,
+  robotId: string,
+  kind: FaultKind,
+  state: ConnectionFaultState | null,
+  reason: string,
+) =>
+  postOps<FaultInjectionOutcome>(
+    '/api/faults',
+    session,
+    kind === 'CONNECTION' ? { robotId, kind, state, reason } : { robotId, kind, reason },
+  )
+
+/** 승인자는 싣지 않는다. 운영 서비스가 `X-Ops-User` 로 정한다(S4a JSON 계약 §9.5, ADR 43). */
+export const resolveHold = (
+  session: Session,
+  executionId: string,
+  unitId: string,
+  decision: HoldDecision,
+  reason: string,
+) =>
+  postOps<HoldResolveOutcome>(
+    `/api/executions/${encodeURIComponent(executionId)}/units/${encodeURIComponent(unitId)}/resolve`,
+    session,
+    { decision, reason },
+  )

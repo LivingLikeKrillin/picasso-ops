@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { checkEligibility, fetchCell, fetchExecutions, submitJobOrder, writeCellSignal } from '../api'
+import { checkEligibility, fetchCell, fetchExecutions, fetchIncidents, submitJobOrder, writeCellSignal } from '../api'
 import type {
   CellView,
   Delivered,
   ExecutionsView,
+  IncidentsView,
   JobOrderForm,
   JobOrderOutcome,
   Session,
@@ -17,6 +18,7 @@ import { EligibilityTable } from './EligibilityTable'
 import type { EligibilityRead } from './EligibilityTable'
 import { ExecutionList } from './ExecutionList'
 import type { HostRead } from './ExecutionList'
+import { IncidentSection } from './IncidentSection'
 import { JobOrderFormView } from './JobOrderFormView'
 import { JobOrderNotice } from './JobOrderNotice'
 import { SignalNotice } from './SignalNotice'
@@ -32,9 +34,10 @@ const NO_ELIGIBILITY: EligibilityRead = { view: null, refusal: null, error: null
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /**
- * «운영» 영역(S3a 스펙 §9). 작업 지시 폼, 기체별 배정 가능 표, 실행 목록, 셀 대역 표시와 신호 조작(S3b 스펙 §8).
+ * «운영» 영역(S3a 스펙 §9). 작업 지시 폼, 기체별 배정 가능 표, 실행 목록, 인시던트와 운영자 판단(S4a 스펙 §8.2·§8.3),
+ * 셀 대역 표시와 신호 조작(S3b 스펙 §8).
  *
- * 실행 목록·셀·배정 가능은 실행 호스트를 거친다. 그래서 App 의 다섯 조회(`Promise.all`)와 따로, 이 영역이 열려 있을 때만
+ * 실행 목록·인시던트·셀·배정 가능은 실행 호스트를 거친다. 그래서 App 의 다섯 조회(`Promise.all`)와 따로, 이 영역이 열려 있을 때만
  * 읽는다(S3a 스펙 §9.3). 호스트가 멈춰도 다섯 조회가 직전 값이 되지 않게 하기 위해서다. 셋은 서로도 따로 실패하고, 못 읽으면
  * 직전 값을 지우지 않고 불통을 표시한다.
  *
@@ -47,6 +50,7 @@ export function OperationsArea({ session, onChanged }: Props) {
   const [tick, setTick] = useState(0)
   const [executions, setExecutions] = useState<HostRead<ExecutionsView>>({ value: null, error: null })
   const [cell, setCell] = useState<HostRead<CellView>>({ value: null, error: null })
+  const [incidents, setIncidents] = useState<HostRead<IncidentsView>>({ value: null, error: null })
   const [eligibility, setEligibility] = useState<EligibilityRead>(NO_ELIGIBILITY)
   const [draft, setDraft] = useState<JobOrderDraft>(EMPTY_DRAFT)
   const [problem, setProblem] = useState<string | null>(null)
@@ -60,7 +64,7 @@ export function OperationsArea({ session, onChanged }: Props) {
     return () => clearInterval(timer)
   }, [])
 
-  // 신호 조작 뒤 pump 가 돈 다음에 한 번 더 읽는 타이머. 영역을 닫으면 치우고, 닫은 뒤에 끝난 조작은 타이머를 걸지 않는다.
+  // 신호 조작과 운영자 판단 뒤 pump 가 돈 다음에 한 번 더 읽는 타이머. 영역을 닫으면 치우고, 닫은 뒤에 끝난 조작은 타이머를 걸지 않는다.
   const mounted = useRef(true)
   const settle = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -74,7 +78,7 @@ export function OperationsArea({ session, onChanged }: Props) {
 
   useEffect(() => {
     let alive = true
-    // 둘을 묶지 않는다. 셀 대역만 못 읽어도 실행 목록은 새 값이어야 한다.
+    // 셋을 묶지 않는다. 셀 대역만 못 읽어도 실행 목록은 새 값이어야 한다.
     fetchExecutions(session)
       .then((value) => {
         if (alive) setExecutions({ value, error: null })
@@ -88,6 +92,13 @@ export function OperationsArea({ session, onChanged }: Props) {
       })
       .catch((error: unknown) => {
         if (alive) setCell((previous) => ({ ...previous, error: message(error) }))
+      })
+    fetchIncidents(session)
+      .then((value) => {
+        if (alive) setIncidents({ value, error: null })
+      })
+      .catch((error: unknown) => {
+        if (alive) setIncidents((previous) => ({ ...previous, error: message(error) }))
       })
     return () => {
       alive = false
@@ -142,7 +153,19 @@ export function OperationsArea({ session, onChanged }: Props) {
   }
 
   // 바뀐 값은 실행 호스트의 다음 pump 부터 보인다. 곧바로 한 번, pump 가 돈 뒤 한 번 더 읽는다. 조작이 잇따르면 마지막 조작
-  // 뒤의 한 번이 앞의 것을 대신한다.
+  // 뒤의 한 번이 앞의 것을 대신한다. 신호 조작과 운영자 판단이 같이 쓴다.
+  const rereadNowAndAfterPump = () => {
+    setTick((value) => value + 1)
+    if (settle.current !== null) clearTimeout(settle.current)
+    settle.current = mounted.current
+      ? setTimeout(() => {
+          settle.current = null
+          setTick((value) => value + 1)
+        }, SIGNAL_SETTLE_MS)
+      : null
+    onChanged()
+  }
+
   const writeSignal = (name: string, value: string) => {
     const what = `${name} ${value === 'true' ? '켜기' : '끄기'}`
     setSignalBusy(true)
@@ -150,15 +173,7 @@ export function OperationsArea({ session, onChanged }: Props) {
       .then((sent) => setSignalLast({ what, sent }))
       .finally(() => {
         setSignalBusy(false)
-        setTick((value) => value + 1)
-        if (settle.current !== null) clearTimeout(settle.current)
-        settle.current = mounted.current
-          ? setTimeout(() => {
-              settle.current = null
-              setTick((value) => value + 1)
-            }, SIGNAL_SETTLE_MS)
-          : null
-        onChanged()
+        rereadNowAndAfterPump()
       })
   }
 
@@ -189,6 +204,7 @@ export function OperationsArea({ session, onChanged }: Props) {
         <h2>실행</h2>
         <ExecutionList read={executions} highlight={submitted} />
       </section>
+      <IncidentSection read={incidents} session={session} tick={tick} onDecided={rereadNowAndAfterPump} />
       <section aria-label="셀 대역">
         <h2>셀 대역</h2>
         {signalLast !== null && <SignalNotice what={signalLast.what} sent={signalLast.sent} />}

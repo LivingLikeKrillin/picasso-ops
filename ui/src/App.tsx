@@ -3,6 +3,7 @@ import { fetchAdapters, fetchOperations, fetchProfiles, fetchRobots, fetchSiteSe
 import type { AdapterListView, OperationRecord, ProfileListView, RobotListView, Session, SiteSettingsView } from './api'
 import { AREAS } from './areas'
 import type { AreaId } from './areas'
+import { FaultPanel } from './components/FaultPanel'
 import { HistoryArea } from './components/HistoryArea'
 import { MissionsArea } from './components/MissionsArea'
 import { ModeSwitch } from './components/ModeSwitch'
@@ -94,12 +95,15 @@ export default function App() {
           />
         )}
         {current.id === 'site' && (
-          <SiteArea
-            view={settings}
-            opsError={opsError}
-            session={session}
-            onChanged={() => setTick((value) => value + 1)}
-          />
+          <>
+            <SiteArea
+              view={settings}
+              opsError={opsError}
+              session={session}
+              onChanged={() => setTick((value) => value + 1)}
+            />
+            <FaultPanel robots={view} session={session} onChanged={() => setTick((value) => value + 1)} />
+          </>
         )}
         {current.id === 'missions' && (
           <MissionsArea session={session} onChanged={() => setTick((value) => value + 1)} />

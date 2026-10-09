@@ -9,7 +9,7 @@ import type {
   MissionOperationOutcome,
   MissionValidationReply,
 } from '../api'
-import { kindLabel, mockRunVerdict } from '../labels'
+import { kindLabel, mockRunVerdict, rejectionLabel } from '../labels'
 import { FindingCard } from './FindingCard'
 import { MockRunReport } from './MockRunReport'
 
@@ -136,7 +136,7 @@ function operated<T>(
     return (
       <>
         <p>
-          {what}: 실행 호스트가 거부함({kindLabel(operation.rejection.error)})
+          {what}: 실행 호스트가 거부함({rejectionLabel(operation.rejection.error)})
         </p>
         <p>{operation.rejection.detail}</p>
       </>
