@@ -7,8 +7,13 @@ import type {
   DraftView,
   EligibilityView,
   ExecutionsView,
+  FaultInjectionOutcome,
   Finding,
+  HoldResolveOutcome,
   HostTimings,
+  IncidentDetail,
+  IncidentRow,
+  IncidentsView,
   MissionOverview,
   MissionTemplates,
   MockRunView,
@@ -45,6 +50,9 @@ export interface FakeOps {
   /** 임무 개요와 템플릿(S3b). 운영 서비스가 호스트 본문을 그대로 넘기는 모양이다. */
   mission: MissionOverview
   templates: MissionTemplates
+  /** 인시던트 목록과 상세(S4a). 상세 맵에 없는 id 는 404 `INCIDENT_NOT_FOUND` 다. */
+  incidents: IncidentsView
+  incidentDetails: Map<string, IncidentDetail>
   /** `POST /api/job-orders/eligibility` 의 답. 폼 거부(400)를 만들려면 [eligibilityStatus] 와 본문을 바꾼다. */
   eligibility: EligibilityView | PreRejection
   eligibilityStatus: number
@@ -62,7 +70,8 @@ export const MISSION_PATH = '/api/missions/PrepareSequencedRack'
 export const TEMPLATES_PATH = '/api/missions/templates/PrepareSequencedRack'
 
 /** 실행 호스트를 거치는 경로. 503 일 때 운영 서비스가 `HOST_SILENT` 를 싣는다(S3a JSON 계약 §9.4, S3b JSON 계약 §10.3). */
-const HOST_PATHS = new Set(['/api/executions', '/api/cell', MISSION_PATH, TEMPLATES_PATH])
+const HOST_PATHS = new Set(['/api/executions', '/api/cell', '/api/incidents', MISSION_PATH, TEMPLATES_PATH])
+const INCIDENT_PREFIX = '/api/incidents/'
 const ELIGIBILITY_PATH = '/api/job-orders/eligibility'
 
 /** 실행 목록. 기본은 실행이 없는 호스트 인스턴스 하나다. */
@@ -91,12 +100,14 @@ export function cellView(): CellView {
   }
 }
 
-/** 템플릿 두 정의의 글자. 시험은 글자 그대로 오가는지만 본다. */
+/** 템플릿 세 정의의 글자. 시험은 글자 그대로 오가는지만 본다. */
 export const DATA_V1 = '{"schemaVersion": 1, "workMasterId": "PrepareSequencedRack", "nodes": ["place"]}'
 export const ARRIVAL_WAIT =
   '{"schemaVersion": 1, "workMasterId": "PrepareSequencedRack", "nodes": ["rack-arrival", "place"]}'
+export const ARRIVAL_WAIT_HOLD =
+  '{"schemaVersion": 1, "workMasterId": "PrepareSequencedRack", "nodes": ["rack-arrival(hold)", "place"]}'
 
-/** 템플릿 둘(S3b JSON 계약 §4.2). */
+/** 템플릿 셋(S3b JSON 계약 §4.2, S4a JSON 계약 §6). */
 export function missionTemplates(): MissionTemplates {
   return {
     workMasterId: 'PrepareSequencedRack',
@@ -106,6 +117,11 @@ export function missionTemplates(): MissionTemplates {
         id: 'ARRIVAL_WAIT',
         title: '랙 도착 대기(rack_present = true, 기한 120초, 기한 뒤 ABORTED)',
         definition: ARRIVAL_WAIT,
+      },
+      {
+        id: 'ARRIVAL_WAIT_HOLD',
+        title: '랙 도착 대기(rack_present = true, 기한 20초, 기한 뒤 운영자 보류)',
+        definition: ARRIVAL_WAIT_HOLD,
       },
     ],
   }
@@ -333,6 +349,137 @@ export function outcome(partial: Partial<OperationOutcome>): OperationOutcome {
   }
 }
 
+/** 인시던트 목록(S4a JSON 계약 §3). 기본은 인시던트가 없는 호스트 인스턴스 하나다. */
+export function incidentsView(incidents: IncidentRow[] = []): IncidentsView {
+  return { instanceId: 'mw-1', total: incidents.length, incidents }
+}
+
+/**
+ * 인시던트 한 줄(S4a JSON 계약 §3). 기본은 보류 버전 1 의 대기 기한 보류 직후다(미해결, 보류 중, 판단 없음, 결함 없음).
+ */
+export function incidentRow(partial: Partial<IncidentRow> = {}): IncidentRow {
+  return {
+    incidentId: 'incident-1',
+    executionId: 'exec-1',
+    jobOrderId: 'JO-20261009-aaaaaaaa',
+    robotId: 'humanoid-01',
+    unitId: 'rack-arrival',
+    at: 'h10',
+    failureClass: 'SIGNAL_DEADLINE',
+    route: 'SIGNAL',
+    missionVersion: 3,
+    siteSettingsVersion: 2,
+    evidenceBeforeSeconds: 30,
+    evidenceAfterSeconds: 15,
+    inDoubtGraceSeconds: 60,
+    stallWindowSeconds: 300,
+    unresolved: true,
+    resolution: null,
+    fault: null,
+    held: true,
+    confirmedWithoutEvidence: false,
+    ...partial,
+  }
+}
+
+/** 인시던트 상세(S4a JSON 계약 §4). 기본은 [incidentRow] 기본과 같은 대기 기한 보류의 실측 값이다. */
+export function incidentDetail(partial: Partial<IncidentDetail> = {}): IncidentDetail {
+  return {
+    instanceId: 'mw-1',
+    incidentId: 'incident-1',
+    executionId: 'exec-1',
+    jobOrderId: 'JO-20261009-aaaaaaaa',
+    robotId: 'humanoid-01',
+    unitId: 'rack-arrival',
+    at: 'h10',
+    wallClockAt: 'w10',
+    failureClass: 'SIGNAL_DEADLINE',
+    route: 'SIGNAL',
+    unresolved: true,
+    resolution: null,
+    held: true,
+    confirmedWithoutEvidence: false,
+    unitState: 'OPERATOR_HOLD',
+    fault: null,
+    blockedBy: [],
+    requiredEvidence: 'E2',
+    reachedEvidence: 'E0',
+    verification: 'NOT_REQUESTED',
+    step: { at: 1, plan: ['rack-arrival', 'RACK-204.S01'], completed: [] },
+    evidenceWindow: [
+      { sequence: 41, occurredAt: 'h9', kind: 'CELL_SIGNAL', detail: 'signal rack_present at deadline: false', local: true },
+    ],
+    windowTruncated: false,
+    preconditionSubjects: [],
+    expectedHold: null,
+    observedHold: 'HOLD_KIND_UNSPECIFIED',
+    effectMismatch: null,
+    linkBroken: false,
+    intent: {
+      workMasterId: 'PrepareSequencedRack',
+      orderVersion: 1,
+      orderParameters: {},
+      materials: [],
+      equipment: [],
+      capabilityMaxEvidence: 'E2',
+      evidenceBeforeSeconds: 30,
+      evidenceAfterSeconds: 15,
+      skillType: 'equipment_wait',
+      unitParameters: { signal: 'rack_present', expect: 'true', deadlineSeconds: '20', onDeadline: 'OPERATOR_HOLD' },
+      source: null,
+      destination: null,
+      expectedIdentity: null,
+      missionVersion: 3,
+      siteSettingsVersion: 2,
+      inDoubtGraceSeconds: 60,
+      stallWindowSeconds: 300,
+    },
+    ...partial,
+  }
+}
+
+/** 장애 주입 200 본문(S4a JSON 계약 §9.4). 기본은 humanoid-01 의 스킬 실패를 현장이 받아들인 것이다. */
+export function faultInjected(partial: Partial<FaultInjectionOutcome> = {}): FaultInjectionOutcome {
+  return {
+    requestId: '6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a',
+    robotId: 'humanoid-01',
+    kind: 'SKILL_EXECUTION_FAILED',
+    state: null,
+    result: 'SUCCEEDED',
+    confirmation: null,
+    fault: {
+      robotId: 'humanoid-01',
+      kind: 'SKILL_EXECUTION_FAILED',
+      taskId: 'JO-1#RACK-204.S01',
+      taskState: 'RETRIABLE',
+      raised: true,
+    },
+    rejection: null,
+    ...partial,
+  }
+}
+
+/** 운영자 판단 200 본문(S4a JSON 계약 §9.5). 기본은 exec-1 의 rack-arrival 재작업이 선 것이다. */
+export function holdResolved(partial: Partial<HoldResolveOutcome> = {}): HoldResolveOutcome {
+  return {
+    requestId: '3f0c6c1e-6a0e-4f43-9a52-2a3b4a9e8d10',
+    executionId: 'exec-1',
+    unitId: 'rack-arrival',
+    decision: 'REWORK',
+    result: 'SUCCEEDED',
+    confirmation: null,
+    outcome: 'Resolved',
+    answer: {
+      result: 'Resolved',
+      detail: null,
+      incidentId: 'incident-1',
+      requestId: '3f0c6c1e-6a0e-4f43-9a52-2a3b4a9e8d10',
+    },
+    rejection: null,
+    ...partial,
+  }
+}
+
 /** 브라우저처럼 ISO-8859-1 밖의 문자가 헤더에 있으면 보내기 전에 던지는 fetch 대역을 끼운다. */
 export function installFakeOps(
   view: RobotListView,
@@ -350,6 +497,8 @@ export function installFakeOps(
     cell: cellView(),
     mission: missionOverview(),
     templates: missionTemplates(),
+    incidents: incidentsView(),
+    incidentDetails: new Map(),
     eligibility: eligibilityView(),
     eligibilityStatus: 200,
     failing: new Set(),
@@ -368,10 +517,16 @@ export function installFakeOps(
       const method = init?.method ?? 'GET'
       fake.calls.push({ method, url, headers, body: init?.body ? JSON.parse(init.body as string) : undefined })
       if (fake.failing.has(url) && (method === 'GET' || url === ELIGIBILITY_PATH)) {
-        const body = HOST_PATHS.has(url)
+        const body = HOST_PATHS.has(url) || url.startsWith(INCIDENT_PREFIX)
           ? JSON.stringify({ error: 'HOST_SILENT', detail: '실행 호스트가 답하지 않는다: 응답 없음: ConnectException' })
           : ''
         return new Response(body, { status: 503 })
+      }
+      if (method === 'GET' && url.startsWith(INCIDENT_PREFIX)) {
+        const found = fake.incidentDetails.get(decodeURIComponent(url.slice(INCIDENT_PREFIX.length)))
+        return found === undefined
+          ? new Response(JSON.stringify({ error: 'INCIDENT_NOT_FOUND', detail: '인시던트가 없다' }), { status: 404 })
+          : new Response(JSON.stringify(found), { status: 200 })
       }
       if (method === 'GET') {
         const body =
@@ -391,7 +546,9 @@ export function installFakeOps(
                         ? fake.mission
                         : url === TEMPLATES_PATH
                           ? fake.templates
-                          : []
+                          : url === '/api/incidents'
+                            ? fake.incidents
+                            : []
         return new Response(JSON.stringify(body), { status: 200 })
       }
       if (url === ELIGIBILITY_PATH) {

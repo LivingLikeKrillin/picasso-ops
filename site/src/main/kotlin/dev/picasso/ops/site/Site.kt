@@ -23,7 +23,7 @@ import java.time.Instant
  *
  * 기동 직후 mimic 가상 시계를 실제 시각까지 한 번 민다. 미들웨어는 E2 시간 윈도우의 기준 시각을 mimic 응답 헤더의
  * `state_as_of` 에서 가져오고 마감은 자기 시계로 보므로, EPOCH 에서 시작하면 둘이 어긋난다. 그 뒤 런처는 [advanceTo] 로
- * 실제 시각을 따라잡는다. [now]·시계 밀기·셀 대역의 훑기·[teach] 는 모두 `MimicServer.exclusive` 아래에서 돈다. 가상
+ * 실제 시각을 따라잡는다. [now]·시계 밀기·셀 대역의 훑기·[teach]·장애 주입은 모두 `MimicServer.exclusive` 아래에서 돈다. 가상
  * 시계는 다른 스레드에서 읽을 때 최신 값이 보인다는 보장이 없으므로 잠금이 그 가시성도 맡는다.
  */
 class Site private constructor(
@@ -41,7 +41,7 @@ class Site private constructor(
     /** mimic gRPC 가 열린 포트. 시험은 0 을 주고 여기서 읽는다(S3a 스펙 §6.2). */
     val mimicPort: Int get() = mimic.server.port
 
-    /** 셀 대역 `GET /cell` 이 열린 루프백 포트(S3a 스펙 §6.3). */
+    /** 셀 대역 `GET /cell` 과 장애 주입 `POST /faults` 가 열린 루프백 포트(S3a 스펙 §6.3, S4a 스펙 §5). */
     val cellPort: Int get() = cell.port
 
     /** 셀 대역의 지금 스냅숏. `GET /cell` 이 내는 것과 같다. */

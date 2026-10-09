@@ -15,3 +15,7 @@ tr.selected { background: #e8ebf3; }
 .editor textarea, pre { font-family: ui-monospace, monospace; font-size: 13px; }
 pre { white-space: pre-wrap; border: 1px solid #ccc; padding: 8px; margin: 0; }
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+tr.held { background: #fbeee6; }
+tr.held strong { color: #b23a1d; }
+.asserted { border-left: 4px double #2b3f6b; padding-left: 8px; }
+.observed h4 { margin-bottom: 4px; }

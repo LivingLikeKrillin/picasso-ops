@@ -1,6 +1,8 @@
 import type {
   CommissioningState,
   Connection,
+  FaultKind,
+  HoldDecision,
   HostSubmitResult,
   MockRunFailure,
   MockRunView,
@@ -81,6 +83,13 @@ export const KIND_LABEL: Record<string, string> = {
   SIGNAL_BAD_REQUEST: '신호 값 형식 오류',
   UNKNOWN_SIGNAL: '모르는 신호',
   SAFETY_SIGNAL_READ_ONLY: '안전 신호는 쓸 수 없음',
+  // 장애 주입의 현장 거부와 운영 서비스의 사전 거부(S4a JSON 계약 §1.3·§9.7).
+  NO_RUNNING_TASK: '진행 중 태스크 없음',
+  UNSUPPORTED_FAULT: '받지 않는 장애 종류',
+  FAULT_REFUSED: 'mimic 엔진이 강제를 거부함',
+  UNSUPPORTED_MEDIA_TYPE: 'JSON 이 아닌 본문',
+  FAULT_BAD_REQUEST: '장애 주입 본문 오류',
+  RESOLVE_BAD_REQUEST: '판단 본문 오류',
 }
 
 /** «시운전» 칸(P2·S1d 스펙 §8.5). 연결 칸과 합치지 않는다. */
@@ -107,6 +116,13 @@ export const TEST_REQUEST_LABEL: Record<TestRequestState, string> = {
 }
 
 export const kindLabel = (kind: string) => KIND_LABEL[kind] ?? kind
+
+/** 호스트·현장 거부의 이름. 거부 본문을 못 읽어 이름이 없으면(null) 이유 없음이다. */
+export const rejectionLabel = (error: string | null) => (error === null ? '이유 없음' : kindLabel(error))
+
+/** 거부 알림 한 줄. 사람이 읽는 문장(detail)이 없으면 이름만 적는다. */
+export const rejectionText = (who: string, rejection: { error: string | null; detail: string | null }) =>
+  `${who}(${rejectionLabel(rejection.error)})${rejection.detail ? `. ${rejection.detail}` : ''}`
 
 /** 실행 호스트의 스킬 적합(S3a 스펙 §9.1). `UNKNOWN` 은 기체 케이퍼빌리티를 못 물어본 것이다. */
 export const SKILL_FIT_LABEL: Record<SkillFit, string> = {
@@ -143,4 +159,17 @@ export function mockRunVerdict(run: MockRunView): string {
 export const TEMPLATE_LABEL: Record<string, string> = {
   DATA_V1: '데이터 정의 템플릿',
   ARRIVAL_WAIT: '랙 도착 대기 템플릿',
+  ARRIVAL_WAIT_HOLD: '운영자 보류 대기 템플릿',
+}
+
+/** 장애 주입 종류(S4a JSON 계약 §1.1). */
+export const FAULT_KIND_LABEL: Record<FaultKind, string> = {
+  SKILL_EXECUTION_FAILED: '스킬 실패',
+  CONNECTION: '연결 상태',
+}
+
+/** 운영자 판단 둘(S4a 스펙 §8.3). 버튼 이름이기도 하다. */
+export const DECISION_LABEL: Record<HoldDecision, string> = {
+  CONFIRM_DONE: '완료 확인',
+  REWORK: '재작업',
 }

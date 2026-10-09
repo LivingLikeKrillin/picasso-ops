@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Finding, MissionOperationOutcome, Session } from '../api'
 import {
   ARRIVAL_WAIT,
+  ARRIVAL_WAIT_HOLD,
   DATA_V1,
   MISSION_PATH,
   draftRow,
@@ -146,6 +147,8 @@ describe('임무·정책 영역', () => {
 
     await click('랙 도착 대기 템플릿 불러오기')
     expect(editor().value).toBe(ARRIVAL_WAIT)
+    await click('운영자 보류 대기 템플릿 불러오기')
+    expect(editor().value).toBe(ARRIVAL_WAIT_HOLD)
     await click('데이터 정의 템플릿 불러오기')
     expect(editor().value).toBe(DATA_V1)
   })

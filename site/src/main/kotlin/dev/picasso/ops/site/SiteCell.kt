@@ -133,7 +133,8 @@ sealed interface SignalWrite {
  * ## 내는 곳
  *
  * 루프백 JDK `HttpServer` 의 `GET /cell` 과 `POST /cell/signals/{name}` 이다. `GET` 처리 스레드는 [snapshot] 만 읽고
- * 엔진에 닿지 않는다. 본문 모양과 오류 이름은 S3b JSON 계약 §1·§2 다.
+ * 엔진에 닿지 않는다. 본문 모양과 오류 이름은 S3b JSON 계약 §1·§2 다. 같은 서버에 기체 장애 주입 `POST /faults`([SiteFaults],
+ * S4a 스펙 §5)가 붙는다.
  *
  * @param port 0 이면 무작위(시험).
  */
@@ -159,8 +160,12 @@ class SiteCell(
 
     private val json = ObjectMapper()
 
+    /** 기체 장애 주입(S4a 스펙 §5). 같은 루프백 서버의 `POST /faults` 가 이것을 부른다. */
+    val faults = SiteFaults(mimic)
+
     private val server: HttpServer = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), port), 0).apply {
         createContext("/cell", ::handle)
+        createContext(SiteFaults.PATH, faults::handle)
         start()
     }
 

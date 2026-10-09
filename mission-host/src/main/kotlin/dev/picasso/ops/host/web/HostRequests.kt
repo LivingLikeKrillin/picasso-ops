@@ -5,10 +5,18 @@ import dev.picasso.middleware.EquipmentRequirement
 import dev.picasso.middleware.Evidence
 import dev.picasso.middleware.JobOrder
 import dev.picasso.middleware.MaterialRequirement
+import dev.picasso.middleware.OperatorDecision
 import dev.picasso.ops.host.MissionHost
+import java.util.UUID
 
 /** 거부한 요청의 답. 운영 서비스의 사전 거부(`PreRejection`)와 같은 모양이다. */
 data class HostRejection(val error: String, val detail: String)
+
+/**
+ * 운영자 판단 요청(S4a 스펙 T6). [requestId] 는 운영 서비스가 실은 요청 id 이며 호스트는 응답에 그대로 돌려줄 뿐 저장하지 않는다.
+ * 응답 없음 뒤의 재조회는 인시던트의 판단으로 대조한다.
+ */
+data class ResolveRequest(val decision: OperatorDecision, val approverId: String, val requestId: String?)
 
 /** 본문을 못 받는 까닭. [error] 가 응답의 `error` 칸이다. */
 class BadRequest(val error: String, detail: String) : RuntimeException(detail)
@@ -61,6 +69,23 @@ object HostRequests {
                 EquipmentRequirement(text(it, "id"), text(it, "equipmentUse"), stringMap(it.get("properties"), "properties"))
             },
         )
+    }
+
+    /**
+     * `{decision, approverId, requestId?}` 를 읽는다. decision 은 `CONFIRM_DONE`·`REWORK` 이고 approverId 는 비어 있지 않은
+     * 문자열이다. requestId 는 없거나 `null` 이거나 UUID 문자열이다.
+     */
+    fun resolution(body: JsonNode?): ResolveRequest {
+        if (body == null || !body.isObject) throw BadRequest(BAD_REQUEST, "본문이 JSON 객체가 아니다")
+        val decision = text(body, "decision").let { value ->
+            OperatorDecision.entries.firstOrNull { it.name == value }
+                ?: throw BadRequest(BAD_REQUEST, "decision 이 ${OperatorDecision.entries.joinToString("·")} 가 아니다: $value")
+        }
+        val requestId = body.get("requestId")?.takeUnless { it.isNull }?.let { node ->
+            node.takeIf { it.isTextual }?.asText()?.takeIf { runCatching { UUID.fromString(it) }.isSuccess }
+                ?: throw BadRequest(BAD_REQUEST, "requestId 가 UUID 문자열이 아니다")
+        }
+        return ResolveRequest(decision, text(body, "approverId"), requestId)
     }
 
     /** 비어 있지 않은 문자열 칸. */

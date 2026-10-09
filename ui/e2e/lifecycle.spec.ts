@@ -215,6 +215,89 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(page.getByRole('status', { name: '신호 조작 결과' })).toHaveText('rack_present 켜기: 반영됨(값 true)')
   await expect(signals.getByRole('row', { name: /^rack_present BOOLEAN true / })).toBeVisible()
 
+  // 장애 주입(S4a 스펙 §3). 운영자가 데이터 정의 버전 1 로 슬롯 하나짜리 PrepareSequencedRack 을 내고, pick_place 가 도는 동안
+  // 엔지니어가 현장·자원 영역에서 스킬 실패를 넣는다. 슬롯 S01 은 아직 채운 적이 없어 근거가 없으므로 단위가 FAILED 이고
+  // GRASP_FAILED 인시던트가 선다. 현장 기체의 pick_place 는 이것이 처음이고 강제한 태스크는 자연 실패 추첨을 하지 않는다.
+  await order.getByLabel('임무').selectOption('PrepareSequencedRack')
+  await order.getByLabel('RACK-204.S01').check()
+  await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
+  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  const rackRuns = executions.getByRole('row').filter({ hasText: 'PrepareSequencedRack' })
+  const graspRun = rackRuns.filter({ hasText: 'RACK-204.S01 pick_place' })
+  // 작업 지시 직후의 태스크는 ACCEPTED 라 현장이 거부한다. RUNNING 이 보인 뒤에 넣는다. pick_place 는 45초 ±10% 다.
+  await expect(graspRun).toContainText('RACK-204.S01 pick_place: RUNNING')
+  await page.getByLabel('엔지니어').check()
+  await page.getByRole('button', { name: '현장·자원' }).click()
+  const faultForm = page.getByRole('form', { name: '장애 주입 폼' })
+  await faultForm.getByLabel('기체').selectOption('humanoid-01')
+  await faultForm.getByLabel('장애 종류').selectOption('SKILL_EXECUTION_FAILED')
+  await faultForm.getByLabel('장애 주입 사유').fill('스킬 실패 시연')
+  await faultForm.getByRole('button', { name: '장애 넣기' }).click()
+  await expect(page.getByRole('status', { name: '장애 주입 결과' })).toHaveText(
+    /^humanoid-01 스킬 실패: 받아들임\(태스크 .+#RACK-204\.S01, RETRIABLE\)$/,
+  )
+  await page.getByRole('button', { name: '운영', exact: true }).click()
+  const incidentTable = page.getByRole('table', { name: '인시던트 목록' })
+  const grasp = incidentTable.getByRole('row').filter({ hasText: 'GRASP_FAILED' })
+  // 현장 설정은 버전 3(stallWindow 변경), 임무는 데이터 정의 버전 1 이다.
+  await expect(grasp).toContainText('humanoid-01')
+  await expect(grasp.getByRole('cell').nth(7)).toHaveText('버전 3')
+  await expect(grasp.getByRole('cell').nth(8)).toHaveText('버전 1')
+  await expect(grasp.getByRole('cell').nth(9)).toHaveText('판단 대상 아님')
+  await expect(graspRun).toContainText('RACK-204.S01 pick_place: FAILED')
+
+  // 운영자 보류(S4a 스펙 §3). 활성화한 보류 버전은 DB 에 남으므로 맨 끝에 둔다. 런처는 1:1 실시간이고 시계를 밀 수단이 없어
+  // 기한 20초를 실제 시간으로 기다린다. 재작업 뒤 대기는 새 기한 20초로 다시 돌므로 다시 돈 것을 본 즉시 신호를 켠다.
+  await page.getByRole('button', { name: '임무·정책' }).click()
+  await editor.getByRole('button', { name: '운영자 보류 대기 템플릿 불러오기' }).click()
+  await editor.getByRole('button', { name: '초안 저장' }).click()
+  await expect(missionNotice).toHaveText('초안 저장: 초안 2 저장됨')
+  await editor.getByRole('button', { name: '모의 실행', exact: true }).click()
+  await expect(missionNotice).toContainText('초안 2 모의 실행: 통과')
+  await editor.getByLabel('활성화 사유').fill('운영자 보류 대기 도입')
+  await editor.getByRole('button', { name: '활성화', exact: true }).click()
+  await expect(missionNotice).toHaveText('초안 2 활성화: 버전 2 활성화됨. 다음 작업 지시부터 이 버전을 씁니다')
+
+  // 셀 대역 신호는 스스로 돌아가지 않는다. 앞에서 켠 rack_present 를 끄지 않으면 대기가 곧바로 끝난다.
+  await page.getByLabel('운영자').check()
+  await page.getByRole('button', { name: '운영', exact: true }).click()
+  await signals.getByRole('button', { name: 'rack_present 끄기' }).click()
+  await expect(signals.getByRole('row', { name: /^rack_present BOOLEAN false / })).toBeVisible()
+  // 영역을 옮기면 작업 지시 폼이 처음 값(InspectAsset)으로 돌아온다.
+  await order.getByLabel('임무').selectOption('PrepareSequencedRack')
+  await order.getByLabel('RACK-204.S02').check()
+  await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
+  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  const holdRun = rackRuns.filter({ hasText: 'rack-arrival equipment_wait' })
+  await expect(holdRun).toContainText('rack-arrival equipment_wait: RUNNING')
+  const held = incidentTable.getByRole('row').filter({ hasText: '보류 중' })
+  await expect(held).toContainText('SIGNAL_DEADLINE')
+  await expect(held.getByRole('cell').nth(8)).toHaveText('버전 2')
+  await expect(held.getByRole('cell').nth(9)).toHaveText('미해결')
+  await held.getByRole('button', { name: /상세 보기$/ }).click()
+  const incidentDetail = page.getByRole('region', { name: '인시던트 상세' })
+  await expect(incidentDetail).toContainText('사람의 판단 없음. 아래 값은 모두 관측입니다')
+  // 판단 버튼은 운영자 모드에서만 보인다.
+  await page.getByLabel('엔지니어').check()
+  await expect(incidentDetail.getByText('보류 중입니다. 운영자 판단은 운영자 모드에서 합니다', { exact: true })).toBeVisible()
+  await expect(incidentDetail.getByRole('button', { name: '재작업' })).toHaveCount(0)
+  await page.getByLabel('운영자').check()
+  const decision = incidentDetail.getByRole('form', { name: '운영자 판단' })
+  await decision.getByLabel('판단 사유').fill('랙 재배치 뒤 재작업')
+  await decision.getByRole('button', { name: '재작업' }).click()
+  await expect(page.getByRole('status', { name: '판단 결과' })).toHaveText(/\/rack-arrival 재작업: 판단이 섰습니다\(incident-\d+\)$/)
+  await expect(holdRun).toContainText('rack-arrival equipment_wait: RUNNING', { timeout: 10_000 })
+  await signals.getByRole('button', { name: 'rack_present 켜기' }).click()
+  await expect(page.getByRole('status', { name: '신호 조작 결과' })).toHaveText('rack_present 켜기: 반영됨(값 true)')
+  await expect(holdRun).toContainText('PHYSICALLY_DONE', { timeout: 90_000 })
+  const asserted = incidentDetail.getByRole('region', { name: '사람의 판단' })
+  await expect(asserted).toContainText('사람이 판단함: local, ')
+  await expect(asserted).toContainText('결정 재작업(REWORK)')
+  const deadline = incidentTable.getByRole('row').filter({ hasText: 'SIGNAL_DEADLINE' })
+  await expect(deadline).toHaveCount(1)
+  await expect(deadline.getByRole('cell').nth(9)).toHaveText('판단됨')
+  await expect(deadline.getByRole('cell').nth(10)).toHaveText('-')
+
   // registry 를 멈춘다. 런처(registry 와 mimic 이 든 프로세스)를 끈다.
   const pidFile = fileURLToPath(new URL('../../build/site.pid', import.meta.url))
   process.kill(Number(readFileSync(pidFile, 'utf8')))

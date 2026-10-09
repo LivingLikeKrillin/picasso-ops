@@ -1,14 +1,19 @@
 package dev.picasso.ops.host
 
+import dev.picasso.middleware.Approver
+import dev.picasso.middleware.IncidentBundle
 import dev.picasso.middleware.InspectAsset
 import dev.picasso.middleware.JobOrder
 import dev.picasso.middleware.JobResponse
 import dev.picasso.middleware.Middleware
+import dev.picasso.middleware.OperatorDecision
 import dev.picasso.middleware.PrepareSequencedRack
 import dev.picasso.middleware.Route
+import dev.picasso.middleware.ResolveOutcome
 import dev.picasso.middleware.RobotPort
 import dev.picasso.middleware.SiteTimingsSource
 import dev.picasso.middleware.Unassigned
+import dev.picasso.middleware.UnitState
 import dev.picasso.ops.host.cell.CellBandClient
 import dev.picasso.ops.host.cell.CellBandSignals
 import dev.picasso.ops.host.cell.CellSnapshot
@@ -109,41 +114,11 @@ data class ExecutionView(
 data class ExecutionsView(val instanceId: String, val pumpedAt: Instant?, val executions: List<ExecutionView>)
 
 /**
- * 인시던트 하나(S3c 스펙 §7.2). 미들웨어 `IncidentBundle` 에서 통합 시험과 화면이 쓰는 칸만 옮긴다. 시간값은 picasso 의 ISO-8601
- * 문자열(`Duration.toString()`, 60초면 `PT1M`)을 초 단위 정수로 되돌린 것이다.
- *
- * @param at 봉인 라운드의 미들웨어 시각(호스트 시계)
- * @param missionVersion 임무 버전. `null` 이면 코드 정의다
- * @param siteSettingsVersion 봉인 라운드의 현장 설정 버전. 현장 시간값 없이 봉인했으면 `null` 이다
- * @param evidenceBeforeSeconds·evidenceAfterSeconds 봉인 라운드의 근거 윈도우 앞·뒤 폭. 늘 있다
- * @param inDoubtGraceSeconds·stallWindowSeconds 봉인 라운드의 값. 현장 시간값 없이 봉인했으면 `null` 이다
- */
-data class IncidentView(
-    val incidentId: String,
-    val executionId: String,
-    val jobOrderId: String,
-    val robotId: String,
-    val unitId: String,
-    val at: Instant,
-    val failureClass: String?,
-    val route: String,
-    val missionVersion: Int?,
-    val siteSettingsVersion: Long?,
-    val evidenceBeforeSeconds: Long,
-    val evidenceAfterSeconds: Long,
-    val inDoubtGraceSeconds: Long?,
-    val stallWindowSeconds: Long?,
-)
-
-/** `GET /host/incidents` 의 본문. [incidents] 는 최신부터 많아야 limit 개이고 [total] 은 자르기 전의 수다. */
-data class IncidentsView(val instanceId: String, val total: Int, val incidents: List<IncidentView>)
-
-/**
  * 미들웨어 실행 호스트(S3a 스펙 §7).
  *
  * ## 잠금 하나
  *
- * 미들웨어에는 스레드도 잠금도 없다. pump, 판정, 제출, 조회를 모두 [lock] 하나 아래에서 돈다. 잠금 순서는 호스트 잠금에서
+ * 미들웨어에는 스레드도 잠금도 없다. pump, 판정, 제출, 조회, 운영자 판단을 모두 [lock] 하나 아래에서 돈다. 잠금 순서는 호스트 잠금에서
  * mimic 엔진 잠금으로 한 방향뿐이다(gRPC 호출이 잠금 아래에서 나간다).
  *
  * 임무 버전 활성화도 이 잠금 아래에서 한다([exclusive], S3b 스펙 T2). 판정과 배정 사이에 활성화가 끼면 한 제출 안에서 판정
@@ -279,33 +254,56 @@ class MissionHost(
     }
 
     /**
-     * 봉인된 인시던트(S3c 스펙 §7.2). 최신부터 많아야 [limit] 개다. 번들은 미들웨어 안의 값이라 호스트 잠금 아래에서 옮긴다.
+     * 봉인된 인시던트(S3c 스펙 §7.2, S4a 스펙 §6). 최신부터 많아야 [limit] 개다. 번들은 미들웨어 안의 값이라 호스트 잠금 아래에서
+     * 옮긴다. 보류 중 여부는 자르기 전의 전부로 정한다.
      */
     fun incidents(limit: Int): IncidentsView = lock.withLock {
         val all = middleware.incidents()
+        val held = heldIncidents(all)
         IncidentsView(
             instanceId = middleware.instanceId,
             total = all.size,
-            incidents = all.asReversed().take(limit).map { bundle ->
-                val intent = bundle.intent
-                IncidentView(
-                    incidentId = bundle.incidentId,
-                    executionId = bundle.executionId,
-                    jobOrderId = bundle.jobOrderId,
-                    robotId = bundle.robotId,
-                    unitId = bundle.unitId,
-                    at = bundle.at,
-                    failureClass = bundle.failureClass,
-                    route = bundle.route,
-                    missionVersion = intent.missionVersion,
-                    siteSettingsVersion = intent.siteSettingsVersion,
-                    evidenceBeforeSeconds = seconds(intent.evidenceWindowBefore),
-                    evidenceAfterSeconds = seconds(intent.evidenceWindowAfter),
-                    inDoubtGraceSeconds = intent.inDoubtGrace?.let(::seconds),
-                    stallWindowSeconds = intent.stallWindow?.let(::seconds),
-                )
-            },
+            incidents = all.asReversed().take(limit).map { IncidentViews.item(it, it.incidentId in held) },
         )
+    }
+
+    /** 인시던트 하나의 상세(S4a 스펙 §6). 없으면 `null` 이다. 호스트 잠금 아래에서 읽는다. */
+    fun incident(incidentId: String): IncidentDetailView? = lock.withLock {
+        val bundle = middleware.incident(incidentId) ?: return@withLock null
+        val unitState = middleware.executions().firstOrNull { it.executionId == bundle.executionId }
+            ?.units?.firstOrNull { it.unitId == bundle.unitId }?.state?.name
+        IncidentViews.detail(middleware.instanceId, bundle, incidentId in heldIncidents(middleware.incidents()), unitState)
+    }
+
+    /**
+     * 운영자 판단(S4a 스펙 T4, T6). 호스트 잠금 아래에서 `Middleware.resolve` 를 부르고 결과 이름을 picasso 그대로 돌려준다.
+     * 판단은 그 단위의 판단 없는 가장 최근 인시던트에 붙는다(picasso `IncidentLog.noteResolution`). Resolved 이면 그 인시던트 id 를
+     * 같이 낸다. REST 는 늘 `PERSON` 승인자를 만들므로 Refused 는 이 메서드를 직접 부를 때만 난다.
+     */
+    fun resolve(executionId: String, unitId: String, decision: OperatorDecision, approver: Approver, requestId: String?): ResolveView =
+        lock.withLock {
+            val target = middleware.incidents().lastOrNull {
+                it.executionId == executionId && it.unitId == unitId && it.resolution == null
+            }?.incidentId
+            when (val outcome = middleware.resolve(executionId, unitId, decision, approver)) {
+                ResolveOutcome.Resolved -> ResolveView(RESOLVED, null, target, requestId)
+                ResolveOutcome.NotHeld -> ResolveView(NOT_HELD, null, null, requestId)
+                is ResolveOutcome.Refused -> ResolveView(REFUSED, outcome.reason, null, requestId)
+            }
+        }
+
+    /**
+     * 보류 중인 인시던트. 그 단위가 지금 운영자 보류이고, 그 단위의 인시던트 가운데 `unresolved` 이고 판단이 없는 가장 최근의
+     * 것이다. 재작업 뒤 두 번째 보류가 서면 앞 인시던트는 판단이 붙어 빠지므로 한 단위에 많아야 하나다.
+     */
+    private fun heldIncidents(all: List<IncidentBundle>): Set<String> {
+        val holding = middleware.executions().flatMap { execution ->
+            execution.units.filter { it.state == UnitState.OPERATOR_HOLD }.map { execution.executionId to it.unitId }
+        }.toSet()
+        return all.filter { (it.executionId to it.unitId) in holding && it.unresolved && it.resolution == null }
+            .groupBy { it.executionId to it.unitId }
+            .values.map { it.last().incidentId }
+            .toSet()
     }
 
     /** 마지막 pump 가 읽은 셀 대역 스냅숏. 못 읽었으면 `null` 이다. */
@@ -357,9 +355,6 @@ class MissionHost(
         return HostEligibility(robotId, fit, missing, running, passed = reasons.isEmpty(), reasons = reasons)
     }
 
-    /** picasso 의 ISO-8601 기간 문자열을 초로 되돌린다. 60초는 `PT1M` 으로 접혀 온다. */
-    private fun seconds(iso: String): Long = Duration.parse(iso).seconds
-
     private fun view(response: JobResponse) = JobResponseView(
         jobResponseId = response.jobResponseId,
         version = response.version,
@@ -389,6 +384,11 @@ class MissionHost(
 
         /** 현장 시간값 미적용 동안 판정이 기체마다 더하는 이유(S3c 스펙 T8). 화면에 그대로 보인다. */
         const val UNAPPLIED_REASON = "현장 시간값 미적용: 실행 호스트가 현장 설정을 아직 읽지 못했다"
+
+        /** 운영자 판단의 결과 이름. picasso `ResolveOutcome` 의 이름 그대로다(S4a 스펙 T6). */
+        const val RESOLVED = "Resolved"
+        const val NOT_HELD = "NotHeld"
+        const val REFUSED = "Refused"
 
         /** 받는 WorkMaster. DeliverContainer 는 플릿 포트 구현이 없어 받지 않는다(스펙 §1). */
         val WORK_MASTERS: Set<String> = setOf(InspectAsset.WORK_MASTER, PrepareSequencedRack.WORK_MASTER)

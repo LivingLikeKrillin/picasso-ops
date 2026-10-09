@@ -1,5 +1,5 @@
 import type { Delivered, SignalWriteOutcome } from '../api'
-import { kindLabel } from '../labels'
+import { kindLabel, rejectionText } from '../labels'
 
 interface Props {
   /** 어느 신호를 어떻게 썼는지. 예: `rack_present 켜기` */
@@ -25,7 +25,7 @@ function describe(sent: Delivered<SignalWriteOutcome>): string {
   const { result, confirmation, signal, rejection } = sent.outcome
   if (result === 'SUCCEEDED') return `반영됨(값 ${signal?.value ?? sent.outcome.value})`
   if (result === 'REJECTED' && rejection !== null) {
-    return `현장이 거부함(${kindLabel(rejection.error)}). ${rejection.detail}`
+    return rejectionText('현장이 거부함', rejection)
   }
   switch (confirmation) {
     case 'CONFIRMED_APPLIED':

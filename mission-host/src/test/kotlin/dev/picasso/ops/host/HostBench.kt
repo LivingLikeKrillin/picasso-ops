@@ -101,7 +101,23 @@ class HostBench(
     /** 셀 대역 대역이 받은 신호 쓰기(경로의 이름, Content-Type, 본문). */
     val signalWrites = CopyOnWriteArrayList<Triple<String, String?, String>>()
 
+    /** 셀 대역 대역이 장애 주입에 답할 상태 코드와 본문. */
+    @Volatile
+    var faultReply: Pair<Int, String> = 200 to """{"robotId":"humanoid-01","kind":"CONNECTION","state":"OFFLINE","changed":true}"""
+
+    /** 셀 대역 대역이 받은 장애 주입(Content-Type, 본문). */
+    val faultWrites = CopyOnWriteArrayList<Pair<String?, String>>()
+
     private val cell: HttpServer = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0).apply {
+        createContext("/faults") { exchange ->
+            faultWrites += exchange.requestHeaders.getFirst("Content-Type") to exchange.requestBody.readAllBytes().toString(Charsets.UTF_8)
+            val (status, body) = faultReply
+            val bytes = body.toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(status, bytes.size.toLong())
+            exchange.responseBody.write(bytes)
+            exchange.close()
+        }
         createContext("/cell") { exchange ->
             val path = exchange.requestURI.path
             val (status, body) = if (path.startsWith("/cell/signals/") && exchange.requestMethod == "POST") {

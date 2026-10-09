@@ -83,7 +83,7 @@ class MissionVersionsTest {
     private fun HostBench.activeVersion(): JsonNode = get("/host/missions/$PSR")["active"]["version"]
 
     @Test
-    fun `버전이 없으면 개요는 코드 정의를 내고 템플릿 둘은 버전 1 모양과 ABORTED 대기 버전 2 모양이다`() {
+    fun `버전이 없으면 개요는 코드 정의를 내고 템플릿 셋은 버전 1 모양과 ABORTED 대기와 운영자 보류 대기다`() {
         HostBench().use { bench ->
             val overview = bench.get("/host/missions/$PSR")
             assertEquals(PSR, overview["workMasterId"].asText())
@@ -94,7 +94,7 @@ class MissionVersionsTest {
             assertEquals(0, overview["drafts"].size())
 
             val templates = bench.get("/host/missions/templates/$PSR")["templates"]
-            assertEquals(listOf("DATA_V1", "ARRIVAL_WAIT"), templates.map { it["id"].asText() })
+            assertEquals(listOf("DATA_V1", "ARRIVAL_WAIT", "ARRIVAL_WAIT_HOLD"), templates.map { it["id"].asText() })
             val wait = JSON.readTree(templates[1]["definition"].asText())["steps"][0]
             assertEquals("rack-arrival", wait["id"].asText())
             assertEquals("rack_present", wait["signal"].asText())
@@ -102,6 +102,13 @@ class MissionVersionsTest {
             assertEquals(120, wait["deadlineSeconds"].asInt())
             assertEquals("ABORTED", wait["onDeadline"].asText())
             assertEquals(1, JSON.readTree(templates[0]["definition"].asText())["steps"].size())
+
+            // 운영자 보류 대기는 기한과 기한 뒤 동작만 다르다(S4a 스펙 T3).
+            val hold = JSON.readTree(templates[2]["definition"].asText())
+            assertEquals(20, hold["steps"][0]["deadlineSeconds"].asInt())
+            assertEquals("OPERATOR_HOLD", hold["steps"][0]["onDeadline"].asText())
+            (hold["steps"][0] as com.fasterxml.jackson.databind.node.ObjectNode).put("deadlineSeconds", 120).put("onDeadline", "ABORTED")
+            assertEquals(JSON.readTree(templates[1]["definition"].asText()), hold)
         }
     }
 
