@@ -64,29 +64,29 @@
     <!-- edges: data -->
     <g fill="none" stroke="#e6e6e6" stroke-width="1.2">
       <path d="M336,380 H250" marker-end="url(#data)"/>
+      <path d="M320,110 H138 V202" marker-end="url(#data)"/>
+      <path d="M208,204 V184 H632 V202" marker-end="url(#data)"/>
+      <path d="M232,256 V338" marker-end="url(#data)"/>
+      <path d="M268,222 H334" marker-end="url(#data)"/>
+      <path d="M572,222 H506" marker-end="url(#data)"/>
+      <path d="M248,352 H300 V248 H334" marker-end="url(#data)"/>
     </g>
     <g font-size="10.5" fill="#e6e6e6">
       <text x="292" y="373" text-anchor="middle">생존 보고</text>
+      <text x="229" y="103" text-anchor="middle">/api 조작·조회</text>
+      <text x="420" y="177" text-anchor="middle">지시·판단 보냄</text>
+      <text x="224" y="290" text-anchor="end">기체 선언 보냄</text>
+      <text x="301" y="215" text-anchor="middle">기록 쓰기</text>
+      <text x="539" y="215" text-anchor="middle">일지 쓰기</text>
+      <text x="308" y="290">원장 저장</text>
     </g>
 
     <!-- edges: command -->
     <g fill="none" stroke="#d4654a" stroke-width="2">
-      <path d="M320,110 H138 V202" marker-end="url(#cmd)"/>
-      <path d="M208,204 V184 H632 V202" marker-end="url(#cmd)"/>
-      <path d="M232,256 V338" marker-end="url(#cmd)"/>
       <path d="M600,256 V280 H460 V338" marker-end="url(#cmd)"/>
-      <path d="M268,222 H334" marker-end="url(#cmd)"/>
-      <path d="M572,222 H506" marker-end="url(#cmd)"/>
-      <path d="M248,352 H300 V248 H334" marker-end="url(#cmd)"/>
     </g>
     <g font-size="10.5" fill="#d4654a">
-      <text x="229" y="103" text-anchor="middle">/api 조작·조회</text>
-      <text x="420" y="177" text-anchor="middle">지시·판단 보냄</text>
-      <text x="224" y="290" text-anchor="end">기체 선언 보냄</text>
       <text x="530" y="273" text-anchor="middle">gRPC로 명령·관측</text>
-      <text x="301" y="215" text-anchor="middle">기록 쓰기</text>
-      <text x="539" y="215" text-anchor="middle">일지 쓰기</text>
-      <text x="308" y="290">원장 저장</text>
     </g>
 
     <!-- edges: observation -->
@@ -114,7 +114,7 @@
       <path d="M92,560 H116" fill="none" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3"/>
       <text x="122" y="564">관측</text>
       <path d="M156,560 H180" fill="none" stroke="#d4654a" stroke-width="2"/>
-      <text x="186" y="564">명령·쓰기</text>
+      <text x="186" y="564">제어 명령</text>
       <path d="M248,560 H272" fill="none" stroke="#8fa2cc" stroke-width="1.2" stroke-dasharray="1.5 2.5"/>
       <text x="278" y="564">라이브러리 포함</text>
       <rect x="368" y="554" width="14" height="10" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
