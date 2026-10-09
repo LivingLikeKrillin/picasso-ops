@@ -323,7 +323,8 @@ class MissionHost(
     private fun restore() = lock.withLock {
         restoredAt = clock.now()
         records.openJournal().forEach { row -> restoreRow(row) }
-        gaveUp += records.gaveUpJournal()
+        // 이번 기동에서 포기한 행은 attempt 가 이미 넣었고 그 GAVE_UP 이벤트도 일지에 있다. 작업 지시마다 한 번만 든다.
+        gaveUp += records.gaveUpJournal().filter { row -> gaveUp.none { it.jobOrderId == row.jobOrderId } }
     }
 
     private fun restoreRow(row: JournalRow) {
