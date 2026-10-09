@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="512" viewBox="0 0 840 512">
+  <defs>
+    <marker id="data" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M1,1 L8,5 L1,9" fill="none" stroke="#262626" stroke-width="1.2"/>
+    </marker>
+    <marker id="cmd" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,1 L9,5 L0,9 Z" fill="#b23a1d"/>
+    </marker>
+  </defs>
+
+  <g font-family="'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', sans-serif" fill="#262626">
+
+    <!-- title block -->
+    <text x="20" y="36" font-size="17" font-weight="700">운영 흐름</text>
+    <text x="20" y="56" font-size="12" fill="#6f6f6f">기체 시운전부터 운영까지 화면 조작 절차와 담당</text>
+
+    <!-- zone: Day-1 -->
+    <rect x="32" y="84" width="776" height="112" fill="none" stroke="#bdbdbd"/>
+    <text x="44" y="100" font-size="11" fill="#6f6f6f">Day-1 시운전·엔지니어</text>
+
+    <rect x="48" y="120" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="60" y="143" font-size="12.5" font-weight="700">기체 선언</text>
+    <text x="60" y="159" font-size="11" fill="#6f6f6f">로봇·연결 영역</text>
+
+    <rect x="202" y="120" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="214" y="143" font-size="12.5" font-weight="700">어댑터 등록</text>
+    <text x="214" y="159" font-size="11" fill="#6f6f6f">제품, 빌드, 인스턴스</text>
+
+    <rect x="356" y="120" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="368" y="143" font-size="12.5" font-weight="700">프로파일 리비전</text>
+    <text x="368" y="159" font-size="11" fill="#6f6f6f">시험 실행기가 기록</text>
+
+    <rect x="510" y="120" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="522" y="143" font-size="12.5" font-weight="700">바인딩 기록</text>
+    <text x="522" y="159" font-size="11" fill="#6f6f6f">기체 상세에서</text>
+
+    <rect x="664" y="120" width="128" height="52" fill="#ffffff" stroke="#bdbdbd"/>
+    <text x="676" y="143" font-size="12.5" font-weight="700">시운전 완료</text>
+    <text x="676" y="159" font-size="11" fill="#6f6f6f">3개 조건 자동 판정</text>
+
+    <!-- zone: Day-2 -->
+    <rect x="32" y="228" width="776" height="228" fill="none" stroke="#bdbdbd"/>
+    <text x="44" y="244" font-size="11" fill="#6f6f6f">Day-2 운영</text>
+
+    <rect x="202" y="264" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="214" y="287" font-size="12.5" font-weight="700">임무 활성화</text>
+    <text x="214" y="303" font-size="11" fill="#6f6f6f">엔지니어, 검증 관문</text>
+
+    <rect x="356" y="264" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="368" y="287" font-size="12.5" font-weight="700">작업 지시</text>
+    <text x="368" y="303" font-size="11" fill="#6f6f6f">운영자, 배정표</text>
+
+    <rect x="510" y="264" width="128" height="52" fill="#ffffff" stroke="#bdbdbd"/>
+    <text x="522" y="287" font-size="12.5" font-weight="700">실행</text>
+    <text x="522" y="303" font-size="11" fill="#6f6f6f">미들웨어, mimic</text>
+
+    <rect x="664" y="264" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="676" y="287" font-size="12.5" font-weight="700">인시던트 판단</text>
+    <text x="676" y="303" font-size="11" fill="#6f6f6f">운영자, 확인·재작업</text>
+
+    <rect x="356" y="380" width="128" height="52" fill="#ffffff" stroke="#bdbdbd"/>
+    <text x="368" y="403" font-size="12.5" font-weight="700">호스트 재기동</text>
+    <text x="368" y="419" font-size="11" fill="#6f6f6f">자동, 일지로 복원</text>
+
+    <rect x="510" y="380" width="128" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="522" y="403" font-size="12.5" font-weight="700">장애 주입</text>
+    <text x="522" y="419" font-size="11" fill="#6f6f6f">엔지니어, 현장·자원</text>
+
+    <!-- edges: sequence (data) -->
+    <g fill="none" stroke="#262626" stroke-width="1.2">
+      <path d="M176,146 H200" marker-end="url(#data)"/>
+      <path d="M330,146 H354" marker-end="url(#data)"/>
+      <path d="M484,146 H508" marker-end="url(#data)"/>
+      <path d="M638,146 H662" marker-end="url(#data)"/>
+      <path d="M728,172 V216 H420 V262" marker-end="url(#data)"/>
+      <path d="M330,290 H354" marker-end="url(#data)"/>
+      <path d="M484,290 H508" marker-end="url(#data)"/>
+      <path d="M638,290 H662" marker-end="url(#data)"/>
+      <path d="M440,380 V352 H540 V318" marker-end="url(#data)"/>
+    </g>
+    <g font-size="10.5" fill="#262626">
+      <text x="574" y="209" text-anchor="middle">배정 가능 조건 충족</text>
+      <text x="490" y="345" text-anchor="middle">같은 id로 재연결</text>
+    </g>
+
+    <!-- edges: command -->
+    <g fill="none" stroke="#b23a1d" stroke-width="2">
+      <path d="M592,380 V318" marker-end="url(#cmd)"/>
+    </g>
+    <g font-size="10.5" fill="#b23a1d">
+      <text x="600" y="356">장애 주입</text>
+    </g>
+
+    <!-- key -->
+    <g font-size="10.5" fill="#6f6f6f">
+      <path d="M20,484 H44" fill="none" stroke="#262626" stroke-width="1.2"/>
+      <text x="50" y="488">차례</text>
+      <path d="M84,484 H108" fill="none" stroke="#b23a1d" stroke-width="2"/>
+      <text x="114" y="488">주입</text>
+      <rect x="152" y="478" width="14" height="10" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+      <text x="172" y="488">사람 단계</text>
+      <rect x="236" y="478" width="14" height="10" fill="#ffffff" stroke="#bdbdbd"/>
+      <text x="256" y="488">시스템 단계</text>
+    </g>
+  </g>
+</svg>
