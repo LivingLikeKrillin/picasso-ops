@@ -305,7 +305,8 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   const responseLog = page.getByRole('region', { name: '작업 응답 송신 기록' })
   await responseLog.getByLabel('송신 기록의 작업 지시').selectOption(holdJobOrder)
   const sentRows = responseLog.getByRole('table', { name: '송신 기록 목록' }).getByRole('row').filter({ hasText: holdJobOrder })
-  await expect(sentRows.filter({ hasText: 'PHYSICALLY_DONE' })).toContainText('송신')
+  // 처분 칸(열째)은 글자 그대로 송신이다. 재기동 중복의 표시(재기동 중복(송신 안 함))도 송신을 품으므로 포함 검사로는 못 가른다.
+  await expect(sentRows.filter({ hasText: 'PHYSICALLY_DONE' }).getByRole('cell').nth(9)).toHaveText('송신')
   await expect(sentRows.filter({ hasText: '재기동 중복' })).toHaveCount(0)
   await expect(responseLog).toContainText('그 가운데 재기동 중복 0건')
 

@@ -118,7 +118,7 @@ export function OperationsArea({ session, onChanged }: Props) {
     }
   }, [session, tick])
 
-  // 송신 기록은 고른 작업 지시가 바뀌어도 다시 읽는다. 앞 작업 지시의 늦은 답은 버린다.
+  // 송신 기록은 고른 작업 지시가 바뀌어도 다시 읽는다. 앞 작업 지시의 늦은 응답은 버린다.
   useEffect(() => {
     let alive = true
     fetchJobResponses(session, responseFilter)
