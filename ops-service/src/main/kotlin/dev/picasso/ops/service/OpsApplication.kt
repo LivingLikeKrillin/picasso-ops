@@ -5,6 +5,8 @@ import dev.picasso.ops.service.profiles.ProfileListService
 import dev.picasso.ops.service.adapters.AdapterListService
 import dev.picasso.ops.service.cell.CellSignalOperations
 import dev.picasso.ops.service.host.HostClient
+import dev.picasso.ops.service.incidents.FaultOperations
+import dev.picasso.ops.service.incidents.HoldResolutions
 import dev.picasso.ops.service.joborders.JobOrderEligibility
 import dev.picasso.ops.service.joborders.JobOrderOperations
 import dev.picasso.ops.service.log.OperationLog
@@ -139,6 +141,14 @@ open class OpsApplication {
     @Bean
     open fun cellSignalOperations(host: HostClient, log: OperationLog): CellSignalOperations =
         CellSignalOperations(host, host, log)
+
+    @Bean
+    open fun faultOperations(host: HostClient, log: OperationLog): FaultOperations = FaultOperations(host, log)
+
+    /** 재조회 대조의 «요청 직전 실제 시각» 은 운영 서비스 시계에서 읽는다(S4a JSON 계약 §5.4). */
+    @Bean
+    open fun holdResolutions(host: HostClient, log: OperationLog, clock: Clock): HoldResolutions =
+        HoldResolutions(host, log, clock = clock)
 
     /** [migrated] 는 쓰지 않는다. 받는 것만으로 ops 마이그레이션 뒤에 이 빈이 만들어진다. */
     @Bean

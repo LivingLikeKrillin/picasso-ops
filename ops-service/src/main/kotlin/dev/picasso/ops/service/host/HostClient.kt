@@ -172,7 +172,43 @@ fun interface HostSiteTimings {
 }
 
 /**
- * 실행 호스트 REST 클라이언트(S3a 스펙 §8, S3b 스펙 §7, S3c 스펙 §8). 호스트는 루프백·무인증이라 토큰을 싣지 않는다.
+ * 인시던트 단건 읽기 한 번의 결과(S4a JSON 계약 §4). «그런 인시던트가 없다» 는 호스트의 응답(404 `INCIDENT_NOT_FOUND`)이고
+ * «못 읽음» 과 다르다. 앞의 것은 화면에 404 로 그대로 넘기고, 뒤의 것은 503 이다.
+ */
+sealed interface HostIncident {
+    /** 상세 본문(S4a JSON 계약 §4) 그대로. */
+    data class Found(val body: JsonNode) : HostIncident
+
+    /** 호스트의 404 본문 `{error, detail}` 그대로. */
+    data class NotFound(val body: JsonNode) : HostIncident
+
+    data class Silent(val cause: String) : HostIncident
+}
+
+/**
+ * 호스트의 인시던트 REST(S4a 스펙 §6·§7). 시험이 호스트 없이 대신 끼운다.
+ *
+ * 두 읽기는 본문을 해석하지 않고 넘긴다. 판단은 응답이 오면 코드와 본문을 그대로 넘기고 분류는 부르는 쪽이 한다.
+ */
+interface HostIncidents {
+    /** `GET /host/incidents[?limit=]` 본문 그대로. [limit] 이 널이면 쿼리를 싣지 않는다(호스트 기본 50). */
+    fun incidents(limit: Int? = null): HostCall<JsonNode>
+
+    /** `GET /host/incidents/{incidentId}`. */
+    fun incident(incidentId: String): HostIncident
+
+    /** `POST /host/executions/{executionId}/units/{unitId}/resolve`(S4a JSON 계약 §5.1). */
+    fun resolve(executionId: String, unitId: String, decision: String, approverId: String, requestId: UUID): HostWrite
+}
+
+/** 장애 주입 전달(S4a 스펙 §7, T1). 시험이 호스트 없이 대신 끼운다. */
+fun interface HostFaults {
+    /** `POST /host/faults`. 호스트는 [body] 를 해석하지 않고 현장에 넘기며 현장의 상태 코드와 본문을 그대로 돌려준다. */
+    fun injectFault(body: ObjectNode): HostWrite
+}
+
+/**
+ * 실행 호스트 REST 클라이언트(S3a 스펙 §8, S3b 스펙 §7, S3c 스펙 §8, S4a 스펙 §7). 호스트는 루프백·무인증이라 토큰을 싣지 않는다.
  *
  * 연결 제한은 registry 와 같고 요청 제한은 더 길다. 호스트는 판정과 제출을 자기 잠금 아래에서 하며, 그 안에서 mimic 에
  * gRPC 를 부르고, mimic 은 엔진 잠금 아래에서 registry 로 태스크 관측을 동기 HTTP 로 적재한다(요청 제한 3초, 스펙 §5.3).
@@ -188,7 +224,7 @@ class HostClient(
     private val json: ObjectMapper = jacksonObjectMapper(),
     private val requestTimeout: Duration = REQUEST_TIMEOUT,
     private val mockRunTimeout: Duration = MOCK_RUN_TIMEOUT,
-) : HostReads, HostWrites, HostMissions, HostSignals, HostSiteTimings, AutoCloseable {
+) : HostReads, HostWrites, HostMissions, HostSignals, HostSiteTimings, HostIncidents, HostFaults, AutoCloseable {
 
     private val base = checkBaseUrl(baseUrl)
 
@@ -270,6 +306,37 @@ class HostClient(
     override fun writeSignal(name: String, value: String): HostWrite =
         post("/host/cell/signals/${segment(name)}", json.createObjectNode().put("value", value))
 
+    override fun injectFault(body: ObjectNode): HostWrite = post("/host/faults", body)
+
+    override fun incidents(limit: Int?): HostCall<JsonNode> = get("/host/incidents" + (limit?.let { "?limit=$it" } ?: ""))
+
+    /**
+     * 없다는 응답은 404 와 `INCIDENT_NOT_FOUND` 가 함께일 때만이다. 다른 404(그 경로가 없는 서버 등)는 호스트의 판단이
+     * 아니므로 못 읽음이다.
+     */
+    override fun incident(incidentId: String): HostIncident {
+        val request = HttpRequest.newBuilder(URI.create("$base/host/incidents/${segment(incidentId)}")).GET()
+        val response = when (val write = send(request, requestTimeout)) {
+            is HostWrite.NoResponse -> return HostIncident.Silent(write.cause)
+            is HostWrite.Answered -> write
+        }
+        val body = objectOrNull(response.body)
+        return when {
+            response.status == 200 && body != null -> HostIncident.Found(body)
+            response.status == 404 && body?.get("error")?.asText() == INCIDENT_NOT_FOUND -> HostIncident.NotFound(body)
+            response.status == 200 -> HostIncident.Silent("본문 모양이 다르다")
+            else -> HostIncident.Silent("HTTP ${response.status}")
+        }
+    }
+
+    override fun resolve(executionId: String, unitId: String, decision: String, approverId: String, requestId: UUID): HostWrite {
+        val body = json.createObjectNode()
+            .put("decision", decision)
+            .put("approverId", approverId)
+            .put("requestId", requestId.toString())
+        return post("/host/executions/${segment(executionId)}/units/${segment(unitId)}/resolve", body)
+    }
+
     /** 객체 본문만 받는다. 호스트의 GET 은 늘 객체를 준다(S3a JSON 계약 §5·§6, S3b JSON 계약 §4). */
     private fun get(path: String): HostCall<JsonNode> {
         val response = when (val write = send(HttpRequest.newBuilder(URI.create(base + path)).GET(), requestTimeout)) {
@@ -327,6 +394,9 @@ class HostClient(
 
         /** 재조회에서 호스트가 그 요청을 아직 처리 중이라는 오류 이름(S3b JSON 계약 §3). */
         const val REQUEST_IN_PROGRESS = "REQUEST_IN_PROGRESS"
+
+        /** 인시던트 단건에서 그런 인시던트가 없다는 호스트 오류 이름(S4a JSON 계약 §4). */
+        const val INCIDENT_NOT_FOUND = "INCIDENT_NOT_FOUND"
 
         /** 형식이 틀린 주소를 기동에서 잡는다. 그대로 두면 요청마다 호스트 불통으로 보인다. */
         fun checkBaseUrl(baseUrl: String): String {
