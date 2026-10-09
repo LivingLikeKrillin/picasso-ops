@@ -1,13 +1,9 @@
 package dev.picasso.ops.host.web
 
 import dev.picasso.middleware.SiteTimings
-import dev.picasso.ops.host.MissionHost
 import dev.picasso.ops.host.timings.RejectedTimings
 import dev.picasso.ops.host.timings.SiteTimingsReader
-import org.springframework.http.HttpStatus
-import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.time.Instant
 
@@ -42,11 +38,11 @@ data class SiteTimingsStateView(
 )
 
 /**
- * 현장 시간값 적용 상태와 인시던트 조회(S3c 스펙 §7.2, T9). 둘 다 읽기만 한다. 운영 서비스가 적용 상태를 대신 읽어 화면에 보이고,
- * 통합 시험이 인시던트에 실린 설정 버전과 시간값을 확인한다.
+ * 현장 시간값 적용 상태 조회(S3c 스펙 §7.2, T9). 읽기만 한다. 운영 서비스가 적용 상태를 대신 읽어 화면에 보인다. 인시던트 조회는
+ * S4a 에서 [IncidentController] 로 옮겼다.
  */
 @RestController
-class SiteTimingsController(private val host: MissionHost, private val timings: SiteTimingsReader) {
+class SiteTimingsController(private val timings: SiteTimingsReader) {
 
     @GetMapping("/host/site-timings")
     fun siteTimings(): SiteTimingsStateView {
@@ -58,19 +54,5 @@ class SiteTimingsController(private val host: MissionHost, private val timings: 
             readError = state.readError,
             rejected = state.rejected,
         )
-    }
-
-    /** 최신부터 많아야 [limit] 개. 정수가 아니거나 1~[MAX_LIMIT] 밖이면 400 `BAD_REQUEST` 다. */
-    @GetMapping("/host/incidents")
-    fun incidents(@RequestParam(required = false) limit: String?): ResponseEntity<Any> {
-        val count = if (limit == null) DEFAULT_LIMIT else limit.toIntOrNull()?.takeIf { it in 1..MAX_LIMIT }
-            ?: return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(HostRejection(HostRequests.BAD_REQUEST, "limit 은 1~$MAX_LIMIT 의 정수다: $limit"))
-        return ResponseEntity.ok(host.incidents(count))
-    }
-
-    companion object {
-        const val DEFAULT_LIMIT = 50
-        const val MAX_LIMIT = 500
     }
 }

@@ -49,7 +49,7 @@ data class CellSnapshot(val presentations: List<CellPlace>, val slots: List<Cell
     fun signalSpecs(): List<SignalSpec>? = signals?.map { it.spec() }
 }
 
-/** 신호 조작을 현장에 넘긴 결과. 현장이 답하면 그 상태 코드와 본문 그대로다. */
+/** 신호 조작이나 장애 주입을 현장에 넘긴 결과. 현장이 답하면 그 상태 코드와 본문 그대로다. */
 data class SignalRelay(val status: Int, val contentType: String?, val body: ByteArray)
 
 /**
@@ -90,10 +90,18 @@ class CellBandClient(
      * `POST /cell/signals/{name}` 을 현장에 그대로 넘긴다. 현장이 안 닿으면(연결 실패, 시간 초과) `null` 이다. 이름은 경로
      * 조각으로 인코딩한다. 판정(404·400·403)은 현장의 몫이다.
      */
-    fun writeSignal(name: String, body: ByteArray): SignalRelay? = try {
-        val encoded = URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20")
+    fun writeSignal(name: String, body: ByteArray): SignalRelay? =
+        relay("$base/cell/signals/${URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20")}", body)
+
+    /**
+     * 기체 장애 주입 `POST /faults` 를 현장에 그대로 넘긴다(S4a 스펙 §6). 현장이 안 닿으면 `null` 이다. 종류의 해석과 판정은
+     * 현장의 몫이다. 현장의 주입도 mimic 엔진 잠금을 기다리므로 신호 조작과 같은 요청 제한을 쓴다.
+     */
+    fun injectFault(body: ByteArray): SignalRelay? = relay("$base/faults", body)
+
+    private fun relay(url: String, body: ByteArray): SignalRelay? = try {
         val response = http.send(
-            HttpRequest.newBuilder(URI.create("$base/cell/signals/$encoded"))
+            HttpRequest.newBuilder(URI.create(url))
                 .timeout(writeTimeout)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))

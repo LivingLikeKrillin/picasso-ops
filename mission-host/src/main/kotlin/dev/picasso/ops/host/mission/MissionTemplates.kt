@@ -12,17 +12,25 @@ data class MissionTemplate(val id: String, val title: String, val definition: St
  * - [DATA_V1]: 코드 `PrepareSequencedRack` 을 데이터로 옮긴 것(버전 1 의 모양).
  * - [ARRIVAL_WAIT]: 그 앞에 랙 도착 대기(신호 `rack_present`, 기대 `true`, 기한 120초)를 둔 것(버전 2 의 모양). 사본에서
  *   `onDeadline` 만 ABORTED 로 바꿨다(픽스처 기본값은 OPERATOR_HOLD, 결정 4). 운영자 보류와 그 해소 화면은 S4 다.
+ * - [ARRIVAL_WAIT_HOLD]: [ARRIVAL_WAIT] 와 같되 기한이 20초이고 기한 뒤 운영자 보류다(S4a 스펙 T3). 시계 RPC 를 열지 않는
+ *   런처에서 실제 시간으로 기다릴 수 있게 기한을 줄였다.
  */
 object MissionTemplates {
 
     const val DATA_V1 = "DATA_V1"
     const val ARRIVAL_WAIT = "ARRIVAL_WAIT"
+    const val ARRIVAL_WAIT_HOLD = "ARRIVAL_WAIT_HOLD"
 
     /** WorkMaster 마다 시작용 정의. 편집 대상이 PrepareSequencedRack 하나다(T6). */
     fun of(workMasterId: String): List<MissionTemplate> = when (workMasterId) {
         PrepareSequencedRack.WORK_MASTER -> listOf(
             MissionTemplate(DATA_V1, "코드 PrepareSequencedRack 을 옮긴 데이터 정의", read("PrepareSequencedRack.data-v1.json")),
             MissionTemplate(ARRIVAL_WAIT, "랙 도착 대기(rack_present = true, 기한 120초, 기한 뒤 ABORTED)", read("PrepareSequencedRack.arrival-wait.json")),
+            MissionTemplate(
+                ARRIVAL_WAIT_HOLD,
+                "랙 도착 대기(rack_present = true, 기한 20초, 기한 뒤 운영자 보류)",
+                read("PrepareSequencedRack.arrival-wait-hold.json"),
+            ),
         )
         else -> emptyList()
     }
