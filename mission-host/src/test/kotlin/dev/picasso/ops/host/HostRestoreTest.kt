@@ -1,0 +1,264 @@
+package dev.picasso.ops.host
+
+import com.fasterxml.jackson.databind.JsonNode
+import dev.picasso.mimic.engine.ForceOutcome
+import dev.picasso.mimic.engine.TaskState
+import dev.picasso.ops.host.HostBench.Companion.HUMANOID
+import dev.picasso.ops.host.HostBench.Companion.JSON
+import dev.picasso.ops.host.HostBench.Companion.MATERIAL
+import dev.picasso.ops.host.HostBench.Companion.QUADRUPED
+import dev.picasso.ops.host.HostBench.Companion.STANDARD_CELL
+import dev.picasso.ops.host.HostBench.Companion.inspect
+import dev.picasso.ops.host.HostBench.Companion.rack
+import dev.picasso.ops.host.HostBench.Companion.request
+import dev.picasso.registry.PostgresSupport
+import java.time.Duration
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/**
+ * 기동 복원과 재기동 중복(S4b 스펙 T3·T5·T6, §6.3·§6.4). 호스트만 다시 띄우고 mimic 과 DB 는 그대로다(e2e 의 재기동과 같은 배선).
+ */
+class HostRestoreTest {
+
+    private val settled = setOf("PHYSICALLY_DONE", "FAILED", "UNVERIFIED", "ABORTED", "PARTIAL")
+
+    @Test
+    fun `도는 실행을 재기동하면 같은 작업 지시가 새 인스턴스의 실행으로 다시 서고 끝난 단위는 끝난 대로 새 태스크 없이 이어 끝까지 간다`() {
+        HostBench().use { bench ->
+            val accepted = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7", "T2" to "dock-3"), "candidates", HUMANOID)).body!!
+            assertEquals("ACCEPTED", accepted["result"].asText(), accepted.toString())
+            val before = bench.host.instanceId
+            bench.driveUnits("exec-1") { it["T1.travel"] == "DONE" && it["T1"] == "RUNNING" }
+            val tasksBefore = bench.tasks(HUMANOID)
+            assertEquals(setOf("JO-1#T1.travel", "JO-1#T1"), tasksBefore.keys)
+
+            bench.restartHost()
+            val after = bench.host.instanceId
+            val restore = bench.get("/host/executions")["restore"]
+            assertEquals(listOf("at", "rows"), restore.fieldNames().asSequence().toList())
+            val row = restore["rows"].single()
+            assertEquals(RESTORE_ROW_FIELDS, row.fieldNames().asSequence().toList())
+            assertEquals(
+                listOf("JO-1", HUMANOID, before, "exec-1", "RESTORED", "exec-1"),
+                listOf("jobOrderId", "robotId", "previousInstanceId", "previousExecutionId", "result", "executionId").map { row[it].asText() },
+            )
+            assertTrue(row["reason"].isNull)
+            assertEquals(listOf(listOf("RESTORED", after, "exec-1", null)), events("JO-1"))
+
+            // 가상 시계를 밀지 않고 pump 가 기체를 다시 관측하면 끝난 단위는 끝난 대로, 도는 단위는 도는 대로 선다. 새 태스크는 없다.
+            bench.eventually("단위 다시 관측") { units(bench.execution("exec-1")!!) == mapOf("T1.travel" to "DONE", "T1" to "RUNNING", "T2.travel" to "PENDING", "T2" to "PENDING") }
+            val execution = bench.execution("exec-1")!!
+            assertEquals(JSON.readTree("""{"instanceId":"$before","executionId":"exec-1"}"""), execution["restoredFrom"])
+            assertTrue(execution["missionVersion"].isNull)
+            assertEquals(tasksBefore, bench.tasks(HUMANOID))
+
+            val done = bench.driveUntil("exec-1", settled)
+            assertEquals("PHYSICALLY_DONE", done["physicalState"].asText(), done.toString())
+            bench.eventually("정착 이벤트") { events("JO-1").size == 2 }
+            assertEquals(listOf("SETTLED", after, "exec-1", "PHYSICALLY_DONE"), events("JO-1")[1])
+            assertEquals(setOf("JO-1#T1.travel", "JO-1#T1", "JO-1#T2.travel", "JO-1#T2"), bench.tasks(HUMANOID).keys)
+
+            // 정착한 일지 행은 다음 기동이 다시 짓지 않는다.
+            bench.restartHost()
+            val idle = bench.get("/host/executions")
+            assertTrue(idle["restore"]["rows"].isEmpty && idle["executions"].isEmpty, idle.toString())
+        }
+    }
+
+    @Test
+    fun `받은 뒤 다른 임무 버전을 활성화하고 재기동해도 받은 때의 임무 정의로 다시 짓는다`() {
+        HostBench().use { bench ->
+            bench.mimic.server.advance(Duration.ofSeconds(1))
+            bench.awaitPump()
+            val accepted = bench.post("/host/job-orders", request(rack("JO-1", S01), "candidates", HUMANOID)).body!!
+            assertEquals("ACCEPTED", accepted["result"].asText(), accepted.toString())
+            assertEquals(1, bench.activateHold())
+
+            bench.restartHost()
+            assertEquals("RESTORED", bench.get("/host/executions")["restore"]["rows"].single()["result"].asText())
+            val execution = bench.execution("exec-1")!!
+            assertTrue(execution["missionVersion"].isNull, execution.toString())
+            assertEquals(listOf(S01), execution["units"].map { it["unitId"].asText() })
+            // 일지에는 받은 때의 임무 버전(코드 정의라 null)이 있다.
+            assertNull(journalVersion("JO-1"))
+        }
+    }
+
+    @Test
+    fun `운영자 보류에 선 실행을 두 번 다시 띄워도 새 인스턴스의 첫 보류 응답은 재기동 중복이고 같은 인스턴스의 다음 보류는 송신이다`() {
+        HostBench().use { bench ->
+            val first = bench.host.instanceId
+            val executionId = bench.submitHeldOrder("JO-1")
+            bench.driveToHold(executionId)
+            bench.eventually("첫 보류 송신") { log("JO-1").isNotEmpty() }
+            assertEquals(listOf(first to "SENT"), log("JO-1").map { it[0] to it[1] })
+
+            bench.restartHost()
+            val second = bench.host.instanceId
+            val restored = bench.execution("exec-1")!!
+            assertEquals(1, restored["missionVersion"].asInt())
+            assertEquals(listOf(WAIT, S01), restored["units"].map { it["unitId"].asText() })
+            bench.driveToHold("exec-1")
+            bench.eventually("둘째 인스턴스의 보류") { log("JO-1").size == 2 }
+            assertEquals(second to "RESTART_DUPLICATE", log("JO-1")[1].let { it[0] to it[1] })
+            assertEquals("OPERATOR_HOLD", log("JO-1")[1][2])
+
+            bench.restartHost()
+            val third = bench.host.instanceId
+            val row = bench.get("/host/executions")["restore"]["rows"].single()
+            assertEquals(listOf(second, "exec-1"), listOf(row["previousInstanceId"].asText(), row["previousExecutionId"].asText()))
+            assertEquals(JSON.readTree("""{"instanceId":"$second","executionId":"exec-1"}"""), bench.execution("exec-1")!!["restoredFrom"])
+            bench.driveToHold("exec-1")
+            bench.eventually("셋째 인스턴스의 보류") { log("JO-1").size == 3 }
+            assertEquals(third to "RESTART_DUPLICATE", log("JO-1")[2].let { it[0] to it[1] })
+
+            // 같은 인스턴스 안에서 재작업 뒤 다시 선 보류는 같은 내용이어도 새 사건이라 송신한다.
+            assertEquals("Resolved", bench.resolve("exec-1", WAIT, "REWORK", "kim").body!!["result"].asText())
+            bench.driveToHold("exec-1")
+            bench.eventually("재작업 뒤 보류") { log("JO-1").size == 4 }
+            assertEquals(third to "SENT", log("JO-1")[3].let { it[0] to it[1] })
+            assertEquals(log("JO-1")[0].drop(2), log("JO-1")[3].drop(2))
+
+            val view = bench.get("/host/job-responses?jobOrderId=JO-1")["responses"]
+            assertEquals(listOf("SENT", "RESTART_DUPLICATE", "RESTART_DUPLICATE", "SENT"), view.map { it["disposition"].asText() }.reversed())
+            assertEquals(listOf(first, second, third, third), view.map { it["instanceId"].asText() }.reversed())
+        }
+    }
+
+    @Test
+    fun `기체 스냅숏을 못 읽으면 미루고 그 기체를 판정에서 빼며 pump 마다 다시 시도해 읽히면 다시 짓고 그 밖의 거부는 포기한다`() {
+        HostBench(gated = true).use { bench ->
+            val accepted = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7"), "candidates", HUMANOID)).body!!
+            assertEquals("ACCEPTED", accepted["result"].asText(), accepted.toString())
+            val before = bench.host.instanceId
+            bench.driveUnits("exec-1") { it["T1.travel"] == "RUNNING" }
+            // InspectAsset 의 최고 근거 등급은 E0 이라 E2 를 요구하는 일지 행은 다시 짓지 못한다.
+            insertJournal("JO-E2", QUADRUPED, evidence = "E2")
+
+            bench.blockedSnapshots += HUMANOID
+            bench.restartHost()
+            val rows = bench.get("/host/executions")["restore"]["rows"]
+            assertEquals(listOf("JO-1" to "DEFERRED", "JO-E2" to "GAVE_UP"), rows.map { it["jobOrderId"].asText() to it["result"].asText() })
+            assertTrue(rows[0]["reason"].asText().startsWith("기체 스냅숏을 못 읽어"), rows.toString())
+            assertTrue(rows[0]["executionId"].isNull)
+            assertTrue("요구 근거 등급" in rows[1]["reason"].asText(), rows.toString())
+            assertTrue(bench.get("/host/executions")["executions"].isEmpty)
+
+            fun reasons(robotId: String) =
+                bench.post("/host/eligibility", request(inspect("JO-9", "T2" to "dock-3"), "robotIds", robotId)).body!!["robots"].single()["reasons"].map { it.asText() }
+            assertEquals(listOf("복원 못 한 실행이 있다: JO-1"), reasons(HUMANOID))
+            // 포기한 행의 기체에 그 작업 지시의 태스크가 없으면 곧바로 풀린다.
+            assertEquals(emptyList(), reasons(QUADRUPED))
+
+            bench.idlePumps()
+            assertEquals(listOf("DEFERRED"), events("JO-1").map { it[0] })
+            assertEquals("DEFERRED", bench.get("/host/executions")["restore"]["rows"][0]["result"].asText())
+
+            bench.blockedSnapshots -= HUMANOID
+            bench.eventually("미룬 행 다시 짓기") { bench.get("/host/executions")["restore"]["rows"][0]["result"].asText() == "RESTORED" }
+            val after = bench.host.instanceId
+            assertEquals(listOf(listOf("DEFERRED", after, null), listOf("RESTORED", after, "exec-1")), events("JO-1").map { it.take(3) })
+            val row = bench.get("/host/executions")["restore"]["rows"][0]
+            assertEquals(listOf("exec-1", before, "exec-1"), listOf(row["executionId"].asText(), row["previousInstanceId"].asText(), row["previousExecutionId"].asText()))
+            assertTrue(row["reason"].isNull)
+            assertEquals(JSON.readTree("""{"instanceId":"$before","executionId":"exec-1"}"""), bench.execution("exec-1")!!["restoredFrom"])
+            assertEquals(listOf("도는 실행이 있다: exec-1"), reasons(HUMANOID))
+        }
+    }
+
+    @Test
+    fun `재작업한 로봇 단위를 재기동하면 @rN 태스크에 다시 붙고 새 태스크를 내지 않는다`() {
+        HostBench().use { bench ->
+            bench.awaitPump()
+            val accepted = bench.post("/host/job-orders", request(rack("JO-1", S01), "candidates", HUMANOID)).body!!
+            assertEquals("ACCEPTED", accepted["result"].asText(), accepted.toString())
+            val running = bench.runningTask(HUMANOID)
+            // 슬롯이 근거 윈도우 안에 채워졌으므로 스킬 실패는 실패가 아니라 운영자 보류다(S4a JSON 계약 §8).
+            bench.cellBody = STANDARD_CELL.replace(
+                """{"id":"$S01","occupied":false,"material":null,"observedAt":null}""",
+                """{"id":"$S01","occupied":true,"material":"$MATERIAL","observedAt":null}""",
+            )
+            bench.awaitPump()
+            val outcome = bench.mimic.server.exclusive { bench.mimic.instance(HUMANOID)!!.tasks.forceFault("SKILL_EXECUTION_FAILED", running) }
+            assertTrue(outcome is ForceOutcome.Raised, outcome.toString())
+            bench.driveToHold("exec-1")
+            assertEquals("Resolved", bench.resolve("exec-1", S01, "REWORK", "kim").body!!["result"].asText())
+            bench.eventually("재작업 태스크") { "JO-1#$S01@r1" in bench.tasks(HUMANOID).keys }
+            bench.eventually("재작업 단위 RUNNING") { units(bench.execution("exec-1")!!)[S01] == "RUNNING" }
+            val tasksBefore = bench.tasks(HUMANOID)
+            assertEquals(setOf("JO-1#$S01", "JO-1#$S01@r1"), tasksBefore.keys)
+
+            bench.restartHost()
+            assertEquals("RESTORED", bench.get("/host/executions")["restore"]["rows"].single()["result"].asText())
+            bench.eventually("@r1 에 다시 붙음") { units(bench.execution("exec-1")!!)[S01] == "RUNNING" }
+            bench.idlePumps()
+            // 같은 태스크 둘뿐이다. @r1 은 재기동 전에 받은 그 태스크가 이어 돈다(ACCEPTED 에서 RUNNING 으로 갔을 수 있다).
+            val tasksAfter = bench.tasks(HUMANOID)
+            assertEquals(tasksBefore.keys, tasksAfter.keys)
+            assertEquals(tasksBefore["JO-1#$S01"], tasksAfter["JO-1#$S01"])
+            assertTrue(tasksAfter.getValue("JO-1#$S01@r1") in setOf(TaskState.ACCEPTED, TaskState.RUNNING), tasksAfter.toString())
+        }
+    }
+
+    private fun HostBench.runningTask(robotId: String): String {
+        repeat(20) {
+            mimic.server.advance(Duration.ofSeconds(1))
+            awaitPump()
+            mimic.server.exclusive { mimic.instance(robotId)!!.tasks.all.firstOrNull { it.machine.state == TaskState.RUNNING }?.taskId }
+                ?.let { return it }
+        }
+        error("태스크가 RUNNING 이 되지 않았다")
+    }
+
+    /** 실행의 단위가 [done] 을 만족할 때까지 가상 시계를 1초씩 민다(가상 120초 상한). */
+    private fun HostBench.driveUnits(executionId: String, done: (Map<String, String>) -> Boolean) {
+        repeat(120) {
+            if (done(units(checkNotNull(execution(executionId))))) return
+            mimic.server.advance(Duration.ofSeconds(1))
+            awaitPump()
+            Thread.sleep(MissionHost.PUMP_PERIOD.toMillis())
+        }
+        error("단위가 바라는 상태에 이르지 않았다: ${execution(executionId)}")
+    }
+
+    /** mimic 이 호스팅하는 태스크 id 와 상태. */
+    private fun HostBench.tasks(robotId: String): Map<String, TaskState> =
+        mimic.server.exclusive { mimic.instance(robotId)!!.tasks.all.associate { it.taskId to it.machine.state } }
+
+    private companion object {
+        const val WAIT = "rack-arrival"
+        const val S01 = "RACK-204.S01"
+
+        val RESTORE_ROW_FIELDS = listOf("jobOrderId", "robotId", "previousInstanceId", "previousExecutionId", "result", "executionId", "reason")
+
+        fun units(execution: JsonNode): Map<String, String> = execution["units"].associate { it["unitId"].asText() to it["state"].asText() }
+
+        fun events(jobOrderId: String): List<List<String?>> = PostgresSupport.queryAll(
+            "SELECT kind, instance_id, execution_id, detail FROM mission.execution_journal_event WHERE job_order_id = '$jobOrderId' ORDER BY event_id",
+        ) { listOf(it.getString(1), it.getString(2), it.getString(3), it.getString(4)) }
+
+        /** 송신 기록(인스턴스, 처분, 물리 상태, 미완 단위, 운영자 필요, 도달 근거 등급). 적은 순서다. */
+        fun log(jobOrderId: String): List<List<String>> = PostgresSupport.queryAll(
+            """
+            SELECT instance_id, disposition, physical_state, incomplete_units::text, operator_required::text, reached_evidence
+            FROM mission.job_response_log WHERE job_order_id = '$jobOrderId' ORDER BY log_id
+            """.trimIndent(),
+        ) { (1..6).map { i -> it.getString(i) } }
+
+        fun journalVersion(jobOrderId: String): Int? =
+            PostgresSupport.queryOne("SELECT mission_version FROM mission.execution_journal WHERE job_order_id = '$jobOrderId'") { it.getObject(1) as Int? }
+
+        fun insertJournal(jobOrderId: String, robotId: String, evidence: String) {
+            val order = JSON.writeValueAsString(JSON.readTree(inspect(jobOrderId, "T1" to "bay-7", evidence = evidence)))
+            PostgresSupport.execute(
+                """
+                INSERT INTO mission.execution_journal (job_order_id, robot_id, job_order, work_master_id, mission_version, instance_id, execution_id)
+                VALUES ('$jobOrderId', '$robotId', '$order'::jsonb, 'InspectAsset', NULL, 'mw-before', 'exec-7')
+                """.trimIndent(),
+            )
+        }
+    }
+}

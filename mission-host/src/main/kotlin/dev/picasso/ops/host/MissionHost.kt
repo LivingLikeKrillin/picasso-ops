@@ -230,9 +230,11 @@ class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeExc
  * 호스트는 스킬 적합과 도는 실행 없음만 본다. 시운전 완료와 연결 신선은 운영 서비스가 본다. 미들웨어의 배정 관문은 이
  * 넷을 보지 않으므로 제출 때 호스트가 다시 판정해 통과한 기체만 `assign` 에 넘긴다.
  *
- * ## 작업 응답
+ * ## 작업 응답과 재기동(S4b 스펙)
  *
- * 상위 시스템이 없어 `ack` 하지 않는다(스펙 §7.7). 아웃박스가 계속 자라는 것은 한계다(스펙 §12).
+ * 상위 시스템이 없어 송신 기록(`mission.job_response_log`)이 전선 자리를 대신한다. pump 뒤 같은 잠금 안에서 응답을 적고 `ack`
+ * 한다. 받은 작업 지시는 실행 일지에 적고 기동 때 [start] 가 다시 짓는다. 인시던트와 판단은 사본으로 남는다. 미들웨어 아웃박스는
+ * ack 한 응답도 들고 있어 계속 자라는 것은 그대로 한계다(S3a 스펙 §12).
  *
  * @param robots 하위 포트. 판정의 케이퍼빌리티도 이것으로 묻는다(`PicassoClient` 가 세대별로 캐시한다). 그 캐시는 잠금 밖에서
  *   안전하지 않으므로 케이퍼빌리티는 늘 [lock] 아래에서 묻는다.
@@ -387,9 +389,25 @@ class MissionHost(
         }
     }
 
-    /** 미들웨어에 다시 넣는다. P6 `Middleware.resume` 을 기다리는 자리. */
+    /**
+     * 미들웨어에 다시 넣는다(picasso `Middleware.resume`, S4b 스펙 T1). 기체 스냅숏을 못 읽은 거부는 DEFERRED, 그 밖의 거부는
+     * GAVE_UP 이다. Idempotent 는 이번 기동에서 이미 다시 지은 행을 또 부른 경우(앞선 이벤트 쓰기가 실패한 다시 시도)뿐이고
+     * 그 실행으로 RESTORED 다.
+     *
+     * @return 결과, RESTORED 의 실행 id, DEFERRED·GAVE_UP 의 사유
+     */
     private fun resumed(waiting: Deferred): Triple<RestoreResult, String?, String?> =
-        Triple(RestoreResult.GAVE_UP, null, "resume 없음")
+        when (val submission = middleware.resume(waiting.order, waiting.row.robotId, waiting.mission)) {
+            is Middleware.Submission.Accepted -> Triple(RestoreResult.RESTORED, submission.execution.executionId, null)
+            is Middleware.Submission.Idempotent -> Triple(RestoreResult.RESTORED, submission.execution.executionId, null)
+            is Middleware.Submission.Rejected ->
+                if (submission.reason.startsWith(Middleware.RESUME_SNAPSHOT_UNREADABLE)) {
+                    Triple(RestoreResult.DEFERRED, null, submission.reason)
+                } else {
+                    Triple(RestoreResult.GAVE_UP, null, submission.reason)
+                }
+            is Unassigned -> Triple(RestoreResult.GAVE_UP, null, "배정되지 않았다: ${submission.refusals}")
+        }
 
     private fun restoreView(): RestoreView? = restoredAt?.let { RestoreView(it, restoreRows.toList()) }
 
