@@ -22,6 +22,21 @@ object OpsSchema {
             .locations(LOCATION)
             .cleanDisabled(!cleanable)
             .load()
+
+    /**
+     * 주소로 ops 스키마를 올린다. 통합 시험의 스택이 실행 호스트보다 먼저 부른다(S3c 스펙 §7.1). 호스트가 기동 안에서 현장
+     * 시간값 뷰를 한 번 읽으므로, 그 전에 뷰가 있어야 호스트가 미적용으로 뜨지 않는다. 시험 모듈은 Flyway 를 직접 보지 않으므로
+     * 올린 수만 돌려준다.
+     */
+    fun migrate(url: String, user: String, password: String): Int =
+        Flyway.configure()
+            .dataSource(url, user, password)
+            .schemas(SCHEMA)
+            .defaultSchema(SCHEMA)
+            .locations(LOCATION)
+            .load()
+            .migrate()
+            .migrationsExecuted
 }
 
 /** 기동 때 올린 마이그레이션 수. 조작 기록 빈이 이것에 기대어 마이그레이션 뒤에 만들어진다. */

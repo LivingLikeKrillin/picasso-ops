@@ -7,6 +7,8 @@ import dev.picasso.ops.service.finding.Owner
 import dev.picasso.ops.service.log.OperationLog
 import dev.picasso.ops.service.log.OperationResult
 import dev.picasso.ops.service.operations.OperationOutcome
+import dev.picasso.ops.service.settings.SiteSettingsChange
+import dev.picasso.ops.service.settings.SiteSettingsFields
 import dev.picasso.ops.service.settings.SiteSettingsOperations
 import dev.picasso.ops.service.settings.SiteSettingsStore
 import dev.picasso.ops.service.store.OpsSchema
@@ -25,7 +27,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
-/** 현장 설정 변경(S2 스펙 §6.2·§6.3). 새 버전 행과 조작 기록 행이 같이 들어가거나 같이 안 들어간다. */
+/**
+ * 현장 설정 변경(S2 스펙 §6.2·§6.3, S3c 스펙 §6.2). 새 버전 행과 조작 기록 행이 같이 들어가거나 같이 안 들어간다.
+ * 빠진 칸은 기준 버전의 값으로 채운다.
+ */
 class SiteSettingsOperationsTest {
 
     private val dataSource = DriverManagerDataSource(
@@ -43,6 +48,8 @@ class SiteSettingsOperationsTest {
     private val lee = Actor(Mode.ENGINEER, "lee")
     private val json = ObjectMapper()
 
+    private fun threshold(seconds: Int) = SiteSettingsChange(connectionThresholdSeconds = seconds)
+
     @BeforeTest
     fun freshSchema() {
         OpsSchema.flyway(dataSource, cleanable = true).apply {
@@ -53,7 +60,7 @@ class SiteSettingsOperationsTest {
 
     @Test
     fun `기준 버전이 지금 버전이면 다음 버전을 넣고 조작 기록에 성공 행을 남긴다`() {
-        val outcome = operations.change(lee, 1, 60, "시험")
+        val outcome = operations.change(lee, 1, threshold(60), "시험")
         assertEquals(OperationResult.SUCCEEDED, outcome.result)
         assertNull(outcome.rejection)
         assertNull(outcome.registryStatus)
@@ -69,15 +76,18 @@ class SiteSettingsOperationsTest {
         assertEquals("시험", record.reason)
         assertNull(record.targetResponse)
         assertEquals(
-            json.readTree("""{"op":"CHANGE_SITE_SETTINGS","baseVersion":1,"connectionThresholdSeconds":60}"""),
+            json.readTree(
+                """{"op":"CHANGE_SITE_SETTINGS","baseVersion":1,"connectionThresholdSeconds":60,"evidenceBeforeSeconds":30,""" +
+                    """"evidenceAfterSeconds":15,"inDoubtGraceSeconds":60,"stallWindowSeconds":300}""",
+            ),
             json.readTree(record.request),
         )
     }
 
     @Test
     fun `지난 기준 버전 위의 변경은 버전 충돌로 거부하고 조작 기록에 거부 행을 남긴다`() {
-        operations.change(lee, 1, 60, "먼저")
-        val outcome = operations.change(Actor(Mode.ENGINEER, "park"), 1, 120, "늦게")
+        operations.change(lee, 1, threshold(60), "먼저")
+        val outcome = operations.change(Actor(Mode.ENGINEER, "park"), 1, threshold(120), "늦게")
         assertEquals(OperationResult.REJECTED, outcome.result)
         val rejection = outcome.rejection!!
         assertEquals(SiteSettingsOperations.VERSION_CONFLICT, rejection.kind)
@@ -94,7 +104,7 @@ class SiteSettingsOperationsTest {
 
     @Test
     fun `아직 없는 버전을 기준으로 보내면 번호를 건너뛰지 않고 거부한다`() {
-        val outcome = operations.change(lee, 5, 60, "앞선 기준")
+        val outcome = operations.change(lee, 5, threshold(60), "앞선 기준")
         assertEquals(OperationResult.REJECTED, outcome.result)
         assertEquals("현재 버전 1", outcome.rejection!!.observed)
         assertEquals(listOf(1L), store.history().map { it.version })
@@ -107,11 +117,12 @@ class SiteSettingsOperationsTest {
             other.autoCommit = false
             other.createStatement().use {
                 it.executeUpdate(
-                    "INSERT INTO ops.site_settings (version, connection_threshold_seconds, mode, actor_user, reason) " +
-                        "VALUES (2, 120, 'ENGINEER', 'park', '먼저')",
+                    "INSERT INTO ops.site_settings (version, connection_threshold_seconds, evidence_before_seconds, " +
+                        "evidence_after_seconds, in_doubt_grace_seconds, stall_window_seconds, mode, actor_user, reason) " +
+                        "VALUES (2, 120, 30, 15, 60, 300, 'ENGINEER', 'park', '먼저')",
                 )
             }
-            val pending = pool.submit<OperationOutcome> { operations.change(lee, 1, 60, "늦게") }
+            val pending = pool.submit<OperationOutcome> { operations.change(lee, 1, threshold(60), "늦게") }
             // 변경이 버전 2 의 기본 키 잠금을 기다릴 때까지 본다. 그 전에 커밋하면 비교 경로로 간다.
             val deadline = System.nanoTime() + 10_000_000_000
             while (PostgresSupport.queryOne(
@@ -132,9 +143,50 @@ class SiteSettingsOperationsTest {
     }
 
     @Test
-    fun `범위 밖 값은 관문이 막으므로 여기까지 오면 계약 위반이다`() {
-        assertFailsWith<IllegalArgumentException> { operations.change(lee, 1, 59, "범위 밖") }
+    fun `범위 밖 값과 다 빠진 요청은 관문이 막으므로 여기까지 오면 계약 위반이다`() {
+        assertFailsWith<IllegalArgumentException> { operations.change(lee, 1, threshold(59), "범위 밖") }
+        assertFailsWith<IllegalArgumentException> { operations.change(lee, 1, SiteSettingsChange(stallWindowSeconds = 3601), "범위 밖") }
+        assertFailsWith<IllegalArgumentException> { operations.change(lee, 1, SiteSettingsChange(), "빈 변경") }
         assertEquals(listOf(1L), store.history().map { it.version })
         assertEquals(emptyList(), log.list())
+    }
+
+    @Test
+    fun `빠진 칸은 기준 버전의 값으로 채우고 조작 기록에 채운 값 다섯을 남긴다`() {
+        operations.change(lee, 1, SiteSettingsChange(connectionThresholdSeconds = 120, inDoubtGraceSeconds = 90), "먼저")
+        val outcome = operations.change(lee, 2, SiteSettingsChange(evidenceBeforeSeconds = 45, stallWindowSeconds = 600), "시간값")
+        assertEquals(OperationResult.SUCCEEDED, outcome.result)
+        // 기준 버전 2 의 연결 기준 시간 120 과 inDoubtGrace 90 이 남고, 뒤 폭은 버전 1 부터의 기본값 15 다.
+        assertEquals(SiteSettingsFields(120, 45, 15, 90, 600), store.latest().fields())
+        assertEquals(3L, store.latest().version)
+        assertEquals(
+            json.readTree(
+                """{"op":"CHANGE_SITE_SETTINGS","baseVersion":2,"connectionThresholdSeconds":120,"evidenceBeforeSeconds":45,""" +
+                    """"evidenceAfterSeconds":15,"inDoubtGraceSeconds":90,"stallWindowSeconds":600}""",
+            ),
+            json.readTree(log.list().first().request),
+        )
+    }
+
+    @Test
+    fun `버전 충돌의 조작 기록은 기준 버전이 있으면 그 값으로 채우고 없는 버전이면 빠진 칸이 null 이다`() {
+        operations.change(lee, 1, SiteSettingsChange(stallWindowSeconds = 600), "먼저")
+        operations.change(lee, 1, SiteSettingsChange(evidenceAfterSeconds = 20), "늦게")
+        assertEquals(
+            json.readTree(
+                """{"op":"CHANGE_SITE_SETTINGS","baseVersion":1,"connectionThresholdSeconds":90,"evidenceBeforeSeconds":30,""" +
+                    """"evidenceAfterSeconds":20,"inDoubtGraceSeconds":60,"stallWindowSeconds":300}""",
+            ),
+            json.readTree(log.list().first().request),
+        )
+        operations.change(lee, 9, SiteSettingsChange(evidenceAfterSeconds = 20), "앞선 기준")
+        assertEquals(
+            json.readTree(
+                """{"op":"CHANGE_SITE_SETTINGS","baseVersion":9,"connectionThresholdSeconds":null,"evidenceBeforeSeconds":null,""" +
+                    """"evidenceAfterSeconds":20,"inDoubtGraceSeconds":null,"stallWindowSeconds":null}""",
+            ),
+            json.readTree(log.list().first().request),
+        )
+        assertEquals(listOf(OperationResult.REJECTED, OperationResult.REJECTED, OperationResult.SUCCEEDED), log.list().map { it.result })
     }
 }

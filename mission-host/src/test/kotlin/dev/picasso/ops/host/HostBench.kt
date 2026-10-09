@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.HttpServer
 import dev.picasso.mimic.cli.MimicCli
+import dev.picasso.ops.host.timings.SiteTimingsView
 import dev.picasso.registry.PostgresSupport
 import org.springframework.boot.web.context.WebServerApplicationContext
 import org.springframework.context.ConfigurableApplicationContext
@@ -27,13 +28,53 @@ import java.util.concurrent.CopyOnWriteArrayList
  * 임무 버전 저장은 registry 시험 픽스처의 Postgres 다(S3b 스펙 §6.1). 띄울 때마다 `mission` 스키마를 지운다. 덧붙이기 전용
  * 트리거가 DELETE·TRUNCATE 를 막으므로 스키마째 지운다. [restartHost] 는 DB 를 그대로 두고 호스트만 다시 띄운다.
  *
+ * 현장 시간값 뷰(S3c 스펙 §7.1)는 운영 서비스의 마이그레이션이 만들지만 이 세트에는 운영 서비스가 없다. 그래서 띄울 때마다 ops
+ * 스키마를 지우고, 호스트 main 의 뷰 상수([SiteTimingsView])로 `VALUES` 한 행의 대역 뷰를 만든다([timingsView]). 실제 뷰와 칸이
+ * 같은지는 통합 시험이 대조한다.
+ *
  * @param mockVirtualLimit 주면 모의 실행의 가상 시간 상한을 이것으로 덮는다.
+ * @param readInterval 주면 현장 시간값 읽기 주기를 이것으로 덮는다. 길게 주면 기동 안의 첫 읽기만 일어난다.
+ * @param timings 대역 뷰의 한 행(버전, 앞 폭, 뒤 폭, inDoubtGrace, stallWindow). `null` 이면 뷰를 만들지 않아 호스트가 미적용으로 뜬다.
  */
-class HostBench(private val mockVirtualLimit: Duration? = null) : AutoCloseable {
+class HostBench(
+    private val mockVirtualLimit: Duration? = null,
+    private val readInterval: Duration? = null,
+    timings: List<Long>? = STANDARD_TIMINGS,
+) : AutoCloseable {
 
     init {
         PostgresSupport.execute("DROP SCHEMA IF EXISTS mission CASCADE")
+        PostgresSupport.execute("DROP SCHEMA IF EXISTS ops CASCADE")
+        timings?.let(::timingsView)
     }
+
+    /** 대역 뷰를 [row] 한 행으로 다시 만든다. 호스트는 다음 읽기(1초 주기)에서 그 행을 읽는다. */
+    fun timingsView(row: List<Long>) {
+        require(row.size == SiteTimingsView.COLUMNS.size) { "칸이 ${SiteTimingsView.COLUMNS.size} 개여야 한다: $row" }
+        PostgresSupport.execute("CREATE SCHEMA IF NOT EXISTS ${SiteTimingsView.NAME.substringBefore('.')}")
+        dropTimingsView()
+        val values = SiteTimingsView.COLUMNS.zip(row).joinToString(", ") { (column, value) -> "$value::${column.type}" }
+        PostgresSupport.execute(
+            "CREATE VIEW ${SiteTimingsView.NAME} (${SiteTimingsView.COLUMNS.joinToString(", ") { it.name }}) AS VALUES ($values)",
+        )
+    }
+
+    /** 대역 뷰를 지운다. 호스트의 다음 읽기가 실패한다. */
+    fun dropTimingsView() = PostgresSupport.execute("DROP VIEW IF EXISTS ${SiteTimingsView.NAME}")
+
+    /** `GET /host/site-timings` 가 [done] 을 만족할 때까지 기다린다(실제 시간 상한 5초). 만족한 본문을 돌려준다. */
+    fun awaitTimings(done: (JsonNode) -> Boolean): JsonNode {
+        val deadline = Instant.now().plusSeconds(5)
+        while (true) {
+            val view = get("/host/site-timings")
+            if (done(view)) return view
+            check(Instant.now().isBefore(deadline)) { "5초 안에 현장 시간값 상태가 바뀌지 않았다: $view" }
+            Thread.sleep(100)
+        }
+    }
+
+    /** 호스트가 버전 [version] 을 적용할 때까지 기다린다. */
+    fun awaitApplied(version: Long): JsonNode = awaitTimings { it["applied"]?.get("version")?.asLong() == version }
 
     val mimic: MimicCli.Started = checkNotNull(
         MimicCli().start(
@@ -101,6 +142,7 @@ class HostBench(private val mockVirtualLimit: Duration? = null) : AutoCloseable 
             add("--host.mock-run.profile=$MOCK_PROFILE")
             add("--host.mock-run.schema=$SCHEMA")
             mockVirtualLimit?.let { add("--host.mock-run.virtual-limit=$it") }
+            readInterval?.let { add("--host.site-timings.read-interval=$it") }
         }.toTypedArray(),
     )
 
@@ -184,6 +226,9 @@ class HostBench(private val mockVirtualLimit: Duration? = null) : AutoCloseable 
         const val GHOST = "ghost-01"
         const val SOURCE = "SEQ-IN-02.BIN-A"
         const val MATERIAL = "ENGINE-COVER-A"
+
+        /** 대역 뷰의 처음 행. 버전 1 과 picasso 케이퍼빌리티 기본값이며, 운영 서비스 마이그레이션이 만드는 버전 1 과 같다. */
+        val STANDARD_TIMINGS: List<Long> = listOf(1, 30, 15, 60, 300)
 
         val ROOT: Path = Path.of("..").toAbsolutePath().normalize()
         val HTTP: HttpClient = HttpClient.newHttpClient()

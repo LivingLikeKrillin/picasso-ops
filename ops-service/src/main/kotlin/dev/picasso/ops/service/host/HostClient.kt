@@ -165,8 +165,14 @@ fun interface HostSignals {
     fun writeSignal(name: String, value: String): HostWrite
 }
 
+/** 호스트의 현장 시간값 적용 상태(S3c 스펙 §8). 시험이 호스트 없이 대신 끼운다. */
+fun interface HostSiteTimings {
+    /** `GET /host/site-timings` 본문 그대로. 200 아님과 닿지 않음은 모름이다. */
+    fun siteTimings(): HostCall<JsonNode>
+}
+
 /**
- * 실행 호스트 REST 클라이언트(S3a 스펙 §8, S3b 스펙 §7). 호스트는 루프백·무인증이라 토큰을 싣지 않는다.
+ * 실행 호스트 REST 클라이언트(S3a 스펙 §8, S3b 스펙 §7, S3c 스펙 §8). 호스트는 루프백·무인증이라 토큰을 싣지 않는다.
  *
  * 연결 제한은 registry 와 같고 요청 제한은 더 길다. 호스트는 판정과 제출을 자기 잠금 아래에서 하며, 그 안에서 mimic 에
  * gRPC 를 부르고, mimic 은 엔진 잠금 아래에서 registry 로 태스크 관측을 동기 HTTP 로 적재한다(요청 제한 3초, 스펙 §5.3).
@@ -182,7 +188,7 @@ class HostClient(
     private val json: ObjectMapper = jacksonObjectMapper(),
     private val requestTimeout: Duration = REQUEST_TIMEOUT,
     private val mockRunTimeout: Duration = MOCK_RUN_TIMEOUT,
-) : HostReads, HostWrites, HostMissions, HostSignals, AutoCloseable {
+) : HostReads, HostWrites, HostMissions, HostSignals, HostSiteTimings, AutoCloseable {
 
     private val base = checkBaseUrl(baseUrl)
 
@@ -258,6 +264,8 @@ class HostClient(
             else -> HostRequery.Silent("HTTP ${response.status}")
         }
     }
+
+    override fun siteTimings(): HostCall<JsonNode> = get("/host/site-timings")
 
     override fun writeSignal(name: String, value: String): HostWrite =
         post("/host/cell/signals/${segment(name)}", json.createObjectNode().put("value", value))

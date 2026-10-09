@@ -442,6 +442,60 @@ class MissionVersionsTest {
     }
 
     @Test
+    fun `기한을 넘긴 대기의 인시던트가 봉인 라운드의 설정 버전과 시간값을 싣고 최신부터 나온다`() {
+        HostBench(timings = listOf(7, 40, 20, 90, 600)).use { bench ->
+            assertTrue(bench.get("/host/incidents")["incidents"].isEmpty)
+            bench.cellBody = filledCell(rackPresent = "false")
+            bench.nextPump()
+            assertEquals(1, bench.activated(bench.arrivalWait()))
+            val first = bench.post("/host/job-orders", request(rack("JO-1", "RACK-204.S01"), "candidates", HUMANOID)).body!!["executionId"].asText()
+            bench.driveUntil(first, setOf("ABORTED"))
+
+            // 둘째 작업 지시가 대기 중일 때 버전 8 을 적용하면, 그 대기의 인시던트는 봉인 라운드의 버전 8 을 든다.
+            val second = bench.post("/host/job-orders", request(rack("JO-2", "RACK-204.S02"), "candidates", HUMANOID)).body!!["executionId"].asText()
+            bench.timingsView(listOf(8, 45, 25, 120, 900))
+            bench.awaitApplied(8)
+            bench.driveUntil(second, setOf("ABORTED"))
+
+            // limit 을 생략하면 기본 50 개까지라 둘 다 나온다.
+            val view = bench.get("/host/incidents")
+            assertTrue(view["instanceId"].asText().startsWith("mw-"), view.toString())
+            assertEquals(2, view["total"].asInt(), view.toString())
+            assertEquals(2, view["incidents"].size(), view.toString())
+            val (newest, oldest) = view["incidents"].toList()
+            assertEquals(
+                listOf(second, "JO-2", 8L, listOf(45L, 25L, 120L, 900L)),
+                listOf(newest["executionId"].asText(), newest["jobOrderId"].asText(), newest["siteSettingsVersion"].asLong(), seconds(newest)),
+            )
+            assertEquals(
+                listOf(first, "JO-1", 7L, listOf(40L, 20L, 90L, 600L)),
+                listOf(oldest["executionId"].asText(), oldest["jobOrderId"].asText(), oldest["siteSettingsVersion"].asLong(), seconds(oldest)),
+            )
+            listOf(newest, oldest).forEach { incident ->
+                assertEquals("SIGNAL_DEADLINE", incident["failureClass"].asText(), incident.toString())
+                assertEquals("rack-arrival", incident["unitId"].asText())
+                assertEquals(HUMANOID, incident["robotId"].asText())
+                assertEquals("SIGNAL", incident["route"].asText())
+                assertEquals(1, incident["missionVersion"].asInt())
+                assertTrue(incident["incidentId"].asText().startsWith("incident-"), incident.toString())
+                Instant.parse(incident["at"].asText())
+            }
+
+            assertEquals(listOf(second), bench.get("/host/incidents?limit=1")["incidents"].map { it["executionId"].asText() })
+            assertEquals(2, bench.get("/host/incidents?limit=1")["total"].asInt())
+            listOf("0", "501", "x").forEach { limit ->
+                val bad = bench.fetch("/host/incidents?limit=$limit")
+                assertEquals(400, bad.status, limit)
+                assertEquals("BAD_REQUEST", bad.body!!["error"].asText())
+            }
+        }
+    }
+
+    /** 인시던트의 시간값 넷(앞 폭, 뒤 폭, inDoubtGrace, stallWindow). */
+    private fun seconds(incident: JsonNode): List<Long> =
+        listOf("evidenceBeforeSeconds", "evidenceAfterSeconds", "inDoubtGraceSeconds", "stallWindowSeconds").map { incident[it].asLong() }
+
+    @Test
     fun `재기동해도 활성 버전 번호가 같고 다음 활성화는 가장 큰 번호 더하기 1 이다`() {
         HostBench().use { bench ->
             bench.awaitPump()

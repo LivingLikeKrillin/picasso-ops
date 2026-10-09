@@ -8,6 +8,7 @@ import type {
   EligibilityView,
   ExecutionsView,
   Finding,
+  HostTimings,
   MissionOverview,
   MissionTemplates,
   MockRunView,
@@ -205,11 +206,18 @@ export function profileView(partial: Partial<ProfileListView> = {}): ProfileList
   }
 }
 
-/** 현장 설정. 기본은 마이그레이션이 넣는 버전 1 의 90초 하나다(S2 스펙 §5). */
+/**
+ * 현장 설정. 기본은 마이그레이션이 넣는 버전 1 하나(90초와 picasso 기본 시간값, S3c JSON 계약 §1.1)이고, 실행 호스트가 그
+ * 버전을 적용한 상태다.
+ */
 export function settingsView(partial: Partial<SiteSettingsView> = {}): SiteSettingsView {
   const first = {
     version: 1,
     connectionThresholdSeconds: 90,
+    evidenceBeforeSeconds: 30,
+    evidenceAfterSeconds: 15,
+    inDoubtGraceSeconds: 60,
+    stallWindowSeconds: 300,
     mode: 'ENGINEER',
     user: 'system',
     reason: 'S1 설정값 이전',
@@ -217,8 +225,32 @@ export function settingsView(partial: Partial<SiteSettingsView> = {}): SiteSetti
   }
   return {
     current: first,
-    range: { minConnectionThresholdSeconds: 60, maxConnectionThresholdSeconds: 3600 },
+    range: {
+      minConnectionThresholdSeconds: 60,
+      maxConnectionThresholdSeconds: 3600,
+      minEvidenceBeforeSeconds: 5,
+      maxEvidenceBeforeSeconds: 120,
+      minEvidenceAfterSeconds: 5,
+      maxEvidenceAfterSeconds: 120,
+      minInDoubtGraceSeconds: 10,
+      maxInDoubtGraceSeconds: 600,
+      minStallWindowSeconds: 30,
+      maxStallWindowSeconds: 3600,
+    },
     history: [first],
+    hostTimings: hostTimings(),
+    ...partial,
+  }
+}
+
+/** 실행 호스트의 적용 상태(S3c JSON 계약 §7). 기본은 버전 1 을 적용하고 읽기 실패와 적용하지 않은 버전이 없다. */
+export function hostTimings(partial: Partial<HostTimings> = {}): HostTimings {
+  return {
+    applied: { version: 1, evidenceBeforeSeconds: 30, evidenceAfterSeconds: 15, inDoubtGraceSeconds: 60, stallWindowSeconds: 300 },
+    appliedAt: 'h1',
+    lastReadAt: 'h2',
+    readError: null,
+    rejected: null,
     ...partial,
   }
 }

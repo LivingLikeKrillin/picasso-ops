@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
  * 기체는 site/robots.json 의 humanoid-01 이다. 런처가 mimic 을 띄워 두었으므로 선언하면 보고가 붙는다.
  *
  * 이어서 S1c 의 화면 쪽(스펙 §3). 제품 선언 → 빌드 선언 → 인스턴스 등록 → 인스턴스 목록에 UNTESTED.
- * 이어서 S1d 의 화면 쪽(P2·S1d 스펙 §3·§11). 개정판 제출(파일 고르기) → 시험 요청 → 현장 실행기가 TESTED → 활성화 →
+ * 이어서 S1d 의 화면 쪽(P2·S1d 스펙 §3·§11). 리비전 제출(파일 고르기) → 시험 요청 → 현장 실행기가 TESTED → 활성화 →
  * 바인딩 → 명칭 기록 → «시운전 완료»(humanoid-01). quadruped-01 은 명칭을 티칭하지 않아 «기체가 아는 명칭 없음» 으로 막힌다.
  * 이어서 S2 의 화면 쪽(S2 스펙 §3). 현장·자원 영역에서 연결 기준 시간을 바꾸면 버전 2 와 이력 행이 보이고, 운영자 모드는
  * 바꾸지 못하며, 기체 상세가 버전 2 의 기준으로 판정한다.
@@ -17,6 +17,8 @@ import { fileURLToPath } from 'node:url'
  * 이어서 S3b 의 화면 쪽(S3b 스펙 §3). 엔지니어 모드로 «임무·정책» 영역에서 데이터 정의 템플릿을 불러와 초안 저장 → 검증 → 모의
  * 실행 → 활성화(사유)하면 버전 이력에 «버전 1 (활성)» 이 보인다. 운영 영역의 셀 대역 신호 표에서 rack_present 를 켜면 신호 조작
  * 결과와 신호 값이 보인다.
+ * S3c 의 화면 쪽(S3c 스펙 §3)은 S2 단계 뒤다. 엔지니어 모드로 stallWindow 를 바꾸면 버전 3 이력 행이 보이고 «실행 호스트 반영»
+ * 이 버전 3 이 된다.
  * registry 를 멈추는 것은 맨 끝이다. 그 뒤로는 조작이 registry 에 닿지 않는다.
  *
  * 선언 직후의 CLAIMED 는 여기서 단언하지 않는다. 실시간 1:1 시계에서는 다음 보고가 1초 안에 올 수도 있어
@@ -83,7 +85,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   const instances = page.getByRole('table', { name: '인스턴스 목록' })
   await expect(instances.getByRole('row', { name: /fleet-gw-01/ })).toContainText('UNTESTED')
 
-  // 프로파일: 개정판 둘을 제출하고 시험을 요청하면 현장 실행기가 TESTED 로 올린다. 그 뒤 활성화.
+  // 프로파일: 리비전 둘을 제출하고 시험을 요청하면 현장 실행기가 TESTED 로 올린다. 그 뒤 활성화.
   const declareQuadruped = page.getByRole('form', { name: '기체 선언' })
   await declareQuadruped.getByLabel('robot_id').fill('quadruped-01')
   await declareQuadruped.getByLabel('일련번호').fill('QB-0001')
@@ -148,6 +150,20 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await page.getByRole('button', { name: '로봇·연결' }).click()
   await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
   await expect(detail.getByText('기준 120초, 현장 설정 버전 2', { exact: true })).toBeVisible()
+
+  // 현장 시간값(S3c 스펙 §3). 엔지니어 모드에서 stallWindow 를 바꾸면 버전 3 과 시간값 열이 붙은 이력 행이 보이고, 실행 호스트가
+  // ops 의 현재 버전 뷰를 읽어 적용한 버전이 따로 보인다. 실행 호스트는 운영 서비스보다 먼저 떠 미적용으로 시작하고 운영 서비스가
+  // 마이그레이션을 마친 뒤 적용하므로 여기서는 이미 버전 2 다. 화면은 5초마다 다시 읽고 호스트는 1초마다 읽는다.
+  const hostApplied = { timeout: 15_000 }
+  await page.getByRole('button', { name: '현장·자원' }).click()
+  await expect(settings.getByText('실행 호스트 반영: 버전 2', { exact: true })).toBeVisible(hostApplied)
+  await change.getByLabel('stallWindow(초)').fill('600')
+  await change.getByLabel('변경 사유').fill('정체 표시 늦춤')
+  await change.getByRole('button', { name: '변경' }).click()
+  await expect(page.getByText('stallWindow 600초로 변경: 반영됨', { exact: true })).toBeVisible()
+  await expect(versions.getByRole('row', { name: /^3 120초 local 엔지니어 정체 표시 늦춤 .* 30초 15초 60초 600초$/ })).toBeVisible()
+  await expect(versions.getByRole('row', { name: /^2 120초 local 엔지니어 연결 기준 늘림 .* 30초 15초 60초 300초$/ })).toBeVisible()
+  await expect(settings.getByText('실행 호스트 반영: 버전 3', { exact: true })).toBeVisible(hostApplied)
 
   // 운영(S3a 스펙 §3). 시운전 완료는 humanoid-01 하나다. quadruped-01 은 명칭 막힘으로 시운전 미완이라 배정 불가다.
   await page.getByLabel('운영자').check()

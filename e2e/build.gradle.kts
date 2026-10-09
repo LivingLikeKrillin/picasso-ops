@@ -4,6 +4,9 @@ dependencies {
     testImplementation(project(":mission-host"))
     testImplementation(project(":ops-service"))
     testImplementation(testFixtures("dev.picasso:registry"))
+    // 운영 서비스의 시간값 범위 사본을 picasso `SiteTimings` 의 범위와 맞댄다(S3c 스펙 §3 5단계, T6). mission-host 는 picasso 를
+    // implementation 으로 들어 e2e 의 컴파일 클래스패스에 내지 않는다.
+    testImplementation("dev.picasso:picasso")
     testImplementation(platform(libs.spring.boot.bom))
     testImplementation(libs.spring.boot.starter.web)
     testImplementation(libs.jackson.databind)
