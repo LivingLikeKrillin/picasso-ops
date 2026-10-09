@@ -48,6 +48,21 @@ class StoredMissionCatalog(code: List<LogicalCapability> = MissionCatalog.codeCa
         activated = activated + (workMasterId to ActiveMission(capability, version))
     }
 
+    /**
+     * 받은 때의 임무로 [ActiveMission] 을 세운다(S4b 스펙 T3). [row] 가 `null` 이면 코드 정의이고 버전이 없다. 지금 활성 버전은 보지
+     * 않는다. 코드 정의가 없는 WorkMaster 이거나 저장된 정의를 읽지 못하면 [IllegalStateException] 이고 그 문장이 포기 사유다.
+     *
+     * @param row 일지의 임무 버전으로 읽은 행. 그 WorkMaster 의 행이어야 한다
+     */
+    fun mission(workMasterId: String, row: VersionRow?): ActiveMission {
+        if (row == null) {
+            val code = coded[workMasterId] ?: throw IllegalStateException("코드 정의가 없는 WorkMaster 다: $workMasterId")
+            return ActiveMission(code, missionVersion = null)
+        }
+        check(row.workMasterId == workMasterId) { "임무 버전 행의 WorkMaster(${row.workMasterId})가 $workMasterId 가 아니다" }
+        return ActiveMission(capability(row), row.version)
+    }
+
     private fun capability(row: VersionRow): DefinedCapability {
         val where = "저장된 임무 버전 ${row.workMasterId} 버전 ${row.version}"
         val definition = when (val parsed = MissionDefinitionParser.parse(row.definition)) {

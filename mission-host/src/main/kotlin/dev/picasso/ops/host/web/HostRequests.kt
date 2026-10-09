@@ -14,9 +14,9 @@ data class HostRejection(val error: String, val detail: String)
 
 /**
  * 운영자 판단 요청(S4a 스펙 T6). [requestId] 는 운영 서비스가 실은 요청 id 이며 호스트는 응답에 그대로 돌려줄 뿐 저장하지 않는다.
- * 응답 없음 뒤의 재조회는 인시던트의 판단으로 대조한다.
+ * 응답 없음 뒤의 재조회는 인시던트의 판단으로 대조한다. [instanceId] 는 운영 서비스가 상세에서 받은 인스턴스다(S4b 스펙 T8).
  */
-data class ResolveRequest(val decision: OperatorDecision, val approverId: String, val requestId: String?)
+data class ResolveRequest(val decision: OperatorDecision, val approverId: String, val requestId: String?, val instanceId: String)
 
 /** 본문을 못 받는 까닭. [error] 가 응답의 `error` 칸이다. */
 class BadRequest(val error: String, detail: String) : RuntimeException(detail)
@@ -72,8 +72,8 @@ object HostRequests {
     }
 
     /**
-     * `{decision, approverId, requestId?}` 를 읽는다. decision 은 `CONFIRM_DONE`·`REWORK` 이고 approverId 는 비어 있지 않은
-     * 문자열이다. requestId 는 없거나 `null` 이거나 UUID 문자열이다.
+     * `{decision, approverId, requestId?, instanceId}` 를 읽는다. decision 은 `CONFIRM_DONE`·`REWORK` 이고 approverId 와
+     * instanceId 는 비어 있지 않은 문자열이다(S4b 스펙 T8). requestId 는 없거나 `null` 이거나 UUID 문자열이다.
      */
     fun resolution(body: JsonNode?): ResolveRequest {
         if (body == null || !body.isObject) throw BadRequest(BAD_REQUEST, "본문이 JSON 객체가 아니다")
@@ -85,7 +85,7 @@ object HostRequests {
             node.takeIf { it.isTextual }?.asText()?.takeIf { runCatching { UUID.fromString(it) }.isSuccess }
                 ?: throw BadRequest(BAD_REQUEST, "requestId 가 UUID 문자열이 아니다")
         }
-        return ResolveRequest(decision, text(body, "approverId"), requestId)
+        return ResolveRequest(decision, text(body, "approverId"), requestId, text(body, "instanceId"))
     }
 
     /** 비어 있지 않은 문자열 칸. */

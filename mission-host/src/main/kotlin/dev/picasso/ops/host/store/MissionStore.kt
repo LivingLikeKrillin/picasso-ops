@@ -152,6 +152,15 @@ class MissionStore(private val jdbc: JdbcClient) {
             .query { rs, _ -> version(rs) }
             .list()
 
+    /** 버전 하나. 없으면 `null` 이다. 기동 복원이 일지의 임무 버전을 이것으로 읽는다(S4b 스펙 T3). */
+    fun version(workMasterId: String, version: Int): VersionRow? =
+        jdbc.sql("SELECT $VERSION_COLUMNS FROM mission.mission_version WHERE work_master_id = :workMaster AND version = :version")
+            .param("workMaster", workMasterId)
+            .param("version", version)
+            .query { rs, _ -> version(rs) }
+            .optional()
+            .orElse(null)
+
     /** WorkMaster 마다 가장 높은 버전 하나. 기동 때 카탈로그를 이것으로 세운다(T1). */
     fun activeVersions(): List<VersionRow> =
         jdbc.sql(

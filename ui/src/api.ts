@@ -516,7 +516,10 @@ export interface JobResponse {
   connection: string
 }
 
-/** 실행 하나(S3a JSON 계약 §5). `missionVersion` 이 null 이면 코드 정의 임무다. */
+/**
+ * 실행 하나(S3a JSON 계약 §5, S4b 계약 H1). `missionVersion` 이 null 이면 코드 정의 임무다. `restoredFrom` 은 이번 기동이
+ * 다시 지은 실행의 바로 앞 인스턴스 실행이고, 새로 받은 실행이면 null 이다. 옛 호스트는 칸을 싣지 않는다.
+ */
 export interface Execution {
   executionId: string
   jobOrderId: string
@@ -526,13 +529,32 @@ export interface Execution {
   physicalState: string
   units: ExecutionUnit[]
   jobResponse: JobResponse | null
+  restoredFrom?: { instanceId: string; executionId: string } | null
 }
 
-/** 운영 서비스의 `GET /api/executions`(실행 호스트 본문 그대로). `instanceId` 가 바뀌면 호스트가 재기동한 것이다. */
+/** 다시 짓기 결과 셋(S4b 스펙 T3). */
+export type RestoreResult = 'RESTORED' | 'DEFERRED' | 'GAVE_UP'
+
+/** 복원 보고의 행 하나(S4b 계약 H1, 7칸). `executionId` 는 RESTORED 일 때만, `reason` 은 그 밖일 때만 있다. */
+export interface RestoreRow {
+  jobOrderId: string
+  robotId: string
+  previousInstanceId: string
+  previousExecutionId: string
+  result: RestoreResult
+  executionId: string | null
+  reason: string | null
+}
+
+/**
+ * 운영 서비스의 `GET /api/executions`(실행 호스트 본문 그대로). `instanceId` 가 바뀌면 호스트가 재기동한 것이다. `restore` 는
+ * 이번 기동의 복원 보고다(S4b 계약 H1). 다시 지을 것이 없었으면 `rows` 가 비어 있다.
+ */
 export interface ExecutionsView {
   instanceId: string
   pumpedAt: string | null
   executions: Execution[]
+  restore?: { at: string; rows: RestoreRow[] } | null
 }
 
 /** 셀 대역의 자리 하나(S3a JSON 계약 §1). 제시 자리의 `observedAt` 은 늘 null 이다. */
@@ -839,11 +861,21 @@ export interface IncidentRow {
   confirmedWithoutEvidence: boolean
 }
 
-/** 운영 서비스의 `GET /api/incidents`(S4a JSON 계약 §9.2). `incidents` 는 최신부터이고 `total` 은 자르기 전의 수다. */
+/** 이전 인스턴스의 인시던트 사본 한 줄(S4b 계약 H3, 20칸). 그 사본의 `instanceId` 를 앞에 둔다. 늘 보류가 아니다. */
+export interface EarlierIncidentRow extends IncidentRow {
+  instanceId: string
+}
+
+/**
+ * 운영 서비스의 `GET /api/incidents`(S4a JSON 계약 §9.2, S4b 계약 H3). `incidents` 는 지금 인스턴스의 것이고 최신부터이며
+ * `total` 은 자르기 전의 수다. `earlier` 는 재기동 앞 인스턴스들의 사본이고 최근에 적은 것부터다.
+ */
 export interface IncidentsView {
   instanceId: string
   total: number
   incidents: IncidentRow[]
+  earlierTotal?: number
+  earlier?: EarlierIncidentRow[]
 }
 
 /** 결함 원문(S4a JSON 계약 §4, 9칸). `vendorDetail`·`errorHint`·`activeUntilTime` 은 빈 문자열일 수 있다. */
@@ -930,9 +962,15 @@ export type IncidentLookup = { kind: 'found'; detail: IncidentDetail } | { kind:
 
 export const fetchIncidents = (session: Session) => getHostJson<IncidentsView>('/api/incidents', session)
 
-/** 404 `INCIDENT_NOT_FOUND` 만 없음이다. 그 밖의 실패(503 `HOST_SILENT` 포함)는 못 읽음이라 던진다. */
-export async function fetchIncident(session: Session, incidentId: string): Promise<IncidentLookup> {
-  const response = await fetch(`/api/incidents/${encodeURIComponent(incidentId)}`, { headers: actorHeaders(session) })
+/**
+ * 404 `INCIDENT_NOT_FOUND` 만 없음이다. 그 밖의 실패(503 `HOST_SILENT` 포함)는 못 읽음이라 던진다. 인스턴스를 늘 싣는다
+ * (S4b 계약 H4). 재기동 뒤 `incident-N` 을 다시 세므로, 인스턴스 없이 읽으면 같은 id 의 다른 인시던트를 읽는다.
+ */
+export async function fetchIncident(session: Session, instanceId: string, incidentId: string): Promise<IncidentLookup> {
+  const response = await fetch(
+    `/api/incidents/${encodeURIComponent(incidentId)}?instanceId=${encodeURIComponent(instanceId)}`,
+    { headers: actorHeaders(session) },
+  )
   if (response.ok) return { kind: 'found', detail: (await response.json()) as IncidentDetail }
   const body = (await response.json().catch(() => null)) as Partial<PreRejection> | null
   const detail = typeof body?.detail === 'string' && body.detail !== '' ? body.detail : `운영 서비스 응답 ${response.status}`
@@ -1012,16 +1050,56 @@ export const injectFault = (
     kind === 'CONNECTION' ? { robotId, kind, state, reason } : { robotId, kind, reason },
   )
 
-/** 승인자는 싣지 않는다. 운영 서비스가 `X-Ops-User` 로 정한다(S4a JSON 계약 §9.5, ADR 43). */
+/**
+ * 승인자는 싣지 않는다. 운영 서비스가 `X-Ops-User` 로 정한다(S4a JSON 계약 §9.5, ADR 43). 인스턴스는 상세의 `instanceId`
+ * 이고, 실행 호스트가 그 사이 재기동했으면 409 `INSTANCE_MISMATCH` 로 막는다(S4b 스펙 T8).
+ */
 export const resolveHold = (
   session: Session,
-  executionId: string,
-  unitId: string,
+  target: { instanceId: string; executionId: string; unitId: string },
   decision: HoldDecision,
   reason: string,
 ) =>
   postOps<HoldResolveOutcome>(
-    `/api/executions/${encodeURIComponent(executionId)}/units/${encodeURIComponent(unitId)}/resolve`,
+    `/api/executions/${encodeURIComponent(target.executionId)}/units/${encodeURIComponent(target.unitId)}/resolve`,
     session,
-    { decision, reason },
+    { decision, instanceId: target.instanceId, reason },
+  )
+
+/** 송신 기록 행의 처분(S4b 스펙 T6). 재기동 중복은 송신하지 않은 것이다. */
+export type JobResponseDisposition = 'SENT' | 'RESTART_DUPLICATE'
+
+/** 작업 응답 송신 기록 한 행(S4b 계약 H6, 17칸). 단위 배열은 정렬됐고 `incompleteUnits` 는 사유 없는 id 다. */
+export interface JobResponseLogRow {
+  instanceId: string
+  jobResponseId: string
+  jobOrderId: string
+  executionId: string
+  version: number
+  physicalState: string
+  requiredEvidence: string
+  reachedEvidence: string
+  completedUnits: string[]
+  unverifiedUnits: string[]
+  inDoubtUnits: string[]
+  incompleteUnits: string[]
+  operatorRequired: boolean
+  residualHold: string
+  blockedBy: string[]
+  disposition: JobResponseDisposition
+  recordedAt: string
+}
+
+/** 운영 서비스의 `GET /api/job-responses`(S4b 계약 H6). `responses` 는 최근에 적은 것부터이고 `total` 은 자르기 전의 수다. */
+export interface JobResponsesView {
+  instanceId: string
+  total: number
+  responses: JobResponseLogRow[]
+}
+
+/** 작업 지시를 고르지 않으면(null) 전체다. 건수는 실행 호스트 기본(50)이다. */
+export const fetchJobResponses = (session: Session, jobOrderId: string | null) =>
+  getHostJson<JobResponsesView>(
+    jobOrderId === null ? '/api/job-responses' : `/api/job-responses?jobOrderId=${encodeURIComponent(jobOrderId)}`,
+    session,
   )

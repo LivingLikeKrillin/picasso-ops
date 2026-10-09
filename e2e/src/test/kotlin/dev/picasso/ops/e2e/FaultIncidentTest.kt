@@ -256,7 +256,7 @@ class FaultIncidentTest {
     @Test
     @Order(5)
     fun `단계 4 운영자가 사유를 적어 재작업을 판단하면 대기가 새로 시작되고 신호를 켜면 끝나며 판단자와 사유가 남는다`() {
-        val reply = resolve(holdExecution, WAIT_UNIT, "REWORK", "랙 재배치 뒤 재작업")
+        val reply = resolve(holdExecution, WAIT_UNIT, "REWORK", "랙 재배치 뒤 재작업", instanceId = detailInstance(firstHold))
         assertEquals(200, reply.status, "${reply.body}")
         val body = reply.body!!
         assertEquals(listOf("SUCCEEDED", "Resolved", "REWORK"), listOf(body["result"], body["outcome"], body["decision"]).map { it.asText() }, "$body")
@@ -302,7 +302,7 @@ class FaultIncidentTest {
         // 앞 보류는 판단을 든 채 보류가 아니다.
         assertEquals(false, rows.single { it["incidentId"].asText() == firstHold }["held"].asBoolean(), "$rows")
 
-        val reply = resolve(executionId, WAIT_UNIT, "CONFIRM_DONE", "현장 육안으로 랙 도착 확인")
+        val reply = resolve(executionId, WAIT_UNIT, "CONFIRM_DONE", "현장 육안으로 랙 도착 확인", instanceId = detailInstance(hold["incidentId"].asText()))
         assertEquals("SUCCEEDED" to "Resolved", reply.body!!["result"].asText() to reply.body["outcome"].asText(), "${reply.body}")
         assertEquals("DONE", unit(executionId, WAIT_UNIT)["state"].asText(), "${driver.execution(executionId)}")
 
@@ -326,7 +326,7 @@ class FaultIncidentTest {
 
         val engineerResolve = resolve(holdExecution, WAIT_UNIT, "REWORK", "모드 확인", mode = "engineer")
         assertEquals(403 to "MODE_NOT_ALLOWED", engineerResolve.status to engineerResolve.body!!["error"].asText(), "${engineerResolve.body}")
-        val noReason = stack.send("POST", "/api/executions/$holdExecution/units/$WAIT_UNIT/resolve", "operator", body = """{"decision":"REWORK"}""")
+        val noReason = stack.send("POST", "/api/executions/$holdExecution/units/$WAIT_UNIT/resolve", "operator", body = """{"decision":"REWORK","instanceId":"${incidents()["instanceId"].asText()}"}""")
         assertEquals(400 to "REASON_REQUIRED", noReason.status to noReason.body!!["error"].asText(), "${noReason.body}")
         val operatorFault = stack.send("POST", "/api/faults", "operator", body = """{"robotId":"$HUMANOID","kind":"SKILL_EXECUTION_FAILED","reason":"모드 확인"}""")
         assertEquals(403 to "MODE_NOT_ALLOWED", operatorFault.status to operatorFault.body!!["error"].asText(), "${operatorFault.body}")
@@ -395,8 +395,23 @@ class FaultIncidentTest {
     private fun connection(robotId: String, state: String, reason: String): JsonNode =
         engineer("/api/faults", """{"robotId":"$robotId","kind":"CONNECTION","state":"$state","reason":"$reason"}""")
 
-    private fun resolve(executionId: String, unitId: String, decision: String, reason: String, mode: String = "operator"): E2eStack.Reply =
-        stack.send("POST", "/api/executions/$executionId/units/$unitId/resolve", mode, body = """{"decision":"$decision","reason":"$reason"}""")
+    /**
+     * 판단 요청. 본문의 `instanceId` 는 화면처럼 인시던트 상세의 값이다(S4b JSON 계약 O3). 보류가 아닌 단위를 판단하는 경우처럼
+     * 고른 인시던트가 없으면 목록의 지금 인스턴스다.
+     */
+    private fun resolve(
+        executionId: String,
+        unitId: String,
+        decision: String,
+        reason: String,
+        mode: String = "operator",
+        instanceId: String = incidents()["instanceId"].asText(),
+    ): E2eStack.Reply = stack.send(
+        "POST", "/api/executions/$executionId/units/$unitId/resolve", mode,
+        body = """{"decision":"$decision","instanceId":"$instanceId","reason":"$reason"}""",
+    )
+
+    private fun detailInstance(incidentId: String): String = stack.get("/api/incidents/$incidentId")["instanceId"].asText()
 
     private fun signal(value: String) {
         val written = stack.send("POST", "/api/cell/signals/rack_present", "operator", body = """{"value":"$value"}""")

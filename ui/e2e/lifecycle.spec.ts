@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
  * 이어서 S3b 의 화면 쪽(S3b 스펙 §3). 엔지니어 모드로 «임무·정책» 영역에서 데이터 정의 템플릿을 불러와 초안 저장 → 검증 → 모의
  * 실행 → 활성화(사유)하면 버전 이력에 «버전 1 (활성)» 이 보인다. 운영 영역의 셀 대역 신호 표에서 rack_present 를 켜면 신호 조작
  * 결과와 신호 값이 보인다.
+ * S4b 의 화면 쪽(S4b 스펙 T11)은 운영자 보류 단계 뒤에 송신 기록 구역이 그 작업 지시의 송신 행을 보이는 것 하나다.
  * S3c 의 화면 쪽(S3c 스펙 §3)은 S2 단계 뒤다. 엔지니어 모드로 stallWindow 를 바꾸면 버전 3 이력 행이 보이고 «실행 호스트 반영»
  * 이 버전 3 이 된다.
  * registry 를 멈추는 것은 맨 끝이다. 그 뒤로는 조작이 registry 에 닿지 않는다.
@@ -297,6 +298,17 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(deadline).toHaveCount(1)
   await expect(deadline.getByRole('cell').nth(9)).toHaveText('판단됨')
   await expect(deadline.getByRole('cell').nth(10)).toHaveText('-')
+
+  // 작업 응답 송신 기록(S4b 스펙 T10·T11). 보류 작업 지시가 낸 응답이 송신 행으로 남는다. 재기동하지 않았으므로 재기동 중복은
+  // 없다. 재기동 단계는 통합 시험(RestartRecoveryTest)이 본다.
+  const holdJobOrder = (await holdRun.getByRole('cell').nth(1).textContent())!.trim()
+  const responseLog = page.getByRole('region', { name: '작업 응답 송신 기록' })
+  await responseLog.getByLabel('송신 기록의 작업 지시').selectOption(holdJobOrder)
+  const sentRows = responseLog.getByRole('table', { name: '송신 기록 목록' }).getByRole('row').filter({ hasText: holdJobOrder })
+  // 처분 칸(열째)은 글자 그대로 송신이다. 재기동 중복의 표시(재기동 중복(송신 안 함))도 송신을 품으므로 포함 검사로는 못 가른다.
+  await expect(sentRows.filter({ hasText: 'PHYSICALLY_DONE' }).getByRole('cell').nth(9)).toHaveText('송신')
+  await expect(sentRows.filter({ hasText: '재기동 중복' })).toHaveCount(0)
+  await expect(responseLog).toContainText('그 가운데 재기동 중복 0건')
 
   // registry 를 멈춘다. 런처(registry 와 mimic 이 든 프로세스)를 끈다.
   const pidFile = fileURLToPath(new URL('../../build/site.pid', import.meta.url))

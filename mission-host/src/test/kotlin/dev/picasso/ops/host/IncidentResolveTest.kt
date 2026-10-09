@@ -65,7 +65,9 @@ class IncidentResolveTest {
     private fun HostBench.resolve(executionId: String, unitId: String, decision: String, approverId: String, requestId: String? = null): HostBench.Reply =
         post(
             "/host/executions/$executionId/units/$unitId/resolve",
-            JSON.writeValueAsString(linkedMapOf("decision" to decision, "approverId" to approverId, "requestId" to requestId)),
+            JSON.writeValueAsString(
+                linkedMapOf("decision" to decision, "approverId" to approverId, "requestId" to requestId, "instanceId" to host.instanceId),
+            ),
         )
 
     private fun HostBench.incidents(): List<JsonNode> = get("/host/incidents")["incidents"].toList()
@@ -274,19 +276,53 @@ class IncidentResolveTest {
     @Test
     fun `판단 요청 본문이 틀리면 400 BAD_REQUEST 이고 JSON 이 아니면 415 다`() {
         HostBench().use { bench ->
+            val instance = bench.host.instanceId
             listOf(
-                """{"decision":"RELEASE","approverId":"kim"}""",
-                """{"decision":"REWORK"}""",
-                """{"decision":"REWORK","approverId":" "}""",
-                """{"decision":"REWORK","approverId":"kim","requestId":"not-a-uuid"}""",
-                """{"decision":"REWORK","approverId":"kim","requestId":7}""",
+                """{"decision":"RELEASE","approverId":"kim","instanceId":"$instance"}""",
+                """{"decision":"REWORK","instanceId":"$instance"}""",
+                """{"decision":"REWORK","approverId":" ","instanceId":"$instance"}""",
+                """{"decision":"REWORK","approverId":"kim","requestId":"not-a-uuid","instanceId":"$instance"}""",
+                """{"decision":"REWORK","approverId":"kim","requestId":7,"instanceId":"$instance"}""",
                 """["REWORK"]""",
             ).forEach { body ->
                 val reply = bench.post("/host/executions/exec-1/units/$WAIT/resolve", body)
                 assertEquals(400, reply.status, body)
                 assertEquals("BAD_REQUEST", reply.body!!["error"].asText(), body)
             }
-            assertEquals(415, bench.post("/host/executions/exec-1/units/$WAIT/resolve", """{"decision":"REWORK","approverId":"kim"}""", contentType = "text/plain").status)
+            assertEquals(
+                415,
+                bench.post("/host/executions/exec-1/units/$WAIT/resolve", """{"decision":"REWORK","approverId":"kim","instanceId":"$instance"}""", contentType = "text/plain").status,
+            )
+        }
+    }
+
+    @Test
+    fun `판단 요청에 instanceId 가 없으면 400 이고 지금 인스턴스가 아니면 409 INSTANCE_MISMATCH 이며 판단하지 않는다`() {
+        HostBench().use { bench ->
+            val executionId = bench.submitHeldOrder()
+            bench.driveToHold(executionId)
+            val path = "/host/executions/$executionId/units/$WAIT/resolve"
+
+            listOf(
+                """{"decision":"REWORK","approverId":"kim"}""",
+                """{"decision":"REWORK","approverId":"kim","instanceId":null}""",
+                """{"decision":"REWORK","approverId":"kim","instanceId":" "}""",
+                """{"decision":"REWORK","approverId":"kim","instanceId":7}""",
+            ).forEach { body ->
+                val reply = bench.post(path, body)
+                assertEquals(400, reply.status, body)
+                assertEquals("BAD_REQUEST", reply.body!!["error"].asText(), body)
+            }
+
+            val mismatch = bench.post(path, """{"decision":"REWORK","approverId":"kim","instanceId":"mw-earlier"}""")
+            assertEquals(409, mismatch.status, mismatch.body.toString())
+            assertEquals(listOf("error", "detail"), mismatch.body!!.fieldNames().asSequence().toList())
+            assertEquals("INSTANCE_MISMATCH", mismatch.body["error"].asText())
+            val untouched = bench.incidents().single()
+            assertTrue(untouched["resolution"].isNull && untouched["held"].asBoolean(), untouched.toString())
+            assertEquals("OPERATOR_HOLD", bench.execution(executionId)!!["units"][0]["state"].asText())
+
+            assertEquals("Resolved", bench.resolve(executionId, WAIT, "REWORK", "kim").body!!["result"].asText())
         }
     }
 

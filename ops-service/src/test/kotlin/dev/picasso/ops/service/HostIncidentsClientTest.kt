@@ -94,6 +94,7 @@ class HostIncidentsClientTest {
         assertEquals("/host/incidents/incident-1", seen.single().rawPath)
         found.incident("a/b")
         assertEquals("/host/incidents/a%2Fb", seen.last().rawPath)
+        assertEquals(listOf(null, null), seen.map { it.rawQuery })
         stop()
         val missing = """{"error":"INCIDENT_NOT_FOUND","detail":"없다"}"""
         assertEquals(
@@ -117,15 +118,45 @@ class HostIncidentsClientTest {
     fun `판단은 실행과 단위를 경로 조각으로 인코딩해 결정과 승인자와 요청 id 를 보내고 응답을 그대로 돌려준다`() {
         val answer = """{"result":"NotHeld","detail":null,"incidentId":null,"requestId":"$requestId"}"""
         val client = serve("/host/executions/" to (200 to answer))
-        assertEquals(HostWrite.Answered(200, answer), client.resolve("exec-1", "RACK-204.S01/x", "CONFIRM_DONE", "kim", requestId))
+        assertEquals(
+            HostWrite.Answered(200, answer),
+            client.resolve("exec-1", "RACK-204.S01/x", "CONFIRM_DONE", "kim", "mw-9b1e", requestId),
+        )
         val request = seen.single()
         assertEquals("POST", request.method)
         assertEquals("/host/executions/exec-1/units/RACK-204.S01%2Fx/resolve", request.rawPath)
         assertEquals("application/json", request.contentType)
+        // 칸 순서도 계약 그대로다(S4b 계약 H5).
         assertEquals(
-            json.readTree("""{"decision":"CONFIRM_DONE","approverId":"kim","requestId":"$requestId"}"""),
-            json.readTree(request.body),
+            """{"decision":"CONFIRM_DONE","approverId":"kim","requestId":"$requestId","instanceId":"mw-9b1e"}""",
+            request.body,
         )
+    }
+
+    @Test
+    fun `인시던트 상세는 instanceId 를 쿼리로 인코딩해 싣고 이전 인스턴스 사본을 찾음으로 돌려준다`() {
+        val client = serve("/host/incidents/" to (200 to """{"instanceId":"mw 3f/0c","incidentId":"incident-1","held":false}"""))
+        val found = assertIs<HostIncident.Found>(client.incident("incident-1", "mw 3f/0c"))
+        assertEquals("mw 3f/0c", found.body["instanceId"].asText())
+        assertEquals("/host/incidents/incident-1", seen.single().rawPath)
+        assertEquals("instanceId=mw%203f%2F0c", seen.single().rawQuery)
+    }
+
+    @Test
+    fun `송신 기록은 작업 지시 id 와 limit 을 있을 때만 쿼리로 싣고 객체 본문 그대로이며 200 아님은 모름이다`() {
+        val body = """{"instanceId":"i-2","total":0,"responses":[]}"""
+        val client = serve("/host/job-responses" to (200 to body))
+        assertEquals(json.readTree(body), (client.jobResponses(null, null) as HostCall.Ok).value)
+        client.jobResponses("JO 1&x", null)
+        client.jobResponses(null, 500)
+        client.jobResponses("JO-1", 20)
+        assertEquals(listOf("/host/job-responses"), seen.map { it.rawPath }.distinct())
+        assertEquals(listOf(null, "jobOrderId=JO%201%26x", "limit=500", "jobOrderId=JO-1&limit=20"), seen.map { it.rawQuery })
+        stop()
+        val refusing = serve("/host/job-responses" to (400 to """{"error":"BAD_REQUEST","detail":"x"}"""))
+        assertEquals(HostCall.Silent("HTTP 400"), refusing.jobResponses(null, 9999))
+        stop()
+        assertEquals(HostCall.Silent("본문 모양이 다르다"), serve("/host/job-responses" to (200 to "[]")).jobResponses(null, null))
     }
 
     @Test
@@ -134,7 +165,8 @@ class HostIncidentsClientTest {
         stop()
         assertIs<HostCall.Silent>(client.incidents())
         assertIs<HostIncident.Silent>(client.incident("incident-1"))
-        assertIs<HostWrite.NoResponse>(client.resolve("exec-1", "rack-arrival", "REWORK", "kim", requestId))
+        assertIs<HostWrite.NoResponse>(client.resolve("exec-1", "rack-arrival", "REWORK", "kim", "i-1", requestId))
+        assertIs<HostCall.Silent>(client.jobResponses(null, null))
         assertIs<HostWrite.NoResponse>(client.injectFault(json.createObjectNode()))
     }
 }

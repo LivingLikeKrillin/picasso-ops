@@ -32,6 +32,9 @@ import org.springframework.web.bind.annotation.RestController
  * `application/json` 만 받는다(다른 출처 방어는 [RobotOperationsController]).
  *
  * 두 조작은 호스트가 무엇을 답했든 200 과 조작 결과다. 현장·호스트의 거부와 판단 결과 이름은 본문에 있다.
+ *
+ * 재기동 뒤(S4b 스펙 T9): 목록은 이전 인스턴스의 사본 `earlier`·`earlierTotal` 을 그대로 넘긴다. 상세는 `instanceId` 쿼리를
+ * 그대로 넘기고(빈 값은 400 `INCIDENT_BAD_REQUEST`), 판단 본문은 `instanceId` 가 필수다(없거나 비면 400 `RESOLVE_BAD_REQUEST`).
  */
 @RestController
 class IncidentController(
@@ -54,10 +57,15 @@ class IncidentController(
     }
 
     @GetMapping("/api/incidents/{incidentId}")
-    fun incident(@PathVariable incidentId: String): ResponseEntity<Any> = when (val found = host.incident(incidentId)) {
-        is HostIncident.Found -> ResponseEntity.ok(found.body)
-        is HostIncident.NotFound -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(found.body)
-        is HostIncident.Silent -> hostSilent(found.cause)
+    fun incident(@PathVariable incidentId: String, @RequestParam(required = false) instanceId: String?): ResponseEntity<Any> {
+        if (instanceId != null && instanceId.isBlank()) {
+            return reject(HttpStatus.BAD_REQUEST, INCIDENT_BAD_REQUEST, "instanceId 는 비어 있지 않은 문자열이다")
+        }
+        return when (val found = host.incident(incidentId, instanceId)) {
+            is HostIncident.Found -> ResponseEntity.ok(found.body)
+            is HostIncident.NotFound -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(found.body)
+            is HostIncident.Silent -> hostSilent(found.cause)
+        }
     }
 
     @PostMapping("/api/faults", consumes = [MediaType.APPLICATION_JSON_VALUE])
@@ -94,8 +102,13 @@ class IncidentController(
                 HttpStatus.BAD_REQUEST, RESOLVE_BAD_REQUEST,
                 "decision 은 ${HoldResolutions.DECISIONS.joinToString(" 또는 ")} 이다",
             )
+        val instanceId = text(node, "instanceId")
+            ?: return@guarded reject(
+                HttpStatus.BAD_REQUEST, RESOLVE_BAD_REQUEST,
+                "instanceId 는 비어 있지 않은 문자열이다(인시던트 상세의 instanceId)",
+            )
         val reason = reason(node) ?: return@guarded reject(HttpStatus.BAD_REQUEST, REASON_REQUIRED, "판단 사유가 없다")
-        ResponseEntity.ok(resolutions.resolve(actor, executionId, unitId, decision, reason))
+        ResponseEntity.ok(resolutions.resolve(actor, executionId, unitId, decision, instanceId, reason))
     }
 
     private fun read(body: ByteArray?): JsonNode? = body?.let { runCatching { json.readTree(it) }.getOrNull() }?.takeIf { it.isObject }
