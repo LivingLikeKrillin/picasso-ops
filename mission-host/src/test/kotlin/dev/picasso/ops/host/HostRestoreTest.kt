@@ -39,7 +39,9 @@ class HostRestoreTest {
 
             bench.restartHost()
             val after = bench.host.instanceId
-            val restore = bench.get("/host/executions")["restore"]
+            val body = bench.get("/host/executions")
+            assertEquals(EXECUTIONS_FIELDS, body.fieldNames().asSequence().toList())
+            val restore = body["restore"]
             assertEquals(listOf("at", "rows"), restore.fieldNames().asSequence().toList())
             val row = restore["rows"].single()
             assertEquals(RESTORE_ROW_FIELDS, row.fieldNames().asSequence().toList())
@@ -53,6 +55,8 @@ class HostRestoreTest {
             // 가상 시계를 밀지 않고 pump 가 기체를 다시 관측하면 끝난 단위는 끝난 대로, 도는 단위는 도는 대로 선다. 새 태스크는 없다.
             bench.eventually("단위 다시 관측") { units(bench.execution("exec-1")!!) == mapOf("T1.travel" to "DONE", "T1" to "RUNNING", "T2.travel" to "PENDING", "T2" to "PENDING") }
             val execution = bench.execution("exec-1")!!
+            assertEquals(EXECUTION_FIELDS, execution.fieldNames().asSequence().toList())
+            assertEquals(listOf("instanceId", "executionId"), execution["restoredFrom"].fieldNames().asSequence().toList())
             assertEquals(JSON.readTree("""{"instanceId":"$before","executionId":"exec-1"}"""), execution["restoredFrom"])
             assertTrue(execution["missionVersion"].isNull)
             assertEquals(tasksBefore, bench.tasks(HUMANOID))
@@ -267,6 +271,12 @@ class HostRestoreTest {
     private companion object {
         const val WAIT = "rack-arrival"
         const val S01 = "RACK-204.S01"
+
+        val EXECUTIONS_FIELDS = listOf("instanceId", "pumpedAt", "executions", "restore")
+
+        val EXECUTION_FIELDS = listOf(
+            "executionId", "jobOrderId", "workMasterId", "missionVersion", "robotId", "physicalState", "units", "jobResponse", "restoredFrom",
+        )
 
         val RESTORE_ROW_FIELDS = listOf("jobOrderId", "robotId", "previousInstanceId", "previousExecutionId", "result", "executionId", "reason")
 
