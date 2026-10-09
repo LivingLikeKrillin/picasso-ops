@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="656" viewBox="0 0 840 656">
+  <defs>
+    <marker id="data" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1,1 L8,5 L1,9" fill="none" stroke="#e6e6e6" stroke-width="1.2"/></marker>
+    <marker id="obs" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1,1 L8,5 L1,9" fill="none" stroke="#9a9a9a" stroke-width="1.2"/></marker>
+    <marker id="cmd" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,1 L9,5 L0,9 Z" fill="#d4654a"/></marker>
+  </defs>
+  <g font-family="'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', sans-serif" fill="#e6e6e6">
+    <text x="20" y="36" font-size="17" font-weight="700">보류와 운영자 판단</text>
+    <text x="20" y="56" font-size="12" fill="#9a9a9a">설비 대기 기한 초과부터 운영자 판단과 실행 재개까지</text>
+    <g stroke="#4a4a4a" stroke-width="1">
+      <path d="M100,116 V592" fill="none"/>
+      <path d="M260,116 V592" fill="none"/>
+      <path d="M420,116 V592" fill="none"/>
+      <path d="M580,116 V592" fill="none"/>
+      <path d="M740,116 V592" fill="none"/>
+    </g>
+    <rect x="44" y="84" width="112" height="32" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
+    <text x="100" y="105" font-size="12.5" font-weight="700" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ui</text>
+    <rect x="204" y="84" width="112" height="32" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
+    <text x="260" y="105" font-size="12.5" font-weight="700" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops-service</text>
+    <rect x="364" y="84" width="112" height="32" fill="#0d1117" stroke="#4a4a4a" stroke-width="1"/>
+    <text x="420" y="105" font-size="12" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">Postgres</text>
+    <rect x="524" y="84" width="112" height="32" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
+    <text x="580" y="105" font-size="12.5" font-weight="700" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mission-host</text>
+    <rect x="684" y="84" width="112" height="32" fill="#0d1117" stroke="#4a4a4a" stroke-width="1"/>
+    <text x="740" y="105" font-size="12" text-anchor="middle" font-family="'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', sans-serif">셀 대역</text>
+    <path d="M580,156 H738" fill="none" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#obs)"/>
+    <text x="660" y="149" font-size="10.5" fill="#9a9a9a" text-anchor="middle">1. rack_present 읽기</text>
+    <path d="M580,192 H604 V206 H583" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="612" y="203" font-size="10.5" fill="#e6e6e6">2. 20초 초과, 보류·봉인</text>
+    <path d="M580,228 H422" fill="none" stroke="#d4654a" stroke-width="2" marker-end="url(#cmd)"/>
+    <text x="500" y="221" font-size="10.5" fill="#d4654a" text-anchor="middle">3. 사본·보류 작업 응답 쓰기</text>
+    <path d="M100,264 H258" fill="none" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#obs)"/>
+    <text x="180" y="257" font-size="10.5" fill="#9a9a9a" text-anchor="middle">4. 인시던트 목록·상세 읽기</text>
+    <path d="M260,300 H578" fill="none" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#obs)"/>
+    <text x="340" y="293" font-size="10.5" fill="#9a9a9a" text-anchor="middle">5. instanceId로 상세 읽기</text>
+    <path d="M100,336 H258" fill="none" stroke="#d4654a" stroke-width="2" marker-end="url(#cmd)"/>
+    <text x="180" y="329" font-size="10.5" fill="#d4654a" text-anchor="middle">6. 사유 포함 판단 보냄</text>
+    <path d="M260,372 H578" fill="none" stroke="#d4654a" stroke-width="2" marker-end="url(#cmd)"/>
+    <text x="340" y="365" font-size="10.5" fill="#d4654a" text-anchor="middle">7. 사유 없이 판단 보냄</text>
+    <path d="M580,408 H604 V422 H583" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="612" y="419" font-size="10.5" fill="#e6e6e6">8. instanceId 대조</text>
+    <path d="M580,444 H262" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="500" y="437" font-size="10.5" fill="#e6e6e6" text-anchor="middle">9. Resolved 반환</text>
+    <path d="M260,480 H418" fill="none" stroke="#d4654a" stroke-width="2" marker-end="url(#cmd)"/>
+    <text x="340" y="473" font-size="10.5" fill="#d4654a" text-anchor="middle">10. 사유와 조작 기록 쓰기</text>
+    <path d="M580,516 H422" fill="none" stroke="#d4654a" stroke-width="2" marker-end="url(#cmd)"/>
+    <text x="500" y="509" font-size="10.5" fill="#d4654a" text-anchor="middle">11. pump 후 판단 행 쓰기</text>
+    <path d="M580,552 H604 V566 H583" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="612" y="563" font-size="10.5" fill="#e6e6e6">12. 새 기한으로 재작업</text>
+    <g font-size="10.5" fill="#9a9a9a">
+      <path d="M20,632 H44" fill="none" stroke="#e6e6e6" stroke-width="1.2"/>
+      <text x="50" y="636">데이터</text>
+      <path d="M105,632 H129" fill="none" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3"/>
+      <text x="135" y="636">관측·읽기</text>
+      <path d="M207,632 H231" fill="none" stroke="#d4654a" stroke-width="2"/>
+      <text x="237" y="636">명령·쓰기</text>
+      <path d="M309,626 H323 V636 H311" fill="none" stroke="#e6e6e6" stroke-width="1.2"/>
+      <text x="331" y="636">프로세스 안</text>
+      <rect x="421" y="626" width="14" height="10" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
+      <text x="441" y="636">이 저장소</text>
+      <rect x="510" y="626" width="14" height="10" fill="none" stroke="#4a4a4a"/>
+      <text x="530" y="636">대역·외부</text>
+    </g>
+  </g>
+</svg>
