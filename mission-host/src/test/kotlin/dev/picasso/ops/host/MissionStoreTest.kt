@@ -85,7 +85,7 @@ class MissionStoreTest {
         ).forEach { (table, set) ->
             listOf("UPDATE mission.$table SET $set", "DELETE FROM mission.$table", "TRUNCATE mission.$table CASCADE").forEach { sql ->
                 val e = assertFailsWith<SQLException>(sql) { PostgresSupport.execute(sql) }
-                assertTrue("덧붙이기만" in e.message!!, "$sql: ${e.message}")
+                assertTrue("실행 일지·송신 기록·인시던트 사본은 덧붙이기만 한다" in e.message!!, "$sql: ${e.message}")
             }
         }
         // 같은 인스턴스·응답 id 는 두 번 적지 못한다. 일지 이벤트 종류는 넷뿐이다.

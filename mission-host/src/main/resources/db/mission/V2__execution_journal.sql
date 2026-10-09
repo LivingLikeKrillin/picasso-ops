@@ -88,43 +88,49 @@ CREATE TABLE incident_copy_resolution (
     FOREIGN KEY (instance_id, incident_id) REFERENCES incident_copy (instance_id, incident_id)
 );
 
--- 덧붙이기만 한다. V1 의 mission_append_only() 를 그대로 쓴다.
+-- 덧붙이기만 한다. V1 의 mission_append_only() 는 임무 버전 저장을 이르므로 이 표 다섯에는 따로 둔다.
+CREATE FUNCTION mission_record_append_only() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION '실행 일지·송신 기록·인시던트 사본은 덧붙이기만 한다(% %)', TG_OP, TG_TABLE_NAME;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE TRIGGER execution_journal_no_update_delete
     BEFORE UPDATE OR DELETE ON execution_journal
-    FOR EACH ROW EXECUTE FUNCTION mission_append_only();
+    FOR EACH ROW EXECUTE FUNCTION mission_record_append_only();
 
 CREATE TRIGGER execution_journal_no_truncate
     BEFORE TRUNCATE ON execution_journal
-    FOR EACH STATEMENT EXECUTE FUNCTION mission_append_only();
+    FOR EACH STATEMENT EXECUTE FUNCTION mission_record_append_only();
 
 CREATE TRIGGER execution_journal_event_no_update_delete
     BEFORE UPDATE OR DELETE ON execution_journal_event
-    FOR EACH ROW EXECUTE FUNCTION mission_append_only();
+    FOR EACH ROW EXECUTE FUNCTION mission_record_append_only();
 
 CREATE TRIGGER execution_journal_event_no_truncate
     BEFORE TRUNCATE ON execution_journal_event
-    FOR EACH STATEMENT EXECUTE FUNCTION mission_append_only();
+    FOR EACH STATEMENT EXECUTE FUNCTION mission_record_append_only();
 
 CREATE TRIGGER job_response_log_no_update_delete
     BEFORE UPDATE OR DELETE ON job_response_log
-    FOR EACH ROW EXECUTE FUNCTION mission_append_only();
+    FOR EACH ROW EXECUTE FUNCTION mission_record_append_only();
 
 CREATE TRIGGER job_response_log_no_truncate
     BEFORE TRUNCATE ON job_response_log
-    FOR EACH STATEMENT EXECUTE FUNCTION mission_append_only();
+    FOR EACH STATEMENT EXECUTE FUNCTION mission_record_append_only();
 
 CREATE TRIGGER incident_copy_no_update_delete
     BEFORE UPDATE OR DELETE ON incident_copy
-    FOR EACH ROW EXECUTE FUNCTION mission_append_only();
+    FOR EACH ROW EXECUTE FUNCTION mission_record_append_only();
 
 CREATE TRIGGER incident_copy_no_truncate
     BEFORE TRUNCATE ON incident_copy
-    FOR EACH STATEMENT EXECUTE FUNCTION mission_append_only();
+    FOR EACH STATEMENT EXECUTE FUNCTION mission_record_append_only();
 
 CREATE TRIGGER incident_copy_resolution_no_update_delete
     BEFORE UPDATE OR DELETE ON incident_copy_resolution
-    FOR EACH ROW EXECUTE FUNCTION mission_append_only();
+    FOR EACH ROW EXECUTE FUNCTION mission_record_append_only();
 
 CREATE TRIGGER incident_copy_resolution_no_truncate
     BEFORE TRUNCATE ON incident_copy_resolution
-    FOR EACH STATEMENT EXECUTE FUNCTION mission_append_only();
+    FOR EACH STATEMENT EXECUTE FUNCTION mission_record_append_only();
