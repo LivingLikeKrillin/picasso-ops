@@ -78,7 +78,10 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 ### 작업 지시
 
-![작업 지시 시퀀스](diagrams/sequence-job-order.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/sequence-job-order.dark.svg">
+  <img alt="작업 지시 시퀀스" src="diagrams/sequence-job-order.svg">
+</picture>
 
 - 배정 가능 판정 분담: 운영 서비스는 시운전과 연결 상태를 판정하고, 실행 호스트는 실행 중인 작업과 스킬 적합성을 판정합니다. 운영 서비스는 배정 가능한 기체만을 후보로 전달합니다.
 - 기록 시점: 실행 호스트는 새 실행 정보를 응답하기 전에 실행 일지에 먼저 기록합니다. 운영 서비스는 응답을 받은 뒤 조작 기록에 남깁니다.
@@ -87,7 +90,10 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 ### 보류와 운영자 판단
 
-![보류와 운영자 판단 시퀀스](diagrams/sequence-hold-decision.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/sequence-hold-decision.dark.svg">
+  <img alt="보류와 운영자 판단 시퀀스" src="diagrams/sequence-hold-decision.svg">
+</picture>
 
 - 운영자 보류 전환: 운영자 보류 대기 템플릿 `ARRIVAL_WAIT_HOLD`의 설비 대기 단위가 20초 기한을 초과하면 단위 운영자 보류로 전환되고 인시던트가 봉인됩니다.
 - 상태 기록: 해당 pump 직후 인시던트 사본과 보류 작업 응답이 호스트 DB `mission`에 기록됩니다.

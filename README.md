@@ -21,7 +21,7 @@ picasso의 `registry` 모듈은 Spring Boot(`RegistryApplication.kt`)와 Postgre
 
 ## 핵심 장점
 
-### 코드 수정 없는 현장 변경
+### 1. 코드 수정 없는 현장 변경
 
 정해진 현장 변경을 코드 수정 없이 화면에서 직접 처리합니다.
 
@@ -51,7 +51,7 @@ picasso의 `registry` 모듈은 Spring Boot(`RegistryApplication.kt`)와 Postgre
 - 화면 밖 작업: 명칭 티칭, 로봇 내부 지도 및 웨이포인트 티칭, mimic 기동
 - 화면 밖 제어: 로봇 수준 결함이 다음 단위를 막는 실행 수준 보류의 풀이, 실행 중단
 
-### 잘못된 변경 거부
+### 2. 잘못된 변경 거부
 
 부적절하거나 유효하지 않은 변경을 사전에 차단합니다.
 임무 정의 초안 저장은 자유롭지만, 활성화 시점에는 현재 신호 사양과 시운전을 완료한 기체 스킬을 기준으로 재검증을 거치며 해당 초안의 마지막 모의 실행을 반드시 통과해야 합니다.
@@ -69,7 +69,7 @@ picasso의 `registry` 모듈은 Spring Boot(`RegistryApplication.kt`)와 Postgre
 
 시운전 완료 판정은 원장이 `CONFIRMED` 상태이고 퇴역 상태가 아니며, 활성 바인딩과 명칭 상태(`CONFIRMED` 또는 `NOT_REQUIRED`)를 모두 충족할 때 자동으로 내려집니다. 조건이 누락되면 작업 진행이 차단됩니다.
 
-### 설명 가능성
+### 3. 설명 가능성
 
 어느 버전에서 어떤 처리가 일어났는지 명확하게 기록하고 추적합니다.
 
@@ -89,14 +89,14 @@ picasso의 `registry` 모듈은 Spring Boot(`RegistryApplication.kt`)와 Postgre
 판단이 내려지지 않은 인시던트는 관측 내용만 보여주고, 판단이 완료된 인시던트는 «사람이 판단함: <판단자>, <시각>» 문구와 함께 결정 내용을 관측 영역과 분리된 구역에 표시합니다.
 활성 버전 전환 시 새 버전은 다음 작업 지시부터 반영되며, 이미 실행 중인 건은 생성 당시의 버전으로 종료됩니다.
 
-### 재기동 뒤 중복 방지
+### 4. 재기동 뒤 중복 방지
 
 실행 호스트 재기동 시 중복 명령이나 응답이 발생하지 않도록 제어합니다. 어댑터나 현장 런처의 재기동은 대상 범위에 포함되지 않습니다.
 새로운 실행은 응답하기 전에 실행 일지에 먼저 기록하며, 재기동 시 pump를 돌리기 전에 상태를 다시 구성합니다.
 기체에는 같은 태스크 id와 `revision`으로 StartTask를 다시 보내지만 기체는 새 태스크를 만들지 않고 기존 핸들을 돌려줍니다.
 동일한 작업 응답을 다시 보내지 않으며, 재기동 중복으로 기록하여 단 1회만 송신합니다.
 
-### 시험과 결함 주입을 통한 보증
+### 5. 시험과 결함 주입을 통한 보증
 
 소프트웨어 안정성을 광범위한 시험과 결함 주입으로 입증합니다.
 Gradle `@Test` 421건(site 38건, mission-host 79건, ops-service 241건, e2e 63건), vitest 151건, Playwright 1건을 수행합니다.
@@ -132,7 +132,10 @@ Gradle `@Test` 421건(site 38건, mission-host 79건, ops-service 241건, e2e 63
 
 ## 시스템 구성
 
-![시스템 아키텍처 다이어그램](docs/diagrams/architecture.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture.dark.svg">
+  <img alt="시스템 아키텍처 다이어그램" src="docs/diagrams/architecture.svg">
+</picture>
 
 picasso-ops는 세 프로세스와 단일 Postgres 데이터베이스로 구성됩니다.
 
@@ -145,7 +148,10 @@ picasso-ops는 세 프로세스와 단일 Postgres 데이터베이스로 구성�
 
 ## 운영 흐름
 
-![운영 흐름 다이어그램](docs/diagrams/operations-flow.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/operations-flow.dark.svg">
+  <img alt="운영 흐름 다이어그램" src="docs/diagrams/operations-flow.svg">
+</picture>
 
 운영 절차는 등록, 검증과 시운전, 활성화, 실행, 보류와 판단, 이력 확인 순서로 이어지며, 잘못된 변경이나 조건이 맞지 않는 조작이 막히는 곳은 리비전 활성화(시험 전 활성화 거부), 임무 활성화(검증과 마지막 모의 실행 통과가 관문), 작업 지시(배정 불가 기체는 후보에서 빠짐)이고, 실행과 이력 단계에는 막는 곳이 없습니다.
 역할에 따른 작업 범위와 권한은 다음과 같습니다.
@@ -165,7 +171,10 @@ picasso-ops는 세 프로세스와 단일 Postgres 데이터베이스로 구성�
 
 ## 재기동 시퀀스
 
-![재기동 시퀀스](docs/diagrams/sequence-restart.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/sequence-restart.dark.svg">
+  <img alt="재기동 시퀀스" src="docs/diagrams/sequence-restart.svg">
+</picture>
 
 재기동 시점에는 다음 세 가지 동작이 일어납니다.
 

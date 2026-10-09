@@ -33,35 +33,35 @@
     <text x="292" y="185" font-size="10.5" fill="#6f6f6f" text-anchor="middle">2. 기체·바인딩 읽기</text>
     <path d="M228,228 H610" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
     <text x="292" y="221" font-size="10.5" fill="#262626" text-anchor="middle">3. 스킬·실행 판정 요청</text>
-    <path d="M100,264 H226" fill="none" stroke="#b23a1d" stroke-width="2" marker-end="url(#cmd)"/>
-    <text x="164" y="257" font-size="10.5" fill="#b23a1d" text-anchor="middle">4. 작업 지시 제출</text>
-    <path d="M228,300 H610" fill="none" stroke="#b23a1d" stroke-width="2" marker-end="url(#cmd)"/>
-    <text x="292" y="293" font-size="10.5" fill="#b23a1d" text-anchor="middle">5. 배정 가능 후보 제출</text>
-    <path d="M612,336 H486" fill="none" stroke="#b23a1d" stroke-width="2" marker-end="url(#cmd)"/>
-    <text x="548" y="329" font-size="10.5" fill="#b23a1d" text-anchor="middle">6. 응답 전 일지 쓰기</text>
+    <path d="M100,264 H226" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="164" y="257" font-size="10.5" fill="#262626" text-anchor="middle">4. 작업 지시 제출</text>
+    <path d="M228,300 H610" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="292" y="293" font-size="10.5" fill="#262626" text-anchor="middle">5. 배정 가능 후보 제출</text>
+    <path d="M612,336 H486" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="548" y="329" font-size="10.5" fill="#262626" text-anchor="middle">6. 응답 전 일지 쓰기</text>
     <path d="M612,372 H230" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
     <text x="548" y="365" font-size="10.5" fill="#262626" text-anchor="middle">7. ACCEPTED 반환</text>
-    <path d="M228,408 H482" fill="none" stroke="#b23a1d" stroke-width="2" marker-end="url(#cmd)"/>
-    <text x="292" y="401" font-size="10.5" fill="#b23a1d" text-anchor="middle">8. 조작 기록 쓰기</text>
+    <path d="M228,408 H482" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="292" y="401" font-size="10.5" fill="#262626" text-anchor="middle">8. 조작 기록 쓰기</text>
     <path d="M612,444 H738" fill="none" stroke="#b23a1d" stroke-width="2" marker-end="url(#cmd)"/>
     <text x="676" y="437" font-size="10.5" fill="#b23a1d" text-anchor="middle">9. StartTask 보냄</text>
     <path d="M740,480 H614" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
     <text x="676" y="473" font-size="10.5" fill="#262626" text-anchor="middle">10. 갱신 반환</text>
-    <path d="M612,516 H486" fill="none" stroke="#b23a1d" stroke-width="2" marker-end="url(#cmd)"/>
-    <text x="548" y="509" font-size="10.5" fill="#b23a1d" text-anchor="middle">11. 정착 작업 응답 쓰기</text>
+    <path d="M612,516 H486" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="548" y="509" font-size="10.5" fill="#262626" text-anchor="middle">11. 정착 작업 응답 쓰기</text>
     <g font-size="10.5" fill="#6f6f6f">
       <path d="M20,596 H44" fill="none" stroke="#262626" stroke-width="1.2"/>
       <text x="50" y="600">데이터</text>
       <path d="M105,596 H129" fill="none" stroke="#6f6f6f" stroke-width="1.2" stroke-dasharray="5 3"/>
       <text x="135" y="600">관측·읽기</text>
       <path d="M207,596 H231" fill="none" stroke="#b23a1d" stroke-width="2"/>
-      <text x="237" y="600">명령·쓰기</text>
-      <path d="M309,590 H323 V600 H311" fill="none" stroke="#262626" stroke-width="1.2"/>
-      <text x="331" y="600">프로세스 안</text>
-      <rect x="421" y="590" width="14" height="10" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
-      <text x="441" y="600">이 저장소</text>
-      <rect x="510" y="590" width="14" height="10" fill="none" stroke="#bdbdbd"/>
-      <text x="530" y="600">대역·외부</text>
+      <text x="237" y="600">제어 명령</text>
+      <path d="M306,590 H320 V600 H308" fill="none" stroke="#262626" stroke-width="1.2"/>
+      <text x="328" y="600">프로세스 안</text>
+      <rect x="418" y="590" width="14" height="10" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+      <text x="438" y="600">이 저장소</text>
+      <rect x="507" y="590" width="14" height="10" fill="none" stroke="#bdbdbd"/>
+      <text x="527" y="600">대역·외부</text>
     </g>
   </g>
 </svg>
