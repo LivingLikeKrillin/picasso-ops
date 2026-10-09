@@ -4,6 +4,7 @@ import type {
   FaultKind,
   HoldDecision,
   HostSubmitResult,
+  JobResponseDisposition,
   MockRunFailure,
   MockRunView,
   Owner,
@@ -90,6 +91,9 @@ export const KIND_LABEL: Record<string, string> = {
   UNSUPPORTED_MEDIA_TYPE: 'JSON 이 아닌 본문',
   FAULT_BAD_REQUEST: '장애 주입 본문 오류',
   RESOLVE_BAD_REQUEST: '판단 본문 오류',
+  // 재기동 뒤 판단(S4b 계약 H5·H7). 운영 서비스의 송신 기록 사전 거부도 둔다.
+  INSTANCE_MISMATCH: '실행 호스트가 재기동해 인스턴스가 다름',
+  JOB_RESPONSE_BAD_REQUEST: '송신 기록 요청 오류',
 }
 
 /** «시운전» 칸(P2·S1d 스펙 §8.5). 연결 칸과 합치지 않는다. */
@@ -166,6 +170,12 @@ export const TEMPLATE_LABEL: Record<string, string> = {
 export const FAULT_KIND_LABEL: Record<FaultKind, string> = {
   SKILL_EXECUTION_FAILED: '스킬 실패',
   CONNECTION: '연결 상태',
+}
+
+/** 송신 기록의 처분(S4b 스펙 T6, §8). */
+export const DISPOSITION_LABEL: Record<JobResponseDisposition, string> = {
+  SENT: '송신',
+  RESTART_DUPLICATE: '재기동 중복(송신 안 함)',
 }
 
 /** 운영자 판단 둘(S4a 스펙 §8.3). 버튼 이름이기도 하다. */

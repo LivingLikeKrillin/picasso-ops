@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fetchIncident, resolveHold } from '../api'
 import type {
   Delivered,
+  EarlierIncidentRow,
   FaultDetail,
   HoldDecision,
   HoldResolveOutcome,
@@ -49,27 +50,34 @@ function judgement(row: IncidentRow): string {
  * 운영 영역의 «인시던트» 구역(S4a 스펙 §8.2·§8.3). 목록은 실행 호스트가 준 순서(최신부터)이고, 줄을 고르면 상세를 읽는다.
  * 관측(봉인 때의 근거)과 사람의 판단을 따로 보인다(운영 관리 화면 설계 제안 §9). 판단 버튼은 보류 중인 단위의 상세에만,
  * 운영자 모드에서만 있다.
+ *
+ * 재기동 뒤(S4b 스펙 T7·T8·T10): 앞 인스턴스들의 인시던트 사본을 «이전 인스턴스» 부분에 읽기 전용으로 둔다. 인시던트는
+ * (인스턴스, id)로 고르고 상세도 인스턴스를 실어 읽는다. `incident-N` 은 재기동하면 1부터 다시 세기 때문이다. 이전 인스턴스의
+ * 상세에는 판단 폼이 없다. 그 단위는 다시 지은 실행에서 새로 판단해야 한다. 지금 인스턴스의 판단은 상세의 `instanceId` 를
+ * 함께 보내고, 그 사이 재기동했으면 실행 호스트가 거부한다.
  */
 export function IncidentSection({ read, session, tick, onDecided }: Props) {
-  const [selected, setSelected] = useState<string | null>(null)
-  const [detail, setDetail] = useState<{ id: string; lookup: IncidentLookup | null; error: string | null } | null>(null)
+  const [selected, setSelected] = useState<Selection | null>(null)
+  const [detail, setDetail] = useState<{ key: string; lookup: IncidentLookup | null; error: string | null } | null>(null)
   const [busy, setBusy] = useState(false)
   const [last, setLast] = useState<{ what: string; sent: Delivered<HoldResolveOutcome> } | null>(null)
 
+  const selectedKey = selected === null ? null : keyOf(selected)
   useEffect(() => {
     if (selected === null) return
+    const key = keyOf(selected)
     let alive = true
-    fetchIncident(session, selected)
+    fetchIncident(session, selected.instanceId, selected.incidentId)
       .then((lookup) => {
-        if (alive) setDetail({ id: selected, lookup, error: null })
+        if (alive) setDetail({ key, lookup, error: null })
       })
       .catch((error: unknown) => {
         if (!alive) return
         // 못 읽으면 같은 인시던트의 직전 상세를 지우지 않는다.
         setDetail((previous) =>
-          previous !== null && previous.id === selected
+          previous !== null && previous.key === key
             ? { ...previous, error: message(error) }
-            : { id: selected, lookup: null, error: message(error) },
+            : { key, lookup: null, error: message(error) },
         )
       })
     return () => {
@@ -80,7 +88,7 @@ export function IncidentSection({ read, session, tick, onDecided }: Props) {
   const decide = (target: IncidentDetail, decision: HoldDecision, reason: string) => {
     const what = `${target.executionId}/${target.unitId} ${DECISION_LABEL[decision]}`
     setBusy(true)
-    resolveHold(session, target.executionId, target.unitId, decision, reason)
+    resolveHold(session, target, decision, reason)
       .then((sent) => setLast({ what, sent }))
       .finally(() => {
         setBusy(false)
@@ -91,7 +99,9 @@ export function IncidentSection({ read, session, tick, onDecided }: Props) {
   // 운영 서비스가 다른 모양을 주면(예: 시험 대역의 빈 배열) 목록이 없다. 없는 목록도 모름이다.
   const value = read.value !== null && Array.isArray(read.value.incidents) ? read.value : null
   const { error } = read
-  const shown = detail !== null && detail.id === selected ? detail : null
+  const shown = detail !== null && detail.key === selectedKey ? detail : null
+  // 고른 인시던트가 지금 인스턴스의 것이 아니면(이전 인스턴스 줄을 골랐거나 고른 뒤 재기동) 읽기 전용이다.
+  const earlier = selected !== null && (value === null || selected.instanceId !== value.instanceId)
 
   return (
     <section aria-label="인시던트">
@@ -108,13 +118,37 @@ export function IncidentSection({ read, session, tick, onDecided }: Props) {
           {value.incidents.length === 0 ? (
             <p>인시던트가 없습니다</p>
           ) : (
-            <IncidentTable rows={value.incidents} selected={selected} onSelect={setSelected} />
+            <IncidentTable
+              rows={value.incidents.map((row) => ({ ...row, instanceId: value.instanceId }))}
+              earlier={false}
+              selectedKey={selectedKey}
+              onSelect={setSelected}
+            />
+          )}
+          {Array.isArray(value.earlier) && (
+            <section aria-label="이전 인스턴스">
+              <h3>이전 인스턴스</h3>
+              {value.earlier.length === 0 ? (
+                <p>이전 인스턴스의 인시던트가 없습니다</p>
+              ) : (
+                <>
+                  <p>
+                    재기동 앞 인스턴스의 인시던트 {value.earlierTotal ?? value.earlier.length}건 가운데 최신{' '}
+                    {value.earlier.length}건. 읽기 전용이며 여기서 판단하지 않습니다
+                  </p>
+                  <IncidentTable rows={value.earlier} earlier selectedKey={selectedKey} onSelect={setSelected} />
+                </>
+              )}
+            </section>
           )}
         </>
       )}
       {selected !== null && (
         <section aria-label="인시던트 상세">
-          <h3>{selected} 상세</h3>
+          <h3>
+            {selected.incidentId} 상세{earlier && `(이전 인스턴스 ${selected.instanceId})`}
+          </h3>
+          {earlier && <p>이전 인스턴스의 사본입니다. 읽기 전용이며 판단하지 않습니다</p>}
           {shown === null || (shown.lookup === null && shown.error === null) ? (
             <p>상세를 읽는 중입니다</p>
           ) : shown.lookup === null ? (
@@ -127,6 +161,7 @@ export function IncidentSection({ read, session, tick, onDecided }: Props) {
               <Detail
                 detail={shown.lookup.detail}
                 session={session}
+                decidable={!earlier}
                 busy={busy}
                 onDecide={(decision, reason) => {
                   if (shown.lookup?.kind === 'found') decide(shown.lookup.detail, decision, reason)
@@ -140,19 +175,34 @@ export function IncidentSection({ read, session, tick, onDecided }: Props) {
   )
 }
 
+/** 고른 인시던트. 재기동하면 id 를 다시 세므로 인스턴스와 짝을 짓는다. */
+interface Selection {
+  instanceId: string
+  incidentId: string
+}
+
+const keyOf = (selection: Selection) => `${selection.instanceId}/${selection.incidentId}`
+
+/**
+ * 인시던트 표. 지금 인스턴스 표는 S4a 그대로이고, 이전 인스턴스 표([earlier])는 앞에 인스턴스 열을 두며 보류 열이 없다(사본은
+ * 보류 중이 아니다). 이전 인스턴스 줄의 상세 버튼 이름에는 인스턴스를 넣는다. 같은 `incident-N` 이 두 표에 있을 수 있다.
+ */
 function IncidentTable({
   rows,
-  selected,
+  earlier,
+  selectedKey,
   onSelect,
 }: {
-  rows: IncidentRow[]
-  selected: string | null
-  onSelect: (incidentId: string) => void
+  rows: EarlierIncidentRow[]
+  earlier: boolean
+  selectedKey: string | null
+  onSelect: (selection: Selection) => void
 }) {
   return (
-    <table aria-label="인시던트 목록">
+    <table aria-label={earlier ? '이전 인스턴스 인시던트 목록' : '인시던트 목록'}>
       <thead>
         <tr>
+          {earlier && <th>인스턴스</th>}
           <th>인시던트</th>
           <th>발생 시각</th>
           <th>기체</th>
@@ -163,17 +213,25 @@ function IncidentTable({
           <th>현장 설정 버전</th>
           <th>임무 버전</th>
           <th>판단</th>
-          <th>보류</th>
+          {!earlier && <th>보류</th>}
         </tr>
       </thead>
       <tbody>
         {rows.map((row) => (
           <tr
-            key={row.incidentId}
-            className={[row.incidentId === selected ? 'selected' : '', row.held ? 'held' : ''].join(' ').trim() || undefined}
+            key={keyOf(row)}
+            className={
+              [keyOf(row) === selectedKey ? 'selected' : '', !earlier && row.held ? 'held' : ''].join(' ').trim() ||
+              undefined
+            }
           >
+            {earlier && <td>{row.instanceId}</td>}
             <td>
-              <button className="link" aria-label={`${row.incidentId} 상세 보기`} onClick={() => onSelect(row.incidentId)}>
+              <button
+                className="link"
+                aria-label={earlier ? `${row.instanceId} ${row.incidentId} 상세 보기` : `${row.incidentId} 상세 보기`}
+                onClick={() => onSelect({ instanceId: row.instanceId, incidentId: row.incidentId })}
+              >
                 {row.incidentId}
               </button>
             </td>
@@ -186,7 +244,7 @@ function IncidentTable({
             <td>{settingsVersion(row.siteSettingsVersion)}</td>
             <td>{missionVersion(row.missionVersion)}</td>
             <td>{judgement(row)}</td>
-            <td>{row.held ? <strong>보류 중</strong> : '-'}</td>
+            {!earlier && <td>{row.held ? <strong>보류 중</strong> : '-'}</td>}
           </tr>
         ))}
       </tbody>
@@ -197,6 +255,8 @@ function IncidentTable({
 interface DetailProps {
   detail: IncidentDetail
   session: Session
+  /** 지금 인스턴스의 상세일 때만 참이다. 거짓이면 보류여도 판단 폼을 두지 않는다. */
+  decidable: boolean
   busy: boolean
   onDecide: (decision: HoldDecision, reason: string) => void
 }
@@ -205,7 +265,7 @@ interface DetailProps {
  * 인시던트 상세(S4a 스펙 §8.2). 판단은 «사람의 판단» 에, 봉인 때의 근거는 «관측» 에 따로 둔다. 확인 결과는 코드 이름 그대로
  * 보인다. `NOT_REQUESTED` 를 «설비 확인 안 함» 으로 풀면, 설비 슬롯을 실제로 읽은 인시던트를 틀리게 읽힌다(S4a JSON 계약 §4).
  */
-function Detail({ detail, session, busy, onDecide }: DetailProps) {
+function Detail({ detail, session, decidable, busy, onDecide }: DetailProps) {
   const { intent, step } = detail
   const position = step.at === 0 ? `계획에 없음(계획 ${step.plan.length}개)` : `${step.at}/${step.plan.length}`
   return (
@@ -321,7 +381,7 @@ function Detail({ detail, session, busy, onDecide }: DetailProps) {
           </table>
         )}
       </section>
-      {detail.held && <DecisionForm key={detail.incidentId} detail={detail} session={session} busy={busy} onDecide={onDecide} />}
+      {decidable && detail.held && <DecisionForm key={detail.incidentId} detail={detail} session={session} busy={busy} onDecide={onDecide} />}
     </>
   )
 }

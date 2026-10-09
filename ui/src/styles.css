@@ -19,3 +19,6 @@ tr.held { background: #fbeee6; }
 tr.held strong { color: #b23a1d; }
 .asserted { border-left: 4px double #2b3f6b; padding-left: 8px; }
 .observed h4 { margin-bottom: 4px; }
+.restore { border-left: 4px solid #b26b1d; padding-left: 8px; margin: 8px 0; }
+.restored { color: #6f6f6f; }
+tr.duplicate { color: #6f6f6f; }

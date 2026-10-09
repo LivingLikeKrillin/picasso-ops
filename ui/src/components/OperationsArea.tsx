@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { checkEligibility, fetchCell, fetchExecutions, fetchIncidents, submitJobOrder, writeCellSignal } from '../api'
+import {
+  checkEligibility,
+  fetchCell,
+  fetchExecutions,
+  fetchIncidents,
+  fetchJobResponses,
+  submitJobOrder,
+  writeCellSignal,
+} from '../api'
 import type {
   CellView,
   Delivered,
@@ -7,6 +15,7 @@ import type {
   IncidentsView,
   JobOrderForm,
   JobOrderOutcome,
+  JobResponsesView,
   Session,
   SignalWriteOutcome,
 } from '../api'
@@ -21,6 +30,7 @@ import type { HostRead } from './ExecutionList'
 import { IncidentSection } from './IncidentSection'
 import { JobOrderFormView } from './JobOrderFormView'
 import { JobOrderNotice } from './JobOrderNotice'
+import { JobResponseLog } from './JobResponseLog'
 import { SignalNotice } from './SignalNotice'
 
 interface Props {
@@ -35,7 +45,7 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 
 /**
  * «운영» 영역(S3a 스펙 §9). 작업 지시 폼, 기체별 배정 가능 표, 실행 목록, 인시던트와 운영자 판단(S4a 스펙 §8.2·§8.3),
- * 셀 대역 표시와 신호 조작(S3b 스펙 §8).
+ * 셀 대역 표시와 신호 조작(S3b 스펙 §8), 작업 응답 송신 기록(S4b 스펙 §8).
  *
  * 실행 목록·인시던트·셀·배정 가능은 실행 호스트를 거친다. 그래서 App 의 다섯 조회(`Promise.all`)와 따로, 이 영역이 열려 있을 때만
  * 읽는다(S3a 스펙 §9.3). 호스트가 멈춰도 다섯 조회가 직전 값이 되지 않게 하기 위해서다. 셋은 서로도 따로 실패하고, 못 읽으면
@@ -51,6 +61,9 @@ export function OperationsArea({ session, onChanged }: Props) {
   const [executions, setExecutions] = useState<HostRead<ExecutionsView>>({ value: null, error: null })
   const [cell, setCell] = useState<HostRead<CellView>>({ value: null, error: null })
   const [incidents, setIncidents] = useState<HostRead<IncidentsView>>({ value: null, error: null })
+  const [responses, setResponses] = useState<HostRead<JobResponsesView>>({ value: null, error: null })
+  // 송신 기록에서 고른 작업 지시. null 이면 전체다.
+  const [responseFilter, setResponseFilter] = useState<string | null>(null)
   const [eligibility, setEligibility] = useState<EligibilityRead>(NO_ELIGIBILITY)
   const [draft, setDraft] = useState<JobOrderDraft>(EMPTY_DRAFT)
   const [problem, setProblem] = useState<string | null>(null)
@@ -104,6 +117,31 @@ export function OperationsArea({ session, onChanged }: Props) {
       alive = false
     }
   }, [session, tick])
+
+  // 송신 기록은 고른 작업 지시가 바뀌어도 다시 읽는다. 앞 작업 지시의 늦은 답은 버린다.
+  useEffect(() => {
+    let alive = true
+    fetchJobResponses(session, responseFilter)
+      .then((value) => {
+        if (alive) setResponses({ value, error: null })
+      })
+      .catch((error: unknown) => {
+        if (alive) setResponses((previous) => ({ ...previous, error: message(error) }))
+      })
+    return () => {
+      alive = false
+    }
+  }, [session, tick, responseFilter])
+
+  const selectResponses = (jobOrderId: string | null) => {
+    // 다른 작업 지시의 행을 고른 작업 지시의 직전 값으로 보이지 않는다.
+    setResponses({ value: null, error: null })
+    setResponseFilter(jobOrderId)
+  }
+  const responseJobOrders = [
+    ...[...(executions.value?.executions ?? [])].reverse().map((execution) => execution.jobOrderId),
+    ...(responses.value?.responses ?? []).map((row) => row.jobOrderId),
+  ]
 
   const built = buildForm(draft, cell.value?.cell ?? null)
   // 폼을 글자로 비교한다. 셀을 다시 읽을 때마다 객체가 바뀌어도 같은 폼이면 다시 묻지 않는다.
@@ -210,6 +248,12 @@ export function OperationsArea({ session, onChanged }: Props) {
         {signalLast !== null && <SignalNotice what={signalLast.what} sent={signalLast.sent} />}
         <CellBand read={cell} busy={signalBusy} onWrite={writeSignal} />
       </section>
+      <JobResponseLog
+        read={responses}
+        jobOrderIds={responseJobOrders}
+        selected={responseFilter}
+        onSelect={selectResponses}
+      />
     </>
   )
 }

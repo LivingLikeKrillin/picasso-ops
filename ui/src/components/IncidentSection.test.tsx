@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import type { FaultDetail, HoldResolveOutcome, IncidentResolution, Session } from '../api'
 import { POLL_MS, SIGNAL_SETTLE_MS } from '../poll'
-import { holdResolved, incidentDetail, incidentRow, incidentsView, installFakeOps } from '../testing/fakeOps'
+import { earlierRow, holdResolved, incidentDetail, incidentRow, incidentsView, installFakeOps } from '../testing/fakeOps'
 import type { FakeOps } from '../testing/fakeOps'
 import { OperationsArea } from './OperationsArea'
 
@@ -151,7 +151,7 @@ describe('인시던트', () => {
       ['41', 'h9', 'CELL_SIGNAL', 'signal rack_present at deadline: false', '미들웨어 기록'],
     ])
     expect(within(observed).getByText('근거 윈도우(앞 30초, 뒤 15초)')).toBeInTheDocument()
-    expect(calls(fake, 'GET', '/api/incidents/incident-1').length).toBeGreaterThan(0)
+    expect(calls(fake, 'GET', '/api/incidents/incident-1?instanceId=mw-1').length).toBeGreaterThan(0)
   })
 
   it('상세는 이 단위의 결함과 실행을 막던 결함(blockedBy) 원문을 보이고 코드 정의 임무는 코드 정의다', async () => {
@@ -322,7 +322,7 @@ describe('인시던트', () => {
     const reads = () => ({
       incidents: calls(fake, 'GET', '/api/incidents').length,
       executions: calls(fake, 'GET', '/api/executions').length,
-      detail: calls(fake, 'GET', '/api/incidents/incident-1').length,
+      detail: calls(fake, 'GET', '/api/incidents/incident-1?instanceId=mw-1').length,
     })
     const before = reads()
     fireEvent.click(within(detail).getByRole('button', { name: '재작업' }))
@@ -332,7 +332,7 @@ describe('인시던트', () => {
       'exec 1/rack/arrival 재작업: 판단이 섰습니다(incident-1)',
     )
     const post = calls(fake, 'POST', path).at(-1)!
-    expect(post.body).toEqual({ decision: 'REWORK', reason: '랙 재배치 뒤 재작업' })
+    expect(post.body).toEqual({ decision: 'REWORK', instanceId: 'mw-1', reason: '랙 재배치 뒤 재작업' })
     expect(post.headers['X-Ops-Mode']).toBe('operator')
     expect(post.headers['X-Ops-User']).toBe('kim')
     const now = reads()
@@ -413,12 +413,12 @@ describe('인시던트', () => {
     fireEvent.click(screen.getByRole('button', { name: 'incident-1 상세 보기' }))
     await flush()
     const list = calls(fake, 'GET', '/api/incidents').length
-    const detail = calls(fake, 'GET', '/api/incidents/incident-1').length
+    const detail = calls(fake, 'GET', '/api/incidents/incident-1?instanceId=mw-1').length
     expect(detail).toBe(1)
     await act(async () => vi.advanceTimersByTime(POLL_MS))
     await flush()
     expect(calls(fake, 'GET', '/api/incidents')).toHaveLength(list + 1)
-    expect(calls(fake, 'GET', '/api/incidents/incident-1')).toHaveLength(detail + 1)
+    expect(calls(fake, 'GET', '/api/incidents/incident-1?instanceId=mw-1')).toHaveLength(detail + 1)
 
     // 다시 읽은 상세가 판단을 실으면 그대로 바뀐다.
     fake.incidentDetails.set('incident-1', incidentDetail({ held: false, resolution: rework }))
@@ -467,5 +467,136 @@ describe('인시던트', () => {
         '모름: 인시던트 목록을 아직 읽지 못했습니다 (실행 호스트가 답하지 않는다: 응답 없음: ConnectException)',
       ),
     ).toBeInTheDocument()
+  })
+})
+
+describe('재기동 뒤 인시던트', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('이전 인스턴스 부분은 earlier 사본을 인스턴스 열과 함께 읽기 전용으로 보이고 보류 열이 없다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.incidents = {
+      ...incidentsView([incidentRow()]),
+      earlierTotal: 4,
+      earlier: [
+        earlierRow(),
+        earlierRow({ instanceId: 'mw-00', incidentId: 'incident-2', at: 'h3', resolution: null, held: false }),
+      ],
+    }
+    open()
+    const region = screen.getByRole('region', { name: '인시던트' })
+    const earlier = await within(region).findByRole('region', { name: '이전 인스턴스' })
+    expect(earlier).toHaveTextContent('재기동 앞 인스턴스의 인시던트 4건 가운데 최신 2건. 읽기 전용이며 여기서 판단하지 않습니다')
+    const table = within(earlier).getByRole('table', { name: '이전 인스턴스 인시던트 목록' })
+    expect(within(table).getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
+      '인스턴스',
+      '인시던트',
+      '발생 시각',
+      '기체',
+      '실행 id',
+      '단위',
+      '실패 종류',
+      '경로',
+      '현장 설정 버전',
+      '임무 버전',
+      '판단',
+    ])
+    expect(within(table).getAllByRole('row').slice(1).map(cells)).toEqual([
+      ['mw-0', 'incident-1', 'h10', 'humanoid-01', 'exec-1', 'rack-arrival', 'SIGNAL_DEADLINE', 'SIGNAL', '버전 2', '버전 3', '판단됨'],
+      ['mw-00', 'incident-2', 'h3', 'humanoid-01', 'exec-1', 'rack-arrival', 'SIGNAL_DEADLINE', 'SIGNAL', '버전 2', '버전 3', '미해결'],
+    ])
+    expect(within(table).queryByText('보류 중')).toBeNull()
+    // 지금 인스턴스의 같은 id 줄은 지금 표에 따로 있다.
+    const current = within(region).getByRole('table', { name: '인시던트 목록' })
+    expect(within(current).getAllByRole('row')).toHaveLength(2)
+    expect(within(current).getByText('보류 중')).toBeInTheDocument()
+  })
+
+  it('이전 인스턴스 사본이 없으면 없음을 보이고 earlier 를 싣지 않는 목록에는 그 부분이 없다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.incidents = { ...incidentsView(), earlierTotal: 0, earlier: [] }
+    const { rerender } = open()
+    const earlier = await screen.findByRole('region', { name: '이전 인스턴스' })
+    expect(earlier).toHaveTextContent('이전 인스턴스의 인시던트가 없습니다')
+    fake.incidents = incidentsView([incidentRow()])
+    rerender(<OperationsArea session={{ ...operator }} onChanged={() => undefined} />)
+    await screen.findByRole('table', { name: '인시던트 목록' })
+    expect(screen.queryByRole('region', { name: '이전 인스턴스' })).toBeNull()
+  })
+
+  it('이전 인스턴스 줄의 상세는 그 인스턴스를 실어 읽고 보류여도 판단 폼이 없으며 지금 줄의 상세와 섞이지 않는다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.incidents = { ...incidentsView([incidentRow()]), earlierTotal: 1, earlier: [earlierRow()] }
+    fake.incidentDetails.set('incident-1', incidentDetail())
+    // 사본의 held 는 늘 거짓이지만 화면은 그것에 기대지 않는다.
+    fake.earlierDetails.set('mw-0/incident-1', incidentDetail({ instanceId: 'mw-0', unitState: null, resolution: rework }))
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: 'mw-0 incident-1 상세 보기' }))
+    const detail = await screen.findByRole('region', { name: '인시던트 상세' })
+    expect(within(detail).getByRole('heading', { level: 3 })).toHaveTextContent('incident-1 상세(이전 인스턴스 mw-0)')
+    expect(within(detail).getByText('이전 인스턴스의 사본입니다. 읽기 전용이며 판단하지 않습니다')).toBeInTheDocument()
+    expect(await within(detail).findByRole('region', { name: '사람의 판단' })).toHaveTextContent('사람이 판단함: kim, w20')
+    expect(field(within(detail).getByRole('region', { name: '관측' }), '단위의 지금 상태')).toBe('모름(실행 없음)')
+    expect(within(detail).queryByRole('form', { name: '운영자 판단' })).toBeNull()
+    expect(within(detail).queryByRole('button', { name: '재작업' })).toBeNull()
+    expect(calls(fake, 'GET', '/api/incidents/incident-1?instanceId=mw-0')).toHaveLength(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'incident-1 상세 보기' }))
+    expect(await within(detail).findByRole('form', { name: '운영자 판단' })).toBeInTheDocument()
+    expect(within(detail).getByRole('heading', { level: 3 })).toHaveTextContent(/^incident-1 상세$/)
+    expect(calls(fake, 'GET', '/api/incidents/incident-1?instanceId=mw-1').length).toBeGreaterThan(0)
+  })
+
+  it('고른 뒤 실행 호스트가 재기동하면 같은 id 의 새 인시던트가 아니라 고른 인스턴스의 사본을 읽고 판단 폼이 내려간다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.incidents = incidentsView([incidentRow()])
+    fake.incidentDetails.set('incident-1', incidentDetail())
+    const { rerender } = open()
+    const detail = await select('incident-1')
+    expect(await within(detail).findByRole('form', { name: '운영자 판단' })).toBeInTheDocument()
+
+    // 재기동: 새 인스턴스 mw-2 의 incident-1 은 다른 단위의 보류다. 앞 인스턴스의 것은 사본으로 남는다.
+    fake.incidents = {
+      ...incidentsView([incidentRow({ unitId: 'RACK-204.S01' })]),
+      instanceId: 'mw-2',
+      earlierTotal: 1,
+      earlier: [earlierRow({ instanceId: 'mw-1', resolution: null })],
+    }
+    fake.incidentDetails.set('incident-1', incidentDetail({ instanceId: 'mw-2', unitId: 'RACK-204.S01' }))
+    fake.earlierDetails.set('mw-1/incident-1', incidentDetail({ held: false, unitState: null }))
+    rerender(<OperationsArea session={{ ...operator }} onChanged={() => undefined} />)
+    expect(await within(detail).findByText('이전 인스턴스의 사본입니다. 읽기 전용이며 판단하지 않습니다')).toBeInTheDocument()
+    expect(within(detail).getByRole('heading', { level: 3 })).toHaveTextContent('incident-1 상세(이전 인스턴스 mw-1)')
+    expect(field(within(detail).getByRole('region', { name: '관측' }), '단위')).toBe('rack-arrival')
+    expect(within(detail).queryByRole('form', { name: '운영자 판단' })).toBeNull()
+    const earlier = screen.getByRole('table', { name: '이전 인스턴스 인시던트 목록' })
+    expect(within(earlier).getAllByRole('row')[1]).toHaveClass('selected')
+    expect(within(screen.getByRole('table', { name: '인시던트 목록' })).getAllByRole('row')[1]).not.toHaveClass('selected')
+  })
+
+  it('판단은 상세의 instanceId 를 싣고 실행 호스트가 409 INSTANCE_MISMATCH 로 막으면 그 이름을 풀어 보인다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.incidents = incidentsView([incidentRow()])
+    fake.incidentDetails.set('incident-1', incidentDetail())
+    fake.answers.set(RESOLVE, {
+      status: 200,
+      body: holdResolved({
+        result: 'REJECTED',
+        outcome: null,
+        answer: null,
+        rejection: { status: 409, error: 'INSTANCE_MISMATCH', detail: '판단 요청의 인스턴스(mw-1)가 지금 인스턴스(mw-2)가 아니다' },
+      }),
+    })
+    open()
+    const detail = await select('incident-1')
+    await userEvent.type(await within(detail).findByLabelText('판단 사유'), '재작업')
+    await userEvent.click(within(detail).getByRole('button', { name: '재작업' }))
+    expect(await screen.findByRole('status', { name: '판단 결과' })).toHaveTextContent(
+      'exec-1/rack-arrival 재작업: 실행 호스트가 거부함(실행 호스트가 재기동해 인스턴스가 다름). 판단 요청의 인스턴스(mw-1)가 지금 인스턴스(mw-2)가 아니다',
+    )
+    expect(calls(fake, 'POST', RESOLVE).at(-1)!.body).toEqual({ decision: 'REWORK', instanceId: 'mw-1', reason: '재작업' })
   })
 })

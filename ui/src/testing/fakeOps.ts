@@ -5,6 +5,7 @@ import type {
   CellSignal,
   CellView,
   DraftView,
+  EarlierIncidentRow,
   EligibilityView,
   ExecutionsView,
   FaultInjectionOutcome,
@@ -14,12 +15,15 @@ import type {
   IncidentDetail,
   IncidentRow,
   IncidentsView,
+  JobResponseLogRow,
+  JobResponsesView,
   MissionOverview,
   MissionTemplates,
   MockRunView,
   OperationOutcome,
   PreRejection,
   ProfileListView,
+  RestoreRow,
   Revision,
   SiteSettingsView,
   RevisionView,
@@ -50,14 +54,20 @@ export interface FakeOps {
   /** 임무 개요와 템플릿(S3b). 운영 서비스가 호스트 본문을 그대로 넘기는 모양이다. */
   mission: MissionOverview
   templates: MissionTemplates
-  /** 인시던트 목록과 상세(S4a). 상세 맵에 없는 id 는 404 `INCIDENT_NOT_FOUND` 다. */
+  /**
+   * 인시던트 목록과 상세(S4a·S4b). 상세의 `instanceId` 쿼리가 목록의 인스턴스면 [incidentDetails](id 키)에서, 다른
+   * 인스턴스면 [earlierDetails](`<instanceId>/<incidentId>` 키)에서 찾는다. 없으면 404 `INCIDENT_NOT_FOUND` 다.
+   */
   incidents: IncidentsView
   incidentDetails: Map<string, IncidentDetail>
+  earlierDetails: Map<string, IncidentDetail>
+  /** 송신 기록(S4b). `jobOrderId` 쿼리가 있으면 실행 호스트처럼 그 작업 지시 행만 돌려준다. */
+  jobResponses: JobResponsesView
   /** `POST /api/job-orders/eligibility` 의 답. 폼 거부(400)를 만들려면 [eligibilityStatus] 와 본문을 바꾼다. */
   eligibility: EligibilityView | PreRejection
   eligibilityStatus: number
   /**
-   * 여기 든 경로의 GET 은 503 이다. 운영 서비스의 일부 읽기만 실패하는 경우를 만든다. 실행 호스트를 거치는 경로는 운영
+   * 여기 든 경로(쿼리를 뺀 것)의 GET 은 503 이다. 운영 서비스의 일부 읽기만 실패하는 경우를 만든다. 실행 호스트를 거치는 경로는 운영
    * 서비스처럼 `HOST_SILENT` 본문을 싣는다. 배정 가능 판정은 POST 지만 읽기이므로 여기 들면 503 이다.
    */
   failing: Set<string>
@@ -70,7 +80,7 @@ export const MISSION_PATH = '/api/missions/PrepareSequencedRack'
 export const TEMPLATES_PATH = '/api/missions/templates/PrepareSequencedRack'
 
 /** 실행 호스트를 거치는 경로. 503 일 때 운영 서비스가 `HOST_SILENT` 를 싣는다(S3a JSON 계약 §9.4, S3b JSON 계약 §10.3). */
-const HOST_PATHS = new Set(['/api/executions', '/api/cell', '/api/incidents', MISSION_PATH, TEMPLATES_PATH])
+const HOST_PATHS = new Set(['/api/executions', '/api/cell', '/api/incidents', '/api/job-responses', MISSION_PATH, TEMPLATES_PATH])
 const INCIDENT_PREFIX = '/api/incidents/'
 const ELIGIBILITY_PATH = '/api/job-orders/eligibility'
 
@@ -438,6 +448,61 @@ export function incidentDetail(partial: Partial<IncidentDetail> = {}): IncidentD
   }
 }
 
+/** 이전 인스턴스 사본 한 줄(S4b 계약 H3). 기본은 [incidentRow] 기본을 인스턴스 mw-0 에서 재작업 판단한 것이다. */
+export function earlierRow(partial: Partial<EarlierIncidentRow> = {}): EarlierIncidentRow {
+  return {
+    instanceId: 'mw-0',
+    ...incidentRow({
+      held: false,
+      resolution: { decision: 'REWORK', at: 'h20', wallClockAt: 'w20', decidedBy: { id: 'kim', kind: 'PERSON' } },
+    }),
+    ...partial,
+  }
+}
+
+/** 복원 보고 한 행(S4b 계약 H1). 기본은 mw-0 의 exec-3 을 exec-1 로 다시 지은 것이다. */
+export function restoreRow(partial: Partial<RestoreRow> = {}): RestoreRow {
+  return {
+    jobOrderId: 'JO-20261009-aaaaaaaa',
+    robotId: 'humanoid-01',
+    previousInstanceId: 'mw-0',
+    previousExecutionId: 'exec-3',
+    result: 'RESTORED',
+    executionId: 'exec-1',
+    reason: null,
+    ...partial,
+  }
+}
+
+/** 송신 기록(S4b 계약 H6). 기본은 행이 없는 지금 인스턴스 mw-1 이다. */
+export function jobResponsesView(responses: JobResponseLogRow[] = []): JobResponsesView {
+  return { instanceId: 'mw-1', total: responses.length, responses }
+}
+
+/** 송신 기록 한 행(S4b 계약 H6). 기본은 운영자 보류에 선 PARTIAL 응답을 보낸 것이다. */
+export function jobResponseRow(partial: Partial<JobResponseLogRow> = {}): JobResponseLogRow {
+  return {
+    instanceId: 'mw-1',
+    jobResponseId: 'resp-1',
+    jobOrderId: 'JO-20261009-aaaaaaaa',
+    executionId: 'exec-1',
+    version: 1,
+    physicalState: 'PARTIAL',
+    requiredEvidence: 'E2',
+    reachedEvidence: 'E0',
+    completedUnits: [],
+    unverifiedUnits: [],
+    inDoubtUnits: [],
+    incompleteUnits: ['rack-arrival'],
+    operatorRequired: true,
+    residualHold: 'HOLD_KIND_UNSPECIFIED',
+    blockedBy: [],
+    disposition: 'SENT',
+    recordedAt: 'w30',
+    ...partial,
+  }
+}
+
 /** 장애 주입 200 본문(S4a JSON 계약 §9.4). 기본은 humanoid-01 의 스킬 실패를 현장이 받아들인 것이다. */
 export function faultInjected(partial: Partial<FaultInjectionOutcome> = {}): FaultInjectionOutcome {
   return {
@@ -499,6 +564,8 @@ export function installFakeOps(
     templates: missionTemplates(),
     incidents: incidentsView(),
     incidentDetails: new Map(),
+    earlierDetails: new Map(),
+    jobResponses: jobResponsesView(),
     eligibility: eligibilityView(),
     eligibilityStatus: 200,
     failing: new Set(),
@@ -516,17 +583,30 @@ export function installFakeOps(
       }
       const method = init?.method ?? 'GET'
       fake.calls.push({ method, url, headers, body: init?.body ? JSON.parse(init.body as string) : undefined })
-      if (fake.failing.has(url) && (method === 'GET' || url === ELIGIBILITY_PATH)) {
-        const body = HOST_PATHS.has(url) || url.startsWith(INCIDENT_PREFIX)
+      const [path, query] = url.split('?')
+      const params = new URLSearchParams(query ?? '')
+      if (fake.failing.has(path) && (method === 'GET' || url === ELIGIBILITY_PATH)) {
+        const body = HOST_PATHS.has(path) || path.startsWith(INCIDENT_PREFIX)
           ? JSON.stringify({ error: 'HOST_SILENT', detail: '실행 호스트가 답하지 않는다: 응답 없음: ConnectException' })
           : ''
         return new Response(body, { status: 503 })
       }
-      if (method === 'GET' && url.startsWith(INCIDENT_PREFIX)) {
-        const found = fake.incidentDetails.get(decodeURIComponent(url.slice(INCIDENT_PREFIX.length)))
+      if (method === 'GET' && path.startsWith(INCIDENT_PREFIX)) {
+        const incidentId = decodeURIComponent(path.slice(INCIDENT_PREFIX.length))
+        const instanceId = params.get('instanceId')
+        const found =
+          instanceId === null || instanceId === fake.incidents.instanceId
+            ? fake.incidentDetails.get(incidentId)
+            : fake.earlierDetails.get(`${instanceId}/${incidentId}`)
         return found === undefined
           ? new Response(JSON.stringify({ error: 'INCIDENT_NOT_FOUND', detail: '인시던트가 없다' }), { status: 404 })
           : new Response(JSON.stringify(found), { status: 200 })
+      }
+      if (method === 'GET' && path === '/api/job-responses') {
+        const jobOrderId = params.get('jobOrderId')
+        const rows = fake.jobResponses.responses.filter((row) => jobOrderId === null || row.jobOrderId === jobOrderId)
+        const body = jobOrderId === null ? fake.jobResponses : { ...fake.jobResponses, total: rows.length, responses: rows }
+        return new Response(JSON.stringify(body), { status: 200 })
       }
       if (method === 'GET') {
         const body =
