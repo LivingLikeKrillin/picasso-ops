@@ -80,6 +80,17 @@ class Site private constructor(
         mimic.server.exclusive { instance.knownSiteNames = siteNames }
     }
 
+    /**
+     * 이 기체가 호스팅하는 태스크마다 갱신 로그의 상태 이름(적은 순서, S4b 스펙 T5). 통합 시험이 재기동 앞뒤로 새 명령이 나가지
+     * 않았는지 대조할 때 쓴다. mimic 은 같은 태스크 id·리비전의 `StartTask` 에 기존 태스크를 돌려주므로, 새 명령이 나가면 새
+     * 태스크 id 나 둘째 `ACCEPTED` 로 보인다. mimic 은 RPC 마다 접수한 태스크를 집어 들어(`ACCEPTED` → `RUNNING`) 시계를 밀지
+     * 않아도 로그가 이어질 수 있다. 읽기만 하며 엔진 잠금 아래에서 돈다.
+     */
+    fun taskHistory(robotId: String): Map<String, List<String>> {
+        val instance = requireNotNull(mimic.instance(robotId)) { "이 현장에 없는 기체다: $robotId" }
+        return mimic.server.exclusive { instance.tasks.all.associate { task -> task.taskId to task.log.from(0).map { it.state.name } } }
+    }
+
     override fun close() {
         try {
             runner.close()
