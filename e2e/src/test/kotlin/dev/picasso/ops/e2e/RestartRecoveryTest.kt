@@ -196,7 +196,7 @@ class RestartRecoveryTest {
 
     @Test
     @Order(4)
-    fun `단계 4 운영자 보류에 선 실행을 두 번 다시 띄우면 기한이 다시 지난 뒤의 보류 응답이 매번 재기동 중복으로 적히고 송신은 한 번뿐이다`() {
+    fun `단계 4 운영자 보류에 선 실행을 두 번 다시 띄우면 기한이 다시 지난 뒤의 보류 응답이 매번 재기동 중복으로 적히고 송신은 한 번뿐이며 같은 인스턴스에서 재작업 뒤 다시 선 보류는 송신이다`() {
         activate("ARRIVAL_WAIT_HOLD", "운영자 보류 대기 도입", 3)
         signal("false")
         val (jobOrderId, executionId) = submit(rack(S04))
@@ -228,11 +228,21 @@ class RestartRecoveryTest {
         val rows = responses(jobOrderId)
         val keys = listOf("version", "physicalState", "requiredEvidence", "reachedEvidence", "completedUnits", "unverifiedUnits", "incompleteUnits", "inDoubtUnits", "operatorRequired", "residualHold", "blockedBy")
         assertEquals(1, rows.map { r -> keys.map { r[it] } }.distinct().size, "$rows")
+
+        // 같은 인스턴스에서 재작업 뒤 다시 선 보류는 내용이 같아도 새로 일어난 일이라 송신한다. 단계 5 가 이 보류를 재작업하고 다시
+        // 띄운다.
+        val first3 = incidents()["incidents"].single { it["held"].asBoolean() }["incidentId"].asText()
+        val reworked = resolve(heldExecution(), "REWORK", "랙 위치 확인 뒤 재작업", stack.get("/api/incidents/$first3")["instanceId"].asText())
+        assertEquals("SUCCEEDED" to "Resolved", reworked.body!!["result"].asText() to reworked.body["outcome"].asText(), "${reworked.body}")
+        pushUntilHeld(heldExecution())
+        val again = waitLogged(third, 2)
+        assertEquals(Triple(third, "OPERATOR_HOLD", "SENT"), again.first(), "$again")
+        assertEquals(2, again.count { it.third == "SENT" }, "$again")
     }
 
     @Test
     @Order(5)
-    fun `단계 5 설비 대기 보류를 재작업으로 판단한 뒤 다시 띄우면 대기가 새 기한으로 다시 서고 옛 인시던트와 그 판단은 earlier 에만 있다`() {
+    fun `단계 5 설비 대기 보류를 재작업으로 판단한 뒤 다시 띄우면 대기가 새 기한으로 다시 서고 그 보류 응답은 재기동 중복이며 옛 인시던트와 그 판단은 earlier 에만 있다`() {
         val executionId = executionOf(heldOrder)
         val hold = incidents()["incidents"].single { it["executionId"].asText() == executionId && it["held"].asBoolean() }
         reworkIncident = hold["incidentId"].asText()
@@ -252,6 +262,8 @@ class RestartRecoveryTest {
         val held = pushUntilHeld(executionOf(heldOrder))
         assertTrue(Duration.between(restartedAt, stack.site.now()) >= DEADLINE, "재기동 뒤 기한 전에 보류가 섰다: ${stack.site.now()}")
         assertEquals("OPERATOR_HOLD", held["physicalState"].asText(), "$held")
+        // 상위가 마지막으로 받은 것은 재작업 뒤 보류(단계 4 끝의 SENT)다. 내용 키가 같아 송신하지 않는다.
+        assertEquals(Triple(instance, "OPERATOR_HOLD", "RESTART_DUPLICATE"), waitLogged(instance, 1).first())
 
         val list = incidents()
         assertEquals(instance, list["instanceId"].asText(), "$list")
@@ -260,14 +272,15 @@ class RestartRecoveryTest {
         assertEquals(1, live.size, "$list")
         assertEquals(listOf(true, true), listOf(live.single()["unresolved"].asBoolean(), live.single()["held"].asBoolean()), "$list")
         assertTrue(list["incidents"].all { it["resolution"].isNull }, "$list")
-        // 앞 세 인스턴스의 보류는 earlier 에 최근 것부터 있고, 재작업 판단은 그 인스턴스의 사본에 붙었다.
+        // 앞 세 인스턴스의 보류 넷(셋째 인스턴스에 둘)은 earlier 에 최근 것부터 있고, 재작업 판단은 그 사본에 붙었다.
         val earlier = list["earlier"].filter { it["jobOrderId"].asText() == heldOrder }
-        assertEquals(3, earlier.size, "$list")
+        assertEquals(4, earlier.size, "$list")
         assertEquals(reworkInstance to reworkIncident, earlier.first()["instanceId"].asText() to earlier.first()["incidentId"].asText(), "$list")
         val resolution = earlier.first()["resolution"]
         assertEquals(listOf("REWORK", "kim", "PERSON"), listOf(resolution["decision"], resolution["decidedBy"]["id"], resolution["decidedBy"]["kind"]).map { it.asText() }, "$list")
         assertTrue(earlier.all { !it["held"].asBoolean() && it["failureClass"].asText() == "SIGNAL_DEADLINE" }, "$list")
-        assertTrue(earlier.drop(1).all { it["resolution"].isNull }, "$list")
+        assertEquals("REWORK", earlier[1]["resolution"]["decision"].asText(), "$list")
+        assertTrue(earlier.drop(2).all { it["resolution"].isNull }, "$list")
         assertTrue(list["earlier"].none { it["instanceId"].asText() == instance }, "$list")
     }
 
@@ -371,6 +384,19 @@ class RestartRecoveryTest {
             driver.push(ExecutionDriver.STEP)
         }
         error("대기 단위가 운영자 보류가 되지 않았다: ${driver.execution(executionId)}")
+    }
+
+    /** 단계 4~6 의 보류 실행의 지금 실행 id. */
+    private fun heldExecution(): String = executionOf(heldOrder)
+
+    /** 보류 실행의 송신 기록에 [instance] 의 행이 [count] 개 적히기를 기다리고 (인스턴스, 물리 상태, 처분)을 최근부터 낸다. */
+    private fun waitLogged(instance: String, count: Int): List<Triple<String, String, String>> {
+        val until = Instant.now().plus(REOBSERVE_WAIT)
+        while (dispositions(heldOrder).count { it.first == instance } < count) {
+            check(Instant.now().isBefore(until)) { "$instance 의 행이 $count 개가 아니다: ${dispositions(heldOrder)}" }
+            Thread.sleep(100)
+        }
+        return dispositions(heldOrder)
     }
 
     /** 지금 인스턴스에서 그 작업 지시를 든 실행 id. 다시 지으면 인스턴스의 셈으로 바뀐다. */
