@@ -1,7 +1,9 @@
 package dev.picasso.ops.host
 
 import com.fasterxml.jackson.databind.JsonNode
+import dev.picasso.contracts.v1.ParameterValue
 import dev.picasso.mimic.engine.ForceOutcome
+import dev.picasso.mimic.engine.StartOutcome
 import dev.picasso.mimic.engine.TaskState
 import dev.picasso.ops.host.HostBench.Companion.HUMANOID
 import dev.picasso.ops.host.HostBench.Companion.JSON
@@ -166,6 +168,40 @@ class HostRestoreTest {
             assertTrue(row["reason"].isNull)
             assertEquals(JSON.readTree("""{"instanceId":"$before","executionId":"exec-1"}"""), bench.execution("exec-1")!!["restoredFrom"])
             assertEquals(listOf("도는 실행이 있다: exec-1"), reasons(HUMANOID))
+        }
+    }
+
+    @Test
+    fun `포기한 행의 작업 지시 태스크가 사람을 기다리는 NEEDS_INTERVENTION 이면 종료 상태가 아니라 그 기체를 계속 판정에서 뺀다`() {
+        HostBench().use { bench ->
+            // InspectAsset 의 최고 근거 등급은 E0 이라 E2 를 요구하는 일지 행은 포기한다. 그 작업 지시의 태스크를 기체에 직접 세운다.
+            insertJournal("JO-E2", QUADRUPED, evidence = "E2")
+            val taskId = "JO-E2#T1"
+            val location = ParameterValue.newBuilder().setKey("location").setStringValue("bay-7").build()
+            val started = bench.mimic.server.exclusive { bench.mimic.instance(QUADRUPED)!!.tasks.start(taskId, 1, "navigate_to", listOf(location)) }
+            assertTrue(started is StartOutcome.Accepted, started.toString())
+            repeat(20) {
+                if (bench.tasks(QUADRUPED)[taskId] != TaskState.RUNNING) {
+                    bench.mimic.server.advance(Duration.ofSeconds(1))
+                    bench.awaitPump()
+                }
+            }
+            assertEquals(TaskState.RUNNING, bench.tasks(QUADRUPED)[taskId])
+            val outcome = bench.mimic.server.exclusive { bench.mimic.instance(QUADRUPED)!!.tasks.forceFault("LOCALIZATION_LOST", taskId) }
+            assertEquals(TaskState.NEEDS_INTERVENTION, (outcome as ForceOutcome.Raised).taskState, outcome.toString())
+
+            bench.restartHost()
+            assertEquals(
+                listOf("JO-E2" to "GAVE_UP"),
+                bench.get("/host/executions")["restore"]["rows"].map { it["jobOrderId"].asText() to it["result"].asText() },
+            )
+            fun reasons() =
+                bench.post("/host/eligibility", request(inspect("JO-9", "T2" to "dock-3"), "robotIds", QUADRUPED)).body!!["robots"].single()["reasons"].map { it.asText() }
+            // 스냅숏을 읽을 때마다 같다. 사람을 기다리는 태스크는 종료하지 않은 태스크라 풀지 않는다.
+            assertEquals(listOf("${MissionHost.UNRESTORED_REASON}: JO-E2"), reasons())
+            bench.idlePumps()
+            assertEquals(TaskState.NEEDS_INTERVENTION, bench.tasks(QUADRUPED)[taskId])
+            assertEquals(listOf("${MissionHost.UNRESTORED_REASON}: JO-E2"), reasons())
         }
     }
 

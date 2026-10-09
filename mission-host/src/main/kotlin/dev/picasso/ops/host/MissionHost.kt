@@ -295,7 +295,7 @@ class MissionHost(
     private val deferred = mutableListOf<Deferred>()
 
     /**
-     * 포기했고 정착하지 않은 일지 행(T4). 그 기체의 스냅숏에 그 작업 지시의 비종착 태스크가 없어질 때까지 그 기체를 판정에서 뺀다.
+     * 포기했고 정착하지 않은 일지 행(T4). 그 기체의 스냅숏에 그 작업 지시의 종료하지 않은 태스크가 없어질 때까지 그 기체를 판정에서 뺀다.
      * 이전 기동에서 포기한 행도 든다. 풀린 행은 이 인스턴스에서 다시 빼지 않는다.
      */
     private val gaveUp = mutableListOf<JournalRow>()
@@ -735,7 +735,7 @@ class MissionHost(
 
     /**
      * 이 기체에서 다시 짓지 못한 작업 지시(T4). 미룬 행은 늘 든다. 포기한 행은 그 기체의 스냅숏을 이번에 한 번 읽어, 그 작업 지시의
-     * 비종착 태스크(id 가 `jobOrderId#` 로 시작, `@rN` 이 붙은 재작업 태스크 포함)가 없으면 풀고 더 빼지 않는다. 스냅숏을 못 읽으면
+     * 종료하지 않은 태스크(id 가 `jobOrderId#` 로 시작, `@rN` 이 붙은 재작업 태스크 포함)가 없으면 풀고 더 빼지 않는다. 스냅숏을 못 읽으면
      * 계속 뺀다.
      */
     private fun unrestoredOn(robotId: String): List<String> {
@@ -798,10 +798,10 @@ class MissionHost(
         /** 다시 짓지 못한 실행이 있는 기체에 판정이 더하는 이유의 앞부분(S4b 스펙 T4). 뒤에 작업 지시 id 가 붙는다. */
         const val UNRESTORED_REASON = "복원 못 한 실행이 있다"
 
-        /** 종착한 태스크 상태. 미들웨어가 단위의 종착으로 보는 것과 같다(사람을 기다리는 RETRIABLE·NEEDS_INTERVENTION 포함). */
+        /** 종료 상태(용어집 태스크 수명주기). 사람을 기다리는 RETRIABLE·NEEDS_INTERVENTION 은 종료하지 않은 상태라 기체를 계속 뺀다. */
         private val TERMINAL_TASK_STATES = setOf(
             TaskState.TASK_STATE_SUCCEEDED, TaskState.TASK_STATE_FAILED, TaskState.TASK_STATE_CANCELLED,
-            TaskState.TASK_STATE_CANCELLED_RECOVERY_FAILED, TaskState.TASK_STATE_NEEDS_INTERVENTION, TaskState.TASK_STATE_RETRIABLE,
+            TaskState.TASK_STATE_CANCELLED_RECOVERY_FAILED,
         )
 
         /** 운영자 판단의 결과 이름. picasso `ResolveOutcome` 의 이름 그대로다(S4a 스펙 T6). */
