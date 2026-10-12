@@ -42,7 +42,7 @@ export function ProfilesSection({ view, opsError, session, busy, run }: Props) {
           {known.revisions!.length === 0 ? (
             <p>제출된 리비전이 없습니다</p>
           ) : (
-            <table aria-label="리비전 목록">
+            <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="리비전 목록">
               <thead>
                 <tr>
                   <th>기종</th>
@@ -112,7 +112,7 @@ export function ProfilesSection({ view, opsError, session, busy, run }: Props) {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           )}
         </>
       )}

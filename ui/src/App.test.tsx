@@ -41,18 +41,22 @@ function serve(view: RobotListView, records: OperationRecord[] = []) {
 }
 
 describe('App', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => { vi.unstubAllGlobals(); window.history.replaceState(null,'',window.location.pathname) })
 
-  it('메뉴가 5영역이고 모두 열려 있다', () => {
+  it('메뉴가 9영역이고 모두 열려 있다', () => {
     serve({ registry: 'OK', checkedAt: 't1', robots: [], robotsAsOf: 't1' })
     render(<App />)
     const nav = screen.getByRole('navigation', { name: '영역' })
     expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual([
-      '현장·자원',
-      '로봇·연결',
-      '임무·정책',
+      '운영 개요',
+      '작업 요청',
+      '공유 자원',
       '운영',
+      '로봇',
+      '임무',
+      '현장 설정',
       '이력',
+      '검증 도구',
     ])
   })
 
@@ -61,12 +65,13 @@ describe('App', () => {
     render(<App />)
     expect(await screen.findByText('선언된 기체가 없습니다')).toBeInTheDocument()
     expect(calls.filter((call) => call.url.startsWith('/api/missions'))).toEqual([])
-    await userEvent.click(screen.getByRole('button', { name: '임무·정책' }))
+    await userEvent.click(screen.getByRole('button', { name: '임무' }))
     await waitFor(() =>
       expect(calls.map((call) => call.url)).toEqual(
         expect.arrayContaining(['/api/missions/PrepareSequencedRack', '/api/missions/templates/PrepareSequencedRack']),
       ),
     )
+    await userEvent.click(screen.getByRole('button', { name: '실행 정의' }))
     expect(screen.getByRole('region', { name: '임무 PrepareSequencedRack' })).toBeInTheDocument()
   })
 

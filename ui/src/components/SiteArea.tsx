@@ -162,7 +162,7 @@ export function SiteArea({ view, opsError, session, onChanged }: Props) {
             <p>현장 설정 변경은 엔지니어 모드에서 합니다</p>
           )}
           <h3>버전 이력</h3>
-          <table aria-label="현장 설정 버전 이력">
+          <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="현장 설정 버전 이력">
             <thead>
               <tr>
                 <th>버전</th>
@@ -191,7 +191,7 @@ export function SiteArea({ view, opsError, session, onChanged }: Props) {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </>
       )}
     </section>

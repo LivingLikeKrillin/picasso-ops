@@ -436,6 +436,8 @@ export type SkillFit = 'FIT' | 'MISSING' | 'UNKNOWN'
 export interface HostEligibility {
   robotId: string
   skillFit: SkillFit
+  requiredSkills?: string[] | null
+  availableSkills?: string[] | null
   missingSkills: string[]
   runningExecutionId: string | null
   passed: boolean
@@ -551,6 +553,7 @@ export interface RestoreRow {
  * 이번 기동의 복원 보고다(S4b 계약 H1). 다시 지을 것이 없었으면 `rows` 가 비어 있다.
  */
 export interface ExecutionsView {
+  journalBlockedExecutionIds?: string[]
   instanceId: string
   pumpedAt: string | null
   executions: Execution[]
@@ -615,6 +618,28 @@ export const checkEligibility = (session: Session, form: JobOrderForm) =>
 export const submitJobOrder = (session: Session, form: JobOrderForm) =>
   postJobOrderForm<JobOrderOutcome>('/api/job-orders', session, form)
 
+export interface ManualReceipt {
+  receiptId: string; sourceSystemId: string; externalOrderId: string; jobOrderId: string;
+  state: string; detail: string | null; submission: JobOrderOutcome | null;
+}
+export interface ManualReceiptAccepted { receipt: ManualReceipt; duplicate: boolean }
+export async function submitManualJobOrder(session: Session, form: JobOrderForm, requestId: string): Promise<Delivered<ManualReceiptAccepted>> {
+  const sent = await deliver<ManualReceiptAccepted>('/api/work-requests/manual', {
+    method: 'POST', headers: { ...actorHeaders(session), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId, form }),
+  })
+  if(sent.kind === 'outcome' && (typeof sent.outcome?.receipt?.receiptId !== 'string' || typeof sent.outcome?.receipt?.jobOrderId !== 'string' || typeof sent.outcome?.duplicate !== 'boolean'))
+    return { kind: 'unknown', cause: '접수 응답 형식을 확인할 수 없습니다' }
+  return sent
+}
+/** Reuse the existing execution notice without confusing a durable receipt with physical completion. */
+export function manualJobOutcome(receipt: ManualReceipt): JobOrderOutcome {
+  if(receipt.submission) return receipt.submission
+  const rejected = receipt.state === 'REJECTED' || receipt.state === 'UNASSIGNED'
+  return { requestId: receipt.receiptId, jobOrderId: receipt.jobOrderId, result: rejected ? 'REJECTED' : 'NO_RESPONSE', confirmation: null,
+    outcome: rejected ? { result: receipt.state === 'UNASSIGNED' ? 'UNASSIGNED' : 'REJECTED', executionId: null, robotId: null, rejectionReason: receipt.detail, refusals: [], excluded: [] } : null }
+}
+
 /** 화면이 편집하는 임무. 작업 지시 폼과 실행 호스트가 두 임무로 고정이라 하나만 편집한다(S3b 스펙 T6). */
 export const EDITABLE_WORK_MASTER = 'PrepareSequencedRack'
 
@@ -640,7 +665,7 @@ export interface MockRunResult {
   failure: MockRunFailure | null
   detail: string | null
   robotId: string
-  sample: { jobOrderId: string; requiredEvidence: string; slots: string[]; material: string; presentation: string } | null
+  sample: { jobOrderId: string; requiredEvidence: string; slots: string[]; material: string; presentation: string; equipment?:{id:string;equipmentUse:string;properties:Record<string,string>}[] } | null
   physicalState: string | null
   units: MockRunUnit[]
   virtualElapsedSeconds: number
@@ -687,7 +712,7 @@ export interface VersionView {
  */
 export interface MissionOverview {
   workMasterId: string
-  active: { version: number | null; source: 'CODE' | 'DATA'; detail: VersionView | null }
+  active: { version: number | null; source: 'CODE' | 'DATA' | 'UNPUBLISHED'; detail: VersionView | null }
   versions: VersionView[]
   drafts: DraftView[]
 }
@@ -1103,3 +1128,98 @@ export const fetchJobResponses = (session: Session, jobOrderId: string | null) =
     jobOrderId === null ? '/api/job-responses' : `/api/job-responses?jobOrderId=${encodeURIComponent(jobOrderId)}`,
     session,
   )
+
+/** 현재 Ops가 지원하는 코드 기반 업무 입력 계약. 외부 공개 계약과 구분한다. */
+export interface JobContract {
+  workMasterId: string
+  name: string
+  description: string
+  editable: boolean
+  requiredEvidence: string
+  fields: { path: string; constraint: string; target: string }[]
+  sample: unknown
+  profile?: MissionProfile | null
+}
+export async function fetchJobContracts(session: Session): Promise<{ contracts: JobContract[] }> {
+  const value = await getHostJson<{ contracts: JobContract[] }>('/api/job-contracts', session)
+  if (!Array.isArray(value.contracts)) throw new Error('지원 업무 계약 응답을 읽을 수 없습니다.')
+  return value
+}
+export async function previewJobOrder(session: Session, sample: unknown): Promise<unknown> {
+  const response = await fetch('/api/job-orders/preview', { method: 'POST', headers: { ...actorHeaders(session), 'Content-Type': 'application/json' }, body: JSON.stringify(sample) })
+  const body = await response.json()
+  if (!response.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `입력 검증 실패 (HTTP ${response.status})`)
+  return body
+}
+
+export interface MissionInterfaceSpec {
+  interfaceId: string
+  version: number
+  name: string
+  workMasterId: string
+  mapping: Record<string, string>
+  sample: unknown
+}
+export interface MissionInterfaceView extends MissionInterfaceSpec {
+  requiredStationId?:string|null
+  status: 'DRAFT' | 'ENABLED' | 'DISABLED'
+  createdBy: string
+  createdAt: string
+  missionVersionPolicy: 'ACTIVE_AT_SUBMISSION' | 'PINNED_DEPLOYMENT'
+  deployment?: InterfaceDeploymentView | null
+}
+export type InterfaceInvocation = ManualReceiptAccepted
+export const fetchMissionInterfaces = (session: Session) => getHostJson<{ interfaces: MissionInterfaceView[] }>('/api/mission-interfaces', session)
+export class InterfaceApiError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) { super(message); this.status = status }
+}
+async function interfaceRequest<T>(session: Session, path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, { method: 'POST', headers: { ...actorHeaders(session), 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const value = await response.json().catch(() => null)
+  if (!response.ok) throw new InterfaceApiError(typeof value?.detail === 'string' ? value.detail : `호출 계약 요청 실패 (HTTP ${response.status})`, response.status)
+  if (value === null) throw new Error('응답 내용을 확인할 수 없습니다. 목록과 실행 이력을 다시 조회하세요.')
+  return value as T
+}
+export const createMissionInterface = (session: Session, spec: MissionInterfaceSpec) => interfaceRequest<MissionInterfaceView>(session, '/api/mission-interfaces', spec)
+export const previewMissionInterface = (session: Session, spec: MissionInterfaceSpec) => interfaceRequest<unknown>(session, '/api/mission-interfaces/preview', spec)
+const interfacePath = (row: MissionInterfaceView) => `/api/mission-interfaces/${encodeURIComponent(row.interfaceId)}/${row.version}`
+export const changeMissionInterfaceState = (session: Session, row: MissionInterfaceView, status: 'ENABLED' | 'DISABLED', reason: string) => interfaceRequest<MissionInterfaceView>(session, `${interfacePath(row)}/state`, { expectedStatus: row.status, status, reason })
+export interface InterfaceEligibility {
+  interfaceId: string
+  interfaceVersion: number
+  jobOrder: { workMasterId: string; missionVersion: string; requiredEvidence: string; deployment: InterfaceDeploymentView; [key: string]: unknown }
+  eligibility: EligibilityView
+}
+export const checkInterfaceEligibility = (session: Session, row: MissionInterfaceView, input: unknown) => interfaceRequest<InterfaceEligibility>(session, `${interfacePath(row)}/eligibility`, { input })
+export const invokeMissionInterface = (session: Session, row: MissionInterfaceView, input: unknown, requestId: string, expectedDeploymentVersion?: number) => interfaceRequest<InterfaceInvocation>(session, `${interfacePath(row)}/invoke`, { requestId, input, ...(expectedDeploymentVersion === undefined ? {} : { expectedDeploymentVersion }) })
+
+export interface InterfaceDeploymentView { interfaceId:string; interfaceVersion:number; mappingVersion:number; deploymentVersion:number; missionVersion:string; createdBy:string; reason:string; createdAt:string }
+export const fetchInterfaceDeployments = (session:Session,row:MissionInterfaceView) => getHostJson<{deployments:InterfaceDeploymentView[]}>(`${interfacePath(row)}/deployments`,session)
+export const deployMissionInterface = (session:Session,row:MissionInterfaceView,missionVersion:string,reason:string) => interfaceRequest<MissionInterfaceView>(session,`${interfacePath(row)}/deploy`,{missionVersion,reason,expectedDeploymentVersion:row.deployment?.deploymentVersion??0})
+
+export interface MissionProfile {
+ workMasterId:string; name:string; description:string; requiredEvidence:string
+ inputSchema:{type:string;properties:Record<string,unknown>;required:string[];additionalProperties:boolean}
+ orderMapping:unknown; sample:Record<string,unknown>; definition:Record<string,unknown>
+}
+export async function createMissionProfile(session:Session,profile:MissionProfile):Promise<MissionProfile> {
+ const response=await fetch('/api/mission-profiles',{method:'POST',headers:{...actorHeaders(session),'Content-Type':'application/json'},body:JSON.stringify(profile)})
+ const body=await response.json()
+ if(!response.ok)throw new Error(body.detail??`미션 생성 HTTP ${response.status}`)
+ if(body.workMasterId!==profile.workMasterId)throw new Error('생성된 미션 ID를 확인할 수 없습니다')
+ return body
+}
+
+export interface RfStation { stationId:string; name:string; readySignal:string; completeSignal:string; timeoutSeconds:number; owner:string|null }
+export interface StationRun { runId:string; stationId:string; payload:{receiptId?:string;workMasterId?:string;interfaceId?:string;interfaceVersion?:number;expectedDeploymentVersion?:number;input?:unknown}; actor:string; state:string; reason:string; receiptId:string|null; attempt:number; revision:number; createdAt:string; phaseAt:string; dispatchedAt:string|null }
+export interface StationEvent { state:string;reason:string;actor:string;recordedAt:string;context:unknown }
+export const fetchStations = (session:Session) => getHostJson<{stations:RfStation[];runs:StationRun[]}>('/api/stations',session)
+export const fetchStationRun = (session:Session,id:string) => getHostJson<{run:StationRun;events:StationEvent[]}>(`/api/stations/runs/${encodeURIComponent(id)}`,session)
+export const createStation = (session:Session,body:unknown) => interfaceRequest<RfStation[]>(session,'/api/stations',body)
+export const enqueueStationRun = (session:Session,body:unknown) => interfaceRequest<StationRun>(session,'/api/stations/runs',body)
+export const decideStationRun = (session:Session,run:StationRun,decision:string,reason:string) => interfaceRequest<StationRun>(session,`/api/stations/runs/${encodeURIComponent(run.runId)}/decision`,{expectedRevision:run.revision,decision,reason})
+
+export interface MissionResourceRequirement { workMasterId:string;stationId:string;revision:number;createdBy:string;reason:string;createdAt:string }
+export const fetchMissionResources=(session:Session)=>getHostJson<{requirements:MissionResourceRequirement[]}>('/api/mission-resources',session)
+export const createMissionResource=(session:Session,body:{workMasterId:string;stationId:string;reason:string})=>interfaceRequest<MissionResourceRequirement>(session,'/api/mission-resources',body)

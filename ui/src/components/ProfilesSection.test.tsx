@@ -56,6 +56,7 @@ const refused: Finding = {
 async function section() {
   render(<App />)
   await screen.findByText('선언된 기체가 없습니다')
+  await userEvent.click(screen.getByRole('button', { name: '프로파일 관리' }))
   return screen.getByRole('region', { name: '프로파일' })
 }
 

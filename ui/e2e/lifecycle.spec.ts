@@ -10,11 +10,12 @@ import { fileURLToPath } from 'node:url'
  * 이어서 S1c 의 화면 쪽(스펙 §3). 제품 선언 → 빌드 선언 → 인스턴스 등록 → 인스턴스 목록에 UNTESTED.
  * 이어서 S1d 의 화면 쪽(P2·S1d 스펙 §3·§11). 리비전 제출(파일 고르기) → 시험 요청 → 현장 실행기가 TESTED → 활성화 →
  * 바인딩 → 명칭 기록 → «시운전 완료»(humanoid-01). quadruped-01 은 명칭을 티칭하지 않아 «기체가 아는 명칭 없음» 으로 막힌다.
- * 이어서 S2 의 화면 쪽(S2 스펙 §3). 현장·자원 영역에서 연결 기준 시간을 바꾸면 버전 2 와 이력 행이 보이고, 운영자 모드는
+ * 이어서 S2 의 화면 쪽(S2 스펙 §3). 현장 설정 영역에서 연결 기준 시간을 바꾸면 버전 2 와 이력 행이 보이고, 운영자 모드는
  * 바꾸지 못하며, 기체 상세가 버전 2 의 기준으로 판정한다.
  * 이어서 S3a 의 화면 쪽(S3a 스펙 §3). 운영자 모드로 «운영» 영역에서 InspectAsset 작업 지시를 내면 시운전을 마친 humanoid-01 에
  * 배정되고 실행 목록에 «코드 정의» 행이 보인다. 실행 호스트는 실제 시각을 쓰고 런처가 가상 시계를 실제 시각까지 따라잡게 민다.
- * 이어서 S3b 의 화면 쪽(S3b 스펙 §3). 엔지니어 모드로 «임무·정책» 영역에서 데이터 정의 템플릿을 불러와 초안 저장 → 검증 → 모의
+ * 호출 계약: 두 기본 업무 중 InspectAsset의 입력 매핑을 저장·공개·호출하고 물리 완료를 확인한 뒤 공개 중지와 409 거절을 검증한다.
+ * 이어서 S3b 의 화면 쪽(S3b 스펙 §3). 엔지니어 모드로 «임무» 영역에서 데이터 정의 템플릿을 불러와 초안 저장 → 검증 → 모의
  * 실행 → 활성화(사유)하면 버전 이력에 «버전 1 (활성)» 이 보인다. 운영 영역의 셀 대역 신호 표에서 rack_present 를 켜면 신호 조작
  * 결과와 신호 값이 보인다.
  * S4b 의 화면 쪽(S4b 스펙 T11)은 운영자 보류 단계 뒤에 송신 기록 구역이 그 작업 지시의 송신 행을 보이는 것 하나다.
@@ -28,6 +29,22 @@ import { fileURLToPath } from 'node:url'
 test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 registry 를 멈추면 모름을 본다', async ({ page }) => {
   await page.goto('/')
   const detail = page.getByRole('region', { name: 'humanoid-01 상세' })
+  const apiResponses: { method: string; path: string; status: number }[] = []
+  page.on('response', response => {
+    const path = new URL(response.url()).pathname
+    if (path.startsWith('/api/')) apiResponses.push({ method: response.request().method(), path, status: response.status() })
+  })
+
+  // 새 도입 화면의 안내와 관리 탭은 실제 API 목록을 사용한다. 경로 선택은 등록 요청을 대신 보내지 않는다.
+  await page.getByRole('button', { name: '로봇 추가', exact: true }).click()
+  const onboarding = page.getByRole('region', { name: '로봇 도입 준비' })
+  await onboarding.getByRole('radio', { name: /새 제조사/ }).check()
+  await expect(onboarding.getByText(/등록 폼이 어댑터 코드를 생성하거나 배포하지는 않습니다/)).toBeVisible()
+  await onboarding.getByRole('button', { name: '어댑터 확인·등록' }).click()
+  await expect(page.getByRole('form', { name: '제품 선언' })).toBeVisible()
+  await page.getByRole('button', { name: '도입 준비', exact: true }).click()
+  await expect(onboarding.getByRole('radio', { name: /새 제조사/ })).toBeChecked()
+  await onboarding.getByRole('radio', { name: /기존 유형/ }).check()
 
   // 엔지니어 모드(기본)에서 선언
   const declare = page.getByRole('form', { name: '기체 선언' })
@@ -35,6 +52,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await declare.getByLabel('일련번호').fill('HA-0001')
   await declare.getByRole('button', { name: '선언' }).click()
   await expect(page.getByText('humanoid-01 선언: 반영됨', { exact: true })).toBeVisible()
+  await expect(onboarding.getByLabel('준비를 이어갈 기체')).toHaveValue('humanoid-01')
 
   // 보고를 기다려 CONFIRMED 를 본다
   await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
@@ -63,8 +81,9 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(page.getByRole('cell', { name: '정비' })).toBeVisible()
 
   // 어댑터: 엔지니어 모드에서 제품 → 빌드 → 인스턴스
-  await page.getByRole('button', { name: '로봇·연결' }).click()
+  await page.getByRole('navigation', { name: '영역' }).getByRole('button', { name: '로봇', exact: true }).click()
   await page.getByLabel('엔지니어').check()
+  await page.getByRole('button', { name: '어댑터 관리', exact: true }).click()
   const product = page.getByRole('form', { name: '제품 선언' })
   await product.getByLabel('vendor').fill('acme')
   await product.getByLabel('name').fill('fleet')
@@ -87,12 +106,14 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(instances.getByRole('row', { name: /fleet-gw-01/ })).toContainText('UNTESTED')
 
   // 프로파일: 리비전 둘을 제출하고 시험을 요청하면 현장 실행기가 TESTED 로 올린다. 그 뒤 활성화.
+  await page.getByRole('button', { name: '기체', exact: true }).click()
   const declareQuadruped = page.getByRole('form', { name: '기체 선언' })
   await declareQuadruped.getByLabel('robot_id').fill('quadruped-01')
   await declareQuadruped.getByLabel('일련번호').fill('QB-0001')
   await declareQuadruped.getByRole('button', { name: '선언' }).click()
   await expect(page.getByText('quadruped-01 선언: 반영됨', { exact: true })).toBeVisible()
 
+  await page.getByRole('button', { name: '프로파일 관리', exact: true }).click()
   const profiles = page.getByRole('region', { name: '프로파일' })
   const revisions = profiles.getByRole('table', { name: '리비전 목록' })
   for (const [model, revision] of [['humanoid-a', 2], ['quadruped-b', 1]] as const) {
@@ -111,6 +132,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   }
 
   // 바인딩과 명칭 기록. humanoid-01 은 현장에서 명칭을 티칭했으므로 기록하면 시운전 완료다.
+  await page.getByRole('button', { name: '기체', exact: true }).click()
   for (const [robotId, model, revision] of [['humanoid-01', 'humanoid-a', 2], ['quadruped-01', 'quadruped-b', 1]] as const) {
     await page.getByRole('button', { name: robotId, exact: true }).click()
     const robot = page.getByRole('region', { name: `${robotId} 상세` })
@@ -134,9 +156,21 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(quadruped.getByText('기체가 아는 명칭 없음', { exact: true })).toBeVisible()
   await expect(quadruped.getByText(/현장\(화면 밖\): 현장에서 명칭 티칭을 다시/)).toBeVisible()
 
+  // 실제 서버 시운전 판정과 도입 안내를 대조하고 배정 판단 화면으로 이어진다.
+  await page.getByRole('button', { name: '도입 준비', exact: true }).click()
+  await onboarding.getByLabel('준비를 이어갈 기체').selectOption('quadruped-01')
+  await expect(onboarding.getByText(/다음 조치: 아래 상세의 명칭 상태/)).toBeVisible()
+  await onboarding.getByLabel('준비를 이어갈 기체').selectOption('humanoid-01')
+  await expect(onboarding.getByText('시운전 완료가 확인되었습니다. 운영에서 실제 임무의 배정 가능 여부를 확인하세요.')).toBeVisible()
+  await onboarding.getByRole('button', { name: '운영에서 배정 조건 확인' }).click()
+  await expect(page.getByRole('form', { name: '작업 지시 폼' })).toBeVisible()
+  await page.getByRole('button', { name: '로봇', exact: true }).click()
+  await expect(onboarding.getByLabel('준비를 이어갈 기체')).toHaveValue('humanoid-01')
+  await page.getByRole('button', { name: '기체', exact: true }).click()
+
   // 현장 설정(S2 스펙 §3). 엔지니어 모드에서 연결 기준 시간을 바꾸면 새 버전과 이력 행이 보이고, 기체 상세가 그 버전으로
   // 판정한다. 런처가 30초마다 보고하므로 120초면 기체는 계속 신선하다.
-  await page.getByRole('button', { name: '현장·자원' }).click()
+  await page.getByRole('button', { name: '현장 설정' }).click()
   const settings = page.getByRole('region', { name: '현장 설정' })
   const change = settings.getByRole('form', { name: '현장 설정 변경' })
   await change.getByLabel('연결 기준 시간(초)').fill('120')
@@ -148,7 +182,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await page.getByLabel('운영자').check()
   await expect(settings.getByText('현장 설정 변경은 엔지니어 모드에서 합니다', { exact: true })).toBeVisible()
   await page.getByLabel('엔지니어').check()
-  await page.getByRole('button', { name: '로봇·연결' }).click()
+  await page.getByRole('navigation', { name: '영역' }).getByRole('button', { name: '로봇', exact: true }).click()
   await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
   await expect(detail.getByText('기준 120초, 현장 설정 버전 2', { exact: true })).toBeVisible()
 
@@ -156,7 +190,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   // ops 의 현재 버전 뷰를 읽어 적용한 버전이 따로 보인다. 실행 호스트는 운영 서비스보다 먼저 떠 미적용으로 시작하고 운영 서비스가
   // 마이그레이션을 마친 뒤 적용하므로 여기서는 이미 버전 2 다. 화면은 5초마다 다시 읽고 호스트는 1초마다 읽는다.
   const hostApplied = { timeout: 15_000 }
-  await page.getByRole('button', { name: '현장·자원' }).click()
+  await page.getByRole('button', { name: '현장 설정' }).click()
   await expect(settings.getByText('실행 호스트 반영: 버전 2', { exact: true })).toBeVisible(hostApplied)
   await change.getByLabel('stallWindow(초)').fill('600')
   await change.getByLabel('변경 사유').fill('정체 표시 늦춤')
@@ -174,11 +208,18 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await order.getByLabel('대상 1 id').fill('T1')
   await order.getByLabel('대상 1 장소').fill('bay-7')
   const eligibility = page.getByRole('table', { name: '기체별 배정 가능' })
-  await expect(eligibility.getByRole('row', { name: /^humanoid-01 / }).getByRole('cell').nth(5)).toHaveText('가능')
+  await expect(eligibility.getByRole('row', { name: /^humanoid-01 / }).getByRole('cell', { name: '가능', exact: true })).toHaveText('가능')
   const quadrupedRow = eligibility.getByRole('row', { name: /^quadruped-01 / })
-  await expect(quadrupedRow.getByRole('cell').nth(5)).toHaveText('불가')
+  await expect(quadrupedRow.getByRole('cell', { name: '불가', exact: true })).toHaveText('불가')
   await expect(quadrupedRow).toContainText('시운전이 끝나지 않았다')
+  const manualReceived = page.waitForResponse(response => response.url().endsWith('/api/work-requests/manual') && response.request().method() === 'POST')
   await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  const manualReply = await manualReceived
+  expect(manualReply.status()).toBe(202)
+  const manual = await manualReply.json()
+  expect(manual.receipt.sourceSystemId).toBe('ops:manual')
+  expect(manual.receipt.payload.requestedBy).toBe('operator/local')
+
   const notice = page.getByRole('status', { name: '제출 결과' })
   await expect(notice).toContainText('InspectAsset 작업 지시: 배정됨')
   await expect(notice.locator('dt', { hasText: '배정된 기체' }).locator('xpath=following-sibling::dd[1]')).toHaveText('humanoid-01')
@@ -188,10 +229,155 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   // 이동 20초와 점검 12초(±10%)를 실제 시간으로 돈다.
   await expect(run).toContainText('PHYSICALLY_DONE', { timeout: 90_000 })
 
-  // 임무·정책(S3b 스펙 §3). 엔지니어 모드로 데이터 정의를 초안 저장 → 검증 → 모의 실행 → 활성화한다. 시운전 완료 기체는
+  const manualTrace = page.getByRole('region', { name: '수동 작업 접수 추적' })
+  await manualTrace.getByRole('button', { name: '접수·실행 결과 보기' }).click()
+  const manualDetail = page.getByRole('article', { name: '작업 요청 상세' })
+  await expect(manualDetail).toContainText(manual.receipt.jobOrderId)
+  await expect(manualDetail).toContainText('operator/local')
+  await expect(manualDetail).toContainText('로컬 작업 · 외부 ACK 대상 아님')
+  const manualReplay = page.waitForResponse(response => response.url().endsWith('/api/work-requests/manual') && response.request().method() === 'POST')
+  await manualTrace.getByRole('button', { name: '동일 요청 접수 확인' }).click()
+  expect((await (await manualReplay).json()).duplicate).toBe(true)
+  await expect(executions.getByRole('row').filter({ hasText: manual.receipt.jobOrderId })).toHaveCount(1)
+  const originalViewport = page.viewportSize()!
+  await page.getByRole('region', { name: '작업 지시', exact: true }).screenshot({ path: fileURLToPath(new URL('../../docs/screens/style-preview/manual-request-fullstack.png', import.meta.url)), style: '.skip-link { visibility:hidden!important; }' })
+  await page.setViewportSize({ width: 390, height: 900 })
+  await page.getByRole('region', { name: '작업 지시', exact: true }).screenshot({ path: fileURLToPath(new URL('../../docs/screens/style-preview/manual-request-mobile-fullstack.png', import.meta.url)) })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391)
+  await page.setViewportSize(originalViewport)
+  await page.reload()
+  await page.getByLabel('운영자', { exact: true }).check()
+  await page.getByRole('button', { name: '운영', exact: true }).click()
+  await expect(manualTrace).toContainText(manual.receipt.externalOrderId)
+  const restoredReplay = page.waitForResponse(response => response.url().endsWith('/api/work-requests/manual') && response.request().method() === 'POST')
+  await manualTrace.getByRole('button', { name: '동일 요청 접수 확인' }).click()
+  const restored = await (await restoredReplay).json()
+  expect(restored.duplicate).toBe(true)
+  expect(restored.receipt.receiptId).toBe(manual.receipt.receiptId)
+  await expect(executions.getByRole('row').filter({ hasText: manual.receipt.jobOrderId })).toHaveCount(1)
+
+  // 임무(S3b 스펙 §3). 엔지니어 모드로 데이터 정의를 초안 저장 → 검증 → 모의 실행 → 활성화한다. 시운전 완료 기체는
   // humanoid-01 하나이고 pick_place 를 가지므로 검증을 지난다. 모의 실행은 실행 호스트 안의 별도 mimic 으로 1~3초 돈다.
   await page.getByLabel('엔지니어').check()
-  await page.getByRole('button', { name: '임무·정책' }).click()
+  await page.getByRole('button', { name: '임무' }).click()
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '호출 연결', exact: true }).click()
+  const interfaces = page.getByRole('region', { name: '버전별 호출 계약' })
+  await interfaces.getByRole('button', { name: '호출 계약 만들기' }).click()
+  const interfaceForm = interfaces.getByRole('region', { name: '호출 계약 작성' })
+  await interfaceForm.getByLabel('호출 식별자', { exact: true }).fill('asset-check')
+  await interfaceForm.getByLabel('계약 이름', { exact: true }).fill('MES 자산 점검')
+  await interfaceForm.getByLabel('대상 미션', { exact: true }).selectOption('InspectAsset')
+  await interfaceForm.getByRole('button', { name: '매핑 검증·미리보기' }).click()
+  await expect(interfaceForm.getByLabel('계약 매핑 미리보기')).toContainText('JO-PREVIEW')
+  await interfaceForm.getByRole('button', { name: '계약 초안 저장' }).click()
+  const savedInterface = interfaces.getByRole('region', { name: '선택한 호출 계약' })
+  await savedInterface.getByLabel('공개 변경 사유').fill('대상 목록 매핑 검증 완료')
+  await savedInterface.getByRole('button', { name: '호출 계약 공개' }).click()
+  await expect(interfaces.getByRole('status', { name: '호출 계약 처리 결과' })).toHaveText('asset-check v1: 공개')
+  const deploymentPanel=savedInterface.getByRole('region',{name:'실행 배포'})
+  await deploymentPanel.getByLabel('배포 판단 사유').fill('초기 코드 정의 명시적 고정')
+  await deploymentPanel.getByRole('button',{name:'새 실행 배포 적용'}).click()
+  await expect(deploymentPanel).toContainText('실행 배포 · v2')
+  await page.getByLabel('운영자', { exact: true }).check()
+  await savedInterface.getByText('공개된 계약으로 작업 요청', { exact: true }).click()
+  await savedInterface.getByRole('button',{name:'이 입력으로 배정 가능 확인'}).click()
+  await expect(savedInterface.getByRole('table',{name:'기체별 배정 가능'})).toContainText('navigate_to')
+  await expect(savedInterface.getByText(/현재 배정 가능한 기체가 있습니다/)).toBeVisible()
+  await savedInterface.getByLabel('이 입력으로 실제 작업을 지시합니다').check()
+  await savedInterface.getByRole('button', { name: '공개 계약으로 작업 지시' }).click()
+  await expect(savedInterface.getByRole('status', { name: '계약 호출 결과' })).toContainText('ACCEPTED')
+  const invokeReceipt = JSON.parse(await savedInterface.getByLabel('계약 호출 응답 JSON').innerText())
+  expect(invokeReceipt.receipt.normalizedOrder.deployment.deploymentVersion).toBe(2)
+  expect(invokeReceipt.receipt.normalizedOrder.missionVersion).toBe('CODE')
+  await savedInterface.getByRole('button', { name: '동일 계약 요청 접수 확인' }).click()
+  await expect(savedInterface.getByRole('status', { name: '계약 호출 결과' })).toContainText('추가 실행 없음')
+  expect(JSON.parse(await savedInterface.getByLabel('계약 호출 응답 JSON').innerText()).receipt.receiptId).toBe(invokeReceipt.receipt.receiptId)
+  const mappedJob = JSON.parse(await savedInterface.getByLabel('계약 호출 응답 JSON').innerText()).receipt.jobOrderId as string
+  await page.getByRole('navigation', { name: '영역' }).getByRole('button', { name: '운영', exact: true }).click()
+  await expect(page.getByRole('table', { name: '실행 목록' }).getByRole('row').filter({ hasText: mappedJob })).toContainText('PHYSICALLY_DONE', { timeout: 90_000 })
+
+  // Mock MES uses the real versioned northbound HTTP endpoint, not Ops mode headers.
+  const auth = { Authorization: 'Bearer picasso-e2e-mock-mes-only' }
+  const upstream = { externalOrderId: 'MES-E2E-204', interfaceId: 'asset-check', interfaceVersion: 1, input: { assets: [{ id: 'T1', location: 'bay-7' }] } }
+  expect((await page.request.post('/integration/v1/job-orders', { data: upstream })).status()).toBe(401)
+  const received = await page.request.post('/integration/v1/job-orders', { headers: auth, data: upstream })
+  expect(received.status()).toBe(202)
+  const receipt = (await received.json()).receipt as { receiptId: string; jobOrderId: string; state: string }
+  expect(receipt.state).toBe('ACCEPTED')
+  const replay = await page.request.post('/integration/v1/job-orders', { headers: auth, data: upstream })
+  expect(replay.status()).toBe(200)
+  expect((await replay.json()).receipt.receiptId).toBe(receipt.receiptId)
+  expect((await page.request.post('/integration/v1/job-orders', { headers: auth, data: { ...upstream, input: { assets: [{ id: 'T2', location: 'bay-7' }] } } })).status()).toBe(409)
+  const rejected = await page.request.post('/integration/v1/job-orders', { headers: auth, data: { ...upstream, externalOrderId: 'MES-E2E-BAD', input: {} } })
+  expect(rejected.status()).toBe(202)
+  expect((await rejected.json()).receipt.state).toBe('REJECTED')
+  // The collector must persist a result without a detail/latest-result GET triggering observation.
+  await expect.poll(async()=> (await page.request.get(`/integration/v1/job-orders/${receipt.receiptId}/results/1`,{headers:auth})).status(),{timeout:90_000}).toBe(200)
+  await expect.poll(async()=> {
+    const rows=await (await page.request.get('http://127.0.0.1:8786/received')).json()
+    return rows.some((row:{body:{receiptId:string};attempts:number})=>row.body.receiptId===receipt.receiptId && row.attempts>=2)
+  },{timeout:30_000}).toBe(true)
+  const requests = page.getByRole('region', { name: '상위 작업 요청' })
+  await requests.getByRole('button', { name: '접수 다시 조회' }).click()
+  await requests.getByRole('button', { name: 'MES-E2E-204 접수 보기' }).click()
+  const receiptDetail = requests.getByRole('article', { name: '작업 요청 상세' })
+  await expect(receiptDetail).toContainText(receipt.jobOrderId)
+  await expect(receiptDetail).toContainText('PHYSICALLY_DONE', { timeout: 90_000 })
+  const polled = await page.request.get(`/integration/v1/job-orders/${receipt.receiptId}`, { headers: auth })
+  expect(polled.status()).toBe(200)
+  expect((await polled.json()).execution.physicalState).toBe('PHYSICALLY_DONE')
+  const resultBase = `/integration/v1/job-orders/${receipt.receiptId}/results`
+  const resultReply = await page.request.get(`${resultBase}/latest`, { headers: auth })
+  expect(resultReply.status()).toBe(200)
+  const result = await resultReply.json()
+  expect(result.snapshot.jobResponse.physicalState).toBe('PHYSICALLY_DONE')
+  expect(result.acknowledgedAt).toBeNull()
+  expect((await page.request.post(`${resultBase}/${result.version}/ack`, { data: { resultHash: result.resultHash } })).status()).toBe(401)
+  expect((await page.request.post(`${resultBase}/${result.version}/ack`, { headers: auth, data: { resultHash: '0'.repeat(64) } })).status()).toBe(409)
+  const ack = await page.request.post(`${resultBase}/${result.version}/ack`, { headers: auth, data: { resultHash: result.resultHash } })
+  expect(ack.status()).toBe(200)
+  const acknowledged = await ack.json()
+  expect(acknowledged.acknowledgedAt).toBeTruthy()
+  const ackAgain = await page.request.post(`${resultBase}/${result.version}/ack`, { headers: auth, data: { resultHash: result.resultHash } })
+  expect(await ackAgain.json()).toEqual(acknowledged)
+  expect((await (await page.request.get(`${resultBase}/${result.version}`, { headers: auth })).json()).snapshot).toEqual(result.snapshot)
+  await requests.getByRole('button', { name: '접수 다시 조회' }).click()
+  await expect(receiptDetail.getByRole('region', { name: '외부 결과 수신 확인' })).toContainText(`v${result.version} 수신 확인됨`)
+  expect(await page.getByRole('table', { name: '실행 목록' }).getByRole('row').filter({ hasText: receipt.jobOrderId }).count()).toBe(1)
+  await expect(receiptDetail.getByLabel('결과 전달 이력')).toContainText('DELIVERED')
+  await page.getByRole('navigation',{name:'영역'}).getByRole('button',{name:'운영 개요',exact:true}).click()
+  const overview=page.getByRole('region',{name:'운영 개요'})
+  await expect(overview.getByRole('link',{name:/전체 접수/})).not.toContainText('모름')
+  await expect(overview.getByRole('region',{name:'결과 자동 수집'})).toContainText('수집 중')
+  const captureStyle='.skip-link { visibility:hidden!important; }'
+  await overview.screenshot({path:fileURLToPath(new URL('../../docs/screens/style-preview/overview-fullstack.png',import.meta.url)),style:captureStyle})
+  const overviewViewport=page.viewportSize()!
+  await page.setViewportSize({width:390,height:900})
+  await overview.screenshot({path:fileURLToPath(new URL('../../docs/screens/style-preview/overview-mobile-fullstack.png',import.meta.url)),style:captureStyle})
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(391)
+  await page.setViewportSize(overviewViewport)
+  await overview.getByRole('link',{name:/업무 거절/}).click()
+  await expect(requests.getByLabel('접수 상태',{exact:true})).toHaveValue('REJECTED')
+  await requests.getByRole('button',{name:'MES-E2E-BAD 접수 보기'}).click()
+  await expect(page).toHaveURL(/#requests\?.*receipt=/)
+  await page.reload()
+  await expect(requests.getByLabel('접수 상태',{exact:true})).toHaveValue('REJECTED')
+  await expect(requests.getByRole('article',{name:'작업 요청 상세'})).toContainText('MES-E2E-BAD')
+  await requests.screenshot({path:fileURLToPath(new URL('../../docs/screens/style-preview/workspace-requests-fullstack.png',import.meta.url)),style:captureStyle})
+  await page.getByLabel('엔지니어', { exact: true }).check()
+  await page.getByRole('navigation', { name: '영역' }).getByRole('button', { name: '임무', exact: true }).click()
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '호출 연결', exact: true }).click()
+  await interfaces.getByRole('button', { name: 'asset-check v1 보기' }).click()
+  await savedInterface.getByLabel('공개 변경 사유').fill('연계 시연 종료')
+  await savedInterface.getByRole('button', { name: '공개 중지' }).click()
+  await expect(interfaces.getByRole('status', { name: '호출 계약 처리 결과' })).toHaveText('asset-check v1: 공개 중지')
+  const blocked = await page.request.post('/api/mission-interfaces/asset-check/1/invoke', { headers: { 'X-Ops-Mode': 'operator', 'X-Ops-User': 'local' }, data: { requestId: crypto.randomUUID(), input: { assets: [{ id: 'T1', location: 'bay-7' }] } } })
+  expect(blocked.status()).toBe(202)
+  expect((await blocked.json()).receipt.state).toBe('REJECTED')
+  await page.getByRole('button', { name: '입력 검증·변환 미리보기' }).click()
+  await expect(page.getByLabel('변환된 작업 지시 JSON')).toContainText('JO-PREVIEW')
+  await expect(page.getByLabel('변환된 작업 지시 JSON')).toContainText('equipmentRequirements')
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
   const editor = page.getByRole('region', { name: '임무 편집' })
   const missionNotice = editor.getByRole('status', { name: '임무 조작 결과' })
   await editor.getByRole('button', { name: '데이터 정의 템플릿 불러오기' }).click()
@@ -204,6 +390,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await editor.getByLabel('활성화 사유').fill('데이터 정의로 옮김')
   await editor.getByRole('button', { name: '활성화', exact: true }).click()
   await expect(missionNotice).toHaveText('초안 1 활성화: 버전 1 활성화됨. 다음 작업 지시부터 이 버전을 씁니다')
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '버전·배포', exact: true }).click()
   const missionVersions = page.getByRole('table', { name: '임무 버전 이력' })
   await expect(missionVersions.getByRole('row', { name: /^버전 1 \(활성\) 초안 1 local 데이터 정의로 옮김 / })).toBeVisible()
 
@@ -217,8 +404,9 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(signals.getByRole('row', { name: /^rack_present BOOLEAN true / })).toBeVisible()
 
   // 장애 주입(S4a 스펙 §3). 운영자가 데이터 정의 버전 1 로 슬롯 하나짜리 PrepareSequencedRack 을 내고, pick_place 가 도는 동안
-  // 엔지니어가 현장·자원 영역에서 스킬 실패를 넣는다. 슬롯 S01 은 아직 채운 적이 없어 근거가 없으므로 단위가 FAILED 이고
+  // 엔지니어가 검증 도구 영역에서 스킬 실패를 넣는다. 슬롯 S01 은 아직 채운 적이 없어 근거가 없으므로 단위가 FAILED 이고
   // GRASP_FAILED 인시던트가 선다. 현장 기체의 pick_place 는 이것이 처음이고 강제한 태스크는 자연 실패 추첨을 하지 않는다.
+  await page.getByRole('button', { name: '새 작업 작성', exact: true }).click()
   await order.getByLabel('임무').selectOption('PrepareSequencedRack')
   await order.getByLabel('RACK-204.S01').check()
   await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
@@ -228,7 +416,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   // 작업 지시 직후의 태스크는 ACCEPTED 라 현장이 거부한다. RUNNING 이 보인 뒤에 넣는다. pick_place 는 45초 ±10% 다.
   await expect(graspRun).toContainText('RACK-204.S01 pick_place: RUNNING')
   await page.getByLabel('엔지니어').check()
-  await page.getByRole('button', { name: '현장·자원' }).click()
+  await page.getByRole('button', { name: '검증 도구' }).click()
   const faultForm = page.getByRole('form', { name: '장애 주입 폼' })
   await faultForm.getByLabel('기체').selectOption('humanoid-01')
   await faultForm.getByLabel('장애 종류').selectOption('SKILL_EXECUTION_FAILED')
@@ -249,7 +437,8 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
 
   // 운영자 보류(S4a 스펙 §3). 활성화한 보류 버전은 DB 에 남으므로 맨 끝에 둔다. 런처는 1:1 실시간이고 시계를 밀 수단이 없어
   // 기한 20초를 실제 시간으로 기다린다. 재작업 뒤 대기는 새 기한 20초로 다시 돌므로 다시 돈 것을 본 즉시 신호를 켠다.
-  await page.getByRole('button', { name: '임무·정책' }).click()
+  await page.getByRole('button', { name: '임무' }).click()
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
   await editor.getByRole('button', { name: '운영자 보류 대기 템플릿 불러오기' }).click()
   await editor.getByRole('button', { name: '초안 저장' }).click()
   await expect(missionNotice).toHaveText('초안 저장: 초안 2 저장됨')
@@ -265,6 +454,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await signals.getByRole('button', { name: 'rack_present 끄기' }).click()
   await expect(signals.getByRole('row', { name: /^rack_present BOOLEAN false / })).toBeVisible()
   // 영역을 옮기면 작업 지시 폼이 처음 값(InspectAsset)으로 돌아온다.
+  await page.getByRole('button', { name: '새 작업 작성', exact: true }).click()
   await order.getByLabel('임무').selectOption('PrepareSequencedRack')
   await order.getByLabel('RACK-204.S02').check()
   await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
@@ -310,16 +500,158 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(sentRows.filter({ hasText: '재기동 중복' })).toHaveCount(0)
   await expect(responseLog).toContainText('그 가운데 재기동 중복 0건')
 
+  // A third mission is registered, validated, deployed and executed entirely through the UI.
+  await page.getByLabel('엔지니어',{exact:true}).check()
+  await page.getByRole('navigation',{name:'영역'}).getByRole('button',{name:'임무',exact:true}).click()
+  await page.getByRole('button',{name:'새 미션 만들기',exact:true}).click()
+  const creator=page.getByRole('region',{name:'새 미션 생성'})
+  await creator.getByLabel('새 미션 ID').fill('LineAssetCheck')
+  await creator.getByLabel('새 미션 이름').fill('라인 자산 점검')
+  await creator.getByRole('button',{name:'미션 등록 후 실행 정의 열기'}).click()
+  const dynamicEditor=page.getByRole('region',{name:'임무 편집'})
+  const dynamicNotice=dynamicEditor.getByRole('status',{name:'임무 조작 결과'})
+  await expect(dynamicEditor).toContainText('활성 버전 없음')
+  await expect(dynamicEditor.locator('textarea').first()).toHaveValue(/LineAssetCheck/)
+  await dynamicEditor.getByRole('button',{name:'초안 저장',exact:true}).click()
+  await expect(dynamicNotice).toContainText('저장됨')
+  await dynamicEditor.getByRole('button',{name:'검증',exact:true}).click()
+  await expect(dynamicNotice).toContainText('검증: 통과')
+  await dynamicEditor.getByRole('button',{name:'모의 실행',exact:true}).click()
+  await expect(dynamicNotice).toContainText('모의 실행: 통과')
+  await dynamicEditor.getByLabel('활성화 사유').fill('신규 업무 전체 여정 검증')
+  await dynamicEditor.getByRole('button',{name:'활성화',exact:true}).click()
+  await expect(dynamicNotice).toContainText('버전 1 활성화됨')
+  await page.getByRole('navigation',{name:'미션 관리'}).getByRole('button',{name:'호출 연결',exact:true}).click()
+  await page.getByRole('button',{name:'호출 계약 만들기',exact:true}).click()
+  const dynamicInterface=page.getByRole('region',{name:'호출 계약 작성'})
+  await dynamicInterface.getByLabel('호출 식별자').fill('line-asset-check')
+  await dynamicInterface.getByRole('button',{name:'계약 초안 저장',exact:true}).click()
+  const dynamicSaved=page.getByRole('region',{name:'선택한 호출 계약'})
+  await expect(dynamicSaved).toContainText('LineAssetCheck')
+  const dynamicDeployment=dynamicSaved.getByRole('region',{name:'실행 배포'})
+  await dynamicDeployment.getByLabel('배포할 미션 버전').selectOption('1')
+  await dynamicDeployment.getByLabel('배포 판단 사유').fill('검증한 정의 v1 연결')
+  await dynamicDeployment.getByRole('button',{name:'새 실행 배포 적용'}).click()
+  await expect(dynamicDeployment).toContainText('실행 배포 · v1')
+  await dynamicSaved.getByLabel('공개 변경 사유').fill('신규 미션 호출 허용')
+  await dynamicSaved.getByRole('button',{name:'호출 계약 공개',exact:true}).click()
+  await expect(page.getByRole('status',{name:'호출 계약 처리 결과'})).toContainText('line-asset-check v1: 공개')
+  await page.evaluate(()=>document.fonts.ready)
+  await page.getByRole('region',{name:'버전별 호출 계약'}).screenshot({path:fileURLToPath(new URL('../../docs/screens/style-preview/new-mission-contract-fullstack.png',import.meta.url)),style:captureStyle})
+  await page.getByLabel('운영자',{exact:true}).check()
+  await dynamicSaved.getByText('공개된 계약으로 작업 요청',{exact:true}).click()
+  await dynamicSaved.getByRole('button',{name:'이 입력으로 배정 가능 확인'}).click()
+  await expect(dynamicSaved.getByRole('table',{name:'기체별 배정 가능'})).toContainText('inspect')
+  await expect(dynamicSaved.getByText(/현재 배정 가능한 기체가 있습니다/)).toBeVisible()
+  const preflight = dynamicSaved.getByRole('region',{name:'계약 입력의 배정 가능 미리보기'})
+  await preflight.screenshot({path:fileURLToPath(new URL('../../docs/screens/style-preview/interface-eligibility-fullstack.png',import.meta.url)),style:captureStyle})
+  const preflightViewport=page.viewportSize()!
+  await page.setViewportSize({width:390,height:844})
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
+  await preflight.screenshot({path:fileURLToPath(new URL('../../docs/screens/style-preview/interface-eligibility-mobile-fullstack.png',import.meta.url)),style:captureStyle})
+  await page.setViewportSize(preflightViewport)
+  await dynamicSaved.getByLabel('이 입력으로 실제 작업을 지시합니다').check()
+  await dynamicSaved.getByRole('button',{name:'공개 계약으로 작업 지시'}).click()
+  await expect(dynamicSaved.getByRole('status',{name:'계약 호출 결과'})).toContainText('ACCEPTED')
+  const dynamicReceipt=JSON.parse(await dynamicSaved.getByLabel('계약 호출 응답 JSON').innerText()).receipt
+  expect(dynamicReceipt.normalizedOrder.workMasterId).toBe('LineAssetCheck')
+  expect(dynamicReceipt.normalizedOrder.missionVersion).toBe('1')
+  await page.getByRole('navigation',{name:'영역'}).getByRole('button',{name:'운영',exact:true}).click()
+  await expect(page.getByRole('table',{name:'실행 목록'}).getByRole('row').filter({hasText:dynamicReceipt.jobOrderId})).toContainText('PHYSICALLY_DONE',{timeout:90_000})
+
+  // Compare persisted upstream receipts through the validation workspace.
+  await expect.poll(async () => (await (await page.request.get(`/api/work-requests/${dynamicReceipt.receiptId}`)).json()).latestResult?.snapshot?.jobResponse?.physicalState).toBe('PHYSICALLY_DONE')
+  await page.getByRole('navigation', { name: '영역' }).getByRole('button', { name: '검증 도구', exact: true }).click()
+  const comparison = page.getByRole('region', { name: '제조 시나리오 검증' })
+  await comparison.getByLabel('접수 A ID').fill(invokeReceipt.receipt.receiptId)
+  await comparison.getByLabel('접수 B ID').fill(dynamicReceipt.receiptId)
+  await comparison.getByRole('button', { name: '두 접수 비교하기' }).click()
+  await expect(comparison.getByRole('status')).toContainText('계약 또는 실행 배포가 다릅니다')
+  await expect(comparison.getByRole('article', { name: '접수 B 근거' })).toContainText('PHYSICALLY_DONE')
+  await comparison.getByRole('heading', { name: '업무 계약과 실행 근거 비교' }).click()
+  await comparison.screenshot({ path: fileURLToPath(new URL('../../docs/screens/style-preview/manufacturing-comparison-fullstack.png', import.meta.url)), style: captureStyle })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await comparison.screenshot({ path: fileURLToPath(new URL('../../docs/screens/style-preview/manufacturing-comparison-mobile-fullstack.png', import.meta.url)), style: captureStyle })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+
+  // Lose an ACCEPTED response after the real host committed it; keep the link down while work completes.
+  const beforeCut=await (await page.request.get('http://127.0.0.1:8790/status')).json()
+  expect((await page.request.post('http://127.0.0.1:8790/cut-after-submit')).ok()).toBe(true)
+  const uncertainBody={externalOrderId:'MES-RESTART-1',interfaceId:'line-asset-check',interfaceVersion:1,input:{targets:[{id:'T1',location:'bay-7'}]}}
+  const uncertainReply=await page.request.post('/integration/v1/job-orders',{headers:auth,data:uncertainBody})
+  expect(uncertainReply.status()).toBe(202)
+  const uncertain=(await uncertainReply.json()).receipt
+  expect(uncertain.state).toBe('IN_DOUBT')
+  await expect.poll(async()=> (await (await page.request.get('/api/work-requests/collector')).json()).state,{timeout:20_000}).toBe('UNAVAILABLE')
+  await page.goto(`/#requests?receipt=${uncertain.receiptId}`)
+  await page.getByLabel('운영자',{exact:true}).check()
+  const review=page.getByRole('region',{name:'현장 확인 기록'})
+  await review.getByLabel('현장 관측').selectOption('IN_PROGRESS')
+  await review.getByLabel('확인 근거·담당자·인계 내용').fill('로컬 PoC 담당자 확인: 실제 호스트 수락, 연결 단절 중 진행')
+  await review.getByRole('button',{name:'현장 확인 기록 저장',exact:true}).click()
+  await expect(review.getByRole('status')).toContainText('현장 확인 기록 저장됨')
+  await expect(page.getByRole('region',{name:'현장 확인 이력'})).toContainText('로컬 PoC 담당자 확인')
+  await expect.poll(async()=>{
+   const current=await (await page.request.get('http://127.0.0.1:8785/host/executions')).json()
+   return current.executions.find((e:{jobOrderId:string})=>e.jobOrderId===uncertain.jobOrderId)?.physicalState
+  },{timeout:90_000}).toBe('PHYSICALLY_DONE')
+  const durableFeed=await (await page.request.get('http://127.0.0.1:8785/host/result-events?limit=200')).json()
+  const jobEvents=durableFeed.events.filter((e:{snapshot:{jobOrderId:string}})=>e.snapshot.jobOrderId===uncertain.jobOrderId)
+  expect(jobEvents.length).toBeGreaterThan(0)
+  expect((await page.request.get(`/integration/v1/job-orders/${uncertain.receiptId}/results/1`,{headers:auth})).status()).toBe(404)
+  const cursorBefore=(await (await page.request.get('/api/work-requests/collector')).json()).cursor
+  expect((await page.request.post('http://127.0.0.1:8788/restart')).ok()).toBe(true)
+  await expect.poll(async()=>{try{return (await page.request.get('/api/work-requests/collector')).status()}catch{return 0}},{timeout:60_000}).toBe(200)
+  expect((await (await page.request.get('/api/work-requests/collector')).json()).cursor.sequence).toBe(cursorBefore.sequence)
+  const replayAfterRestart=await page.request.post('/integration/v1/job-orders',{headers:auth,data:uncertainBody})
+  expect(replayAfterRestart.status()).toBe(200)
+  expect((await replayAfterRestart.json()).receipt.receiptId).toBe(uncertain.receiptId)
+  expect((await (await page.request.get('http://127.0.0.1:8790/status')).json()).submissions).toBe(beforeCut.submissions+1)
+  expect((await page.request.post('http://127.0.0.1:8789/restart')).ok()).toBe(true)
+  await expect.poll(async()=>{try{return (await page.request.get('http://127.0.0.1:8785/host/result-events')).status()}catch{return 0}},{timeout:60_000}).toBe(200)
+  const hostAfterRestart=await (await page.request.get('http://127.0.0.1:8785/host/result-events?limit=200')).json()
+  expect(hostAfterRestart).toEqual(durableFeed)
+  expect((await page.request.post('http://127.0.0.1:8790/connect')).ok()).toBe(true)
+  await expect.poll(async()=> (await page.request.get(`/integration/v1/job-orders/${uncertain.receiptId}/results/1`,{headers:auth})).status(),{timeout:30_000}).toBe(200)
+  const restoredResult=await (await page.request.get(`/integration/v1/job-orders/${uncertain.receiptId}/results/latest`,{headers:auth})).json()
+  expect(restoredResult.snapshot.jobResponse.jobResponseId).toBe(jobEvents.at(-1).snapshot.jobResponse.jobResponseId)
+  expect(restoredResult.snapshot.jobResponse.physicalState).toBe('PHYSICALLY_DONE')
+  await expect.poll(async()=> (await (await page.request.get(`/api/work-requests/${uncertain.receiptId}`)).json()).receipt.state).toBe('ACCEPTED')
+  await page.reload()
+  await expect(page.getByRole('region',{name:'현장 확인 이력'})).toContainText('로컬 PoC 담당자 확인')
+  await expect(page.getByRole('region',{name:'저장 결과의 완료 근거'})).toContainText('PHYSICALLY_DONE')
+  await page.getByRole('heading',{name:'주문 접수 상세',exact:true}).click()
+  await page.getByRole('article',{name:'작업 요청 상세'}).screenshot({path:'../docs/screens/style-preview/reliability-recovery-fullstack.png'})
+  expect((await (await page.request.get('http://127.0.0.1:8790/status')).json()).submissions).toBe(beforeCut.submissions+1)
+
+  // 정상 연계 구간에서 UI가 존재하지 않는 API를 호출하지 않았는지 확인한다.
+  expect(apiResponses.filter(response => response.status === 404)).toEqual([])
+  for (const [method, path] of [
+    ['GET', '/api/robots'], ['GET', '/api/adapters'], ['GET', '/api/profiles'],
+    ['GET', '/api/job-contracts'], ['POST', '/api/job-orders/preview'],
+    ['GET', '/api/mission-interfaces'], ['POST', '/api/mission-interfaces'],
+    ['POST', '/api/mission-interfaces/preview'], ['POST','/api/mission-interfaces/asset-check/1/eligibility'], ['POST', '/api/mission-interfaces/asset-check/1/state'],
+
+    ['POST', '/api/robots'], ['POST', '/api/adapters'], ['POST', '/api/adapter-instances'],
+    ['POST', '/api/profile-revisions'], ['POST', '/api/robots/humanoid-01/binding'],
+    ['POST', '/api/robots/humanoid-01/site-names'], ['POST', '/api/job-orders/eligibility'],
+    ['POST', '/api/work-requests/manual'], ['POST', '/api/faults'],
+  ]) expect(apiResponses.some(response => response.method === method && response.path === path && response.status === 200)).toBe(true)
+  await test.info().attach('api-responses', { body: JSON.stringify(apiResponses, null, 2), contentType: 'application/json' })
+
   // registry 를 멈춘다. 런처(registry 와 mimic 이 든 프로세스)를 끈다.
   const pidFile = fileURLToPath(new URL('../../build/site.pid', import.meta.url))
   process.kill(Number(readFileSync(pidFile, 'utf8')))
-  await page.getByRole('button', { name: '로봇·연결' }).click()
+  await page.getByRole('navigation', { name: '영역' }).getByRole('button', { name: '로봇', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('모름: registry 가 답하지 않습니다')
   await expect(page.getByRole('button', { name: 'humanoid-01', exact: true })).toBeVisible()
   // 기체 목록과 어댑터 목록이 각자 직전 값으로 남는다.
   await expect(page.getByRole('region', { name: '기체 목록' }).getByText(/직전 값입니다/)).toBeVisible()
+  await page.getByRole('button', { name: '어댑터 관리', exact: true }).click()
   const adapters = page.getByRole('region', { name: '어댑터' })
   await expect(adapters.getByText(/직전 값입니다/)).toBeVisible()
   await expect(adapters.getByRole('row', { name: /fleet-gw-01/ })).toBeVisible()
+  await page.getByRole('button', { name: '프로파일 관리', exact: true }).click()
   await expect(profiles.getByText(/직전 값입니다/)).toBeVisible()
 })

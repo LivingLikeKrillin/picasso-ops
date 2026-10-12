@@ -135,6 +135,7 @@ const cells = (row: HTMLElement) => within(row).getAllByRole('cell').map((cell) 
 
 describe('운영 영역', () => {
   afterEach(() => {
+    sessionStorage.clear()
     vi.useRealTimers()
     vi.unstubAllGlobals()
   })
@@ -150,8 +151,8 @@ describe('운영 영역', () => {
     await fillTarget(3, 'T3', 'bay-3')
     await userEvent.click(screen.getByRole('button', { name: '대상 2 빼기' }))
     await submit()
-    const post = calls(fake, 'POST', '/api/job-orders').at(-1)!
-    expect(post.body).toEqual({
+    const post = calls(fake, 'POST', '/api/work-requests/manual').at(-1)!
+    expect((post.body as {form: unknown}).form).toEqual({
       workMasterId: 'InspectAsset',
       targets: [
         { id: 'T1', location: 'bay-7' },
@@ -162,7 +163,7 @@ describe('운영 영역', () => {
     expect(post.headers['X-Ops-User']).toBe('kim')
     expect(post.headers['Content-Type']).toBe('application/json')
     // 배정 가능은 같은 폼 초안으로 묻는다. 폼이 멈춘 뒤 디바운스를 지나 묻는다.
-    await waitFor(() => expect(calls(fake, 'POST', '/api/job-orders/eligibility').at(-1)?.body).toEqual(post.body))
+    await waitFor(() => expect(calls(fake, 'POST', '/api/job-orders/eligibility').at(-1)?.body).toEqual((post.body as {form: unknown}).form))
   })
 
   it('PrepareSequencedRack 폼은 셀 대역 슬롯을 셀 순서로 담고 자재에서 정한 제시 자리로 낸다', async () => {
@@ -176,7 +177,7 @@ describe('운영 영역', () => {
     await userEvent.selectOptions(within(form).getByLabelText('자재'), 'ENGINE-COVER-A')
     expect(within(form).getByText('제시 자리 SEQ-IN-02.BIN-A')).toBeInTheDocument()
     await submit()
-    expect(calls(fake, 'POST', '/api/job-orders').at(-1)!.body).toEqual({
+    expect((calls(fake, 'POST', '/api/work-requests/manual').at(-1)!.body as {form: unknown}).form).toEqual({
       workMasterId: 'PrepareSequencedRack',
       slots: ['RACK-204.S01', 'RACK-204.S03'],
       material: 'ENGINE-COVER-A',
@@ -218,7 +219,7 @@ describe('운영 영역', () => {
     expect(field(notice, '작업 지시 id')).toBe('JO-20261008-6f1c2a9e')
     expect(field(notice, '실행 id')).toBe('exec-1')
     expect(field(notice, '배정된 기체')).toBe('humanoid-01')
-    const row = await screen.findByRole('row', { name: /JO-20261008-6f1c2a9e/ })
+    const row = await within(screen.getByRole('region', {name:'실행'})).findByRole('row', { name: /JO-20261008-6f1c2a9e/ })
     await waitFor(() => expect(row).toHaveClass('selected'))
   })
 
@@ -303,7 +304,7 @@ describe('운영 영역', () => {
 
   it.each([
     ['CONFIRMED_APPLIED' as const, '응답은 없었으나 다시 읽어 보니 실행이 있음'],
-    ['CONFIRMED_NOT_APPLIED' as const, '응답 없음. 다시 읽어 보니 실행이 없음. 다시 하려면 새로 내십시오'],
+    ['CONFIRMED_NOT_APPLIED' as const, '응답 없음. 현재 실행이 보이지 않습니다. 기존 요청 ID로 접수를 확인하세요'],
     [null, '반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다'],
   ])('호스트 응답 없음은 확인 결과 %s 를 따로 보인다', async (confirmation, text) => {
     const fake = installFakeOps(emptyList)
@@ -392,6 +393,7 @@ describe('운영 영역', () => {
           host: hostRow('humanoid-02', {
             skillFit: 'MISSING',
             missingSkills: ['pick_place'],
+            requiredSkills: ['pick_place'], availableSkills: ['inspect'],
             runningExecutionId: 'exec-4',
             passed: false,
             reasons: ['모자란 스킬: pick_place', '도는 실행이 있다: exec-4'],
@@ -412,21 +414,23 @@ describe('운영 영역', () => {
         '모름',
         '모름',
         '없음',
+        '모름', '모름',
         '모름',
         '불가',
         'registry 가 답하지 않아 시운전·연결을 모른다; 기체 케이퍼빌리티를 못 물어봤다',
       ],
-      ['quadruped-01', '완료', '신선(현장 설정 버전 1)', '모름', '모름', '불가', '실행 호스트가 이 기체를 판정하지 않았다'],
+      ['quadruped-01', '완료', '신선(현장 설정 버전 1)', '모름', '모름', '모름', '모름', '불가', '실행 호스트가 이 기체를 판정하지 않았다'],
       [
         'humanoid-02',
         '완료',
         '신선(현장 설정 버전 1)',
         'exec-4',
+        'pick_place', 'inspect',
         '모자람: pick_place',
         '불가',
         '모자란 스킬: pick_place; 도는 실행이 있다: exec-4',
       ],
-      ['humanoid-03', '완료', '신선(현장 설정 버전 1)', '없음', '적합', '가능', ''],
+      ['humanoid-03', '완료', '신선(현장 설정 버전 1)', '없음', '모름', '모름', '적합', '가능', ''],
     ])
   })
 
@@ -683,7 +687,7 @@ describe('운영 영역', () => {
       await screen.findByText('모름: 실행 목록을 아직 읽지 못했습니다 (실행 호스트가 답하지 않는다: 응답 없음: ConnectException)'),
     ).toBeInTheDocument()
     expect(screen.queryByText(/운영 서비스에 닿지 않습니다/)).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: '로봇·연결' }))
+    await userEvent.click(screen.getByRole('button', { name: '로봇' }))
     expect(screen.getByText('선언된 기체가 없습니다')).toBeInTheDocument()
     expect(screen.queryByText(/직전 값입니다/)).not.toBeInTheDocument()
     expect(screen.getByText(/registry 응답 확인/)).toBeInTheDocument()

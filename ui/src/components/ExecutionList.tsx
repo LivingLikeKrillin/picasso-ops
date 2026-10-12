@@ -27,6 +27,7 @@ export function ExecutionList({ read, highlight }: Props) {
   return (
     <>
       {error !== null && <p className="stale">직전 값입니다. 실행 호스트 불통: {error}</p>}
+      {!!value.journalBlockedExecutionIds?.length && <p role="alert">실행 일지 저장 실패로 호스트의 명령 진행과 신규 배정이 차단되었습니다: {value.journalBlockedExecutionIds.join(', ')}</p>}
       <dl>
         <dt>실행 호스트 인스턴스</dt>
         <dd>{value.instanceId}</dd>
@@ -39,7 +40,7 @@ export function ExecutionList({ read, highlight }: Props) {
       {value.executions.length === 0 ? (
         <p>실행이 없습니다</p>
       ) : (
-        <table aria-label="실행 목록">
+        <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="실행 목록">
           <thead>
             <tr>
               <th>실행 id</th>
@@ -85,7 +86,7 @@ export function ExecutionList({ read, highlight }: Props) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </>
   )

@@ -10,12 +10,13 @@ interface Props {
 export function HistoryArea({ records, opsError }: Props) {
   if (records === null) return <p>모름: 조작 기록을 아직 읽지 못했습니다</p>
   return (
-    <>
+    <section aria-label="조작 이력">
+      <h2>조작 기록</h2>
       {opsError !== null && <p className="stale">직전 값입니다</p>}
       {records.length === 0 ? (
         <p>조작 기록이 없습니다</p>
       ) : (
-        <table>
+        <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table>
           <thead>
             <tr>
               <th>시각</th>
@@ -38,8 +39,8 @@ export function HistoryArea({ records, opsError }: Props) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
-    </>
+    </section>
   )
 }

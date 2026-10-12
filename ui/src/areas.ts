@@ -1,4 +1,4 @@
-export type AreaId = 'site' | 'robots' | 'missions' | 'operations' | 'history'
+export type AreaId = 'stations' | 'overview' | 'requests' | 'site' | 'robots' | 'missions' | 'operations' | 'history' | 'validation'
 
 export interface Area {
   id: AreaId
@@ -8,9 +8,13 @@ export interface Area {
 }
 
 export const AREAS: readonly Area[] = [
-  { id: 'site', label: '현장·자원', ready: true },
-  { id: 'robots', label: '로봇·연결', ready: true },
-  { id: 'missions', label: '임무·정책', ready: true },
+  { id: 'overview', label: '운영 개요', ready: true },
+  { id: 'requests', label: '작업 요청', ready: true },
+  { id: 'stations', label: '공유 자원', ready: true },
   { id: 'operations', label: '운영', ready: true },
+  { id: 'robots', label: '로봇', ready: true },
+  { id: 'missions', label: '임무', ready: true },
+  { id: 'site', label: '현장 설정', ready: true },
   { id: 'history', label: '이력', ready: true },
+  { id: 'validation', label: '검증 도구', ready: true },
 ]

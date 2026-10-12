@@ -109,41 +109,42 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   // ── 빈 상태 ──────────────────────────────────────────────────────────────
   await expect(page.getByText('선언된 기체가 없습니다', { exact: true })).toBeVisible()
   await shot(page, 'robots-overview-empty', {
-    area: '로봇·연결',
+    area: '로봇',
     section: '전체',
     mode: '엔지니어',
     state: '빈 상태(기체·어댑터·리비전 없음)',
-    strings: ['registry 응답 확인', '선언된 기체가 없습니다', '등록된 인스턴스가 없습니다', '제출된 리비전이 없습니다', '기체를 고르면 원장 상태와 연결이 여기에 보입니다.'],
+    strings: ['registry 응답 확인', '선언된 기체가 없습니다', '기체를 고르면 원장 상태와 연결이 여기에 보입니다.'],
   })
   await radio(page, '운영자')
   await shot(page, 'robots-overview-empty-operator', {
-    area: '로봇·연결',
+    area: '로봇',
     section: '전체',
     mode: '운영자',
     state: '빈 상태, 운영자 모드(선언·등록 폼 없음)',
-    strings: ['선언은 엔지니어 모드에서 합니다', '어댑터 등록은 엔지니어 모드에서 합니다', '프로파일 관리는 엔지니어 모드에서 합니다'],
+    strings: ['선언은 엔지니어 모드에서 합니다'],
   })
   await radio(page, '엔지니어')
 
-  await go(page, '현장·자원')
+  await go(page, '현장 설정')
   const settings = page.getByRole('region', { name: '현장 설정' })
   await expect(settings.getByText('실행 호스트 반영: 버전 1', { exact: true })).toBeVisible({ timeout: 15_000 })
   await shot(page, 'site-overview-initial', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '전체',
     mode: '엔지니어',
     state: '처음 상태(현장 설정 버전 1, 기체 없음)',
     strings: ['현재 버전', '실행 호스트 반영: 버전 1', '결과 판정 값', '정체 표시', '장애를 넣을 기체가 없습니다'],
   })
 
-  await go(page, '임무·정책')
-  await expect(page.getByText('활성화한 버전이 없습니다. 코드 정의로 돕니다', { exact: true })).toBeVisible()
+  await go(page, '임무')
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
+  await expect(page.getByText('코드 정의는 정의 JSON 이 없습니다', { exact: true })).toBeVisible()
   await shot(page, 'missions-overview-initial', {
-    area: '임무·정책',
+    area: '임무',
     section: '전체',
     mode: '엔지니어',
     state: '처음 상태(코드 정의, 버전·초안 없음)',
-    strings: ['PrepareSequencedRack', '코드 정의', '활성화한 버전이 없습니다. 코드 정의로 돕니다', '저장한 초안이 없습니다', '데이터 정의 템플릿 불러오기'],
+    strings: ['PrepareSequencedRack', '코드 정의', '코드 정의는 정의 JSON 이 없습니다', '저장한 초안이 없습니다', '데이터 정의 템플릿 불러오기'],
   })
 
   await radio(page, '운영자')
@@ -167,10 +168,10 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     strings: ['조작 기록이 없습니다'],
   })
 
-  // ── 로봇·연결: 선언, 퇴역·복귀 ─────────────────────────────────────────────
+  // ── 로봇: 선언, 퇴역·복귀 ─────────────────────────────────────────────
   await radio(page, '엔지니어')
-  await go(page, '로봇·연결')
-  const detailArea = page.getByRole('region', { name: '상세', exact: true })
+  await go(page, '로봇')
+  const detailArea = page.locator('.robot-workspace')
   const humanoid = page.getByRole('region', { name: 'humanoid-01 상세' })
   const declare = page.getByRole('form', { name: '기체 선언' })
   await declare.getByLabel('robot_id').fill('humanoid-01')
@@ -180,8 +181,8 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
   await expect(humanoid.getByText('CONFIRMED', { exact: true })).toBeVisible()
   await shot(detailArea, 'robots-detail-unbound', {
-    area: '로봇·연결',
-    section: '상세',
+    area: '로봇',
+    section: '로봇 작업 영역',
     mode: '엔지니어',
     state: '선언 직후 알림, 바인딩 없음 막힘 카드, 시운전 미완',
     strings: ['humanoid-01 선언: 반영됨', 'CONFIRMED', '바인딩 없음', '활성 바인딩 없음', '시운전: 미완', '퇴역과 복귀는 운영자 모드에서 합니다'],
@@ -192,8 +193,8 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await humanoid.getByRole('button', { name: '퇴역' }).click()
   await expect(humanoid.getByText('퇴역 뒤 보고', { exact: true })).toBeVisible()
   await shot(detailArea, 'robots-detail-retired-blocked', {
-    area: '로봇·연결',
-    section: '상세',
+    area: '로봇',
+    section: '로봇 작업 영역',
     mode: '운영자',
     state: '퇴역 뒤 보고 막힘 카드, 복귀 버튼',
     strings: ['humanoid-01 퇴역: 반영됨', 'RETIRED', '퇴역 뒤 보고', '운영자(화면 안): 현장에서 기체를 내리거나 복귀', '복귀'],
@@ -203,6 +204,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
 
   // ── 어댑터 ──────────────────────────────────────────────────────────────
   await radio(page, '엔지니어')
+  await page.getByRole('button', { name: '어댑터 관리', exact: true }).click()
   const product = page.getByRole('form', { name: '제품 선언' })
   await product.getByLabel('vendor').fill('acme')
   await product.getByLabel('name').fill('fleet')
@@ -221,8 +223,8 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await build.getByRole('button', { name: '빌드 선언' }).click()
   await expect(detailArea.getByText('acme/fleet 1.0.0 빌드 선언: 거절됨', { exact: true })).toBeVisible()
   await shot(detailArea, 'robots-notice-build-rejected', {
-    area: '로봇·연결',
-    section: '상세',
+    area: '로봇',
+    section: '로봇 작업 영역',
     mode: '엔지니어',
     state: '조작 거절 알림과 발견 카드(같은 빌드 버전에 다른 계약값)',
     strings: ['acme/fleet 1.0.0 빌드 선언: 거절됨', '관측값과 기대값', '해결 담당'],
@@ -233,7 +235,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await instance.getByRole('button', { name: '인스턴스 등록' }).click()
   await expect(page.getByText('fleet-gw-01 인스턴스 등록: 반영됨', { exact: true })).toBeVisible()
   await shot(page.getByRole('region', { name: '어댑터' }), 'robots-adapters-populated', {
-    area: '로봇·연결',
+    area: '로봇',
     section: '어댑터',
     mode: '엔지니어',
     state: '제품·빌드·인스턴스 등록 뒤',
@@ -241,11 +243,13 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   })
 
   // ── 프로파일 ─────────────────────────────────────────────────────────────
+  await page.getByRole('button', { name: '기체', exact: true }).click()
   await declare.getByLabel('robot_id').fill('quadruped-01')
   await declare.getByLabel('일련번호').fill('QB-0001')
   await declare.getByRole('button', { name: '선언' }).click()
   await expect(page.getByText('quadruped-01 선언: 반영됨', { exact: true })).toBeVisible()
 
+  await page.getByRole('button', { name: '프로파일 관리', exact: true }).click()
   const profiles = page.getByRole('region', { name: '프로파일' })
   const revisions = profiles.getByRole('table', { name: '리비전 목록' })
   for (const [model, revision] of [['humanoid-a', 2], ['quadruped-b', 1]] as const) {
@@ -261,7 +265,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
       await row.getByRole('button', { name: '활성화' }).click()
       await expect(detailArea.getByText(`picasso-ref/${model}#${revision} 활성화: 거절됨`, { exact: true })).toBeVisible()
       await shot(page, 'robots-overview-activation-rejected', {
-        area: '로봇·연결',
+        area: '로봇',
         section: '전체',
         mode: '엔지니어',
         state: '시험 전 활성화 거절 알림과 발견 카드, 리비전 VALIDATED',
@@ -277,7 +281,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     await expect(row).toContainText('ACTIVE')
   }
   await shot(profiles, 'robots-profiles-populated', {
-    area: '로봇·연결',
+    area: '로봇',
     section: '프로파일',
     mode: '엔지니어',
     state: '리비전 둘 시험 통과·활성화 뒤',
@@ -285,6 +289,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   })
 
   // ── 바인딩과 명칭 기록 ────────────────────────────────────────────────────
+  await page.getByRole('button', { name: '기체', exact: true }).click()
   for (const [robotId, model, revision] of [['humanoid-01', 'humanoid-a', 2], ['quadruped-01', 'quadruped-b', 1]] as const) {
     await page.getByRole('button', { name: robotId, exact: true }).click()
     const robot = page.getByRole('region', { name: `${robotId} 상세` })
@@ -296,8 +301,8 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     await expect(robot.getByText('명칭 기록 없음', { exact: true })).toBeVisible()
     if (robotId === 'humanoid-01') {
       await shot(detailArea, 'robots-detail-bound-unnamed', {
-        area: '로봇·연결',
-        section: '상세',
+        area: '로봇',
+        section: '로봇 작업 영역',
         mode: '엔지니어',
         state: '바인딩 뒤 명칭 기록 없음 막힘',
         strings: ['humanoid-01 바인딩: 반영됨', '명칭 기록 없음', '명칭 등록 기록', '요구 키'],
@@ -309,8 +314,8 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
   await expect(humanoid.getByRole('heading', { name: '시운전: 완료' })).toBeVisible()
   await shot(detailArea, 'robots-detail-commissioned', {
-    area: '로봇·연결',
-    section: '상세',
+    area: '로봇',
+    section: '로봇 작업 영역',
     mode: '엔지니어',
     state: '시운전 완료, 막힘 없음',
     strings: ['시운전: 완료', '막힘 없음', 'acme/fleet 1.0.0', 'picasso-ref/humanoid-a#2', '[v] 활성 바인딩'],
@@ -319,39 +324,39 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   const quadruped = page.getByRole('region', { name: 'quadruped-01 상세' })
   await expect(quadruped.getByText('기체가 아는 명칭 없음', { exact: true })).toBeVisible()
   await shot(detailArea, 'robots-detail-names-contradicted', {
-    area: '로봇·연결',
-    section: '상세',
+    area: '로봇',
+    section: '로봇 작업 영역',
     mode: '엔지니어',
     state: '시운전 미완, 기체가 아는 명칭 없음 막힘 카드',
     strings: ['시운전: 미완', '기체가 아는 명칭 없음', '현장(화면 밖): 현장에서 명칭 티칭을 다시'],
   })
   await page.getByRole('button', { name: 'humanoid-01', exact: true }).click()
   await shot(page, 'robots-overview-populated', {
-    area: '로봇·연결',
+    area: '로봇',
     section: '전체',
     mode: '엔지니어',
     state: '기체 둘·어댑터·리비전을 채운 뒤',
-    strings: ['humanoid-01', 'quadruped-01', 'fleet-gw-01', '시운전: 완료'],
+    strings: ['humanoid-01', 'quadruped-01', '시운전: 완료'],
   })
   await radio(page, '운영자')
   await shot(page, 'robots-overview-populated-operator', {
-    area: '로봇·연결',
+    area: '로봇',
     section: '전체',
     mode: '운영자',
     state: '채운 상태, 운영자 모드(퇴역 폼, 등록 폼 없음)',
-    strings: ['선언은 엔지니어 모드에서 합니다', '퇴역 사유', '프로파일 관리는 엔지니어 모드에서 합니다'],
+    strings: ['선언은 엔지니어 모드에서 합니다', '퇴역 사유'],
   })
   await radio(page, '엔지니어')
 
-  // ── 현장·자원: 현장 설정 ───────────────────────────────────────────────────
-  await go(page, '현장·자원')
+  // ── 현장 설정: 현장 설정 ───────────────────────────────────────────────────
+  await go(page, '현장 설정')
   const change = settings.getByRole('form', { name: '현장 설정 변경' })
   await change.getByLabel('연결 기준 시간(초)').fill('0')
   await change.getByLabel('변경 사유').fill('범위 시험')
   await change.getByRole('button', { name: '변경' }).click()
   await expect(change.getByRole('alert')).toContainText('연결 기준 시간은')
   await shot(change, 'site-settings-out-of-range', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '현장 설정 변경',
     mode: '엔지니어',
     state: '범위 밖 값이라 보내지 않음',
@@ -362,7 +367,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await change.getByRole('button', { name: '변경' }).click()
   await expect(change.getByRole('alert')).toHaveText('변경 사유를 넣으십시오')
   await shot(change, 'site-settings-reason-missing', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '현장 설정 변경',
     mode: '엔지니어',
     state: '사유 없음이라 보내지 않음',
@@ -378,7 +383,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await expect(page.getByText('stallWindow 600초로 변경: 반영됨', { exact: true })).toBeVisible()
   await expect(settings.getByText('실행 호스트 반영: 버전 3', { exact: true })).toBeVisible({ timeout: 15_000 })
   await shot(page, 'site-overview-changed', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '전체',
     mode: '엔지니어',
     state: '변경 반영 알림, 버전 3, 버전 이력 세 줄',
@@ -407,7 +412,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await change.getByRole('button', { name: '변경' }).click()
   await expect(settings.getByText('stallWindow 300초로 변경: 거절됨', { exact: true })).toBeVisible()
   await shot(settings, 'site-settings-version-conflict', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '현장 설정',
     mode: '엔지니어',
     state: '기준 버전이 낡아 거절된 알림과 발견 카드',
@@ -415,7 +420,8 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   })
   await expect(settings.getByText('실행 호스트 반영: 버전 4', { exact: true })).toBeVisible({ timeout: 15_000 })
 
-  // ── 현장·자원: 장애 주입(진행 중 태스크 없음) ────────────────────────────────
+  // ── 현장 설정: 장애 주입(진행 중 태스크 없음) ────────────────────────────────
+  await go(page, '검증 도구')
   const faultPanel = page.getByRole('region', { name: '장애 주입' })
   const faultForm = page.getByRole('form', { name: '장애 주입 폼' })
   await faultForm.getByLabel('기체').selectOption('humanoid-01')
@@ -423,7 +429,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await faultForm.getByRole('button', { name: '장애 넣기' }).click()
   await expect(faultForm.getByRole('alert')).toHaveText('장애 주입 사유를 넣으십시오')
   await shot(faultPanel, 'site-fault-reason-missing', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '장애 주입',
     mode: '엔지니어',
     state: '사유 없음이라 보내지 않음',
@@ -434,7 +440,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   const faultNotice = page.getByRole('status', { name: '장애 주입 결과' })
   await expect(faultNotice).toContainText('humanoid-01 스킬 실패: 현장이 거부함')
   await shot(faultPanel, 'site-fault-rejected', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '장애 주입',
     mode: '엔지니어',
     state: '진행 중 태스크가 없어 현장이 거부',
@@ -447,7 +453,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await faultForm.getByRole('button', { name: '장애 넣기' }).click()
   await expect(faultNotice).toContainText('quadruped-01 연결 상태 OFFLINE:')
   await shot(faultPanel, 'site-fault-connection-accepted', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '장애 주입',
     mode: '엔지니어',
     state: '연결 상태 장애 받아들임(연결 상태 칸이 더 보임)',
@@ -459,7 +465,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await expect(faultNotice).toContainText('quadruped-01 연결 상태 ONLINE:')
   await radio(page, '운영자')
   await shot(page, 'site-overview-operator', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '전체',
     mode: '운영자',
     state: '운영자 모드(변경·장애 주입 폼 없음)',
@@ -545,9 +551,10 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   })
   await expect(run).toContainText('PHYSICALLY_DONE', { timeout: 90_000 })
 
-  // ── 임무·정책 ────────────────────────────────────────────────────────────
+  // ── 임무 ────────────────────────────────────────────────────────────
   await radio(page, '엔지니어')
-  await go(page, '임무·정책')
+  await go(page, '임무')
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
   const editor = page.getByRole('region', { name: '임무 편집' })
   const missionNotice = editor.getByRole('status', { name: '임무 조작 결과' })
   const textarea = editor.getByLabel('임무 정의 JSON')
@@ -560,7 +567,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await editor.getByRole('button', { name: '검증', exact: true }).click()
   await expect(missionNotice).toContainText('초안 1 검증: 거부됨')
   await shot(editor, 'missions-validate-refused', {
-    area: '임무·정책',
+    area: '임무',
     section: '임무 편집',
     mode: '엔지니어',
     state: '현장에 없는 스킬로 고친 정의의 검증 거부와 발견 카드',
@@ -575,7 +582,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await editor.getByRole('button', { name: '활성화', exact: true }).click()
   await expect(missionNotice).toContainText('초안 2 활성화: 막힘')
   await shot(editor, 'missions-activate-mock-run-required', {
-    area: '임무·정책',
+    area: '임무',
     section: '임무 편집',
     mode: '엔지니어',
     state: '모의 실행 없이 활성화해 막힘',
@@ -584,7 +591,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await editor.getByRole('button', { name: '모의 실행', exact: true }).click()
   await expect(missionNotice).toContainText('초안 2 모의 실행: 통과')
   await shot(editor, 'missions-mock-run-passed', {
-    area: '임무·정책',
+    area: '임무',
     section: '임무 편집',
     mode: '엔지니어',
     state: '모의 실행 통과 보고(표본 작업 지시, 단위 표)',
@@ -594,7 +601,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await editor.getByRole('button', { name: '활성화', exact: true }).click()
   await expect(editor.getByRole('alert')).toHaveText('활성화 사유를 넣으십시오')
   await shot(editor, 'missions-activate-reason-missing', {
-    area: '임무·정책',
+    area: '임무',
     section: '임무 편집',
     mode: '엔지니어',
     state: '사유 없음이라 보내지 않음',
@@ -603,19 +610,20 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await editor.getByLabel('활성화 사유').fill('데이터 정의로 옮김')
   await editor.getByRole('button', { name: '활성화', exact: true }).click()
   await expect(missionNotice).toHaveText('초안 2 활성화: 버전 1 활성화됨. 다음 작업 지시부터 이 버전을 씁니다')
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '버전·배포', exact: true }).click()
   const missionVersions = page.getByRole('table', { name: '임무 버전 이력' })
   await expect(missionVersions.getByRole('row', { name: /^버전 1 \(활성\) 초안 2 local 데이터 정의로 옮김 / })).toBeVisible()
   await shot(page, 'missions-overview-active', {
-    area: '임무·정책',
+    area: '임무',
     section: '전체',
     mode: '엔지니어',
     state: '활성화 뒤(버전 1 활성, 초안 둘)',
-    strings: ['초안 2 활성화: 버전 1 활성화됨. 다음 작업 지시부터 이 버전을 씁니다', '버전 1 (활성)', '활성: 버전 1, 편집기와 같음'],
+    strings: ['버전 1 (활성)', '외부 호출 계약 공개·버전 연결 배포는 아직 지원하지 않습니다'],
   })
   const drafts = page.getByRole('region', { name: '초안', exact: true })
   await drafts.getByRole('row', { name: /^초안 2 / }).locator('summary').click()
   await shot(drafts, 'missions-drafts-mock-run-detail', {
-    area: '임무·정책',
+    area: '임무',
     section: '초안',
     mode: '엔지니어',
     state: '초안 목록, 마지막 모의 실행 펼침',
@@ -623,11 +631,11 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   })
   await radio(page, '운영자')
   await shot(page, 'missions-overview-operator', {
-    area: '임무·정책',
+    area: '임무',
     section: '전체',
     mode: '운영자',
     state: '운영자 모드(편집기 없음, 활성 정의 읽기만)',
-    strings: ['임무 편집은 엔지니어 모드에서 합니다', '버전 1 (활성)'],
+    strings: ['버전 1 (활성)', '외부 호출 계약 공개·버전 연결 배포는 아직 지원하지 않습니다'],
   })
 
   // ── 운영: 셀 대역 신호 ────────────────────────────────────────────────────
@@ -654,14 +662,14 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   const graspRun = rackRuns.filter({ hasText: 'RACK-204.S01 pick_place' })
   await expect(graspRun).toContainText('RACK-204.S01 pick_place: RUNNING')
   await radio(page, '엔지니어')
-  await go(page, '현장·자원')
+  await go(page, '검증 도구')
   await faultForm.getByLabel('기체').selectOption('humanoid-01')
   await faultForm.getByLabel('장애 종류').selectOption('SKILL_EXECUTION_FAILED')
   await faultForm.getByLabel('장애 주입 사유').fill('스킬 실패 시연')
   await faultForm.getByRole('button', { name: '장애 넣기' }).click()
   await expect(faultNotice).toHaveText(/^humanoid-01 스킬 실패: 받아들임\(태스크 .+#RACK-204\.S01, RETRIABLE\)$/)
   await shot(faultPanel, 'site-fault-skill-accepted', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '장애 주입',
     mode: '엔지니어',
     state: '진행 중 태스크에 스킬 실패 받아들임',
@@ -694,7 +702,8 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
 
   // ── 운영자 보류와 판단 ─────────────────────────────────────────────────────
   await radio(page, '엔지니어')
-  await go(page, '임무·정책')
+  await go(page, '임무')
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
   await editor.getByRole('button', { name: '운영자 보류 대기 템플릿 불러오기' }).click()
   await editor.getByRole('button', { name: '초안 저장' }).click()
   await expect(missionNotice).toHaveText('초안 저장: 초안 3 저장됨')
@@ -1091,20 +1100,21 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     how: hostDownMock,
     strings: ['직전 값입니다. 실행 호스트 불통: 실행 호스트가 답하지 않는다: java.net.ConnectException', '직전 값입니다 (운영 서비스 응답 503)', 'registry 응답 확인'],
   })
-  await go(page, '임무·정책')
+  await go(page, '임무')
+  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
   await expect(page.getByText(/^모름: 임무 버전을 아직 읽지 못했습니다/)).toBeVisible()
   await shot(page, 'missions-overview-host-down-mock', {
-    area: '임무·정책',
+    area: '임무',
     section: '전체',
     mode: '운영자',
     state: '실행 호스트 불통에 영역을 처음 열어 모름',
     how: hostDownMock,
     strings: ['모름: 임무 버전을 아직 읽지 못했습니다 (실행 호스트가 답하지 않는다: java.net.ConnectException)', '모름: 활성 버전을 아직 읽지 못했습니다'],
   })
-  await go(page, '현장·자원')
+  await go(page, '현장 설정')
   await expect(settings.getByText('실행 호스트 반영: 모름', { exact: true })).toBeVisible()
   await shot(settings, 'site-settings-host-down-mock', {
-    area: '현장·자원',
+    area: '현장 설정',
     section: '현장 설정',
     mode: '운영자',
     state: '실행 호스트 반영 모름',
@@ -1120,7 +1130,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await page.route('**/api/**', (route) => route.abort('connectionrefused'))
   await expect(page.getByRole('alert').filter({ hasText: '모름: 운영 서비스에 닿지 않습니다' })).toBeVisible()
   await shot(page, 'robots-overview-ops-unreachable-mock', {
-    area: '로봇·연결',
+    area: '로봇',
     section: '전체',
     mode: '엔지니어',
     state: '운영 서비스 불통, 전체 상태 모름과 직전 값',
@@ -1136,12 +1146,12 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await expect(page.getByRole('alert')).toContainText('모름: registry 가 답하지 않습니다')
   await expect(page.getByRole('region', { name: '기체 목록' }).getByText(/직전 값입니다/)).toBeVisible()
   await shot(page, 'robots-overview-registry-down', {
-    area: '로봇·연결',
+    area: '로봇',
     section: '전체',
     mode: '엔지니어',
     state: 'registry 불통, 전체 상태 모름과 목록마다 직전 값',
     how: '실제 스택: 런처(registry·mimic 프로세스)를 끔',
-    strings: ['모름: registry 가 답하지 않습니다. 해결 담당 엔지니어, registry 상태 확인', '직전 값입니다', 'humanoid-01', 'fleet-gw-01'],
+    strings: ['모름: registry 가 답하지 않습니다. 해결 담당 엔지니어, registry 상태 확인', '직전 값입니다', 'humanoid-01'],
   })
   await radio(page, '운영자')
   await go(page, '운영')

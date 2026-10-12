@@ -331,9 +331,9 @@ describe('현장·자원 영역', () => {
     const fake = installFakeOps({ registry: 'OK', checkedAt: 't1', robots: [], robotsAsOf: 't1' })
     fake.failing.add('/api/site-settings')
     render(<App />)
-    await userEvent.click(screen.getByRole('button', { name: '현장·자원' }))
+    await userEvent.click(screen.getByRole('button', { name: '현장 설정' }))
     expect(await screen.findByText('모름: 현장 설정을 아직 읽지 못했습니다')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: '로봇·연결' }))
+    await userEvent.click(screen.getByRole('button', { name: '로봇' }))
     expect(screen.getByText('모름: 기체 목록을 아직 읽지 못했습니다')).toBeInTheDocument()
   })
 

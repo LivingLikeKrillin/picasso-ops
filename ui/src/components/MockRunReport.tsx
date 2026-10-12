@@ -18,7 +18,7 @@ export function MockRunReport({ run }: { run: MockRunView }) {
         <dd>
           {result.sample === null
             ? '없음'
-            : `${result.sample.jobOrderId}, 슬롯 ${result.sample.slots.join(', ')}, 자재 ${result.sample.material}, 요구 근거 ${result.sample.requiredEvidence}`}
+            : result.sample.equipment && result.sample.slots.length===0 ? `${result.sample.jobOrderId}, 설비 ${result.sample.equipment.map(item=>`${item.equipmentUse}: ${item.id}`).join(', ')}, 요구 근거 ${result.sample.requiredEvidence}` : `${result.sample.jobOrderId}, 슬롯 ${result.sample.slots.join(', ')}, 자재 ${result.sample.material}, 요구 근거 ${result.sample.requiredEvidence}`}
         </dd>
         <dt>물리 상태</dt>
         <dd>{result.physicalState ?? '실행이 서지 않음'}</dd>
@@ -26,7 +26,7 @@ export function MockRunReport({ run }: { run: MockRunView }) {
         <dd>{result.virtualElapsedSeconds}초</dd>
       </dl>
       {result.units.length > 0 && (
-        <table aria-label={`모의 실행 ${run.mockRunId} 단위`}>
+        <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label={`모의 실행 ${run.mockRunId} 단위`}>
           <thead>
             <tr>
               <th>단위</th>
@@ -49,7 +49,7 @@ export function MockRunReport({ run }: { run: MockRunView }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </>
   )
