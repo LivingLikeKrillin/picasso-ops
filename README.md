@@ -6,7 +6,7 @@ MES·WMS 같은 상위 시스템은 주문을 전달하고, 로봇은 기종별 
 
 현재 스택은 PostgreSQL, picasso registry·mimic, 셀 대역, 실행 호스트, 운영 API, React UI로 구성됩니다. **실물 로봇·PLC·상용 MES 연계는 검증하지 않았습니다.**
 
-![운영 개요: 요청과 실행 상태를 확인하는 첫 화면](docs/screens/style-preview/overview-fullstack.png)
+![운영 개요: 요청과 실행 상태를 확인하는 화면](docs/screens/style-preview/overview-fullstack.png)
 
 ## 대표 시나리오: 상위 주문에서 작업 결과까지
 
@@ -49,13 +49,13 @@ MES·WMS 같은 상위 시스템은 주문을 전달하고, 로봇은 기종별 
 
 | 구성 요소 | 책임 |
 |---|---|
-| `ui` | 운영 개요, 작업 요청, 공유 자원, 로봇 도입, 임무·인터페이스 관리 |
+| `ui` | 운영 개요, 작업 요청, 공유 자원, 운영, 로봇, 임무, 현장 설정, 이력, 검증 도구 |
 | `ops-service` | 운영 API, 상위 주문 계약, 영속 접수·결과·ACK, 공유 자원 조정 |
 | `mission-host` | picasso를 사용하는 실행 호스트, 미션 검증·모의 실행·실행 복원 |
 | `site` | registry·mimic·셀 대역을 띄우는 로컬 현장 런처 |
 | `picasso/` | 고정 커밋의 읽기 전용 Core 서브모듈, Gradle composite build로 사용 |
 
-[picasso-narrator](https://github.com/LivingLikeKrillin/picasso-narrator)는 내보낸 `ops.station.evidence/1` 파일을 해석해 설명할 수 있습니다. 설명은 Ops 상태를 변경하지 않으며, 현재 Ops UI와 자동으로 연결되어 있지 않습니다.
+Ops는 공유 스테이션 실행 근거를 `GET /api/stations/runs/{id}/evidence` 응답(스키마 `ops.station.evidence/1`)으로 제공하며, [picasso-narrator](https://github.com/LivingLikeKrillin/picasso-narrator)는 이 응답을 저장한 파일을 읽어 설명할 수 있습니다. 설명은 Ops 상태를 변경하지 않으며, 현재 Ops UI와 자동으로 연결되어 있지 않습니다.
 
 ## 운영 흐름
 
@@ -157,6 +157,12 @@ env -u PICASSO_INGEST_TOKEN -u PICASSO_OPERATOR_TOKEN mission-host/build/install
 
 6. 터미널 3에서 운영 서비스를 실행합니다. 실행 호스트는 운영 서비스가 `ops` 스키마를 올리기 전까지 미적용 상태를 유지하며 작업 지시를 거부합니다. 운영 서비스 기동 뒤 현장 설정의 적용 상태를 확인합니다.
 
+Mock MES 주문(외부 주문 API, `scripts/mock-mes.mjs`)을 쓰려면 운영 서비스를 띄우기 전에 같은 터미널에서 `PICASSO_INTEGRATION_TOKEN`을 비어 있지 않은 값으로 설정해야 합니다(배포 기본값으로 켜지 않기 위해 `.env`에는 일부러 넣지 않았습니다). Mock MES를 실행하는 터미널에도 같은 값을 설정합니다. 비워 두면 외부 주문 API는 꺼진 채로 뜨고 나머지 화면은 그대로 쓸 수 있습니다. 결과 콜백까지 보려면 `PICASSO_LOCAL_CALLBACK_URL`(루프백 http 주소)과 `PICASSO_LOCAL_CALLBACK_TOKEN`을 설정합니다(선택).
+
+```bash
+export PICASSO_INTEGRATION_TOKEN=<임의의 값>
+```
+
 ```bash
 env -u PICASSO_INGEST_TOKEN ops-service/build/install/ops-service/bin/ops-service
 ```
@@ -201,7 +207,7 @@ bash site/smoke.sh
 
 ## 첫 체험 경로
 
-전체 스택을 띄운 뒤 운영 개요에서 시작하세요. 새 기체는 로봇 추가 안내를 따라 준비하고, 임무에서 배정 조건을 확인합니다. 미션 입력 계약과 실행 버전을 만든 뒤 인터페이스를 배포하고, 작업 요청에서 수동 요청 또는 Mock MES 주문을 추적합니다. 공유 자원에서는 실행 중인 소유자와 대기열, 확인이 필요한 요청을 볼 수 있습니다.
+전체 스택을 띄운 뒤 화면을 처음 열면 로봇 영역이 나옵니다(운영 개요는 메뉴의 첫 항목). 새 기체는 로봇 추가 안내를 따라 준비하고, 임무에서 배정 조건을 확인합니다. 미션 입력 계약과 실행 버전을 만든 뒤 인터페이스를 배포하고, 작업 요청에서 수동 요청 또는 Mock MES 주문을 추적합니다. Mock MES 주문을 추적하려면 6단계에서 설정한 PICASSO_INTEGRATION_TOKEN이 필요하고, `node scripts/mock-mes.mjs order.json --poll`로 주문을 한 번 보냅니다(order.json은 직접 만든 주문 파일). 공유 자원에서는 실행 중인 소유자와 대기열, 확인이 필요한 요청을 볼 수 있습니다.
 
 정확한 입력값과 실행 순서는 [브라우저 생애주기 시나리오](ui/e2e/lifecycle.spec.ts)에 있습니다. 공유 자원 경합은 [별도 시나리오](ui/e2e/station.spec.ts)로 검증합니다.
 
