@@ -19,11 +19,14 @@ class MissionResources(private val jdbc:JdbcClient,private val tx:TransactionTem
   if(actor.mode!=Mode.ENGINEER)fail("엔지니어만 자원 요구를 등록합니다",403)
   if(wm.isBlank() || wm.length>120 || station.isBlank() || reason.isBlank() || reason.length>1000)fail("미션·스테이션·등록 사유가 필요합니다",400)
   missionLock(wm)
-  // RECEIVED is conservatively included: its mission may not have been normalized yet.
-  val active=jdbc.sql("""SELECT count(*) FROM ops.work_request r WHERE state='RECEIVED' OR
-   (normalized_order->>'workMasterId'=:wm AND state<>'REJECTED' AND NOT EXISTS
-    (SELECT 1 FROM ops.work_result v WHERE v.receipt_id=r.receipt_id AND v.version=(SELECT max(version) FROM ops.work_result WHERE receipt_id=r.receipt_id)
-     AND v.snapshot->'jobResponse'->>'physicalState'='PHYSICALLY_DONE'))""").param("wm",wm).query(Long::class.java).single()
+  // In flight for this mission. RECEIVED without a normalized order may still belong to it.
+  // IN_DOUBT and unsettled ACCEPTED block unless the latest on-site review, still current, says never started or done.
+  val active=jdbc.sql("""SELECT count(*) FROM ops.work_request r WHERE (r.state='RECEIVED' AND r.normalized_order IS NULL) OR
+   (r.normalized_order->>'workMasterId'=:wm AND (r.state IN ('RECEIVED','WAITING_RESOURCE','DISPATCHING') OR
+    (r.state='IN_DOUBT' OR r.state='ACCEPTED' AND NOT COALESCE((SELECT v.snapshot->'jobResponse'->>'physicalState' FROM ops.work_result v WHERE v.receipt_id=r.receipt_id ORDER BY v.version DESC LIMIT 1)
+      IN ('PHYSICALLY_DONE','UNVERIFIED','FAILED','ABORTED','PARTIAL'),false))
+    AND NOT COALESCE((SELECT w.observation IN ('NOT_STARTED','COMPLETED') AND w.expected_updated_at=r.updated_at::text FROM ops.work_request_review w
+      WHERE w.receipt_id=r.receipt_id ORDER BY w.created_at DESC,w.request_id DESC LIMIT 1),false)))""").param("wm",wm).query(Long::class.java).single()
   val stationActive=jdbc.sql("""SELECT count(*) FROM ops.station_run r JOIN ops.mission_interface i
    ON i.interface_id=r.payload->>'interfaceId' AND i.version=(r.payload->>'interfaceVersion')::integer
    WHERE i.work_master_id=:wm AND r.state NOT IN ('COMPLETED','TIMED_OUT','REJECTED','MANUALLY_CLEARED','CANCELLED')""").param("wm",wm).query(Long::class.java).single()
@@ -56,7 +59,7 @@ class MissionResources(private val jdbc:JdbcClient,private val tx:TransactionTem
   row.first["deployment"]?.let{payload.put("expectedDeploymentVersion",it["deploymentVersion"].asInt())}
   jdbc.sql("INSERT INTO ops.station_run(run_id,station_id,payload,actor,state,reason,receipt_id,created_at,phase_at) VALUES(:id,:station,CAST(:payload AS JSONB),:actor,'QUEUED','미션 필수 자원 순서를 기다립니다',:id,clock_timestamp(),clock_timestamp())").param("id",id).param("station",required).param("payload",payload.toString()).param("actor",actor.header()).update()
   jdbc.sql("INSERT INTO ops.station_event(run_id,state,reason,actor,context,recorded_at) VALUES(:id,'QUEUED','공통 접수의 필수 자원 대기',:actor,CAST(:context AS JSONB),clock_timestamp())").param("id",id).param("actor",actor.header()).param("context",json.createObjectNode().put("workMasterId",wm).put("requiredStationId",required).put("requirementRevision",1).toString()).update()
-  jdbc.sql("UPDATE ops.work_request SET required_station_id=:station,state='WAITING_RESOURCE',detail='필수 공유 자원 대기',updated_at=clock_timestamp() WHERE receipt_id=:id").param("station",required).param("id",id).update()
+  if(jdbc.sql("UPDATE ops.work_request SET required_station_id=:station,state='WAITING_RESOURCE',detail='필수 공유 자원 대기',updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'").param("station",required).param("id",id).update()!=1)fail("접수가 이미 종료되었습니다")
   true
  }!!
  fun authorize(id:UUID,wm:String) {

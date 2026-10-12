@@ -92,19 +92,34 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    if (old.second != hash) throw RequestRejected("ORDER_CONFLICT", "동일 요청 ID에 다른 입력 또는 요청자가 접수되었습니다",409)
    return ReceiptAccepted(get(old.first,source),true)
   }
-  val draft = try { draftSupplier() }
-   catch(e: Exception) {
-    if(e !is InterfaceRejected && e !is dev.picasso.ops.service.joborders.FormRejection) throw e
-    update(id,"REJECTED",e.message ?: "입력 검증 거절"); return ReceiptAccepted(get(id),false)
-   }
-  val order=JobOrderForm.jobOrder(draft,jobId,json)
-  jdbc.sql("UPDATE ops.work_request SET normalized_order=CAST(:order AS JSONB),state='RECEIVED',updated_at=clock_timestamp() WHERE receipt_id=:id")
-   .param("order",order.toString()).param("id",id).update()
-  if(!resources.admit(id,actor,stationRunId)) {
-   update(id,"DISPATCHING","공통 접수 검증 완료")
-   dispatch(id,actor,draft,interfaceRef,interfaceInput,jobId)
+  // RECEIVED is provably pre-dispatch: DISPATCHING is written before any host call. Close it instead of leaving an orphan.
+  val (draft,queued)=try {
+   val draft = try { draftSupplier() }
+    catch(e: Exception) {
+     if(e !is InterfaceRejected && e !is dev.picasso.ops.service.joborders.FormRejection) throw e
+     update(id,"REJECTED",e.message ?: "입력 검증 거절"); return ReceiptAccepted(get(id),false)
+    }
+   val order=JobOrderForm.jobOrder(draft,jobId,json)
+   if(jdbc.sql("UPDATE ops.work_request SET normalized_order=CAST(:order AS JSONB),updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'")
+    .param("order",order.toString()).param("id",id).update()==0) return ReceiptAccepted(get(id),false)
+   draft to resources.admit(id,actor,stationRunId)
+  } catch(e: Exception) {
+   // A business refusal (e.g. admission's 409) keeps its own words; anything else is an internal failure.
+   val detail=(e as? RequestRejected)?.message ?: "접수 처리 중 내부 오류; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오"
+   runCatching {jdbc.sql("UPDATE ops.work_request SET state='REJECTED',detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'")
+    .param("detail",detail.take(2000)).param("id",id).update()}.onFailure(e::addSuppressed)
+   throw e
   }
+  if(!queued && jdbc.sql("UPDATE ops.work_request SET state='DISPATCHING',detail='공통 접수 검증 완료',updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'").param("id",id).update()==1)
+   dispatch(id,actor,draft,interfaceRef,interfaceInput,jobId)
   return ReceiptAccepted(get(id),false)
+ }
+ /** Close receipts a stopped process left behind. WAITING_RESOURCE belongs to station coordination. */
+ fun sweepStale(olderThan:java.time.Duration):Int {
+  fun close(from:String,to:String,detail:String)=jdbc.sql("UPDATE ops.work_request SET state=:to,detail=:detail,updated_at=clock_timestamp() WHERE state=:from AND updated_at<clock_timestamp()-interval '1 millisecond'*CAST(:ms AS double precision)")
+   .param("from",from).param("to",to).param("detail",detail).param("ms",olderThan.toMillis()).update()
+  return close("RECEIVED","REJECTED","접수 처리 중단; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오")+
+   close("DISPATCHING","IN_DOUBT","제출 도중 중단; 실행 관측과 현장 확인이 필요합니다")
  }
  private fun dispatch(id:UUID,actor:Actor,draft:dev.picasso.ops.service.joborders.JobOrderDraft,interfaceRef:String?,interfaceInput:JsonNode?,jobId:String) {
   resources.authorize(id,draft.workMasterId)
@@ -167,11 +182,12 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
     if(stationRunId==null)throw RequestRejected("RESOURCE_MANAGED","자원 관리 작업은 공유 자원 화면에서 관측·복구합니다",409)
     val context=resources.context(id)
     if(context?.get("runId")!=stationRunId)throw RequestRejected("RESOURCE_MANAGED","다른 자원 작업의 재평가입니다",409)
-    resources.authorize(id,receipt.normalizedOrder!!["workMasterId"].asText())
    }
    // Only pre-dispatch eligibility failures are proven not sent. Absence in a host read is not such proof.
    if(receipt.state!="UNASSIGNED" || receipt.submission!=null || receipt.lastExecution!=null || receipt.normalizedOrder==null)
     throw RequestRejected("RECOVERY_NOT_SAFE","호스트 전송 전 미배정만 재평가할 수 있습니다. 처리 중·결과 불명은 실행 관측과 현장 확인이 필요합니다",409)
+   // Refuse before claiming DISPATCHING, including a requirement registered after this receipt.
+   resources.authorize(id,receipt.normalizedOrder["workMasterId"].asText())
    if(receipt.updatedAt!=expected) throw RequestRejected("STALE_RECOVERY","접수 상태가 바뀌었습니다. 다시 조회하세요",409)
    val original=receipt.payload
    try {
