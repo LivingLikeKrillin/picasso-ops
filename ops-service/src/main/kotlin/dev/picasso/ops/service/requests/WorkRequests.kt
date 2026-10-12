@@ -122,7 +122,12 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    close("DISPATCHING","IN_DOUBT","제출 도중 중단; 실행 관측과 현장 확인이 필요합니다")
  }
  private fun dispatch(id:UUID,actor:Actor,draft:dev.picasso.ops.service.joborders.JobOrderDraft,interfaceRef:String?,interfaceInput:JsonNode?,jobId:String) {
-  resources.authorize(id,draft.workMasterId)
+  // Authorize runs before any host call, so its refusal is provably unsent. Close only this claim; keep the caller's error.
+  try {resources.authorize(id,draft.workMasterId)} catch(e:RequestRejected) {
+   runCatching {jdbc.sql("UPDATE ops.work_request SET state='REJECTED',detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id AND state='DISPATCHING'")
+    .param("detail","자원 요구가 바뀌어 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오: ${e.message}".take(2000)).param("id",id).update()}.onFailure(e::addSuppressed)
+   throw e
+  }
   // A crash after this point remains DISPATCHING; recovery is observation, never blind resubmission.
   try {
    when(val sent=operations.submit(actor,draft,interfaceRef,interfaceInput,id,jobId)) {
@@ -169,7 +174,9 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   var draft:dev.picasso.ops.service.joborders.JobOrderDraft?=null
   var ref:String?=null;var input:JsonNode?=null
   val claimed=transactions.execute {
-   get(id)
+   // Mission lock before the row lock, held to the DISPATCHING commit: a requirement cannot land between authorize and commit.
+   // Order mission -> row; admit takes mission -> station -> row and create takes no row lock, so no cycle.
+   val wm=get(id).normalizedOrder?.get("workMasterId")?.asText()?.also(resources::lockMission)
    jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",id).query(UUID::class.java).single()
    val old=jdbc.sql("SELECT receipt_id,actor,reason,expected_updated_at FROM ops.work_request_recovery WHERE attempt_id=:attempt")
     .param("attempt",attempt).query {rs,_ -> listOf(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4))}.optional().orElse(null)
@@ -188,7 +195,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
     throw RequestRejected("RECOVERY_NOT_SAFE","호스트 전송 전 미배정만 재평가할 수 있습니다. 처리 중·결과 불명은 실행 관측과 현장 확인이 필요합니다",409)
    // Refuse before claiming DISPATCHING, including a requirement registered after this receipt.
    resources.authorize(id,receipt.normalizedOrder["workMasterId"].asText())
-   if(receipt.updatedAt!=expected) throw RequestRejected("STALE_RECOVERY","접수 상태가 바뀌었습니다. 다시 조회하세요",409)
+   if(receipt.updatedAt!=expected || receipt.normalizedOrder["workMasterId"].asText()!=wm) throw RequestRejected("STALE_RECOVERY","접수 상태가 바뀌었습니다. 다시 조회하세요",409)
    val original=receipt.payload
    try {
     draft=if(receipt.sourceSystemId=="ops:manual") JobOrderForm.read(original["form"]) else {
