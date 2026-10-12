@@ -1,0 +1,410 @@
+package dev.picasso.ops.service.requests
+
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
+import dev.picasso.ops.service.actor.Actor
+import dev.picasso.ops.service.actor.Mode
+import dev.picasso.ops.service.host.HostCall
+import dev.picasso.ops.service.host.HostReads
+import dev.picasso.ops.service.interfaces.InterfaceRejected
+import dev.picasso.ops.service.interfaces.MissionInterfaces
+import dev.picasso.ops.service.joborders.JobOrderForm
+import dev.picasso.ops.service.joborders.JobOrderOperations
+import dev.picasso.ops.service.joborders.JobOrderSubmission
+import dev.picasso.ops.service.log.OperationResult
+import org.springframework.jdbc.core.simple.JdbcClient
+import java.security.MessageDigest
+import java.util.UUID
+
+class RequestRejected(val code: String, override val message: String, val status: Int = 400): RuntimeException(message)
+data class Receipt(val receiptId: UUID, val sourceSystemId: String, val externalOrderId: String,
+ val jobOrderId: String, val state: String, val detail: String?, val payload: JsonNode,
+ val normalizedOrder: JsonNode?, val submission: JsonNode?, val receivedAt: String, val updatedAt: String, val lastExecution: JsonNode?, val executionObservedAt: String?, val executionInstanceId: String?, val requiredStationId:String?=null)
+data class ReceiptAccepted(val receipt: Receipt, val duplicate: Boolean)
+
+/** Commit the unique receipt before any host call. Replays never dispatch, including uncertain receipts. */
+class WorkRequests(private val jdbc: JdbcClient, private val interfaces: MissionInterfaces,
+ private val operations: JobOrderOperations, private val host: HostReads,
+ private val transactions: org.springframework.transaction.support.TransactionTemplate,
+ private val durableResults:Boolean=false) {
+ private val json = ObjectMapper()
+ val resources=dev.picasso.ops.service.stations.MissionResources(jdbc,transactions)
+ fun receive(source: String, payload: JsonNode): ReceiptAccepted {
+  val external = payload["externalOrderId"]?.takeIf { it.isTextual }?.asText()
+   ?.takeIf { it.isNotBlank() && it.length <= 160 } ?: throw RequestRejected("BAD_ORDER_ID", "externalOrderId는 1~160자 문자열입니다")
+  if (!payload.isObject || payload.fieldNames().asSequence().toSet() != setOf("externalOrderId","interfaceId","interfaceVersion","input") ||
+      payload["interfaceId"]?.isTextual != true || payload["interfaceId"].asText().length !in 1..64 ||
+      payload["interfaceVersion"]?.isIntegralNumber != true || !payload["interfaceVersion"].canConvertToInt() || payload["interfaceVersion"].asInt() < 1 ||
+      payload["input"]?.isObject != true) throw RequestRejected("BAD_ENVELOPE", "계약 식별자·양의 정수 버전·input 객체가 필요합니다")
+  val interfaceId=payload["interfaceId"].asText(); val version=payload["interfaceVersion"].asInt()
+  return receivePrepared(source,external,payload,Actor(Mode.OPERATOR,source),"$interfaceId/v$version",payload["input"]) {
+   interfaces.draft(interfaceId,version,payload["input"],true)
+  }
+ }
+ fun receiveManual(actor:Actor, payload:JsonNode):ReceiptAccepted {
+  if(actor.mode!=Mode.OPERATOR) throw RequestRejected("MODE_NOT_ALLOWED","운영자 모드만 수동 작업을 접수합니다",403)
+  if(!payload.isObject || payload.fieldNames().asSequence().toSet()!=setOf("requestId","form") ||
+     payload["requestId"]?.isTextual!=true || payload["form"]?.isObject!=true)
+   throw RequestRejected("BAD_MANUAL_REQUEST","requestId UUID와 form 객체가 필요합니다")
+  val raw=payload["requestId"].asText()
+  val key=runCatching { UUID.fromString(raw) }.getOrNull()?.takeIf { it.toString().equals(raw,ignoreCase=true) }
+   ?: throw RequestRejected("BAD_MANUAL_REQUEST","정규 UUID 요청 ID가 필요합니다")
+  val stored=payload.deepCopy<ObjectNode>().apply {put("requestId",key.toString());put("requestedBy",actor.header())}
+  // ':' is excluded by the external identity configuration: upstream callers cannot impersonate local requests.
+  return receivePrepared("ops:manual",key.toString(),stored,actor,null,null) { JobOrderForm.read(payload["form"]) }
+ }
+ fun receiveInterface(actor:Actor,id:String,version:Int,payload:JsonNode,stationRunId:UUID?=null):ReceiptAccepted {
+  if(actor.mode!=Mode.OPERATOR) throw RequestRejected("MODE_NOT_ALLOWED","운영자 모드만 작업을 접수합니다",403)
+  val fields = if(payload.isObject) payload.fieldNames().asSequence().toSet() else emptySet()
+  val expected = payload["expectedDeploymentVersion"]
+  if(!payload.isObject || fields !in setOf(setOf("requestId","input"), setOf("requestId","input","expectedDeploymentVersion")) ||
+     (expected != null && (!expected.isIntegralNumber || !expected.canConvertToInt() || expected.asInt() < 1)) ||
+     payload["requestId"]?.isTextual!=true || payload["input"]?.isObject!=true)
+   throw RequestRejected("BAD_INTERFACE_REQUEST","requestId UUID와 input 객체가 필요합니다")
+  val raw=payload["requestId"].asText()
+  val key=runCatching { UUID.fromString(raw) }.getOrNull()?.takeIf { it.toString().equals(raw,ignoreCase=true) }
+   ?: throw RequestRejected("BAD_INTERFACE_REQUEST","정규 UUID 요청 ID가 필요합니다")
+  val stored=payload.deepCopy<ObjectNode>().apply {
+   put("requestId",key.toString());put("requestedBy",actor.header());put("interfaceId",id);put("interfaceVersion",version)
+  }
+  return receivePrepared("ops:interface",key.toString(),stored,actor,"$id/v$version",payload["input"],stationRunId) {
+   val draft = interfaces.draft(id,version,payload["input"],true)
+   if(expected != null && (draft as? dev.picasso.ops.service.joborders.DeployedJobOrderDraft)?.deployment?.get("deploymentVersion")?.asInt() != expected.asInt())
+    throw InterfaceRejected("STALE_DEPLOYMENT", "배포가 변경되었습니다. 배정 가능 여부를 다시 확인하세요", 409)
+   draft
+  }
+ }
+ private fun receivePrepared(source:String, external:String, payload:JsonNode, actor:Actor,
+  interfaceRef:String?, interfaceInput:JsonNode?, stationRunId:UUID?=null, draftSupplier:()->dev.picasso.ops.service.joborders.JobOrderDraft):ReceiptAccepted {
+  check(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+   "접수는 호스트 호출 전에 독립 커밋되어야 합니다"
+  }
+  val hash = MessageDigest.getInstance("SHA-256").digest(canonical(payload).toString().toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+  val id = UUID.randomUUID()
+  val jobId = "JO-$id"
+  val inserted = jdbc.sql("""INSERT INTO ops.work_request(receipt_id,source_system_id,external_order_id,payload_hash,payload,job_order_id,state)
+   VALUES(:id,:source,:external,:hash,CAST(:payload AS JSONB),:job,'RECEIVED') ON CONFLICT(source_system_id,external_order_id) DO NOTHING""")
+   .param("id",id).param("source",source).param("external",external).param("hash",hash).param("payload",payload.toString()).param("job",jobId).update()
+  if (inserted == 0) {
+   val old = jdbc.sql("SELECT receipt_id,payload_hash FROM ops.work_request WHERE source_system_id=:source AND external_order_id=:external")
+    .param("source",source).param("external",external).query { rs, _ -> rs.getObject(1,UUID::class.java) to rs.getString(2) }.single()
+   if (old.second != hash) throw RequestRejected("ORDER_CONFLICT", "동일 요청 ID에 다른 입력 또는 요청자가 접수되었습니다",409)
+   return ReceiptAccepted(get(old.first,source),true)
+  }
+  val draft = try { draftSupplier() }
+   catch(e: Exception) {
+    if(e !is InterfaceRejected && e !is dev.picasso.ops.service.joborders.FormRejection) throw e
+    update(id,"REJECTED",e.message ?: "입력 검증 거절"); return ReceiptAccepted(get(id),false)
+   }
+  val order=JobOrderForm.jobOrder(draft,jobId,json)
+  jdbc.sql("UPDATE ops.work_request SET normalized_order=CAST(:order AS JSONB),state='RECEIVED',updated_at=clock_timestamp() WHERE receipt_id=:id")
+   .param("order",order.toString()).param("id",id).update()
+  if(!resources.admit(id,actor,stationRunId)) {
+   update(id,"DISPATCHING","공통 접수 검증 완료")
+   dispatch(id,actor,draft,interfaceRef,interfaceInput,jobId)
+  }
+  return ReceiptAccepted(get(id),false)
+ }
+ private fun dispatch(id:UUID,actor:Actor,draft:dev.picasso.ops.service.joborders.JobOrderDraft,interfaceRef:String?,interfaceInput:JsonNode?,jobId:String) {
+  resources.authorize(id,draft.workMasterId)
+  // A crash after this point remains DISPATCHING; recovery is observation, never blind resubmission.
+  try {
+   when(val sent=operations.submit(actor,draft,interfaceRef,interfaceInput,id,jobId)) {
+    is JobOrderSubmission.NoEligibleRobot -> update(id,"UNASSIGNED",sent.detail)
+    is JobOrderSubmission.Submitted -> {
+     val value=sent.outcome
+     val state=when {
+      value.outcome?.result==dev.picasso.ops.service.host.HostSubmitResult.UNASSIGNED -> "UNASSIGNED"
+      value.result==OperationResult.SUCCEEDED || value.confirmation==OperationResult.CONFIRMED_APPLIED -> "ACCEPTED"
+      value.result==OperationResult.REJECTED -> "REJECTED"
+      else -> "IN_DOUBT"
+     }
+     jdbc.sql("UPDATE ops.work_request SET state=:state,submission=CAST(:submission AS JSONB),updated_at=clock_timestamp() WHERE receipt_id=:id")
+      .param("state",state).param("submission",ObjectMapper().findAndRegisterModules().writeValueAsString(value)).param("id",id).update()
+    }
+   }
+  } catch(e: Exception) { org.slf4j.LoggerFactory.getLogger(WorkRequests::class.java).warn("접수 {} 제출 결과 불명: {}",id,e.javaClass.simpleName); update(id,"IN_DOUBT","제출 결과를 확정할 수 없습니다. 실행 이력을 확인하세요") }
+ }
+ fun dispatchQueued(id:UUID,actor:Actor):ReceiptAccepted {
+  val claimed=transactions.execute {
+   jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",id).query(UUID::class.java).single()
+   val r=get(id)
+   if(r.state!="WAITING_RESOURCE")return@execute false
+   resources.authorize(id,r.normalizedOrder!!["workMasterId"].asText())
+   update(id,"DISPATCHING","필수 자원 확보 및 설비 준비 확인")
+   true
+  }!!
+  if(claimed) {
+   val r=get(id)
+   val draft=dev.picasso.ops.service.joborders.GenericJobOrderDraft(r.normalizedOrder!!.deepCopy<ObjectNode>())
+   dispatch(id,actor,draft,null,null,r.jobOrderId)
+  }
+  return ReceiptAccepted(get(id),!claimed)
+ }
+ fun recover(id:UUID,actor:Actor,payload:JsonNode,stationRunId:UUID?=null):ReceiptAccepted {
+  if(actor.mode!=Mode.OPERATOR) throw RequestRejected("MODE_NOT_ALLOWED","운영자만 미배정을 재평가합니다",403)
+  val raw=payload["requestId"]?.takeIf{it.isTextual}?.asText()
+  val attempt=raw?.let{runCatching{UUID.fromString(it)}.getOrNull()}?.takeIf{it.toString().equals(raw,ignoreCase=true)}
+  val reason=payload["reason"]?.takeIf{it.isTextual}?.asText()?.trim()
+  val expected=payload["expectedUpdatedAt"]?.takeIf{it.isTextual}?.asText()
+  if(!payload.isObject || payload.fieldNames().asSequence().toSet()!=setOf("requestId","reason","expectedUpdatedAt") ||
+   attempt==null || reason.isNullOrBlank() || reason.length>1000 || expected.isNullOrBlank())
+   throw RequestRejected("BAD_RECOVERY","요청 UUID·판단 사유·조회한 updatedAt이 필요합니다")
+  var draft:dev.picasso.ops.service.joborders.JobOrderDraft?=null
+  var ref:String?=null;var input:JsonNode?=null
+  val claimed=transactions.execute {
+   get(id)
+   jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",id).query(UUID::class.java).single()
+   val old=jdbc.sql("SELECT receipt_id,actor,reason,expected_updated_at FROM ops.work_request_recovery WHERE attempt_id=:attempt")
+    .param("attempt",attempt).query {rs,_ -> listOf(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4))}.optional().orElse(null)
+   if(old!=null) {
+    if(old!=listOf(id.toString(),actor.header(),reason,expected)) throw RequestRejected("RECOVERY_CONFLICT","재평가 요청 ID가 다른 판단에 사용되었습니다",409)
+    return@execute false
+   }
+   val receipt=get(id)
+   if(receipt.requiredStationId!=null) {
+    if(stationRunId==null)throw RequestRejected("RESOURCE_MANAGED","자원 관리 작업은 공유 자원 화면에서 관측·복구합니다",409)
+    val context=resources.context(id)
+    if(context?.get("runId")!=stationRunId)throw RequestRejected("RESOURCE_MANAGED","다른 자원 작업의 재평가입니다",409)
+    resources.authorize(id,receipt.normalizedOrder!!["workMasterId"].asText())
+   }
+   // Only pre-dispatch eligibility failures are proven not sent. Absence in a host read is not such proof.
+   if(receipt.state!="UNASSIGNED" || receipt.submission!=null || receipt.lastExecution!=null || receipt.normalizedOrder==null)
+    throw RequestRejected("RECOVERY_NOT_SAFE","호스트 전송 전 미배정만 재평가할 수 있습니다. 처리 중·결과 불명은 실행 관측과 현장 확인이 필요합니다",409)
+   if(receipt.updatedAt!=expected) throw RequestRejected("STALE_RECOVERY","접수 상태가 바뀌었습니다. 다시 조회하세요",409)
+   val original=receipt.payload
+   try {
+    draft=if(receipt.sourceSystemId=="ops:manual") JobOrderForm.read(original["form"]) else {
+     val interfaceId=original["interfaceId"].asText();val version=original["interfaceVersion"].asInt()
+     ref="$interfaceId/v$version";input=original["input"]
+     interfaces.draft(interfaceId,version,input!!,true)
+    }
+   } catch(e:InterfaceRejected) {throw RequestRejected(e.code,e.message,e.status)}
+   receipt.normalizedOrder["deployment"]?.let { saved ->
+    val originalDraft=(draft as? dev.picasso.ops.service.joborders.DeployedJobOrderDraft)?.original ?: draft!!
+    draft=dev.picasso.ops.service.joborders.DeployedJobOrderDraft(originalDraft,saved)
+   }
+   if(canonical(JobOrderForm.jobOrder(draft!!,receipt.jobOrderId,json))!=canonical(receipt.normalizedOrder))
+    throw RequestRejected("RECOVERY_INPUT_CHANGED","원래 변환 입력과 달라 재평가를 차단했습니다",409)
+   jdbc.sql("INSERT INTO ops.work_request_recovery(attempt_id,receipt_id,actor,reason,expected_updated_at) VALUES(:attempt,:id,:actor,:reason,:expected)")
+    .param("attempt",attempt).param("id",id).param("actor",actor.header()).param("reason",reason).param("expected",expected).update()
+   jdbc.sql("UPDATE ops.work_request SET state='DISPATCHING',detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id")
+    .param("id",id).param("detail","운영자 미배정 재평가: $reason").update()
+   true
+  }!!
+  if(claimed) dispatch(id,actor,draft!!,ref,input,get(id).jobOrderId)
+  return ReceiptAccepted(get(id),!claimed)
+ }
+ fun review(id:UUID,actor:Actor,payload:JsonNode):Map<String,Any?> = transactions.execute {
+  if(actor.mode!=Mode.OPERATOR)throw RequestRejected("MODE_NOT_ALLOWED","운영자만 현장 확인을 기록합니다",403)
+  val raw=payload.path("requestId").asText();val requestId=runCatching{UUID.fromString(raw)}.getOrNull()?.takeIf{it.toString()==raw}
+  val observation=payload.path("observation").asText();val reason=payload.path("reason").takeIf{it.isTextual}?.asText()?.trim()
+  val expected=payload.path("expectedUpdatedAt").takeIf{it.isTextual}?.asText()
+  if(!payload.isObject || payload.fieldNames().asSequence().toSet()!=setOf("requestId","observation","reason","expectedUpdatedAt") || requestId==null ||
+   observation !in setOf("NOT_CONFIRMED","NOT_STARTED","IN_PROGRESS","COMPLETED") || reason.isNullOrBlank() || reason.length>1000 || expected.isNullOrBlank())
+   throw RequestRejected("BAD_REVIEW","확인 UUID·현장 관측·판단 근거·조회 버전이 필요합니다")
+  get(id)
+  jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",id).query(UUID::class.java).single()
+  val old=jdbc.sql("SELECT receipt_id,actor,observation,reason,expected_updated_at FROM ops.work_request_review WHERE request_id=:request")
+   .param("request",requestId).query{rs,_ -> (1..5).map{rs.getString(it)}}.optional().orElse(null)
+  if(old!=null) {
+   if(old!=listOf(id.toString(),actor.header(),observation,reason,expected))throw RequestRejected("REVIEW_CONFLICT","같은 확인 ID에 다른 기록입니다",409)
+   return@execute mapOf("requestId" to requestId,"duplicate" to true)
+  }
+  val receipt=get(id)
+  if(receipt.updatedAt!=expected)throw RequestRejected("STALE_REVIEW","관측한 접수 상태가 바뀌었습니다. 다시 조회하세요",409)
+  val context=json.createObjectNode().put("receiptState",receipt.state).put("observedAt",receipt.executionObservedAt).put("instanceId",receipt.executionInstanceId)
+  context.set<JsonNode>("lastExecution",receipt.lastExecution?:json.nullNode())
+  context.set<JsonNode>("latestResult",json.valueToTree(storedResult(id,null)))
+  jdbc.sql("INSERT INTO ops.work_request_review(request_id,receipt_id,actor,observation,reason,expected_updated_at,context) VALUES(:request,:id,:actor,:observation,:reason,:expected,CAST(:context AS JSONB))")
+   .param("request",requestId).param("id",id).param("actor",actor.header()).param("observation",observation).param("reason",reason).param("expected",expected).param("context",context.toString()).update()
+  mapOf("requestId" to requestId,"duplicate" to false)
+ }!!
+ private fun update(id:UUID,state:String,detail:String) {
+  jdbc.sql("UPDATE ops.work_request SET state=:state,detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id")
+   .param("state",state).param("detail",detail.take(2000)).param("id",id).update()
+ }
+ fun get(id:UUID,source:String?=null):Receipt = jdbc.sql("SELECT * FROM ops.work_request WHERE receipt_id=:id AND (:source IS NULL OR source_system_id=:source)")
+  .param("id",id).param("source",source,java.sql.Types.VARCHAR).query(::row).optional()
+  .orElseThrow { RequestRejected("RECEIPT_NOT_FOUND","접수를 찾을 수 없습니다",404) }
+ fun list(search:String, state:String?, offset:Int, limit:Int, result:String?=null):Map<String,Any> {
+  if(search.length>160 || offset<0 || limit !in 1..100 || state!=null && state !in STATES && state!="NEEDS_CONFIRMATION" || result!=null && result!="unacknowledged") throw RequestRejected("BAD_FILTER","조회 조건이 잘못되었습니다")
+  val stateFilter=if(state=="NEEDS_CONFIRMATION") "state IN ('RECEIVED','DISPATCHING','IN_DOUBT')" else "(:state IS NULL OR state=:state)"
+  val resultFilter=if(result=="unacknowledged") " AND source_system_id NOT LIKE 'ops:%' AND (SELECT acknowledged_at IS NULL FROM ops.work_result WHERE receipt_id=ops.work_request.receipt_id ORDER BY version DESC LIMIT 1)" else ""
+  val where="$stateFilter AND (strpos(external_order_id,:search)>0 OR strpos(job_order_id,:search)>0 OR strpos(source_system_id,:search)>0)$resultFilter"
+  fun query(sql:String):JdbcClient.StatementSpec {
+   val statement=jdbc.sql(sql).param("search",search)
+   return if(state=="NEEDS_CONFIRMATION") statement else statement.param("state",state,java.sql.Types.VARCHAR)
+  }
+  val count=query("SELECT count(*) FROM ops.work_request WHERE $where").query(Long::class.java).single()
+  val rows=query("SELECT * FROM ops.work_request WHERE $where ORDER BY received_at DESC,receipt_id LIMIT :limit OFFSET :offset")
+   .param("limit",limit).param("offset",offset).query(::row).list()
+  return mapOf("total" to count,"requests" to rows,"offset" to offset,"limit" to limit)
+ }
+ fun summary():Map<String,Any> {
+  val counts=jdbc.sql("SELECT state,count(*) AS n FROM ops.work_request GROUP BY state").query { rs,_ -> rs.getString("state") to rs.getLong("n") }.list().toMap()
+  val pendingResults=jdbc.sql("""SELECT count(*) FROM ops.work_request r JOIN LATERAL
+   (SELECT acknowledged_at FROM ops.work_result WHERE receipt_id=r.receipt_id ORDER BY version DESC LIMIT 1) v ON true
+   WHERE r.source_system_id NOT LIKE 'ops:%' AND v.acknowledged_at IS NULL""").query(Long::class.java).single()
+  return mapOf("states" to counts,"total" to counts.values.sum(),"unacknowledgedResults" to pendingResults,
+   "latest" to jdbc.sql("SELECT * FROM ops.work_request ORDER BY received_at DESC,receipt_id LIMIT 5").query(::row).list(),
+   "observedAt" to java.time.Instant.now().toString())
+ }
+ fun collectResults():Int {
+  if(durableResults)return collectEvents()
+  val observedAt=java.time.Instant.now()
+  val call=host.executions()
+  val body=(call as? HostCall.Ok)?.value?.takeIf{it["instanceId"]?.isTextual==true && it["executions"]?.isArray==true}
+   ?: throw IllegalStateException("호스트 결과 관측 실패")
+  val jobs=body["executions"].mapNotNull{it["jobOrderId"]?.takeIf{it.isTextual}?.asText()}.distinct()
+  if(jobs.isEmpty())return 0
+  val ids=jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE job_order_id IN (:jobs)").param("jobs",jobs).query(UUID::class.java).list()
+  ids.forEach{observe(it,null,call,observedAt)}
+  return ids.size
+ }
+ fun cursorStatus():Map<String,Any?> = jdbc.sql("SELECT producer_id,sequence,high_watermark,updated_at FROM ops.result_cursor WHERE singleton")
+  .query {rs,_ -> mapOf("producerId" to rs.getString(1),"sequence" to rs.getLong(2),"highWatermark" to rs.getLong(3),"updatedAt" to rs.getString(4),"mode" to if(durableResults) "DURABLE_OUTBOX" else "LEGACY_POLLING")}.single()
+ private fun collectEvents():Int {
+  val before=cursorStatus();val after=(before["sequence"] as Long)
+  val feed=(host.resultEvents(after,100) as? HostCall.Ok)?.value ?: error("result feed unavailable")
+  val producer=feed.path("producerId").takeIf{it.isTextual}?.asText()?.let{UUID.fromString(it)} ?: error("invalid producer")
+  val watermark=feed.path("highWatermark").takeIf{it.isIntegralNumber && it.canConvertToLong()}?.asLong() ?: error("invalid watermark")
+  val events=feed.path("events").takeIf{it.isArray && it.size()<=100} ?: error("invalid events")
+  check(watermark>=after)
+  var expected=after
+  events.forEach {event ->
+   val sequence=event.path("sequence");check(sequence.isIntegralNumber && sequence.canConvertToLong() && sequence.asLong()==++expected && expected<=watermark) {"result gap"}
+   validateEvent(event.path("snapshot"))
+  }
+  check(events.size()==minOf(100L,watermark-after).toInt()) {"incomplete event page"}
+  return transactions.execute {
+   val current=jdbc.sql("SELECT producer_id,sequence FROM ops.result_cursor WHERE singleton FOR UPDATE")
+    .query {rs,_ -> rs.getString(1) to rs.getLong(2)}.single()
+   if(current.second!=after)return@execute 0 // Another collector committed this page; read again next tick.
+   check(current.first==null || current.first==producer.toString()) {"producer changed; reconciliation required"}
+   var matched=0
+   events.forEach {event ->
+    val snapshot=event["snapshot"]
+    val receiptId=jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE job_order_id=:job")
+     .param("job",snapshot["jobOrderId"].asText()).query(UUID::class.java).optional().orElse(null)
+    if(receiptId!=null) {
+     val receipt=get(receiptId)
+     check(receipt.normalizedOrder?.path("workMasterId")?.asText()==snapshot["workMasterId"].asText()) {"result mission mismatch"}
+     captureResult(receipt,snapshot["instanceId"].asText(),snapshot)
+     jdbc.sql("UPDATE ops.work_request SET state='ACCEPTED',updated_at=clock_timestamp() WHERE receipt_id=:id AND state IN ('RECEIVED','DISPATCHING','IN_DOUBT')")
+      .param("id",receiptId).update()
+     matched++
+    }
+   }
+   jdbc.sql("UPDATE ops.result_cursor SET producer_id=:producer,sequence=:sequence,high_watermark=:watermark,updated_at=clock_timestamp() WHERE singleton")
+    .param("producer",producer).param("sequence",expected).param("watermark",watermark).update()
+   matched
+  }!!
+ }
+ private fun validateEvent(snapshot:JsonNode) {
+  check(snapshot.isObject)
+  for(key in listOf("instanceId","executionId","jobOrderId","robotId","workMasterId","physicalState"))check(snapshot.path(key).isTextual && snapshot[key].asText().isNotBlank()) {"invalid $key"}
+  val response=snapshot.path("jobResponse")
+  check(response.isObject && response.path("jobResponseId").isTextual && response["jobResponseId"].asText().isNotBlank())
+  check(response.path("version").isIntegralNumber && response["version"].canConvertToInt() && response["version"].asInt()>0)
+  check(response.path("physicalState")==snapshot["physicalState"])
+  check(snapshot.has("missionVersion") && (snapshot["missionVersion"].isNull || snapshot["missionVersion"].isIntegralNumber && snapshot["missionVersion"].canConvertToInt() && snapshot["missionVersion"].asInt()>0))
+  for(key in listOf("requiredEvidence","reachedEvidence"))check(response.path(key).isTextual && response[key].asText() in setOf("E0","E1","E2","E3"))
+  for(key in listOf("completedUnits","unverifiedUnits","inDoubtUnits","blockedBy"))check(response.path(key).isArray && response[key].all{it.isTextual})
+  check(response.path("incompleteUnits").isObject && response["incompleteUnits"].all{it.isTextual})
+  check(response.path("operatorRequired").isBoolean && response.path("residualHold").isTextual)
+ }
+ fun detail(id:UUID,source:String?=null):Map<String,Any?> {
+  get(id,source) // Authorize before any host read.
+  val observedAt=java.time.Instant.now()
+  return observe(id,source,host.executions(),observedAt)
+ }
+ private fun observe(id:UUID,source:String?,call:HostCall<JsonNode>,observedAt:java.time.Instant):Map<String,Any?> = transactions.execute {
+  get(id,source)
+  jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",id).query(UUID::class.java).single()
+  var receipt=get(id,source)
+  val body=(call as? HostCall.Ok)?.value?.takeIf { it["instanceId"]?.isTextual == true && it["executions"]?.isArray == true }
+  val execution=body?.get("executions")?.firstOrNull { it["jobOrderId"]?.asText()==receipt.jobOrderId }
+  val blocked=body?.get("journalBlockedExecutionIds")?.any { it.asText()==execution?.get("executionId")?.asText() } ?: false
+  if(execution!=null && !blocked) {
+   val observed=jdbc.sql("""UPDATE ops.work_request SET last_execution=CAST(:execution AS JSONB),execution_observed_at=:at,execution_instance_id=:instance,
+     state=CASE WHEN state IN ('RECEIVED','DISPATCHING','IN_DOUBT') THEN 'ACCEPTED' ELSE state END,
+     updated_at=clock_timestamp() WHERE receipt_id=:id AND (execution_observed_at IS NULL OR execution_observed_at < :at)""")
+    .param("execution",execution.toString()).param("at",java.time.OffsetDateTime.ofInstant(observedAt,java.time.ZoneOffset.UTC))
+    .param("instance",body.get("instanceId").asText()).param("id",id).update()
+   if(observed>0 && !durableResults) captureResult(receipt,body.get("instanceId").asText(),execution)
+   receipt=get(id,source)
+  }
+  mapOf("resource" to resources.context(id),"receipt" to receipt,"hostRead" to if(body==null) "UNAVAILABLE" else "OK", "instanceId" to body?.get("instanceId"),
+   "execution" to execution,"journalBlocked" to blocked,"observedAt" to observedAt.toString(),
+   "latestResult" to storedResult(id,null),
+   "deliveries" to jdbc.sql("SELECT version,state,attempts,last_error,next_attempt_at,delivered_at FROM ops.work_result_delivery WHERE receipt_id=:id ORDER BY version DESC")
+    .param("id",id).query {rs,_ -> mapOf("version" to rs.getInt(1),"state" to rs.getString(2),"attempts" to rs.getInt(3),"lastError" to rs.getString(4),"nextAttemptAt" to rs.getString(5),"deliveredAt" to rs.getString(6))}.list(),
+   "reviews" to jdbc.sql("SELECT request_id,actor,observation,reason,created_at,context FROM ops.work_request_review WHERE receipt_id=:id ORDER BY created_at,request_id")
+    .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"actor" to rs.getString(2),"observation" to rs.getString(3),"reason" to rs.getString(4),"createdAt" to rs.getString(5),"context" to json.readTree(rs.getString(6)))}.list(),
+   "recoveries" to jdbc.sql("SELECT attempt_id,actor,reason,created_at FROM ops.work_request_recovery WHERE receipt_id=:id ORDER BY created_at")
+    .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"actor" to rs.getString(2),"reason" to rs.getString(3),"createdAt" to rs.getString(4))}.list())
+ }!!
+ /** Capture host response versions, never infer success from a physical state alone. */
+ private fun captureResult(receipt:Receipt, instance:String, execution:JsonNode) {
+  val response=execution["jobResponse"]?.takeIf { it.isObject } ?: return
+  val responseVersion=response["version"]?.takeIf { it.isIntegralNumber && it.canConvertToInt() }?.asInt() ?: return
+  val executionId=execution["executionId"]?.takeIf { it.isTextual && it.asText().isNotBlank() }?.asText() ?: return
+  if(responseVersion<1 || response["jobResponseId"]?.isTextual!=true ||
+     response["physicalState"]?.asText()!=execution["physicalState"]?.asText() ||
+     response["requiredEvidence"]?.isTextual!=true || response["reachedEvidence"]?.isTextual!=true) return
+  val snapshot=json.createObjectNode().apply {
+   put("receiptId",receipt.receiptId.toString());put("sourceSystemId",receipt.sourceSystemId)
+   put("externalOrderId",receipt.externalOrderId);put("jobOrderId",receipt.jobOrderId)
+   put("instanceId",instance);put("executionId",executionId)
+   set<JsonNode>("robotId",execution["robotId"]);set<JsonNode>("workMasterId",execution["workMasterId"])
+   set<JsonNode>("missionVersion",execution["missionVersion"]);set<JsonNode>("jobResponse",response)
+   set<JsonNode>("deployment",receipt.normalizedOrder?.get("deployment")?:json.nullNode())
+  }
+  val hash=MessageDigest.getInstance("SHA-256").digest(canonical(snapshot).toString().toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+  transactions.executeWithoutResult {
+   // All result insertion and ACK for one receipt share this durable row lock.
+   jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",receipt.receiptId).query(UUID::class.java).single()
+   val seen=jdbc.sql("SELECT COALESCE(max(response_version),0) FROM ops.work_result WHERE receipt_id=:id AND instance_id=:instance AND execution_id=:execution")
+    .param("id",receipt.receiptId).param("instance",instance).param("execution",executionId).query(Int::class.java).single()
+   val exists=jdbc.sql("SELECT count(*) FROM ops.work_result WHERE receipt_id=:id AND instance_id=:instance AND execution_id=:execution AND response_id=:responseId")
+    .param("id",receipt.receiptId).param("instance",instance).param("execution",executionId).param("responseId",response["jobResponseId"].asText()).query(Long::class.java).single()>0
+   if((durableResults || responseVersion>=seen) && !exists) {
+    jdbc.sql("""INSERT INTO ops.work_result(receipt_id,version,instance_id,execution_id,response_id,response_version,snapshot,result_hash)
+      SELECT :id,COALESCE(max(version),0)+1,:instance,:execution,:responseId,:response,CAST(:snapshot AS JSONB),:hash FROM ops.work_result WHERE receipt_id=:id""")
+     .param("id",receipt.receiptId).param("instance",instance).param("execution",executionId).param("response",responseVersion)
+     .param("responseId",response["jobResponseId"].asText()).param("snapshot",snapshot.toString()).param("hash",hash).update()
+   }
+  }
+ }
+ private fun storedResult(id:UUID,version:Int?):Map<String,Any?>? = jdbc.sql("""SELECT * FROM ops.work_result
+   WHERE receipt_id=:id AND (:version IS NULL OR version=:version) ORDER BY version DESC LIMIT 1""")
+  .param("id",id).param("version",version,java.sql.Types.INTEGER).query { rs,_ ->
+   mapOf<String,Any?>("version" to rs.getInt("version"),"resultHash" to rs.getString("result_hash"),
+    "snapshot" to json.readTree(rs.getString("snapshot")),"recordedAt" to rs.getString("recorded_at"),
+    "acknowledgedAt" to rs.getString("acknowledged_at"))
+  }.optional().orElse(null)
+ fun result(id:UUID,source:String,version:Int?=null):Map<String,Any?> {
+  get(id,source)
+  if(version!=null && version<1) throw RequestRejected("BAD_VERSION","양의 결과 버전이 필요합니다")
+  if(version==null) detail(id,source) // Observation may capture a new host response; saved versions survive host outage.
+  return storedResult(id,version) ?: throw RequestRejected("RESULT_NOT_READY","저장된 결과 버전이 없습니다",404)
+ }
+ fun acknowledge(id:UUID,source:String,version:Int,hash:String):Map<String,Any?> = transactions.execute {
+  get(id,source) // Cross-source access never reaches ACK or the host.
+  jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",id).query(UUID::class.java).single()
+  val result=storedResult(id,version) ?: throw RequestRejected("RESULT_NOT_FOUND","해당 결과 버전을 찾을 수 없습니다",404)
+  if(result["resultHash"]!=hash) throw RequestRejected("RESULT_CONFLICT","수신한 결과 해시가 일치하지 않습니다",409)
+  jdbc.sql("UPDATE ops.work_result SET acknowledged_at=COALESCE(acknowledged_at,clock_timestamp()) WHERE receipt_id=:id AND version=:version")
+   .param("id",id).param("version",version).update()
+  storedResult(id,version)!!
+ }!!
+ private fun row(rs:java.sql.ResultSet, @Suppress("UNUSED_PARAMETER") index:Int)=Receipt(rs.getObject("receipt_id",UUID::class.java),rs.getString("source_system_id"),rs.getString("external_order_id"),rs.getString("job_order_id"),rs.getString("state"),rs.getString("detail"),json.readTree(rs.getString("payload")),rs.getString("normalized_order")?.let(json::readTree),rs.getString("submission")?.let(json::readTree),rs.getString("received_at"),rs.getString("updated_at"),rs.getString("last_execution")?.let(json::readTree),rs.getString("execution_observed_at"),rs.getString("execution_instance_id"),rs.getString("required_station_id"))
+ private fun canonical(node:JsonNode):JsonNode = when {
+  node.isObject -> json.createObjectNode().apply { node.fieldNames().asSequence().sorted().forEach { set<JsonNode>(it,canonical(node[it])) } }
+  node.isArray -> json.createArrayNode().apply { node.forEach { add(canonical(it)) } }
+  else -> node
+ }
+ companion object { val STATES=setOf("WAITING_RESOURCE","RECEIVED","DISPATCHING","ACCEPTED","REJECTED","UNASSIGNED","IN_DOUBT") }
+}

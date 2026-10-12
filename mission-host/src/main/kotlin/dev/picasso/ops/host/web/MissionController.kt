@@ -44,11 +44,19 @@ class MissionController(
         TemplatesView(workMaster, MissionTemplates.of(workMaster))
     }
 
+    @GetMapping("/host/missions/drafts/{draftId}")
+    fun draft(@PathVariable draftId: String): ResponseEntity<Any> = answering {
+        versions.draftView(MissionRequests.draftId(draftId))
+    }
+
     @PostMapping("/host/missions/{workMasterId}/drafts", consumes = [MediaType.APPLICATION_JSON_VALUE])
     fun saveDraft(@PathVariable workMasterId: String, @RequestBody(required = false) body: ByteArray?): ResponseEntity<Any> = answering {
         val workMaster = MissionRequests.workMaster(workMasterId)
         val request = MissionRequests.draft(read(body))
-        versions.saveDraft(workMaster, request.definition, request.actor, request.requestId)
+        val sample=read(body)?.get("sampleOrder")
+        if(workMaster!="PrepareSequencedRack" && sample==null)throw BadRequest(HostRequests.BAD_REQUEST,"새 미션은 모의 실행할 sampleOrder가 필요합니다")
+        sample?.let{if(HostRequests.jobOrder(it).workMasterId!=workMaster)throw BadRequest(HostRequests.BAD_REQUEST,"표본 작업의 미션 ID가 다릅니다")}
+        versions.saveDraft(workMaster, request.definition, request.actor, request.requestId,sample?.toString())
     }
 
     @PostMapping("/host/missions/drafts/{draftId}/validate", consumes = [MediaType.APPLICATION_JSON_VALUE])

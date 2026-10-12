@@ -63,7 +63,7 @@ class MissionVersions(
         val versions = store.versions(workMasterId).map(VersionView::of)
         val activeVersion = catalog.active(workMasterId)?.missionVersion
         val active = if (activeVersion == null) {
-            ActiveView(null, SOURCE_CODE, null)
+            ActiveView(null, if(catalog.active(workMasterId)==null) "UNPUBLISHED" else SOURCE_CODE, null)
         } else {
             ActiveView(activeVersion, SOURCE_DATA, versions.firstOrNull { it.version == activeVersion })
         }
@@ -72,10 +72,10 @@ class MissionVersions(
     }
 
     /** 초안은 자유롭다. 읽을 수 없는 문서도 저장한다(운영 관리 화면 설계 제안 §8.1). */
-    fun saveDraft(workMasterId: String, definition: String, actor: String, requestId: UUID): DraftSavedView = handling(requestId) {
+    fun saveDraft(workMasterId: String, definition: String, actor: String, requestId: UUID,sampleOrder:String?=null): DraftSavedView = handling(requestId) {
         if (store.requestIdUsed(requestId)) throw RequestIdReused(requestId)
         val row = try {
-            store.saveDraft(workMasterId, definition, actor, requestId)
+            store.saveDraft(workMasterId, definition, actor, requestId,sampleOrder)
         } catch (_: DuplicateKeyException) {
             throw RequestIdReused(requestId)
         }
@@ -131,7 +131,7 @@ class MissionVersions(
             is Judgment.Unknown -> return outcome(INPUT_UNKNOWN, judgment, null)
         }
         // 검증이 지났으면 스냅숏이 있다(신호 사양을 읽었다).
-        val order = MockRunner.sampleOrder(draft.workMasterId, draftId, inputs.cell!!)
+        val order = draft.sampleOrder?.let{dev.picasso.ops.host.web.HostRequests.jobOrder(json.readTree(it)).copy(jobOrderId="MOCK-$draftId")} ?: MockRunner.sampleOrder(draft.workMasterId, draftId, inputs.cell!!)
             ?: return outcome(INPUT_UNKNOWN, Judgment.Unknown(listOf(UnknownInput.SAMPLE_ORDER), emptyList()), null)
 
         val startedAt = store.now()
@@ -211,6 +211,8 @@ class MissionVersions(
             inFlight.remove(requestId)
         }
     }
+
+    fun draftView(draftId: Long): DraftView = draft(draftId).let { DraftView.of(it, store.lastMockRun(it.draftId)?.let(::view)) }
 
     private fun draft(draftId: Long): DraftRow = store.draft(draftId) ?: throw DraftNotFound(draftId)
 

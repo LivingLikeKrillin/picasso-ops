@@ -183,3 +183,5 @@ export const DECISION_LABEL: Record<HoldDecision, string> = {
   CONFIRM_DONE: '완료 확인',
   REWORK: '재작업',
 }
+
+export const reviewLabels:Record<string,string>={NOT_CONFIRMED:'현장 상태 미확인',NOT_STARTED:'현장 미착수 확인',IN_PROGRESS:'현장 진행 중 확인',COMPLETED:'현장 완료 관측'}

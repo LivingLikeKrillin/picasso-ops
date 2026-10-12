@@ -7,6 +7,7 @@
 // 실행 JDK 는 21 이상이어야 한다(Gradle 이 JDK 21 툴체인으로 컴파일한다).
 //
 // java 의 PID 를 build/<이름>.pid 에 적는다. 화면 시험이 registry 를 멈출 때 이것으로 런처를 끈다.
+import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -36,20 +37,38 @@ for (const raw of readFileSync(path.join(root, '.env'), 'utf8').split(/\r?\n/)) 
 if (name !== 'site') delete env.PICASSO_INGEST_TOKEN
 if (name === 'mission-host') delete env.PICASSO_OPERATOR_TOKEN
 
+// Explicit test-only identity; no token is bundled in the frontend.
+if (name === 'ops-service' && process.argv.includes('--mock-mes')) {
+  env.PICASSO_INTEGRATION_TOKEN = 'picasso-e2e-mock-mes-only';
+  env.PICASSO_INTEGRATION_SOURCE = 'mock-mes';
+  env.PICASSO_LOCAL_CALLBACK_URL = 'http://127.0.0.1:8786/results';
+  env.PICASSO_LOCAL_CALLBACK_TOKEN = 'picasso-local-callback-e2e-only';
+}
+
+if (name === 'ops-service' && process.argv.includes('--host-proxy')) env.OPS_HOST_URL='http://127.0.0.1:8791'
+
 const lib = path.join(root, name, 'build', 'install', name, 'lib')
 if (!existsSync(lib)) throw new Error(`배포본이 없다: ${lib} (installDist 먼저)`)
 const java = process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', 'java') : 'java'
 
-const child = spawn(
-  java,
-  ['-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', '-cp', path.join(lib, '*'), MAIN[name]],
-  { cwd: root, env, stdio: 'inherit' },
-)
-child.on('error', (error) => {
-  console.error(`java 를 띄우지 못했다(${java}): ${error.message}`)
-  process.exit(1)
-})
-mkdirSync(path.join(root, 'build'), { recursive: true })
-writeFileSync(path.join(root, 'build', `${name}.pid`), String(child.pid))
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal))
-child.on('exit', (code) => process.exit(code ?? 1))
+// Test-only supervisor. Explicit flag; local loopback control never ships in the service.
+const controlPort = process.argv.includes('--restartable') ? (name==='ops-service'?8788:name==='mission-host'?8789:0) : 0
+let child
+function start() {
+ child = spawn(java,['-Dstdout.encoding=UTF-8','-Dstderr.encoding=UTF-8','-cp',path.join(lib,'*'),MAIN[name]],{cwd:root,env,stdio:'inherit'})
+ child.on('error',error=>{console.error(error.message);process.exit(1)})
+ mkdirSync(path.join(root,'build'),{recursive:true})
+ writeFileSync(path.join(root,'build',`${name}.pid`),String(child.pid))
+ child.on('exit',code=>{if(!controlPort)process.exit(code??1)})
+}
+start()
+let changing=false
+if(controlPort)createServer(async(req,res)=>{
+ if(req.url==='/health'){res.end('ready');return}
+ if(req.method!=='POST' || req.url!=='/restart'){res.writeHead(404).end();return}
+ if(changing){res.writeHead(409).end();return}
+ changing=true
+ try{const previous=child;if(previous.exitCode===null && previous.signalCode===null)await new Promise(resolve=>{previous.once('exit',resolve);previous.kill('SIGKILL')});start();res.end('restarted')}
+ catch(error){res.writeHead(500).end(String(error))}finally{changing=false}
+}).listen(controlPort,'127.0.0.1')
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{child.kill(signal);process.exit(0)})

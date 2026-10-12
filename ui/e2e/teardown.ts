@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 export default function teardown() {
   const root = fileURLToPath(new URL('../..', import.meta.url))
   try {
-    execFileSync('docker', ['compose', '-f', 'site/compose.yaml', '--env-file', '.env', 'down', '-v'], {
+    execFileSync('docker', ['compose', '-p', 'picasso-ops-e2e', '-f', 'site/compose.yaml', '--env-file', '.env', 'down', '-v'], {
       cwd: root,
       stdio: 'ignore',
     })

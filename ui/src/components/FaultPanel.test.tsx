@@ -189,12 +189,12 @@ describe('장애 주입', () => {
     )
   })
 
-  it('현장·자원 영역에 현장 설정과 따로 장애 주입 구역이 있고 기체 목록을 다시 읽어 고를 기체를 채운다', async () => {
+  it('검증 도구에서 장애를 주입하며 현장 설정과 분리하고 기체 목록을 채운다', async () => {
     installFakeOps(robots)
     render(<App />)
-    await userEvent.click(screen.getByRole('button', { name: '현장·자원' }))
+    await userEvent.click(screen.getByRole('button', { name: '검증 도구' }))
     const region = screen.getByRole('region', { name: '장애 주입' })
-    expect(screen.getByRole('region', { name: '현장 설정' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '현장 설정' })).not.toBeInTheDocument()
     const robot = await within(region).findByLabelText('기체')
     expect(within(robot).getAllByRole('option').map((option) => option.textContent)).toEqual([
       'humanoid-01',

@@ -23,7 +23,7 @@ object MissionRequests {
     val EDITABLE: Set<String> = setOf(PrepareSequencedRack.WORK_MASTER)
 
     fun workMaster(value: String): String {
-        if (value !in EDITABLE) {
+        if (value !in EDITABLE && (!Regex("[A-Z][A-Za-z0-9]{0,63}").matches(value) || value in setOf("InspectAsset","DeliverContainer"))) {
             throw BadRequest(HostRequests.UNKNOWN_WORK_MASTER, "편집하지 않는 WorkMaster 다: $value (편집하는 것: ${EDITABLE.sorted()})")
         }
         return value

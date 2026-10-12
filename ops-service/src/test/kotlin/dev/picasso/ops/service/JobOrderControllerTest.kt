@@ -40,6 +40,10 @@ class JobOrderControllerTest {
         bench.eligibility,
         JobOrderOperations(bench.eligibility, bench.host, bench.host, log, bench.clock, requeryDelay = Duration.ZERO),
         bench.host,
+        dev.picasso.ops.service.requests.WorkRequests(JdbcClient.create(dataSource),
+            dev.picasso.ops.service.interfaces.MissionInterfaces(JdbcClient.create(dataSource),org.springframework.transaction.support.TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource)),log),
+            JobOrderOperations(bench.eligibility,bench.host,bench.host,log,bench.clock,requeryDelay=Duration.ZERO),bench.host,
+            org.springframework.transaction.support.TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource))),
     )
     private val json = jacksonObjectMapper()
 

@@ -7,7 +7,7 @@ import { defineConfig, loadEnv } from 'vite'
 export default defineConfig(({ mode }) => {
   const opsPort = loadEnv(mode, '..', 'OPS_').OPS_PORT
   if (!opsPort) throw new Error('루트 .env 에 OPS_PORT 가 없다')
-  const proxy = { '/api': `http://127.0.0.1:${opsPort}` }
+  const proxy = { '/api': `http://127.0.0.1:${opsPort}`, '/integration': `http://127.0.0.1:${opsPort}` }
   return {
     plugins: [react()],
     server: { proxy },

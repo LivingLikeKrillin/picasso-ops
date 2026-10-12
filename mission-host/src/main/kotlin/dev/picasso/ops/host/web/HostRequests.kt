@@ -43,7 +43,7 @@ object HostRequests {
     fun jobOrder(node: JsonNode?): JobOrder {
         if (node == null || !node.isObject) throw BadRequest(BAD_REQUEST, "jobOrder 가 객체가 아니다")
         val workMasterId = text(node, "workMasterId")
-        if (workMasterId !in MissionHost.WORK_MASTERS) {
+        if (workMasterId == "DeliverContainer" || !Regex("[A-Z][A-Za-z0-9]{0,63}").matches(workMasterId)) {
             throw BadRequest(UNKNOWN_WORK_MASTER, "받지 않는 WorkMaster 다: $workMasterId (받는 것: ${MissionHost.WORK_MASTERS.sorted()})")
         }
         val version = node.get("version")?.takeIf { it.isIntegralNumber && it.canConvertToInt() }?.asInt()

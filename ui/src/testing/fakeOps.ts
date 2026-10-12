@@ -15,8 +15,10 @@ import type {
   IncidentDetail,
   IncidentRow,
   IncidentsView,
+  JobContract,
   JobResponseLogRow,
   JobResponsesView,
+  MissionInterfaceView,
   MissionOverview,
   MissionTemplates,
   MockRunView,
@@ -43,6 +45,8 @@ export interface Call {
 
 /** 시험이 고칠 수 있는 대역의 상태. 조작마다 [answer] 를 돌려준다. */
 export interface FakeOps {
+  interfaces: MissionInterfaceView[]
+  contracts: JobContract[]
   calls: Call[]
   view: RobotListView
   adapters: AdapterListView
@@ -553,6 +557,8 @@ export function installFakeOps(
   settings: SiteSettingsView = settingsView(),
 ): FakeOps {
   const fake: FakeOps = {
+    interfaces: [],
+    contracts: jobContracts(),
     calls: [],
     view,
     adapters,
@@ -572,6 +578,7 @@ export function installFakeOps(
     answers: new Map(),
     answer: { status: 200, body: outcome({}) },
   }
+  const manualReceipts = new Map<string, Record<string, unknown>>()
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -591,6 +598,18 @@ export function installFakeOps(
           : ''
         return new Response(body, { status: 503 })
       }
+      if (method === 'GET' && path === '/api/mission-resources') { const answer=fake.answers.get(path)??{status:200,body:{requirements:[]}};return new Response(JSON.stringify(answer.body),{status:answer.status}) }
+      if (method === 'GET' && path.startsWith('/api/stations')) {
+        const answer = fake.answers.get(url) ?? { status: 200, body: { stations: [], runs: [] } }
+        return new Response(JSON.stringify(answer.body), { status: answer.status })
+      }
+      if (method === 'GET' && path === '/api/mission-interfaces') return new Response(JSON.stringify({ interfaces: fake.interfaces }), { status: 200 })
+      if (method === 'GET' && path === '/api/work-requests') return new Response(JSON.stringify({ total: manualReceipts.size, requests: [...manualReceipts.values()], offset: 0, limit: 20 }), { status: 200 })
+      if (method === 'GET' && path.startsWith('/api/work-requests/')) {
+        const receipt = [...manualReceipts.values()].find(row => row.receiptId === path.split('/').at(-1))
+        return new Response(JSON.stringify({ receipt, hostRead: 'OK', execution: null, instanceId: 'mw-test', journalBlocked: false, observedAt: 't2', latestResult: null }), { status: 200 })
+      }
+      if (method === 'GET' && path === '/api/job-contracts') return new Response(JSON.stringify({ contracts: fake.contracts }), { status: 200 })
       if (method === 'GET' && path.startsWith(INCIDENT_PREFIX)) {
         const incidentId = decodeURIComponent(path.slice(INCIDENT_PREFIX.length))
         const instanceId = params.get('instanceId')
@@ -634,9 +653,33 @@ export function installFakeOps(
       if (url === ELIGIBILITY_PATH) {
         return new Response(JSON.stringify(fake.eligibility), { status: fake.eligibilityStatus })
       }
+      if (path.startsWith('/api/mission-interfaces/') && path.endsWith('/eligibility') && !fake.answers.has(url)) {
+        const id = decodeURIComponent(path.split('/')[3]); const version = Number(path.split('/')[4])
+        const row = fake.interfaces.find(item => item.interfaceId === id && item.version === version)
+        return new Response(JSON.stringify({ interfaceId: id, interfaceVersion: version, jobOrder: { workMasterId: row?.workMasterId, missionVersion: row?.deployment?.missionVersion ?? 'CODE', requiredEvidence: 'E0', deployment: row?.deployment ?? { deploymentVersion: 1 } }, eligibility: fake.eligibility }), { status: 200 })
+      }
       const answer = fake.answers.get(url) ?? fake.answer
+      if(url === '/api/work-requests/manual' && answer.status === 200 && answer.body && typeof answer.body === 'object' && 'jobOrderId' in answer.body) {
+        const payload = JSON.parse(init!.body as string) as { requestId: string; form: unknown }
+        const outcome = answer.body as { result: string; jobOrderId: string }
+        const duplicate = manualReceipts.has(payload.requestId)
+        const receipt = { receiptId: `receipt-${payload.requestId}`, sourceSystemId: 'ops:manual', externalOrderId: payload.requestId,
+          jobOrderId: outcome.jobOrderId, state: outcome.result === 'SUCCEEDED' ? 'ACCEPTED' : outcome.result === 'REJECTED' ? 'REJECTED' : 'IN_DOUBT',
+          detail: null, payload: { ...payload, requestedBy: `operator/${headers['X-Ops-User']}` }, normalizedOrder: null,
+          submission: answer.body, receivedAt: 't1', updatedAt: 't1' }
+        manualReceipts.set(payload.requestId, receipt)
+        return new Response(JSON.stringify({ receipt, duplicate }), { status: duplicate ? 200 : 202 })
+      }
       return new Response(JSON.stringify(answer.body), { status: answer.status })
     }),
   )
   return fake
+}
+
+/** Ops 서버의 코드 기반 계약 목록을 나타내는 시험 픽스처. */
+export function jobContracts(): JobContract[] {
+  return [
+    { workMasterId: 'InspectAsset', name: '자산 점검', description: '대상 위치로 이동하고 자산을 점검합니다.', editable: false, requiredEvidence: 'E0', fields: [{ path: 'targets[].id', constraint: '필수 문자열 · 중복 불가', target: 'equipmentRequirements[].id' }, { path: 'targets[].location', constraint: '필수 문자열', target: 'equipmentRequirements[].properties.location' }], sample: { workMasterId: 'InspectAsset', targets: [{ id: 'T1', location: 'bay-7' }] } },
+    { workMasterId: 'PrepareSequencedRack', name: '서열 랙 준비', description: '제시된 자재를 지정 슬롯에 준비합니다.', editable: true, requiredEvidence: 'E2', fields: [{ path: 'slots[]', constraint: '필수 문자열 목록 · 중복 불가', target: 'equipmentRequirements[destination].id' }, { path: 'material', constraint: '필수 문자열', target: 'materialRequirements[].materialDefinitionId' }, { path: 'presentation', constraint: '필수 문자열', target: 'equipmentRequirements[source].id' }], sample: { workMasterId: 'PrepareSequencedRack', slots: ['RACK-204.S01'], material: 'ENGINE-COVER-A', presentation: 'SEQ-IN-02.BIN-A' } },
+  ]
 }

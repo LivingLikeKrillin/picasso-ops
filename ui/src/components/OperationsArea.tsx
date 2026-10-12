@@ -1,3 +1,5 @@
+import { MissionResourceNotice } from './MissionResourceSettings'
+import { WorkRequests } from './WorkRequests'
 import { useEffect, useRef, useState } from 'react'
 import {
   checkEligibility,
@@ -5,7 +7,8 @@ import {
   fetchExecutions,
   fetchIncidents,
   fetchJobResponses,
-  submitJobOrder,
+  submitManualJobOrder,
+  manualJobOutcome,
   writeCellSignal,
 } from '../api'
 import type {
@@ -15,10 +18,13 @@ import type {
   IncidentsView,
   JobOrderForm,
   JobOrderOutcome,
+  ManualReceiptAccepted,
   JobResponsesView,
   Session,
   SignalWriteOutcome,
 } from '../api'
+import { clearManualRequest, loadManualRequest, saveManualRequest } from '../manualRequests'
+import type { PendingManualRequest } from '../manualRequests'
 import { EMPTY_DRAFT, buildForm } from '../jobOrderDraft'
 import type { JobOrderDraft } from '../jobOrderDraft'
 import { ELIGIBILITY_DEBOUNCE_MS, POLL_MS, SIGNAL_SETTLE_MS } from '../poll'
@@ -69,6 +75,27 @@ export function OperationsArea({ session, onChanged }: Props) {
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [last, setLast] = useState<{ what: string; sent: Delivered<JobOrderOutcome> } | null>(null)
+  const [pendingManual, setPendingManual] = useState<PendingManualRequest | null>(null)
+  const [manualReceipt, setManualReceipt] = useState<ManualReceiptAccepted | null>(null)
+  const [manualStorageError, setManualStorageError] = useState<string | null>(null)
+  const [focusReceipt, setFocusReceipt] = useState<string | null>(null)
+  const submitting = useRef(false)
+  const submitEpoch = useRef(0)
+  const { mode: manualMode, user: manualUser } = session
+  const manualIdentity = useRef(`${manualMode}/${manualUser}`)
+  useEffect(() => {
+    submitEpoch.current += 1
+    submitting.current = false
+    let alive = true
+    queueMicrotask(() => {
+      if(!alive) return
+      setBusy(false); setLast(null); setManualReceipt(null); setFocusReceipt(null)
+      try { setPendingManual(loadManualRequest({mode: manualMode, user: manualUser})); setManualStorageError(null) }
+      catch(error) { setPendingManual(null); setManualStorageError(message(error)) }
+      manualIdentity.current = `${manualMode}/${manualUser}`
+    })
+    return () => { alive = false }
+  }, [manualMode, manualUser])
   const [signalBusy, setSignalBusy] = useState(false)
   const [signalLast, setSignalLast] = useState<{ what: string; sent: Delivered<SignalWriteOutcome> } | null>(null)
 
@@ -174,20 +201,46 @@ export function OperationsArea({ session, onChanged }: Props) {
     setProblem(null)
   }
 
-  const submit = () => {
-    if (built.kind !== 'form') {
-      setProblem(built.problem)
-      return
+  const sendManual = (request: PendingManualRequest) => {
+    if(submitting.current || session.mode !== 'operator' || manualStorageError || manualIdentity.current !== `${session.mode}/${session.user}`) return
+    try {
+      const stored = loadManualRequest(session)
+      if(stored && stored.requestId !== request.requestId) { setProblem('보관된 요청 ID로 접수를 먼저 확인하세요'); return }
+      saveManualRequest(session, request)
     }
-    const what = `${built.form.workMasterId} 작업 지시`
-    setBusy(true)
-    submitJobOrder(session, built.form)
-      .then((sent) => setLast({ what, sent }))
-      .finally(() => {
-        setBusy(false)
-        setTick((value) => value + 1)
-        onChanged()
-      })
+    catch(error) { setManualStorageError(`요청 ID 보관 실패: ${message(error)}. 작업을 제출하지 않았습니다`); return }
+    setPendingManual(request); setProblem(null); submitting.current = true; setBusy(true)
+    const epoch = submitEpoch.current
+    const what = `${request.form.workMasterId} 작업 지시`
+    submitManualJobOrder(session, request.form, request.requestId).then((sent) => {
+      if(!mounted.current || epoch !== submitEpoch.current) return
+      if(sent.kind === 'outcome') {
+        const accepted = sent.outcome
+        setManualReceipt(accepted)
+        const saved = { ...request, receiptId: accepted.receipt.receiptId,
+          canStartNew: ['WAITING_RESOURCE', 'ACCEPTED', 'REJECTED', 'UNASSIGNED'].includes(accepted.receipt.state) }
+        setPendingManual(saved)
+        try { saveManualRequest(session, saved) }
+        catch(error) { setManualStorageError(`접수 응답은 받았으나 브라우저 보관 실패: ${message(error)}`) }
+        setLast(accepted.receipt.state==='WAITING_RESOURCE'?null:{ what, sent: { kind: 'outcome', outcome: manualJobOutcome(accepted.receipt) } })
+      } else setLast({ what, sent })
+    }).finally(() => {
+      if(!mounted.current || epoch !== submitEpoch.current) return
+      submitting.current = false; setBusy(false); setTick(value => value + 1); onChanged()
+    })
+  }
+  const submit = () => {
+    if (built.kind !== 'form') { setProblem(built.problem); return }
+    if(pendingManual && JSON.stringify(pendingManual.form) !== JSON.stringify(built.form)) {
+      setProblem('보관된 요청과 입력이 다릅니다. 동일 요청 접수를 확인하거나, 확인된 접수에서 새 작업 작성을 선택하세요'); return
+    }
+    sendManual(pendingManual ?? { requestId: crypto.randomUUID(), form: built.form, canStartNew: false })
+  }
+  const startNewManual = () => {
+    if(!pendingManual?.canStartNew || submitting.current) return
+    try { clearManualRequest(session) }
+    catch(error) { setManualStorageError(message(error)); return }
+    setPendingManual(null); setManualReceipt(null); setLast(null); setProblem(null); setManualStorageError(null)
   }
 
   // 바뀐 값은 실행 호스트의 다음 pump 부터 보인다. 곧바로 한 번, pump 가 돈 뒤 한 번 더 읽는다. 조작이 잇따르면 마지막 조작
@@ -219,10 +272,23 @@ export function OperationsArea({ session, onChanged }: Props) {
 
   return (
     <>
+      <WorkRequests session={session} refreshKey={tick} focusReceipt={focusReceipt} />
       <div className="split">
         <section aria-label="작업 지시">
           <h2>작업 지시</h2>
           {last !== null && <JobOrderNotice what={last.what} sent={last.sent} />}
+          {manualStorageError && <p role="alert">{manualStorageError}</p>}
+          {pendingManual && <section className="manual-receipt" aria-label="수동 작업 접수 추적">
+            <h3>수동 작업 접수</h3><p>요청 ID: <code>{pendingManual.requestId}</code></p>
+            {manualReceipt ? <p>{manualReceipt.duplicate ? '기존 접수 확인 · 추가 실행 없음' : '접수 기록 저장됨'} · {manualReceipt.receipt.state}</p> : <p>보관된 요청입니다. 같은 ID와 원본 입력으로 접수를 확인합니다.</p>}
+            {manualReceipt?.receipt.state==='WAITING_RESOURCE'&&<p role="status">접수 완료 · 필수 자원과 설비 준비를 기다립니다. 아직 로봇에 전송하지 않았습니다.</p>}<p>응답 불명·처리 중인 요청은 새 ID로 재제출하지 마세요. 새 작업 작성은 별도 실행을 의미합니다.</p>
+            <div className="actions">
+              <button type="button" disabled={busy || session.mode !== 'operator' || !!manualStorageError} onClick={() => sendManual(pendingManual)}>동일 요청 접수 확인</button>
+              <button type="button" disabled={busy || !pendingManual.canStartNew || session.mode !== 'operator' || !!manualStorageError} onClick={startNewManual}>새 작업 작성</button>
+              {pendingManual.receiptId && <button type="button" onClick={() => setFocusReceipt(pendingManual.receiptId!)}>접수·실행 결과 보기</button>}
+            </div><details><summary>보관된 요청 입력</summary><pre>{JSON.stringify(pendingManual.form, null, 2)}</pre></details>
+          </section>}
+          <MissionResourceNotice session={session} workMasterId={draft.workMasterId} />
           <JobOrderFormView
             draft={draft}
             cell={cell.value?.cell ?? null}

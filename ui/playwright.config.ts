@@ -22,14 +22,17 @@ const gracefulShutdown = { signal: 'SIGTERM' as const, timeout: 15_000 }
  */
 export default defineConfig({
   testDir: './e2e',
-  timeout: 420_000,
+  // Lifecycle shuts registry down; resource verification uses a fresh stack/config.
+  testMatch: '**/lifecycle.spec.ts',
+  timeout: 600_000,
   expect: { timeout: 60_000 },
   workers: 1,
   forbidOnly: !!process.env.CI,
   reporter: [['list'], ['html', { open: 'never' }]],
   globalTeardown: './e2e/teardown.ts',
-  use: { baseURL: 'http://127.0.0.1:4173', trace: 'retain-on-failure' },
+  use: { baseURL: 'http://127.0.0.1:4173', actionTimeout: 30_000, trace: 'retain-on-failure' },
   webServer: [
+    { command: 'node e2e/mock-mes-callback.mjs', url: 'http://127.0.0.1:8786/health', reuseExistingServer: false, gracefulShutdown },
     {
       command: 'node e2e/postgres.mjs',
       wait: { stdout: /postgres ready/ },
@@ -47,15 +50,16 @@ export default defineConfig({
       gracefulShutdown,
     },
     {
-      command: 'node e2e/run-dist.mjs mission-host',
+      command: 'node e2e/run-dist.mjs mission-host --restartable',
       url: `http://127.0.0.1:${env.HOST_PORT}/host/executions`,
       stdout: 'pipe',
       timeout: 120_000,
       reuseExistingServer: false,
       gracefulShutdown,
     },
+    {command:'node e2e/host-link.mjs',url:'http://127.0.0.1:8790/health',reuseExistingServer:false,gracefulShutdown},
     {
-      command: 'node e2e/run-dist.mjs ops-service',
+      command: 'node e2e/run-dist.mjs ops-service --mock-mes --restartable --host-proxy',
       url: `http://127.0.0.1:${env.OPS_PORT}/api/robots`,
       stdout: 'pipe',
       timeout: 120_000,

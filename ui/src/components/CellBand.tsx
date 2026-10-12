@@ -31,7 +31,7 @@ export function CellBand({ read, busy, onWrite }: Props) {
             </>
           ) : (
             <>
-              <table aria-label="셀 대역 자리">
+              <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="셀 대역 자리">
                 <thead>
                   <tr>
                     <th>자리</th>
@@ -49,7 +49,7 @@ export function CellBand({ read, busy, onWrite }: Props) {
                     <Place key={place.id} place={place} kind="슬롯" />
                   ))}
                 </tbody>
-              </table>
+              </table></div>
               <Signals signals={value.cell.signals} busy={busy} onWrite={onWrite} />
             </>
           )}
@@ -68,7 +68,7 @@ function Signals({ signals, busy, onWrite }: { signals: CellSignal[] | null } & 
   if (signals === null) return <p>모름: 셀 대역이 신호 목록을 싣지 않았습니다</p>
   if (signals.length === 0) return <p>셀 대역에 신호가 없습니다</p>
   return (
-    <table aria-label="셀 대역 신호">
+    <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="셀 대역 신호">
       <thead>
         <tr>
           <th>신호</th>
@@ -114,7 +114,7 @@ function Signals({ signals, busy, onWrite }: { signals: CellSignal[] | null } & 
           </tr>
         ))}
       </tbody>
-    </table>
+    </table></div>
   )
 }
 

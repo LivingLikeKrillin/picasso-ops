@@ -65,13 +65,15 @@ data class CellFixture(
         /**
          * 런처와 시험이 쓰는 세트. 슬롯 넷이 PrepareSequencedRack 작업 지시 하나의 단위 수 상한이다.
          *
-         * 신호 셋은 picasso 시험 픽스처 `MissionFixtures.SIGNALS` 와 같은 사양이다. `rack_present` 는 랙 자리 `RACK-204` 가
-         * 내고 처음에는 랙이 없다(`false`). `guard_closed` 는 안전 신호이고 처음에 닫혀 있다(`true`). `lot_code` 는 텍스트 신호다.
+         * 기본 신호 셋은 picasso 시험 픽스처 `MissionFixtures.SIGNALS` 와 같은 사양이다. `rack_present` 는 랙 자리 `RACK-204` 가
+         * 내고 처음에는 랙이 없다(`false`). `guard_closed` 는 안전 신호이고 처음에 닫혀 있다(`true`). `lot_code` 는 텍스트 신호다. inspection_ready·inspection_complete는 공유 검사 스테이션의 일반 공정 신호다.
          */
         val STANDARD = CellFixture(
             presentations = linkedMapOf("SEQ-IN-02.BIN-A" to "ENGINE-COVER-A"),
             slots = listOf("RACK-204.S01", "RACK-204.S02", "RACK-204.S03", "RACK-204.S04"),
             signals = listOf(
+                SignalFixture("inspection_ready", SignalKind.BOOLEAN, initial = "true"),
+                SignalFixture("inspection_complete", SignalKind.BOOLEAN, initial = "false"),
                 SignalFixture("rack_present", SignalKind.BOOLEAN, location = "RACK-204", initial = "false"),
                 SignalFixture("guard_closed", SignalKind.BOOLEAN, safety = true, initial = "true"),
                 SignalFixture("lot_code", SignalKind.TEXT, initial = "LOT-0001"),

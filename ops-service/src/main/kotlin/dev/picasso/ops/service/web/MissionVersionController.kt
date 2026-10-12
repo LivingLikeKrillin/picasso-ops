@@ -39,6 +39,7 @@ import org.springframework.web.bind.annotation.RestController
 class MissionVersionController(
     private val operations: MissionOperations,
     private val host: HostMissions,
+    private val profiles:dev.picasso.ops.service.missions.MissionProfiles?=null,
 ) {
     private val json = ObjectMapper()
 
@@ -48,7 +49,7 @@ class MissionVersionController(
 
     @GetMapping("/api/missions/templates/{workMasterId}")
     fun templates(@PathVariable workMasterId: String): ResponseEntity<Any> =
-        editable(workMasterId) { forwarded(host.templates(it)) }
+        editable(workMasterId) { wm -> val profile=profiles?.find(wm); if(profile==null)forwarded(host.templates(wm)) else ResponseEntity.ok(mapOf("workMasterId" to wm,"templates" to listOf(mapOf("id" to "registered-template","title" to profile["name"].asText(),"definition" to profile["definition"].toString())))) }
 
     @PostMapping("/api/missions/{workMasterId}/drafts", consumes = [MediaType.APPLICATION_JSON_VALUE])
     fun saveDraft(
@@ -60,7 +61,7 @@ class MissionVersionController(
         editable(workMasterId) { wm ->
             val definition = read(body)?.get("definition")?.takeIf { it.isTextual }?.asText()
                 ?: return@editable reject(HttpStatus.BAD_REQUEST, BAD_REQUEST, "definition 이 문자열이 아니다(정의 JSON 은 글자로 싣는다)")
-            ResponseEntity.ok(operations.saveDraft(actor, wm, definition))
+            ResponseEntity.ok(operations.saveDraft(actor, wm, definition,profiles?.sample(wm)))
         }
     }
 
@@ -115,7 +116,7 @@ class MissionVersionController(
         guarded(mode, user, Mode.ENGINEER, action)
 
     private inline fun editable(workMasterId: String, action: (String) -> ResponseEntity<Any>): ResponseEntity<Any> {
-        if (workMasterId !in MissionOperations.EDITABLE) {
+        if (workMasterId !in MissionOperations.EDITABLE && profiles?.find(workMasterId)==null) {
             return reject(
                 HttpStatus.BAD_REQUEST, JobOrderForm.UNKNOWN_WORK_MASTER,
                 "편집하지 않는 임무다: $workMasterId (편집하는 것: ${MissionOperations.EDITABLE.sorted()})",
@@ -131,6 +132,14 @@ class MissionVersionController(
     ): ResponseEntity<Any> = editable(workMasterId) { wm ->
         val id = draftId.toLongOrNull()?.takeIf { it > 0 }
             ?: return@editable reject(HttpStatus.BAD_REQUEST, BAD_REQUEST, "초안 id 가 양의 정수가 아니다: $draftId")
+        if (profiles != null) {
+            when (val found = host.draft(id)) {
+                is HostCall.Silent -> return@editable hostSilent(found.cause)
+                is HostCall.Ok -> if (found.value.path("workMasterId").asText() != wm) {
+                    return@editable reject(HttpStatus.NOT_FOUND, "DRAFT_NOT_FOUND", "해당 미션의 초안이 아닙니다")
+                }
+            }
+        }
         action(wm, id)
     }
 

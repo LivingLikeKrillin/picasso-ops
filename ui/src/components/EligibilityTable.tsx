@@ -44,14 +44,14 @@ export function EligibilityTable({ read, formKey }: Props) {
       ) : view.robots.length === 0 ? (
         <p>이 사이트에 기체가 없습니다</p>
       ) : (
-        <table aria-label="기체별 배정 가능">
+        <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="기체별 배정 가능">
           <thead>
             <tr>
               <th>기체</th>
               <th>시운전</th>
               <th>연결</th>
               <th>도는 실행</th>
-              <th>스킬 적합</th>
+              <th>요구 스킬</th><th>기체 제공 스킬</th><th>스킬 적합</th>
               <th>배정 가능</th>
               <th>이유</th>
             </tr>
@@ -63,13 +63,13 @@ export function EligibilityTable({ read, formKey }: Props) {
                 <td>{row.commissioning === null ? '모름' : COMMISSIONING_LABEL[row.commissioning]}</td>
                 <td>{connection(row)}</td>
                 <td>{row.host === null ? '모름' : (row.host.runningExecutionId ?? '없음')}</td>
-                <td>{skillFit(row)}</td>
+                <td>{skills(row.host?.requiredSkills)}</td><td>{skills(row.host?.availableSkills)}</td><td>{skillFit(row)}</td>
                 <td>{row.eligible ? '가능' : '불가'}</td>
                 <td>{row.reasons.join('; ')}</td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </>
   )
@@ -87,3 +87,5 @@ function skillFit(row: RobotEligibility): string {
   if (row.host.skillFit === 'MISSING') return `${SKILL_FIT_LABEL.MISSING}: ${row.host.missingSkills.join(', ')}`
   return SKILL_FIT_LABEL[row.host.skillFit]
 }
+
+function skills(value: string[] | null | undefined): string { return value == null ? '모름' : value.length === 0 ? '없음' : value.join(', ') }

@@ -1,0 +1,90 @@
+import { readFileSync } from 'node:fs'
+import { test, expect } from '@playwright/test'
+import { fileURLToPath } from 'node:url'
+
+test('공유 스테이션은 설비 준비 후 두 미션을 순차 실행하고 새 완료 근거로 해제한다', async ({page}) => {
+ const engineer={'X-Ops-Mode':'engineer','X-Ops-User':'local'}
+ const operator={'X-Ops-Mode':'operator','X-Ops-User':'local'}
+ async function post(path:string,body:unknown,headers=engineer){const response=await page.request.post(path,{headers,data:body});expect(response.status(),await response.text()).toBe(200);return response.json()}
+ async function signal(name:string,value:string){await post(`/api/cell/signals/${name}`,{value},operator)}
+ async function run(id:string){return (await (await page.request.get(`/api/stations/runs/${id}`)).json()).run}
+ await page.goto('/')
+ // Build the commissioned humanoid fixture through real Ops APIs.
+ await post('/api/robots',{robotId:'humanoid-01',serialNumber:'HA-0001'})
+ await post('/api/adapters',{vendor:'acme',name:'station-fleet'})
+ const adapter=(await (await page.request.get('/api/adapters')).json()).adapters.find((row:{name:string})=>row.name==='station-fleet')
+ await post(`/api/adapters/${adapter.adapterId}/versions`,{version:'1.0.0',contractSemver:'0.9.0'})
+ const builds=(await (await page.request.get('/api/adapters')).json()).adapters.find((row:{adapterId:number})=>row.adapterId===adapter.adapterId).versions
+ const build=builds[0].adapterVersionId
+ const profile=JSON.parse(readFileSync(fileURLToPath(new URL('../../picasso/profile/profiles/humanoid-a.json',import.meta.url)),'utf8'))
+ await post('/api/profile-revisions',profile)
+ const revisions=(await (await page.request.get('/api/profiles')).json()).revisions.filter((row:{revision:{model:string}})=>row.revision.model==='humanoid-a')
+ const revision=Math.max(...revisions.map((row:{revision:{profileRevisionId:number}})=>row.revision.profileRevisionId))
+ await post(`/api/profile-revisions/${revision}/test-requests`,undefined)
+ await expect.poll(async()=>{const rows=(await (await page.request.get('/api/profiles')).json()).revisions;return rows.find((row:{revision:{profileRevisionId:number}})=>row.revision.profileRevisionId===revision).revision.status}).toBe('TESTED')
+ await post(`/api/profile-revisions/${revision}/activation`,undefined)
+ await post('/api/robots/humanoid-01/binding',{adapterVersionId:build,profileRevisionId:revision})
+ await post('/api/robots/humanoid-01/site-names',undefined)
+ await expect.poll(async()=>{const robots=(await (await page.request.get('/api/robots')).json()).robots;return robots.find((row:{robot:{robotId:string}})=>row.robot.robotId==='humanoid-01').commissioning.state}).toBe('COMPLETE')
+ await post('/api/mission-interfaces',{interfaceId:'shared-inspection',version:1,name:'공유 검사 요청',workMasterId:'InspectAsset',mapping:{targets:'/assets'},sample:{assets:[{id:'T1',location:'bay-7'}]}})
+ await post('/api/mission-interfaces/shared-inspection/1/state',{expectedStatus:'DRAFT',status:'ENABLED',reason:'공유 자원 통합 검증'})
+ await signal('inspection_ready','false');await signal('inspection_complete','false')
+ await page.getByRole('navigation',{name:'영역'}).getByRole('button',{name:'공유 자원',exact:true}).click()
+ const workspace=page.getByRole('region',{name:'공유 스테이션 운영'})
+ await workspace.getByText('공유 스테이션 등록',{exact:true}).click()
+ await workspace.getByLabel('스테이션 ID',{exact:true}).fill('inspection-1')
+ await workspace.getByLabel('스테이션 이름',{exact:true}).fill('공유 검사 스테이션')
+ await workspace.getByRole('button',{name:'스테이션 등록',exact:true}).click()
+ await expect(workspace.getByRole('table',{name:'스테이션 점유'})).toContainText('공유 검사 스테이션')
+ await workspace.getByText('미션 자원 요구 등록',{exact:true}).click()
+ await workspace.getByLabel('자원이 필요한 미션').selectOption('InspectAsset')
+ await workspace.getByRole('combobox',{name:'필수 스테이션',exact:true}).selectOption('inspection-1')
+ await workspace.getByLabel('자원 요구 등록 사유').fill('모든 검사 호출의 공유 자원 조정')
+ await workspace.getByRole('button',{name:'필수 자원 등록',exact:true}).click()
+ await expect(workspace.getByRole('region',{name:'미션 필수 자원'})).toContainText('InspectAsset → inspection-1')
+ await page.getByLabel('운영자',{exact:true}).check()
+ await workspace.getByLabel('사용할 스테이션').selectOption('inspection-1')
+ await workspace.getByLabel('호출할 공개 계약').selectOption('shared-inspection/1')
+ await workspace.getByLabel('준비 조건이 충족되면 실제 로봇 작업을 지시합니다').check()
+ await workspace.getByRole('button',{name:'스테이션 작업 접수',exact:true}).click()
+ await expect(workspace.getByRole('article',{name:'스테이션 작업 근거'})).toBeVisible()
+ const before=(await (await page.request.get('/api/stations')).json()).runs
+ const a=before[0].runId
+ await expect.poll(async()=>(await run(a)).state).toBe('WAITING_READY')
+ expect((await run(a)).receiptId).toBeNull()
+ const queued=await page.request.post('/api/mission-interfaces/shared-inspection/1/invoke',{headers:operator,data:{requestId:crypto.randomUUID(),expectedDeploymentVersion:1,input:{assets:[{id:'T1',location:'bay-7'}]}}})
+ expect(queued.status(),await queued.text()).toBe(202)
+ const b=(await queued.json()).receipt.receiptId
+ await signal('inspection_ready','true')
+ await expect.poll(async()=>(await run(a)).state).toBe('RUNNING')
+ expect((await run(b)).state).toBe('QUEUED')
+ async function waitPhysical(id:string){const receiptId=(await run(id)).receiptId;await expect.poll(async()=>{const detail=await (await page.request.get(`/api/work-requests/${receiptId}`)).json();return detail.latestResult?.snapshot?.jobResponse?.physicalState},{timeout:90_000}).toBe('PHYSICALLY_DONE')}
+ await waitPhysical(a)
+ expect((await run(a)).state).toBe('RUNNING')
+ await signal('inspection_complete','true')
+ await expect.poll(async()=>(await run(a)).state).toBe('COMPLETED')
+ await expect.poll(async()=>(await run(b)).state).toBe('WAITING_READY')
+ expect((await run(b)).receiptId).toBe(b)
+ const waiting=await (await page.request.get(`/api/work-requests/${b}`)).json()
+ expect(waiting.receipt.state).toBe('WAITING_RESOURCE')
+ expect(waiting.resource.stationId).toBe('inspection-1')
+ await workspace.getByRole('button',{name:'자원 상태 새로고침'}).click()
+ await expect(workspace.getByRole('table',{name:'스테이션 작업'})).toContainText('설비 준비 대기')
+ await workspace.getByRole('button',{name:'선택 작업 다시 조회'}).click()
+ await expect(workspace.getByRole('article',{name:'스테이션 작업 근거'})).toContainText('로봇 물리 완료와 이번 작업의 설비 완료 신호 확인')
+ await page.evaluate(async()=>{if(document.activeElement instanceof HTMLElement)document.activeElement.blur();window.scrollTo(0,0);await document.fonts.ready})
+ await page.screenshot({fullPage:true,path:fileURLToPath(new URL('../../docs/screens/style-preview/mission-resource-fullstack.png',import.meta.url))})
+ await page.setViewportSize({width:390,height:844})
+ await page.evaluate(()=>window.scrollTo(0,0))
+ await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
+ await page.screenshot({fullPage:true,path:fileURLToPath(new URL('../../docs/screens/style-preview/mission-resource-mobile-fullstack.png',import.meta.url))})
+ await page.setViewportSize({width:1440,height:1000})
+ await signal('inspection_complete','false')
+ await expect.poll(async()=>(await run(b)).state).toBe('RUNNING')
+ await waitPhysical(b);await signal('inspection_complete','true')
+ await expect.poll(async()=>(await run(b)).state).toBe('COMPLETED')
+ const evidence=await (await page.request.get(`/api/stations/runs/${b}/evidence`)).json()
+ expect(evidence.schema).toBe('ops.station.evidence/1')
+ expect(evidence.explanationMayChangeState).toBe(false)
+ expect(evidence.events.at(-1).context.signals.inspection_complete.value).toBe(true)
+})

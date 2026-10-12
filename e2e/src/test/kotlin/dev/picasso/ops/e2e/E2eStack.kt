@@ -105,7 +105,7 @@ class E2eStack private constructor(
         private val http = HttpClient.newHttpClient()
         private val json = ObjectMapper()
 
-        fun start(): E2eStack {
+        fun start(integrationToken: String = ""): E2eStack {
             val siteId = checkNotNull(System.getenv("SITE_ID")) { "SITE_ID 가 없다(루트 .env)" }
             PostgresSupport.reset()
             PostgresSupport.execute("DROP SCHEMA IF EXISTS ops CASCADE")
@@ -133,7 +133,7 @@ class E2eStack private constructor(
             }
             val hostUrl = "http://127.0.0.1:${(host as WebServerApplicationContext).webServer.port}"
             val ops = try {
-                startOps(site.registryUrl, OPERATOR_TOKEN, siteId, hostUrl)
+                startOps(site.registryUrl, OPERATOR_TOKEN, siteId, hostUrl, integrationToken)
             } catch (e: Exception) {
                 host.close()
                 site.close()
@@ -171,7 +171,7 @@ class E2eStack private constructor(
 
         private fun db() = DbConfig(PostgresSupport.jdbcUrl, PostgresSupport.username, PostgresSupport.password)
 
-        private fun startOps(registryUrl: String, token: String, siteId: String, hostUrl: String): ConfigurableApplicationContext {
+        private fun startOps(registryUrl: String, token: String, siteId: String, hostUrl: String, integrationToken: String = ""): ConfigurableApplicationContext {
             val db = db()
             return OpsApplication.builder().run(
                 "--server.port=0",
@@ -182,6 +182,7 @@ class E2eStack private constructor(
                 "--ops.registry.operator-token=$token",
                 "--ops.site-id=$siteId",
                 "--ops.host.url=$hostUrl",
+                "--ops.integration.token=$integrationToken",
             )
         }
 

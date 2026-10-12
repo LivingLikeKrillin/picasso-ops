@@ -14,7 +14,7 @@ import {
   versionRow,
 } from '../testing/fakeOps'
 import type { FakeOps } from '../testing/fakeOps'
-import { MissionsArea } from './MissionsArea'
+import { MissionDefinitionEditor as MissionsArea } from './MissionDefinitionEditor'
 
 const engineer: Session = { mode: 'engineer', user: 'lee' }
 const operator: Session = { mode: 'operator', user: 'kim' }

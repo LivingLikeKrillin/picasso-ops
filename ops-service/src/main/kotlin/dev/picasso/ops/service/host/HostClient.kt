@@ -57,6 +57,8 @@ data class HostEligibility(
     val runningExecutionId: String? = null,
     val passed: Boolean,
     val reasons: List<String> = emptyList(),
+    val requiredSkills: List<String>? = null,
+    val availableSkills: List<String>? = null,
 )
 
 /** `POST /host/eligibility` 의 답. */
@@ -99,7 +101,7 @@ data class HostExecutionRef(
 
 /** `GET /host/executions` 를 재조회로 읽은 모양. 화면에 넘길 때는 해석하지 않고 그대로 넘긴다([HostReads.executions]). */
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class HostExecutions(val instanceId: String, val executions: List<HostExecutionRef>)
+data class HostExecutions(val instanceId: String, val executions: List<HostExecutionRef>, val journalBlockedExecutionIds: List<String> = emptyList())
 
 /** 호스트 읽기 셋. 시험이 호스트 없이 대신 끼운다. */
 interface HostReads {
@@ -107,6 +109,7 @@ interface HostReads {
     fun eligibility(jobOrder: ObjectNode, robotIds: List<String>): HostCall<List<HostEligibility>>
 
     /** `GET /host/executions` 본문 그대로. 객체가 아니면 모름이다. */
+    fun resultEvents(after:Long,limit:Int=100): HostCall<JsonNode> = HostCall.Silent("result outbox unsupported")
     fun executions(): HostCall<JsonNode>
 
     /** `GET /host/cell` 본문 그대로. 셀 대역을 못 읽은 호스트는 `{"cell": null}` 을 200 으로 준다. */
@@ -141,12 +144,15 @@ sealed interface HostRequery {
  */
 interface HostMissions {
     /** `GET /host/missions/{workMasterId}` 본문 그대로. 200 아님은 모름이다. */
+    fun draft(draftId: Long): HostCall<JsonNode> = HostCall.Silent("초안 조회 미지원")
     fun overview(workMasterId: String): HostCall<JsonNode>
 
     /** `GET /host/missions/templates/{workMasterId}` 본문 그대로. */
     fun templates(workMasterId: String): HostCall<JsonNode>
 
     fun saveDraft(workMasterId: String, definition: String, actor: String, requestId: UUID): HostWrite
+
+    fun saveDraftWithSample(workMasterId:String,definition:String,sample:JsonNode,actor:String,requestId:UUID):HostWrite = HostWrite.NoResponse("표본 작업 저장을 지원하지 않는 호스트입니다")
 
     fun validate(draftId: Long, robotIds: List<String>): HostWrite
 
@@ -259,6 +265,8 @@ class HostClient(
         return read(response.body) { json.readValue<HostEligibilityList?>(it)?.robots }
     }
 
+    override fun resultEvents(after:Long,limit:Int):HostCall<JsonNode> = get("/host/result-events?after=$after&limit=$limit")
+
     override fun executions(): HostCall<JsonNode> = get("/host/executions")
 
     override fun cell(): HostCall<JsonNode> = get("/host/cell")
@@ -270,6 +278,8 @@ class HostClient(
         return post("/host/job-orders", body)
     }
 
+    override fun draft(draftId: Long): HostCall<JsonNode> = get("/host/missions/drafts/$draftId")
+
     override fun overview(workMasterId: String): HostCall<JsonNode> = get("/host/missions/${segment(workMasterId)}")
 
     override fun templates(workMasterId: String): HostCall<JsonNode> = get("/host/missions/templates/${segment(workMasterId)}")
@@ -280,6 +290,12 @@ class HostClient(
             .put("actor", actor)
             .put("requestId", requestId.toString())
         return post("/host/missions/${segment(workMasterId)}/drafts", body)
+    }
+
+    override fun saveDraftWithSample(workMasterId:String,definition:String,sample:JsonNode,actor:String,requestId:UUID):HostWrite {
+        val body=json.createObjectNode().put("definition",definition).put("actor",actor).put("requestId",requestId.toString())
+        body.set<JsonNode>("sampleOrder",sample)
+        return post("/host/missions/${segment(workMasterId)}/drafts",body)
     }
 
     override fun validate(draftId: Long, robotIds: List<String>): HostWrite =

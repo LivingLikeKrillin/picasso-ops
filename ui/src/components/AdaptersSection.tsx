@@ -79,7 +79,7 @@ function AdapterLists({ view, opsError }: { view: AdapterListView; opsError: str
       {instances.length === 0 ? (
         <p>등록된 인스턴스가 없습니다</p>
       ) : (
-        <table aria-label="인스턴스 목록">
+        <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="인스턴스 목록">
           <thead>
             <tr>
               <th>instance_id</th>
@@ -104,13 +104,13 @@ function AdapterLists({ view, opsError }: { view: AdapterListView; opsError: str
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
       <h3>제품·빌드</h3>
       {builds.length === 0 ? (
         <p>등록된 제품이 없습니다</p>
       ) : (
-        <table aria-label="제품·빌드 목록">
+        <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="제품·빌드 목록">
           <thead>
             <tr>
               <th>제품</th>
@@ -131,7 +131,7 @@ function AdapterLists({ view, opsError }: { view: AdapterListView; opsError: str
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </>
   )

@@ -59,7 +59,7 @@ export function JobResponseLog({ read, jobOrderIds, selected, onSelect }: Props)
           {value.responses.length === 0 ? (
             <p>송신 기록이 없습니다</p>
           ) : (
-            <table aria-label="송신 기록 목록">
+            <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="송신 기록 목록">
               <thead>
                 <tr>
                   <th>인스턴스</th>
@@ -97,7 +97,7 @@ export function JobResponseLog({ read, jobOrderIds, selected, onSelect }: Props)
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           )}
         </>
       )}

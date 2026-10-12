@@ -28,8 +28,15 @@ class StoredMissionCatalog(code: List<LogicalCapability> = MissionCatalog.codeCa
     @Volatile
     private var activated: Map<String, ActiveMission> = emptyMap()
 
+    private val selected=ThreadLocal<Map<String,ActiveMission>>()
+    fun <T> withMission(workMasterId:String,mission:ActiveMission?,action:()->T):T {
+        if(mission==null)return action()
+        val previous=selected.get()
+        selected.set(previous.orEmpty()+(workMasterId to mission))
+        try{return action()}finally{if(previous==null)selected.remove()else selected.set(previous)}
+    }
     override fun active(workMasterId: String): ActiveMission? =
-        activated[workMasterId] ?: coded[workMasterId]?.let { ActiveMission(it, missionVersion = null) }
+        selected.get()?.get(workMasterId) ?: activated[workMasterId] ?: coded[workMasterId]?.let { ActiveMission(it, missionVersion = null) }
 
     /**
      * 기동 때 DB 의 활성 버전(WorkMaster 마다 가장 높은 번호)으로 세운다. **다시 검증하지 않는다.** 활성화 때 검증을 지난

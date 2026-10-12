@@ -15,6 +15,7 @@ data class DraftRow(
     val savedBy: String,
     val requestId: UUID,
     val savedAt: Instant,
+    val sampleOrder:String?=null,
 )
 
 /** 모의 실행 한 행. [result] 는 JSON 글자다(모양은 S3b JSON 계약 §4.5). */
@@ -59,17 +60,18 @@ class MissionStore(private val jdbc: JdbcClient) {
     /** 그 요청 id 가 표 셋 중 어디에든 이미 있는가. 요청 id 하나는 운영 서비스의 조작 하나다. */
     fun requestIdUsed(requestId: UUID): Boolean = byRequest(requestId).found
 
-    fun saveDraft(workMasterId: String, definition: String, savedBy: String, requestId: UUID): DraftRow =
+    fun saveDraft(workMasterId: String, definition: String, savedBy: String, requestId: UUID,sampleOrder:String?=null): DraftRow =
         jdbc.sql(
             """
-            INSERT INTO mission.draft (work_master_id, definition, saved_by, request_id)
-            VALUES (:workMaster, :definition, :savedBy, :requestId)
+            INSERT INTO mission.draft (work_master_id, definition, saved_by, request_id,sample_order)
+            VALUES (:workMaster, :definition, :savedBy, :requestId,CAST(:sample AS JSONB))
             RETURNING $DRAFT_COLUMNS
             """.trimIndent(),
         )
             .param("workMaster", workMasterId)
             .param("definition", definition)
             .param("savedBy", savedBy)
+            .param("sample",sampleOrder,java.sql.Types.VARCHAR)
             .param("requestId", requestId)
             .query { rs, _ -> draft(rs) }
             .single()
@@ -189,6 +191,7 @@ class MissionStore(private val jdbc: JdbcClient) {
         savedBy = rs.getString("saved_by"),
         requestId = rs.getObject("request_id", UUID::class.java),
         savedAt = instant(rs, "saved_at"),
+        sampleOrder=rs.getString("sample_order"),
     )
 
     private fun mockRun(rs: ResultSet) = MockRunRow(
@@ -217,7 +220,7 @@ class MissionStore(private val jdbc: JdbcClient) {
     private fun instant(rs: ResultSet, index: Int): Instant = rs.getObject(index, OffsetDateTime::class.java).toInstant()
 
     private companion object {
-        const val DRAFT_COLUMNS = "draft_id, work_master_id, definition, saved_by, request_id, saved_at"
+        const val DRAFT_COLUMNS = "draft_id, work_master_id, definition, saved_by, request_id, saved_at, sample_order"
         const val MOCK_RUN_COLUMNS = "mock_run_id, draft_id, passed, result, request_id, started_at, finished_at"
         const val VERSION_COLUMNS = "work_master_id, version, draft_id, definition, activated_by, reason, request_id, activated_at"
     }

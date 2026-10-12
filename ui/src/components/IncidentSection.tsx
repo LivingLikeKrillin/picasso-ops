@@ -199,7 +199,7 @@ function IncidentTable({
   onSelect: (selection: Selection) => void
 }) {
   return (
-    <table aria-label={earlier ? '이전 인스턴스 인시던트 목록' : '인시던트 목록'}>
+    <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label={earlier ? '이전 인스턴스 인시던트 목록' : '인시던트 목록'}>
       <thead>
         <tr>
           {earlier && <th>인스턴스</th>}
@@ -248,7 +248,7 @@ function IncidentTable({
           </tr>
         ))}
       </tbody>
-    </table>
+    </table></div>
   )
 }
 
@@ -357,7 +357,7 @@ function Detail({ detail, session, decidable, busy, onDecide }: DetailProps) {
         {detail.evidenceWindow.length === 0 ? (
           <p>윈도우 안의 관측이 없습니다</p>
         ) : (
-          <table aria-label="근거 윈도우">
+          <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤"><table aria-label="근거 윈도우">
             <thead>
               <tr>
                 <th>순번</th>
@@ -378,7 +378,7 @@ function Detail({ detail, session, decidable, busy, onDecide }: DetailProps) {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </section>
       {decidable && detail.held && <DecisionForm key={detail.incidentId} detail={detail} session={session} busy={busy} onDecide={onDecide} />}
