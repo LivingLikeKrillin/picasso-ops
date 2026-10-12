@@ -14,7 +14,7 @@ class MissionProfileController(private val profiles:MissionProfiles) {
  @PostMapping("/api/mission-profiles",consumes=[MediaType.APPLICATION_JSON_VALUE])
  fun create(@RequestHeader(Actor.MODE_HEADER,required=false) mode:String?,@RequestHeader(Actor.USER_HEADER,required=false) user:String?,@RequestBody(required=false) body:ByteArray?):ResponseEntity<Any> = guarded(mode,user,Mode.ENGINEER) {actor ->
   try {
-   if(body==null || body.size>65536)throw InterfaceRejected("MISSION_BAD_INPUT","미션 본문은 64KiB 이하입니다")
+   if(body==null || body.size>65536)throw InterfaceRejected("MISSION_BAD_INPUT","임무 본문은 64KiB 이하입니다")
    val value=runCatching{json.readTree(body)}.getOrNull()?.takeIf{it.isObject} ?: throw InterfaceRejected("MISSION_BAD_INPUT","JSON 객체가 필요합니다")
    ResponseEntity.ok(profiles.create(value,actor))
   }catch(e:InterfaceRejected){ResponseEntity.status(e.status).body(PreRejection(e.code,e.message))}

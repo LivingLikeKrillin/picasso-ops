@@ -30,12 +30,12 @@ export function OutcomeNotice({ what, sent, onSelect }: Props) {
   const { outcome } = sent
   if (outcome.result === 'SUCCEEDED') return <p role="status">{what}: 반영됨</p>
   if (outcome.unauthorized) {
-    return <p role="status">{what}: registry 가 운영자 토큰을 거절했습니다. 상단의 전체 상태를 보십시오</p>
+    return <p role="status">{what}: registry 가 운영자 토큰을 거부했습니다. 상단의 전체 상태를 보십시오</p>
   }
   if (outcome.result === 'REJECTED' && outcome.rejection !== null) {
     return (
       <div role="status">
-        <p>{what}: 거절됨</p>
+        <p>{what}: 거부됨</p>
         <FindingCard finding={outcome.rejection} onSelect={onSelect} />
       </div>
     )

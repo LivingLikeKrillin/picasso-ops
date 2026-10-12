@@ -469,7 +469,7 @@ function DecisionForm({ detail, session, busy, onDecide }: DecisionProps) {
   return (
     <form aria-label="운영자 판단" onSubmit={(event) => event.preventDefault()}>
       <p>
-        {detail.executionId}/{detail.unitId} 보류를 판단합니다. 판단자는 {session.user} 입니다
+        {detail.executionId}/{detail.unitId} 보류 해소 방식(완료 확인 또는 재작업)을 결정합니다. 결정자는 {session.user}입니다.
       </p>
       <label>
         판단 사유

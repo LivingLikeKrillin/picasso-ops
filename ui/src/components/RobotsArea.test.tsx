@@ -136,7 +136,7 @@ describe('로봇·연결 영역', () => {
     fake.answer = { status: 200, body: outcome({ result: 'REJECTED', registryStatus: 409, rejection: retiredAlready }) }
     render(<App />)
     await declare('humanoid-01', 'HA-0001')
-    expect(await screen.findByText('humanoid-01 선언: 거절됨')).toBeInTheDocument()
+    expect(await screen.findByText('humanoid-01 선언: 거부됨')).toBeInTheDocument()
     expect(screen.getByText('이미 퇴역한 기체')).toBeInTheDocument()
     expect(screen.getByText('HTTP 409, status=RETIRED, 퇴역한 기체다 / 기대: 201 또는 200')).toBeInTheDocument()
     expect(screen.getByText('운영자(화면 안): 복귀')).toBeInTheDocument()
@@ -198,7 +198,7 @@ describe('로봇·연결 영역', () => {
     await choose('운영자', 'quadruped-01')
     await userEvent.click(screen.getByRole('button', { name: '복귀' }))
     expect(
-      await screen.findByText('quadruped-01 복귀: 보내지 않음. 운영 서비스가 요청을 거절했습니다(HTTP 400)'),
+      await screen.findByText('quadruped-01 복귀: 보내지 않음. 운영 서비스가 요청을 거부했습니다(HTTP 400)'),
     ).toBeInTheDocument()
   })
 

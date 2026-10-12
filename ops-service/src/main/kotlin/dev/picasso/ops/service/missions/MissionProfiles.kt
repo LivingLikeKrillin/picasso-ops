@@ -16,7 +16,7 @@ class MissionProfiles(private val jdbc:JdbcClient) {
  fun find(id:String):JsonNode? = jdbc.sql("SELECT profile FROM ops.mission_profile WHERE work_master_id=:id").param("id",id).query {rs,_ -> json.readTree(rs.getString(1))}.optional().orElse(null)
  fun create(value:JsonNode,actor:Actor):JsonNode {
   val id=value.path("workMasterId").asText()
-  if(!Regex("[A-Z][A-Za-z0-9]{0,63}").matches(id) || id in setOf("InspectAsset","PrepareSequencedRack","DeliverContainer"))fail("새 미션 ID는 대문자로 시작하는 영문·숫자 1~64자이며 기존 업무 ID를 사용할 수 없습니다")
+  if(!Regex("[A-Z][A-Za-z0-9]{0,63}").matches(id) || id in setOf("InspectAsset","PrepareSequencedRack","DeliverContainer"))fail("새 임무 ID는 대문자로 시작하는 영문·숫자 1~64자이며 기존 업무 ID를 사용할 수 없습니다")
   if(value.path("name").asText().isBlank() || value.path("name").asText().length>120 || value.path("description").asText().length>2000)fail("업무 이름 1~120자와 설명 2000자 이하가 필요합니다")
   val definition=value.path("definition")
   if(!definition.isObject || definition.path("workMasterId").asText()!=id || definition.path("maxEvidence").asText()!=value.path("requiredEvidence").asText())fail("정의의 workMasterId와 최고 근거가 입력 계약과 일치해야 합니다")
@@ -25,9 +25,9 @@ class MissionProfiles(private val jdbc:JdbcClient) {
   if(value["inputSchema"]["properties"].has("workMasterId"))fail("workMasterId는 서버가 정하는 예약 입력입니다")
   read(value,value.path("sample"))
   val old=find(id)
-  if(old!=null) {if(old==value)return old;throw InterfaceRejected("MISSION_EXISTS","같은 미션 ID에 다른 입력 계약을 등록할 수 없습니다",409)}
+  if(old!=null) {if(old==value)return old;throw InterfaceRejected("MISSION_EXISTS","같은 임무 ID에 다른 입력 계약을 등록할 수 없습니다",409)}
   try {jdbc.sql("INSERT INTO ops.mission_profile(work_master_id,profile,created_by) VALUES(:id,CAST(:profile AS JSONB),:actor)").param("id",id).param("profile",value.toString()).param("actor",actor.header()).update()}
-  catch(e:DuplicateKeyException){if(find(id)!=value)throw InterfaceRejected("MISSION_EXISTS","이미 등록된 미션입니다",409)}
+  catch(e:DuplicateKeyException){if(find(id)!=value)throw InterfaceRejected("MISSION_EXISTS","이미 등록된 임무입니다",409)}
   return find(id)!!
  }
  fun sample(id:String):ObjectNode?=find(id)?.let{read(it,it["sample"]).order.put("jobOrderId","JO-SAMPLE")}

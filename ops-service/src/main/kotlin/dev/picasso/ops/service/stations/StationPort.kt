@@ -28,7 +28,7 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
  override fun validate(payload:JsonNode) {
   val wm=interfaces.get(payload["interfaceId"].asText(),payload["interfaceVersion"].asInt()).workMasterId
   val required=requests.resources.required(wm)
-  require(required==null || payload["stationId"]?.asText()==required) { "미션이 요구하는 스테이션을 선택하세요" }
+  require(required==null || payload["stationId"]?.asText()==required) { "임무가 요구하는 스테이션을 선택하세요" }
   val draft=interfaces.draft(payload["interfaceId"].asText(),payload["interfaceVersion"].asInt(),payload["input"],true)
   val deployment=(draft as dev.picasso.ops.service.joborders.DeployedJobOrderDraft).deployment
   require(deployment["deploymentVersion"].asInt()==payload["expectedDeploymentVersion"].asInt()) { "조회한 계약 배포가 변경되었습니다" }

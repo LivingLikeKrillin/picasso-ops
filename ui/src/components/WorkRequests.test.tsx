@@ -8,7 +8,7 @@ afterEach(()=>vi.unstubAllGlobals())
 it('미배정 접수도 상세와 원본 입력을 조회하며 자동 재제출 버튼을 제공하지 않는다',async()=>{
  const fetcher=vi.fn(async(url:string)=>new Response(JSON.stringify(url.startsWith('/api/work-requests?')?{total:1,requests:[receipt],offset:0,limit:20}:{receipt,hostRead:'UNAVAILABLE',execution:null,instanceId:null,journalBlocked:false,observedAt:'t2'}),{status:200}))
  vi.stubGlobal('fetch',fetcher)
- render(<WorkRequests session={session}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 접수 보기'}))
+ render(<WorkRequests session={session}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 작업 요청 보기'}))
  const detail=await screen.findByRole('article',{name:'작업 요청 상세'})
  expect(await within(detail).findByText('기체가 바쁩니다')).toBeVisible()
  expect(within(detail).getByText('모름 · 호스트 조회 실패')).toBeVisible()
@@ -17,22 +17,22 @@ it('미배정 접수도 상세와 원본 입력을 조회하며 자동 재제출
 })
 it('서버 검색·상태 필터와 페이지 이동을 사용한다',async()=>{
  const fetcher=vi.fn(async(_url:string)=>new Response(JSON.stringify({total:21,requests:[receipt],offset:0,limit:20}),{status:200}));vi.stubGlobal('fetch',fetcher)
- render(<WorkRequests session={session}/>);await screen.findByRole('button',{name:'MES-204 접수 보기'})
- await userEvent.type(screen.getByLabelText('주문·출처·내부 ID 검색'),'MES-204');await userEvent.click(screen.getByRole('button',{name:'접수 검색'}))
+ render(<WorkRequests session={session}/>);await screen.findByRole('button',{name:'MES-204 작업 요청 보기'})
+ await userEvent.type(screen.getByLabelText('외부 주문·출처·내부 ID 검색'),'MES-204');await userEvent.click(screen.getByRole('button',{name:'작업 요청 검색'}))
  await waitFor(()=>expect(fetcher.mock.calls.some(c=>String(c[0]).includes('search=MES-204'))).toBe(true))
- await userEvent.selectOptions(screen.getByLabelText('접수 상태'),'UNASSIGNED');await userEvent.click(screen.getByRole('button',{name:'접수 다음'}))
+ await userEvent.selectOptions(screen.getByLabelText('작업 요청 상태'),'UNASSIGNED');await userEvent.click(screen.getByRole('button',{name:'작업 요청 목록 다음 페이지'}))
  await waitFor(()=>expect(fetcher.mock.calls.some(c=>String(c[0]).includes('state=UNASSIGNED&offset=20'))).toBe(true))
 })
 it('재조회 실패는 직전 목록으로 표시한다',async()=>{
  let fail=false;vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({total:1,requests:[receipt],offset:0,limit:20}),{status:fail?503:200})))
- render(<WorkRequests session={session}/>);await screen.findByRole('button',{name:'MES-204 접수 보기'});fail=true
- await userEvent.click(screen.getByRole('button',{name:'접수 다시 조회'}));expect(await screen.findByRole('alert')).toHaveTextContent('직전 조회 값')
- expect(screen.getByRole('button',{name:'MES-204 접수 보기'})).toBeVisible()
+ render(<WorkRequests session={session}/>);await screen.findByRole('button',{name:'MES-204 작업 요청 보기'});fail=true
+ await userEvent.click(screen.getByRole('button',{name:'작업 요청 다시 조회'}));expect(await screen.findByRole('alert')).toHaveTextContent('직전 조회 값')
+ expect(screen.getByRole('button',{name:'MES-204 작업 요청 보기'})).toBeVisible()
 })
 
 it('이전 버전 ACK가 있어도 최신 결과는 수신 확인 대기로 표시한다',async()=>{
  vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(url.startsWith('/api/work-requests?')?{total:1,requests:[receipt],offset:0,limit:20}:{receipt,hostRead:'UNAVAILABLE',execution:null,instanceId:null,journalBlocked:false,observedAt:'t2',latestResult:{version:2,resultHash:'abc',recordedAt:'t2',acknowledgedAt:null,snapshot:{jobResponse:{physicalState:'PARTIAL'}}}}),{status:200})))
- render(<WorkRequests session={session}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 접수 보기'}))
+ render(<WorkRequests session={session}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 작업 요청 보기'}))
  expect(await screen.findByText('v2 수신 확인 대기')).toBeVisible()
  expect(screen.getByText(/품질 승인이나 물리 성공을 의미하지/)).toBeVisible()
 })
@@ -40,8 +40,8 @@ it('이전 버전 ACK가 있어도 최신 결과는 수신 확인 대기로 표�
 it('로컬 수동 작업 결과를 MES ACK 대기로 표시하지 않는다',async()=>{
  const local={...receipt,sourceSystemId:'ops:manual',state:'ACCEPTED',payload:{requestedBy:'operator/kim'}}
  vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(url.startsWith('/api/work-requests?')?{total:1,requests:[local],offset:0,limit:20}:{receipt:local,hostRead:'OK',execution:null,instanceId:'mw',journalBlocked:false,observedAt:'t2',latestResult:{version:1,resultHash:'abc',recordedAt:'t2',acknowledgedAt:null,snapshot:{}}}),{status:200})))
- render(<WorkRequests session={session}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 접수 보기'}))
- expect(await screen.findByText('로컬 작업 · 외부 ACK 대상 아님')).toBeVisible()
+ render(<WorkRequests session={session}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 작업 요청 보기'}))
+ expect(await screen.findByText('로컬 작업 · 외부 수신 확인 대상 아님')).toBeVisible()
  expect(screen.getByText('operator/kim')).toBeVisible()
  expect(screen.queryByText('v1 수신 확인 대기')).not.toBeInTheDocument()
 })
@@ -52,8 +52,8 @@ it('전용 메뉴 URL의 검색 조건과 접수를 화면을 다시 열어도 �
  vi.stubGlobal('fetch',fetcher)
  const first=render(<WorkRequests session={session}/> )
  expect(await screen.findByText('기체가 바쁩니다')).toBeVisible()
- expect(screen.getByLabelText('접수 상태')).toHaveValue('UNASSIGNED')
- expect(screen.getByLabelText('주문·출처·내부 ID 검색')).toHaveValue('MES')
+ expect(screen.getByLabelText('작업 요청 상태')).toHaveValue('UNASSIGNED')
+ expect(screen.getByLabelText('외부 주문·출처·내부 ID 검색')).toHaveValue('MES')
  first.unmount();render(<WorkRequests session={session}/> )
  expect(await screen.findByText('기체가 바쁩니다')).toBeVisible()
  expect(fetcher.mock.calls.some(([url])=>url.includes('search=MES&state=UNASSIGNED'))).toBe(true)

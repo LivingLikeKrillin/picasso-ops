@@ -67,12 +67,12 @@ class MissionInterfaceController(private val interfaces: MissionInterfaces, priv
         val expected=value["expectedDeploymentVersion"]?.takeIf{it.isIntegralNumber && it.canConvertToInt()}?.asInt()
             ?: throw InterfaceRejected("BAD_DEPLOYMENT","조회한 배포 버전이 필요합니다")
         val view=interfaces.get(id,version)
-        if(mission=="CODE" && interfaces.profiles.find(view.workMasterId)!=null)throw InterfaceRejected("BAD_DEPLOYMENT","신규 미션은 활성화한 숫자 버전을 배포해야 합니다",409)
+        if(mission=="CODE" && interfaces.profiles.find(view.workMasterId)!=null)throw InterfaceRejected("BAD_DEPLOYMENT","신규 임무는 활성화한 숫자 버전을 배포해야 합니다",409)
         if(mission!="CODE") {
             val call=host?.overview(view.workMasterId) as? dev.picasso.ops.service.host.HostCall.Ok
             val versions=call?.value?.get("versions")?.takeIf{it.isArray}
-                ?: throw InterfaceRejected("HOST_UNAVAILABLE","배포 대상 미션 버전을 확인할 수 없습니다",503)
-            if(versions.none{it["version"]?.asText()==mission}) throw InterfaceRejected("MISSION_VERSION_NOT_FOUND","활성화 이력이 있는 미션 버전만 배포할 수 있습니다",409)
+                ?: throw InterfaceRejected("HOST_UNAVAILABLE","배포 대상 임무 버전을 확인할 수 없습니다",503)
+            if(versions.none{it["version"]?.asText()==mission}) throw InterfaceRejected("MISSION_VERSION_NOT_FOUND","활성화 이력이 있는 임무 버전만 배포할 수 있습니다",409)
         }
         ResponseEntity.ok(interfaces.deploy(id,version,mission,expected,reason,actor))
     }}

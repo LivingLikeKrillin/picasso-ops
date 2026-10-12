@@ -18,10 +18,10 @@ it('응답 소실 뒤 새로고침해도 보관된 ID와 입력으로 확인하�
  const original=posts(fake)[0].body
  expect(screen.getByRole('button',{name:'새 작업 작성'})).toBeDisabled()
  first.unmount();open();fake.answer={status:200,body:accepted}
- await userEvent.click(await screen.findByRole('button',{name:'동일 요청 접수 확인'}))
+ await userEvent.click(await screen.findByRole('button',{name:'동일 작업 요청 확인'}))
  await waitFor(()=>expect(posts(fake)).toHaveLength(2));expect(posts(fake)[1].body).toEqual(original)
  await waitFor(()=>expect(screen.getByRole('button',{name:'새 작업 작성'})).toBeEnabled())
- await userEvent.click(screen.getByRole('button',{name:'접수·실행 결과 보기'}))
+ await userEvent.click(screen.getByRole('button',{name:'작업 요청·실행 결과 보기'}))
  const detail=await screen.findByRole('article',{name:'작업 요청 상세'})
  expect(await within(detail).findByText('operator/kim')).toBeVisible()
  await userEvent.click(screen.getByRole('button',{name:'새 작업 작성'}));await fill()
@@ -36,7 +36,7 @@ it('불명 요청의 입력을 고쳐도 새 ID로 실행하지 않으며 확인
  await userEvent.click(screen.getByRole('button',{name:'작업 지시 내기'}))
  expect(await screen.findByRole('alert')).toHaveTextContent('보관된 요청과 입력이 다릅니다')
  expect(posts(fake)).toHaveLength(1)
- await userEvent.click(screen.getByRole('button',{name:'동일 요청 접수 확인'}))
+ await userEvent.click(screen.getByRole('button',{name:'동일 작업 요청 확인'}))
  await waitFor(()=>expect(posts(fake)).toHaveLength(2));expect(posts(fake)[1].body).toEqual(posts(fake)[0].body)
 })
 it('요청 ID 저장 실패 시 서버에 제출하지 않는다',async()=>{
@@ -49,7 +49,7 @@ it('요청 ID 저장 실패 시 서버에 제출하지 않는다',async()=>{
 it('잘못된 성공 응답은 접수 성공으로 표시하지 않고 기존 요청을 유지한다',async()=>{
  const fake=installFakeOps(empty);fake.answer={status:202,body:{receipt:null}};open();await fill()
  await userEvent.click(screen.getByRole('button',{name:'작업 지시 내기'}))
- expect(await screen.findByRole('status',{name:'제출 결과'})).toHaveTextContent('접수 응답 형식')
+ expect(await screen.findByRole('status',{name:'제출 결과'})).toHaveTextContent('작업 요청 응답 형식')
  expect(screen.getByRole('button',{name:'새 작업 작성'})).toBeDisabled()
  expect(sessionStorage.length).toBe(1)
 })

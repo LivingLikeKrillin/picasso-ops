@@ -19,7 +19,7 @@ it('확인 기록 응답 유실 후 같은 ID와 관측 버전으로만 재확�
  await userEvent.click(screen.getByRole('button',{name:'동일 확인 기록 조회'}))
  expect(await screen.findByRole('status')).toHaveTextContent('기존 현장 확인 기록 확인됨')
  expect(calls[1]).toEqual(calls[0]);expect(calls[0]).toMatchObject({observation:'IN_PROGRESS',expectedUpdatedAt:'t2'})
- expect(screen.getByText(/실행 결과·접수 상태를 변경하거나 재제출을 허가하지 않습니다/)).toBeVisible()
+ expect(screen.getByText(/실행 결과·작업 요청 상태를 변경하거나 재제출을 허가하지 않습니다/)).toBeVisible()
 })
 it('엔지니어는 확인 기록을 전송할 수 없다',()=>{
  render(<RequestReview receipt={receipt} session={{...session,mode:'engineer'}} onChanged={()=>undefined}/>)

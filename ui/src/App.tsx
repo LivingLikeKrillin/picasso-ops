@@ -18,9 +18,9 @@ import { SiteArea } from './components/SiteArea'
 import { POLL_MS } from './poll'
 
 const AREA_DESCRIPTIONS: Record<AreaId, string> = {
-  stations: '공유 스테이션의 점유와 준비 조건, 미션 실행·완료 근거를 조정합니다.',
-  overview: '업무 접수와 로봇 실행의 현재 관측, 확인이 필요한 작업을 살펴봅니다.',
-  requests: 'MES·운영자·호출 계약의 요청을 검색하고 접수부터 실행 결과까지 추적합니다.',
+  stations: '공유 스테이션의 점유와 준비 조건, 임무 실행·완료 근거를 조정합니다.',
+  overview: '작업 요청과 로봇 실행의 현재 관측, 확인이 필요한 작업을 살펴봅니다.',
+  requests: '외부 주문과 운영자 요청을 검색하고 작업 요청부터 실행 결과까지 추적합니다.',
   validation: '모의 현장에 장애를 주입하고 예외 상황 대응을 검증합니다.',
   site: '현장 설정의 저장 버전과 실행 호스트의 적용 상태를 확인합니다.',
   robots: '기체와 어댑터를 연결하고 운영에 필요한 준비 상태를 확인합니다.',
@@ -34,7 +34,7 @@ const AREA_ICONS: Record<AreaId, string> = {
   site: 'M3 20V8l6-4v16M9 10l6-4v14M15 12h6v8H3M6 9v2m6 0v2m6 2v2',
   robots: 'M8 4h8v3H8zM5 9h14v10H5zM9 13h.01M15 13h.01M9 17h6M12 2v2M2 12v4m20-4v4',
   missions: 'M6 3h12v18H6zM9 7h6M9 12h6M9 17h3',
-  stations: '공유 스테이션의 점유와 준비 조건, 미션 실행·완료 근거를 조정합니다.',
+  stations: '공유 스테이션의 점유와 준비 조건, 임무 실행·완료 근거를 조정합니다.',
   overview: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
   requests: 'M5 3h14v18H5zM8 7h8M8 12h8M8 17h5',
   operations: 'M4 19V5m0 14h16M8 14l4-5 4 3 4-7',

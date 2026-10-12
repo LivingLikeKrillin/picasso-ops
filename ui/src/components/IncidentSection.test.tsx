@@ -257,7 +257,7 @@ describe('인시던트', () => {
     let detail = await select('incident-3')
     const form = await within(detail).findByRole('form', { name: '운영자 판단' })
     expect(within(form).getAllByRole('button').map((button) => button.textContent)).toEqual(['완료 확인', '재작업'])
-    expect(form).toHaveTextContent('exec-1/rack-arrival 보류를 판단합니다. 판단자는 kim 입니다')
+    expect(form).toHaveTextContent('exec-1/rack-arrival 보류 해소 방식(완료 확인 또는 재작업)을 결정합니다. 결정자는 kim입니다.')
 
     rerender(<OperationsArea session={engineer} onChanged={() => undefined} />)
     expect(await within(detail).findByText('보류 중입니다. 운영자 판단은 운영자 모드에서 합니다')).toBeInTheDocument()
@@ -284,7 +284,7 @@ describe('인시던트', () => {
     await userEvent.type(await within(detail).findByLabelText('판단 사유'), 'exec-1 랙 확인')
     detail = await select('incident-5')
     const form = await within(detail).findByRole('form', { name: '운영자 판단' })
-    expect(form).toHaveTextContent('exec-2/rack-arrival 보류를 판단합니다')
+    expect(form).toHaveTextContent('exec-2/rack-arrival 보류 해소 방식(완료 확인 또는 재작업)을 결정합니다')
     expect(within(form).getByLabelText('판단 사유')).toHaveValue('')
   })
 

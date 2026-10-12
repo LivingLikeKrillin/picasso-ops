@@ -51,7 +51,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   return tx.execute {
    lock(station)
    val count=jdbc.sql("INSERT INTO ops.station_run(run_id,station_id,payload,actor,state,reason,created_at,phase_at) VALUES(:id,:station,CAST(:payload AS JSONB),:actor,'QUEUED','공유 자원 순서를 기다립니다',:at,:at) ON CONFLICT DO NOTHING").param("id",id).param("station",station).param("payload",p.toString()).param("actor",actor.header()).param("at",java.sql.Timestamp.from(clock.instant())).update()
-   if(count==0) replay(id,p,actor) else {val run=get(id);event(run,"작업 접수",actor.header());run}
+   if(count==0) replay(id,p,actor) else {val run=get(id);event(run,"대기열 등록",actor.header());run}
   }!!
  }
  private fun replay(id:UUID,p:JsonNode,actor:Actor):StationRun {val run=get(id);if(run.payload!=p || run.actor!=actor.header())reject("같은 요청 ID에 다른 입력·요청자가 있습니다",409);return run}
@@ -97,8 +97,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  private fun received(run:StationRun,receipt:StationReceipt) {when {
   receipt.state=="ACCEPTED" -> transition(run,"RUNNING","로봇 수락; 저장 결과와 새 설비 완료 신호를 기다립니다",context=receipt.snapshot)
   receipt.safeToRetry -> transition(run,"WAITING_ROBOT","전송 전 미배정; 가용 기체를 재평가합니다")
-  receipt.state=="REJECTED" -> transition(run,"REJECTED","계약 제출 거절; 자원 해제",release=true)
-  else -> transition(run,"REVIEW_REQUIRED","접수 ${receipt.state}; 실행 여부 확인 전 점유 유지")
+  receipt.state=="REJECTED" -> transition(run,"REJECTED","계약 제출 거부; 자원 해제",release=true)
+  else -> transition(run,"REVIEW_REQUIRED","작업 요청 ${receipt.state}; 실행 여부 확인 전 점유 유지")
  }}
  private fun observe(run:StationRun,station:RfStation,signals:Map<String,StationSignal>?) {
   val receipt=run.receiptId?.let{runCatching{port.receipt(it)}.getOrNull()} ?: return
@@ -137,7 +137,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   val decision=text(p,"decision",32);val reason=text(p,"reason",1000)
   when(decision) {
    "CANCEL_QUEUED" -> {if(current.state!="QUEUED")reject("대기열 작업만 취소할 수 있습니다",409);transition(current,"CANCELLED",reason,by=actor.header())}
-   "RESUME_OBSERVATION" -> {if(current.state!="REVIEW_REQUIRED" || current.receiptId==null)reject("접수가 있는 확인 필요 작업만 관측을 재개합니다",409)
+   "RESUME_OBSERVATION" -> {if(current.state!="REVIEW_REQUIRED" || current.receiptId==null)reject("작업 요청이 있는 확인 필요 작업만 관측을 재개합니다",409)
     // Only completion evidence newer than the resume counts, and a completion signal still on cannot be told apart from this run's.
     val complete=signals?.get(station(current.stationId).completeSignal) ?: reject("현장 신호를 확인할 수 없어 관측을 재개하지 않습니다",503)
     if(complete.value)reject("설비 완료 신호가 켜져 있습니다. 신호를 초기화한 뒤 관측을 재개하십시오",409)
@@ -168,7 +168,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
    lock(run.stationId);val current=get(run.runId);if(current.state!="REWORKING")return@execute
    val station=station(run.stationId);val complete=signals?.get(station.completeSignal)
    when {
-    applied==false -> transition(current,"REVIEW_REQUIRED","재작업 거절; 점유를 유지하고 현장 확인을 기다립니다",by=actor.header(),context=context)
+    applied==false -> transition(current,"REVIEW_REQUIRED","재작업 거부; 점유를 유지하고 현장 확인을 기다립니다",by=actor.header(),context=context)
     applied==null -> transition(current,"REVIEW_REQUIRED","재작업 반영 불명; 실행 관측과 현장 확인 전 점유 유지",by=actor.header(),context=context)
     signals?.get(station.readySignal)==null || complete==null -> transition(current,"REVIEW_REQUIRED","재작업 반영; 현장 신호 관측 불명이라 점유를 유지하고 현장 확인을 기다립니다",by=actor.header(),context=context)
     complete.value -> transition(current,"REVIEW_REQUIRED","재작업 반영; 설비 완료 신호가 켜져 있어 이번 재작업의 완료와 구분할 수 없습니다. 신호 초기화 후 관측을 재개하십시오",by=actor.header(),context=context)
@@ -194,7 +194,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  private fun cleared(run:StationRun,reason:String) {
   val id=run.receiptId ?: return
   fun close(from:String,to:String,detail:String)=jdbc.sql("UPDATE ops.work_request SET state=:to,detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id AND state IN (:from)").param("to",to).param("detail",detail.take(2000)).param("id",id).param("from",from.split(',')).update()
-  close("WAITING_RESOURCE,UNASSIGNED","REJECTED","현장 확인으로 자원을 해제했습니다. 이 접수는 실행하지 않습니다: $reason")
+  close("WAITING_RESOURCE,UNASSIGNED","REJECTED","현장 확인으로 자원을 해제했습니다. 이 작업 요청은 실행하지 않습니다: $reason")
   close("DISPATCHING","IN_DOUBT","현장 확인으로 자원을 해제했습니다. 제출 결과는 실행 관측으로 확인합니다: $reason")
  }
  private fun event(run:StationRun,reason:String,by:String,context:JsonNode?=null) {jdbc.sql("INSERT INTO ops.station_event(run_id,state,reason,actor,context,recorded_at) VALUES(:id,:state,:reason,:actor,CAST(:context AS JSONB),:at)").param("id",run.runId).param("state",run.state).param("reason",reason).param("actor",by).param("context",(context?:json.nullNode()).toString()).param("at",java.sql.Timestamp.from(clock.instant())).update()}

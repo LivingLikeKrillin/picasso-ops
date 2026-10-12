@@ -108,7 +108,7 @@ describe('프로파일', () => {
     const profiles = await section()
     const row = within(within(profiles).getByRole('table', { name: '리비전 목록' })).getByRole('row', { name: /quadruped-b/ })
     await userEvent.click(within(row).getByRole('button', { name: '활성화' }))
-    const notice = (await screen.findByText('picasso-ref/quadruped-b#1 활성화: 거절됨')).closest('[role="status"]') as HTMLElement
+    const notice = (await screen.findByText('picasso-ref/quadruped-b#1 활성화: 거부됨')).closest('[role="status"]') as HTMLElement
     expect(within(notice).getByText('활성화 조건 미달')).toBeInTheDocument()
     expect(within(notice).getByText(/status=VALIDATED/)).toBeInTheDocument()
   })

@@ -304,7 +304,7 @@ describe('운영 영역', () => {
 
   it.each([
     ['CONFIRMED_APPLIED' as const, '응답은 없었으나 다시 읽어 보니 실행이 있음'],
-    ['CONFIRMED_NOT_APPLIED' as const, '응답 없음. 현재 실행이 보이지 않습니다. 기존 요청 ID로 접수를 확인하세요'],
+    ['CONFIRMED_NOT_APPLIED' as const, '응답 없음. 현재 실행이 보이지 않습니다. 기존 요청 ID로 작업 요청을 확인하세요'],
     [null, '반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다'],
   ])('호스트 응답 없음은 확인 결과 %s 를 따로 보인다', async (confirmation, text) => {
     const fake = installFakeOps(emptyList)

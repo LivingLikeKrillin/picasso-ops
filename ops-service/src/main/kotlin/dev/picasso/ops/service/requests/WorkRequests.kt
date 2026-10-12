@@ -43,7 +43,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   }
  }
  fun receiveManual(actor:Actor, payload:JsonNode):ReceiptAccepted {
-  if(actor.mode!=Mode.OPERATOR) throw RequestRejected("MODE_NOT_ALLOWED","운영자 모드만 수동 작업을 접수합니다",403)
+  if(actor.mode!=Mode.OPERATOR) throw RequestRejected("MODE_NOT_ALLOWED","운영자 모드만 수동 작업 요청을 받습니다",403)
   if(!payload.isObject || payload.fieldNames().asSequence().toSet()!=setOf("requestId","form") ||
      payload["requestId"]?.isTextual!=true || payload["form"]?.isObject!=true)
    throw RequestRejected("BAD_MANUAL_REQUEST","requestId UUID와 form 객체가 필요합니다")
@@ -55,7 +55,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   return receivePrepared("ops:manual",key.toString(),stored,actor,null,null) { JobOrderForm.read(payload["form"]) }
  }
  fun receiveInterface(actor:Actor,id:String,version:Int,payload:JsonNode,stationRunId:UUID?=null):ReceiptAccepted {
-  if(actor.mode!=Mode.OPERATOR) throw RequestRejected("MODE_NOT_ALLOWED","운영자 모드만 작업을 접수합니다",403)
+  if(actor.mode!=Mode.OPERATOR) throw RequestRejected("MODE_NOT_ALLOWED","운영자 모드만 작업 요청을 받습니다",403)
   val fields = if(payload.isObject) payload.fieldNames().asSequence().toSet() else emptySet()
   val expected = payload["expectedDeploymentVersion"]
   if(!payload.isObject || fields !in setOf(setOf("requestId","input"), setOf("requestId","input","expectedDeploymentVersion")) ||
@@ -78,7 +78,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  private fun receivePrepared(source:String, external:String, payload:JsonNode, actor:Actor,
   interfaceRef:String?, interfaceInput:JsonNode?, stationRunId:UUID?=null, draftSupplier:()->dev.picasso.ops.service.joborders.JobOrderDraft):ReceiptAccepted {
   check(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
-   "접수는 호스트 호출 전에 독립 커밋되어야 합니다"
+   "작업 요청은 호스트 호출 전에 독립 커밋되어야 합니다"
   }
   val hash = MessageDigest.getInstance("SHA-256").digest(canonical(payload).toString().toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
   val id = UUID.randomUUID()
@@ -89,7 +89,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   if (inserted == 0) {
    val old = jdbc.sql("SELECT receipt_id,payload_hash FROM ops.work_request WHERE source_system_id=:source AND external_order_id=:external")
     .param("source",source).param("external",external).query { rs, _ -> rs.getObject(1,UUID::class.java) to rs.getString(2) }.single()
-   if (old.second != hash) throw RequestRejected("ORDER_CONFLICT", "동일 요청 ID에 다른 입력 또는 요청자가 접수되었습니다",409)
+   if (old.second != hash) throw RequestRejected("ORDER_CONFLICT", "동일 요청 ID로 다른 입력 또는 요청자의 작업 요청이 기록되어 있습니다",409)
    return ReceiptAccepted(get(old.first,source),true)
   }
   // RECEIVED is provably pre-dispatch: DISPATCHING is written before any host call. Close it instead of leaving an orphan.
@@ -97,7 +97,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    val draft = try { draftSupplier() }
     catch(e: Exception) {
      if(e !is InterfaceRejected && e !is dev.picasso.ops.service.joborders.FormRejection) throw e
-     update(id,"REJECTED",e.message ?: "입력 검증 거절"); return ReceiptAccepted(get(id),false)
+     update(id,"REJECTED",e.message ?: "입력 검증 거부"); return ReceiptAccepted(get(id),false)
     }
    val order=JobOrderForm.jobOrder(draft,jobId,json)
    if(jdbc.sql("UPDATE ops.work_request SET normalized_order=CAST(:order AS JSONB),updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'")
@@ -105,12 +105,12 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    draft to resources.admit(id,actor,stationRunId)
   } catch(e: Exception) {
    // A business refusal (e.g. admission's 409) keeps its own words; anything else is an internal failure.
-   val detail=(e as? RequestRejected)?.message ?: "접수 처리 중 내부 오류; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오"
+   val detail=(e as? RequestRejected)?.message ?: "작업 요청 처리 중 내부 오류; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오"
    runCatching {jdbc.sql("UPDATE ops.work_request SET state='REJECTED',detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'")
     .param("detail",detail.take(2000)).param("id",id).update()}.onFailure(e::addSuppressed)
    throw e
   }
-  if(!queued && jdbc.sql("UPDATE ops.work_request SET state='DISPATCHING',detail='공통 접수 검증 완료',updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'").param("id",id).update()==1)
+  if(!queued && jdbc.sql("UPDATE ops.work_request SET state='DISPATCHING',detail='공통 작업 요청 검증 완료',updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'").param("id",id).update()==1)
    dispatch(id,actor,draft,interfaceRef,interfaceInput,jobId)
   return ReceiptAccepted(get(id),false)
  }
@@ -118,7 +118,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  fun sweepStale(olderThan:java.time.Duration):Int {
   fun close(from:String,to:String,detail:String)=jdbc.sql("UPDATE ops.work_request SET state=:to,detail=:detail,updated_at=clock_timestamp() WHERE state=:from AND updated_at<clock_timestamp()-interval '1 millisecond'*CAST(:ms AS double precision)")
    .param("from",from).param("to",to).param("detail",detail).param("ms",olderThan.toMillis()).update()
-  return close("RECEIVED","REJECTED","접수 처리 중단; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오")+
+  return close("RECEIVED","REJECTED","작업 요청 처리 중단; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오")+
    close("DISPATCHING","IN_DOUBT","제출 도중 중단; 실행 관측과 현장 확인이 필요합니다")
  }
  private fun dispatch(id:UUID,actor:Actor,draft:dev.picasso.ops.service.joborders.JobOrderDraft,interfaceRef:String?,interfaceInput:JsonNode?,jobId:String) {
@@ -195,7 +195,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
     throw RequestRejected("RECOVERY_NOT_SAFE","호스트 전송 전 미배정만 재평가할 수 있습니다. 처리 중·결과 불명은 실행 관측과 현장 확인이 필요합니다",409)
    // Refuse before claiming DISPATCHING, including a requirement registered after this receipt.
    resources.authorize(id,receipt.normalizedOrder["workMasterId"].asText())
-   if(receipt.updatedAt!=expected || receipt.normalizedOrder["workMasterId"].asText()!=wm) throw RequestRejected("STALE_RECOVERY","접수 상태가 바뀌었습니다. 다시 조회하세요",409)
+   if(receipt.updatedAt!=expected || receipt.normalizedOrder["workMasterId"].asText()!=wm) throw RequestRejected("STALE_RECOVERY","작업 요청 상태가 바뀌었습니다. 다시 조회하세요",409)
    val original=receipt.payload
    try {
     draft=if(receipt.sourceSystemId=="ops:manual") JobOrderForm.read(original["form"]) else {
@@ -236,7 +236,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    return@execute mapOf("requestId" to requestId,"duplicate" to true)
   }
   val receipt=get(id)
-  if(receipt.updatedAt!=expected)throw RequestRejected("STALE_REVIEW","관측한 접수 상태가 바뀌었습니다. 다시 조회하세요",409)
+  if(receipt.updatedAt!=expected)throw RequestRejected("STALE_REVIEW","관측한 작업 요청 상태가 바뀌었습니다. 다시 조회하세요",409)
   val context=json.createObjectNode().put("receiptState",receipt.state).put("observedAt",receipt.executionObservedAt).put("instanceId",receipt.executionInstanceId)
   context.set<JsonNode>("lastExecution",receipt.lastExecution?:json.nullNode())
   context.set<JsonNode>("latestResult",json.valueToTree(storedResult(id,null)))
@@ -250,7 +250,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  }
  fun get(id:UUID,source:String?=null):Receipt = jdbc.sql("SELECT * FROM ops.work_request WHERE receipt_id=:id AND (:source IS NULL OR source_system_id=:source)")
   .param("id",id).param("source",source,java.sql.Types.VARCHAR).query(::row).optional()
-  .orElseThrow { RequestRejected("RECEIPT_NOT_FOUND","접수를 찾을 수 없습니다",404) }
+  .orElseThrow { RequestRejected("RECEIPT_NOT_FOUND","작업 요청을 찾을 수 없습니다",404) }
  fun list(search:String, state:String?, offset:Int, limit:Int, result:String?=null):Map<String,Any> {
   if(search.length>160 || offset<0 || limit !in 1..100 || state!=null && state !in STATES && state!="NEEDS_CONFIRMATION" || result!=null && result!="unacknowledged") throw RequestRejected("BAD_FILTER","조회 조건이 잘못되었습니다")
   val stateFilter=if(state=="NEEDS_CONFIRMATION") "state IN ('RECEIVED','DISPATCHING','IN_DOUBT')" else "(:state IS NULL OR state=:state)"

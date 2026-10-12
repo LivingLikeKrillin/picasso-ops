@@ -68,10 +68,10 @@ it('응답 소실 뒤 화면을 다시 열어도 같은 계약 요청 ID로 접�
   await userEvent.click(await screen.findByRole('button',{name:'prepare-rack v1 보기'}))
   await userEvent.click(screen.getByText('공개된 계약으로 작업 요청'))
   expect(fake.calls.filter(c=>c.url===endpoint)).toHaveLength(1)
-  await userEvent.click(screen.getByRole('button',{name:'동일 계약 요청 접수 확인'}))
+  await userEvent.click(screen.getByRole('button',{name:'동일 계약 작업 요청 확인'}))
   expect(await screen.findByRole('status',{name:'계약 호출 결과'})).toHaveTextContent('추가 실행 없음')
   expect(fake.calls.filter(c=>c.url===endpoint).at(-1)?.body).toEqual(original)
-  expect(screen.getByRole('link',{name:'접수·실행 결과 보기'})).toHaveAttribute('href','#requests?receipt=receipt-1')
+  expect(screen.getByRole('link',{name:'작업 요청·실행 결과 보기'})).toHaveAttribute('href','#requests?receipt=receipt-1')
   expect(screen.getByRole('button',{name:'새 계약 요청 작성'})).toBeEnabled()
 })
 it('공개되지 않은 계약은 호출할 수 없다', async () => {
@@ -156,7 +156,7 @@ it('필수 자원 미션은 기체가 사용 중이어도 검증된 입력을 �
  render(<MissionInterfaces session={operator} onChanged={()=>undefined}/>);
  await userEvent.click(await screen.findByRole('button',{name:'prepare-rack v1 보기'}));await userEvent.click(screen.getByText('공개된 계약으로 작업 요청'))
  const submit=screen.getByRole('button',{name:'공개 계약으로 작업 지시'});expect(submit).toBeDisabled()
- await userEvent.click(screen.getByRole('button',{name:'이 입력으로 배정 가능 확인'}));expect(await screen.findByText(/검증된 입력으로 자원 대기열에 접수/)).toBeVisible()
+ await userEvent.click(screen.getByRole('button',{name:'이 입력으로 배정 가능 확인'}));expect(await screen.findByText(/검증된 입력을 작업 요청으로 자원 대기열에 넣을/)).toBeVisible()
  await userEvent.click(screen.getByLabelText('이 입력으로 실제 작업을 지시합니다'));expect(submit).toBeEnabled()
  fireEvent.change(screen.getByLabelText('계약 호출 입력'),{target:{value:'{}'}});expect(submit).toBeDisabled()
 })
