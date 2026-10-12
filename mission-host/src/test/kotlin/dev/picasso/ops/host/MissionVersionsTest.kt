@@ -82,6 +82,43 @@ class MissionVersionsTest {
 
     private fun HostBench.activeVersion(): JsonNode = get("/host/missions/$PSR")["active"]["version"]
 
+    @Test fun `새 미션은 영속 샘플로 검증 모의 실행 활성화하고 숫자 버전으로 실제 제출된다`() {
+        HostBench().use {bench ->
+            val profile=JSON.readTree(javaClass.getResourceAsStream("/mission-profile-inspection.json"))
+            val wm=profile["workMasterId"].asText()
+            val order=JSON.readTree("""{"jobOrderId":"NEW-MISSION-1","workMasterId":"ManufacturingInspection","version":1,"requiredEvidence":"E0","parameters":{},"materialRequirements":[],"equipmentRequirements":[{"id":"T1","equipmentUse":"mission_target","properties":{"location":"bay-7"}}]}""") as com.fasterxml.jackson.databind.node.ObjectNode
+            assertEquals("UNPUBLISHED",bench.get("/host/missions/$wm")["active"]["source"].asText())
+            assertEquals(400,bench.post("/host/job-orders",request(order.toString(),"candidates",HUMANOID)).status)
+            val saved=bench.post("/host/missions/$wm/drafts",JSON.writeValueAsString(mapOf("definition" to profile["definition"].toString(),"sampleOrder" to order,"actor" to "lee","requestId" to UUID.randomUUID().toString())))
+            assertEquals(200,saved.status,saved.body.toString());val id=saved.body!!["draft"]["draftId"].asLong()
+            assertEquals("PASSED",bench.validate(id)["result"].asText())
+            val mock=bench.mockRun(id);assertEquals("PASSED",mock["result"].asText(),mock.toString())
+            assertEquals("ACTIVATED",bench.activate(id).body!!["result"].asText())
+            order.put("missionVersion","1")
+            val run=bench.post("/host/job-orders",request(order.toString(),"candidates",HUMANOID));assertEquals("ACCEPTED",run.body!!["result"].asText(),run.body.toString())
+            val execution=bench.execution(run.body["executionId"].asText())!!
+            assertEquals(wm,execution["workMasterId"].asText());assertEquals(1,execution["missionVersion"].asInt())
+            assertEquals("inspect",execution["units"][0]["skillType"].asText())
+        }
+    }
+
+    @Test fun `배포 고정은 활성 버전 변경 뒤에도 원래 미션으로 실행하고 글로벌 활성 버전을 바꾸지 않는다`() {
+        HostBench().use {bench ->
+            assertEquals(1,bench.activated(bench.dataV1()))
+            assertEquals(2,bench.activated(bench.arrivalWait()))
+            val order=JSON.readTree(rack("PINNED-1","RACK-204.S01")) as com.fasterxml.jackson.databind.node.ObjectNode
+            order.put("missionVersion","1")
+            val submitted=bench.post("/host/job-orders",request(order.toString(),"candidates",HUMANOID))
+            assertEquals("ACCEPTED",submitted.body!!["result"].asText(),submitted.body.toString())
+            val execution=bench.execution(submitted.body["executionId"].asText())!!
+            assertEquals(1,execution["missionVersion"].asInt())
+            assertTrue(execution["units"].none{it["unitId"].asText()=="rack-arrival"})
+            assertEquals(2,bench.activeVersion().asInt())
+            order.put("jobOrderId","PINNED-BAD").put("missionVersion","99999")
+            assertEquals(400,bench.post("/host/job-orders",request(order.toString(),"candidates",QUADRUPED)).status)
+            assertEquals(2,bench.activeVersion().asInt())
+        }
+    }
     @Test
     fun `버전이 없으면 개요는 코드 정의를 내고 템플릿 셋은 버전 1 모양과 ABORTED 대기와 운영자 보류 대기다`() {
         HostBench().use { bench ->

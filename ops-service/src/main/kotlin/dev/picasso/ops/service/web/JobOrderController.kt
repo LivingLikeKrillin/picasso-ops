@@ -29,7 +29,8 @@ import org.springframework.web.bind.annotation.RestController
  * (`NO_ELIGIBLE_ROBOT`)은 호스트에 닿지 않은 사전 거부라 조작 기록에 남지 않는다. 쓰기 본문은 `application/json` 만 받는다
  * (다른 출처 방어는 [RobotOperationsController]). 판정은 POST 지만 부작용이 없다. 폼 초안을 본문으로 실어야 해서 POST 다.
  *
- * 제출 결과는 호스트가 무엇을 답했든 200 과 [dev.picasso.ops.service.joborders.JobOrderOutcome] 이다. 호스트의 판단은 본문에 있다.
+ * 직접 제출도 영속 접수를 거친다. 자원 대기는 202와 접수 ID, 즉시 제출은 기존 200 결과를 반환한다.
+ * 재접수 멱등성이 필요한 호출자는 requestId를 받는 /api/work-requests/manual을 사용한다.
  * 실행 목록과 셀은 호스트 본문을 그대로 넘기고, 호스트가 안 닿으면 503 과 이유다.
  */
 @RestController
@@ -37,8 +38,9 @@ class JobOrderController(
     private val eligibility: JobOrderEligibility,
     private val operations: JobOrderOperations,
     private val host: HostReads,
+    private val requests: dev.picasso.ops.service.requests.WorkRequests,
 ) {
-    private val json = ObjectMapper()
+    private val json = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
 
     @PostMapping("/api/job-orders/eligibility", consumes = [MediaType.APPLICATION_JSON_VALUE])
     fun eligibility(@RequestBody(required = false) body: ByteArray?): ResponseEntity<Any> = drafted(body) { draft ->
@@ -51,11 +53,14 @@ class JobOrderController(
         @RequestHeader(Actor.USER_HEADER, required = false) user: String?,
         @RequestBody(required = false) body: ByteArray?,
     ): ResponseEntity<Any> = guarded(mode, user, Mode.OPERATOR) { actor ->
-        drafted(body) { draft ->
-            when (val submission = operations.submit(actor, draft)) {
-                is JobOrderSubmission.Submitted -> ResponseEntity.ok(submission.outcome)
-                is JobOrderSubmission.NoEligibleRobot ->
-                    reject(HttpStatus.BAD_REQUEST, JobOrderOperations.NO_ELIGIBLE_ROBOT, submission.detail)
+        drafted(body) { _ ->
+            val value=json.createObjectNode().put("requestId",java.util.UUID.randomUUID().toString())
+            value.set<JsonNode>("form",json.readTree(body))
+            val accepted=requests.receiveManual(actor,value)
+            when(accepted.receipt.state) {
+                "WAITING_RESOURCE" -> ResponseEntity.status(202).body(accepted)
+                "UNASSIGNED" -> if(accepted.receipt.submission==null) reject(HttpStatus.BAD_REQUEST, JobOrderOperations.NO_ELIGIBLE_ROBOT,accepted.receipt.detail?:"미배정") else ResponseEntity.ok(json.treeToValue(accepted.receipt.submission,dev.picasso.ops.service.joborders.JobOrderOutcome::class.java))
+                else -> ResponseEntity.ok(accepted.receipt.submission?.let{json.treeToValue(it,dev.picasso.ops.service.joborders.JobOrderOutcome::class.java)}?:accepted)
             }
         }
     }

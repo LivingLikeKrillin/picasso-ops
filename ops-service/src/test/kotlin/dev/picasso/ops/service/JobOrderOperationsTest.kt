@@ -54,6 +54,19 @@ class JobOrderOperationsTest {
         }
     }
 
+
+    @Test fun `일지가 없는 메모리 실행을 반영 완료로 확정하지 않는다`() {
+        bench.answer = HostWrite.NoResponse("journal write failed")
+        val jobId = "JO-blocked"
+        val view = (bench.executionsWith(jobId) as HostCall.Ok).value.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>()
+        view.putArray("journalBlockedExecutionIds").add("exec-1")
+        bench.executions = HostCall.Ok(view)
+        val sent = assertIs<JobOrderSubmission.Submitted>(operations.submit(kim, draft, stableJobOrderId = jobId)).outcome
+        assertEquals(OperationResult.NO_RESPONSE, sent.result)
+        assertNull(sent.confirmation)
+        assertEquals(listOf(OperationResult.NO_RESPONSE), log.list().map { it.result })
+    }
+
     private fun submitted(): JobOrderOutcome = assertIs<JobOrderSubmission.Submitted>(operations.submit(kim, draft)).outcome
 
     private fun submittedId(): String = bench.submitted.last().first["jobOrderId"].asText()

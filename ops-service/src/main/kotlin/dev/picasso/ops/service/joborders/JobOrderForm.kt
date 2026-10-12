@@ -15,6 +15,13 @@ sealed interface JobOrderDraft {
     val unitIds: List<String>
 }
 
+data class GenericJobOrderDraft(val order:ObjectNode):JobOrderDraft {
+ override val workMasterId:String get()=order["workMasterId"].asText()
+ override val unitIds:List<String> get()=order["equipmentRequirements"].map{it["id"].asText()}
+}
+
+data class DeployedJobOrderDraft(val original:JobOrderDraft,val deployment:JsonNode):JobOrderDraft by original
+
 /**
  * InspectAsset 의 점검 대상 하나. [id] 는 기체 `inspect` 스킬의 `target` 파라미터로 가므로 [JobOrderForm.MAX_TARGET_ID_LENGTH]
  * 자를 넘지 않는다. [location] 은 기체가 아는 명칭이어야 하나 S3a 는 검사하지 않는다(스펙 §12).
@@ -105,6 +112,11 @@ object JobOrderForm {
      * 미들웨어가 슬롯의 `material` 속성으로 그 자리를 찾는다.
      */
     fun jobOrder(draft: JobOrderDraft, jobOrderId: String, json: ObjectMapper): ObjectNode {
+        if(draft is DeployedJobOrderDraft) return jobOrder(draft.original,jobOrderId,json).apply {
+            put("missionVersion",draft.deployment["missionVersion"].asText())
+            set<JsonNode>("deployment",draft.deployment)
+        }
+        if(draft is GenericJobOrderDraft)return draft.order.deepCopy().put("jobOrderId",jobOrderId)
         val order = json.createObjectNode()
             .put("jobOrderId", jobOrderId)
             .put("workMasterId", draft.workMasterId)
@@ -117,6 +129,8 @@ object JobOrderForm {
             equipment.addObject().put("id", id).put("equipmentUse", use).putObject("properties").put(property, value)
         }
         when (draft) {
+            is GenericJobOrderDraft -> error("범용 초안은 먼저 변환해야 합니다")
+            is DeployedJobOrderDraft -> error("배포 초안은 먼저 변환해야 합니다")
             is InspectAssetDraft -> draft.targets.forEach { requirement(it.id, "inspection_target", "location", it.location) }
             is PrepareSequencedRackDraft -> {
                 materials.addObject().put("materialDefinitionId", draft.material).put("quantity", draft.slots.size)

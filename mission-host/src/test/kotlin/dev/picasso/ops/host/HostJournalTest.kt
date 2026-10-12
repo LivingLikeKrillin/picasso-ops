@@ -75,6 +75,12 @@ class HostJournalTest {
             )
             assertTrue(rows[0]["incompleteUnits"].isArray && rows[0]["incompleteUnits"].isEmpty)
             assertTrue(rows[0]["recordedAt"].isTextual)
+            val feed=bench.get("/host/result-events")
+            assertEquals(rows.size,feed["events"].size())
+            assertEquals(rows[0]["jobResponseId"],feed["events"].last()["snapshot"]["jobResponse"]["jobResponseId"])
+            assertEquals(HUMANOID,feed["events"].last()["snapshot"]["robotId"].asText())
+            bench.restartHost()
+            assertEquals(feed,bench.get("/host/result-events"))
             assertEquals(0, bench.get("/host/job-responses?jobOrderId=JO-2")["total"].asInt())
             assertEquals(1, bench.get("/host/job-responses?limit=1")["responses"].size())
             listOf("?limit=0", "?limit=501", "?limit=x", "?jobOrderId=").forEach { query ->
@@ -106,7 +112,7 @@ class HostJournalTest {
     }
 
     @Test
-    fun `일지 쓰기가 실패하면 제출은 500 JOURNAL_WRITE_FAILED 이고 실행은 미들웨어에 남는다`() {
+    fun `일지 쓰기가 실패하면 제출은 500이고 pump와 신규 제출을 차단해 로봇 태스크를 시작하지 않는다`() {
         HostBench().use { bench ->
             PostgresSupport.execute(
                 """
@@ -122,6 +128,11 @@ class HostJournalTest {
             // 실행은 미들웨어에 남는다(스펙 §9, 한계). 일지에 없으니 다음 기동은 다시 짓지 않는다.
             val execution = checkNotNull(bench.execution("exec-1")) { bench.get("/host/executions").toString() }
             assertEquals(listOf("JO-1", HUMANOID), listOf(execution["jobOrderId"].asText(), execution["robotId"].asText()))
+            bench.idlePumps(5)
+            assertEquals(listOf("exec-1"), bench.get("/host/executions")["journalBlockedExecutionIds"].map { it.asText() })
+            assertTrue(bench.mimic.server.exclusive { bench.mimic.instance(HUMANOID)!!.tasks.all.isEmpty() })
+            val blocked = bench.post("/host/job-orders", request(inspect("JO-2", "T1" to "bay-7"), "candidates", HUMANOID)).body!!
+            assertEquals("REJECTED", blocked["result"].asText())
             bench.restartHost()
             assertTrue(bench.get("/host/executions")["restore"]["rows"].isEmpty)
         }
@@ -140,6 +151,7 @@ class HostJournalTest {
             bench.driveToHold(executionId)
             bench.idlePumps()
             assertEquals(0, count("job_response_log"))
+            assertEquals(0, count("result_outbox"))
             assertEquals(0, count("incident_copy"))
 
             PostgresSupport.execute("DROP TRIGGER refuse_copy ON mission.incident_copy")

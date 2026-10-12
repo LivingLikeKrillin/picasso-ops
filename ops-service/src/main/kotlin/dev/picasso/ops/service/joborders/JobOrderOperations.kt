@@ -69,15 +69,16 @@ class JobOrderOperations(
     private val json: ObjectMapper = jacksonObjectMapper(),
 ) {
 
-    fun submit(actor: Actor, draft: JobOrderDraft): JobOrderSubmission {
-        val requestId = UUID.randomUUID()
-        val jobOrderId = jobOrderId(requestId)
+    fun submit(actor: Actor, draft: JobOrderDraft, interfaceRef: String? = null, interfaceInput: JsonNode? = null, requestId: UUID = UUID.randomUUID(), stableJobOrderId: String? = null): JobOrderSubmission {
+        val jobOrderId = stableJobOrderId ?: jobOrderId(requestId)
         val order = JobOrderForm.jobOrder(draft, jobOrderId, json)
         val judged = eligibility.judge(order)
         val candidates = judged.robots.orEmpty().filter { it.eligible }.map { it.robotId }
         if (candidates.isEmpty()) return JobOrderSubmission.NoEligibleRobot(noEligibleDetail(judged))
 
         val request = json.createObjectNode().put("op", OP)
+        if (interfaceRef != null) request.put("interfaceRef", interfaceRef)
+        if (interfaceInput != null) request.set<JsonNode>("interfaceInput", interfaceInput)
         request.set<JsonNode>("jobOrder", order)
         request.putArray("candidates").apply { candidates.forEach(::add) }
         val requestJson = json.writeValueAsString(request)
@@ -128,6 +129,7 @@ class JobOrderOperations(
             return JobOrderSubmission.Submitted(JobOrderOutcome(requestId, jobOrderId, OperationResult.NO_RESPONSE, null, null))
         }
         val execution = seen.executions.firstOrNull { it.jobOrderId == jobOrderId }
+        if (execution?.executionId in seen.journalBlockedExecutionIds) return JobOrderSubmission.Submitted(JobOrderOutcome(requestId, jobOrderId, OperationResult.NO_RESPONSE, null, null))
         val confirmation = if (execution != null) OperationResult.CONFIRMED_APPLIED else OperationResult.CONFIRMED_NOT_APPLIED
         record(confirmation, json.writeValueAsString(observed(seen.instanceId, execution)))
         return JobOrderSubmission.Submitted(JobOrderOutcome(requestId, jobOrderId, OperationResult.NO_RESPONSE, confirmation, null))

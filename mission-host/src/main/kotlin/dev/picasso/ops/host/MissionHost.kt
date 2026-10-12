@@ -62,6 +62,8 @@ data class HostEligibility(
     val runningExecutionId: String?,
     val passed: Boolean,
     val reasons: List<String>,
+    val requiredSkills: List<String>? = null,
+    val availableSkills: List<String>? = null,
 )
 
 /** 미들웨어 `Submission` 넷의 이름(S3a 스펙 §7.6). */
@@ -137,6 +139,7 @@ data class ExecutionsView(
     val pumpedAt: Instant?,
     val executions: List<ExecutionView>,
     val restore: RestoreView?,
+    val journalBlockedExecutionIds: List<String> = emptyList(),
 )
 
 /** 복원의 결과(S4b 스펙 T3). DEFERRED 는 pump 마다 다시 시도해 RESTORED 나 GAVE_UP 이 된다. */
@@ -421,6 +424,7 @@ class MissionHost(
                 latestCell = cell
                 val at = clock.now()
                 retryDeferred()
+                if (journalBlocked().isNotEmpty()) return@withLock
                 middleware.pump()
                 pumpedAt = at
                 recordAfterPump()
@@ -431,7 +435,19 @@ class MissionHost(
     }
 
     /** 기체마다 호스트 판정을 낸다. [order] 의 WorkMaster 는 부르는 쪽이 [WORK_MASTERS] 로 거른다. */
-    fun eligibility(order: JobOrder, robotIds: List<String>): List<HostEligibility> = lock.withLock {
+    private fun selectedMission(workMaster:String,version:String?):dev.picasso.middleware.ActiveMission? {
+        if(version==null){if(catalog.active(workMaster)==null)throw BadRequest(HostRequests.UNKNOWN_WORK_MASTER,"활성화하지 않은 미션입니다: $workMaster");return null}
+        if(version=="CODE"){if(workMaster !in WORK_MASTERS)throw BadRequest(HostRequests.BAD_REQUEST,"새 미션은 숫자 버전이 필요합니다");return catalog.mission(workMaster,null)}
+        val number=version.toIntOrNull()?.takeIf{it>0 && it.toString()==version}
+            ?: throw BadRequest(HostRequests.BAD_REQUEST,"고정 미션 버전이 잘못되었습니다")
+        val row=store.version(workMaster,number)
+            ?: throw BadRequest(HostRequests.BAD_REQUEST,"고정 미션 버전을 찾을 수 없습니다: $workMaster/v$number")
+        return catalog.mission(workMaster,row)
+    }
+    fun eligibility(order:JobOrder,robotIds:List<String>,missionVersion:String?=null):List<HostEligibility> = lock.withLock {
+        catalog.withMission(order.workMasterId,selectedMission(order.workMasterId,missionVersion)) { eligibilityCurrent(order,robotIds) }
+    }
+    private fun eligibilityCurrent(order: JobOrder, robotIds: List<String>): List<HostEligibility> = lock.withLock {
         val applied = siteTimings.current() != null
         robotIds.distinct().map { judge(order, it, applied) }
     }
@@ -448,9 +464,13 @@ class MissionHost(
      *
      * 새 실행으로 ACCEPTED 이면 같은 잠금 안에서 응답하기 전에 실행 일지를 적는다(S4b 스펙 T2). 이미 있던 실행의 `revise` 가 낸
      * Accepted 와 IDEMPOTENT 는 적지 않는다. pump 도 이 잠금을 잡으므로 일지에 없는 실행은 로봇 명령을 낸 적이 없다. 일지 쓰기가
-     * 실패하면 [JournalWriteFailed] 이고 실행은 미들웨어에 남는다(§9, 한계).
+     * 실패하면 [JournalWriteFailed] 이고 실행은 메모리에 남지만 다음 pump와 신규 제출을 차단한다.
      */
-    fun submit(order: JobOrder, candidates: List<String>): SubmitOutcome = lock.withLock {
+    fun submit(order:JobOrder,candidates:List<String>,missionVersion:String?=null):SubmitOutcome = lock.withLock {
+        catalog.withMission(order.workMasterId,selectedMission(order.workMasterId,missionVersion)) { submitCurrent(order,candidates) }
+    }
+    private fun submitCurrent(order: JobOrder, candidates: List<String>): SubmitOutcome = lock.withLock {
+        if (journalBlocked().isNotEmpty()) return@withLock SubmitOutcome(SubmitResult.REJECTED, null, null, "실행 일지 저장 실패: 호스트 복구 전 제출 차단", emptyList(), emptyList())
         val applied = siteTimings.current() != null
         val judged = candidates.distinct().map { judge(order, it, applied) }
         val excluded = judged.filter { !it.passed }
@@ -524,6 +544,7 @@ class MissionHost(
                 )
             },
             restore = restoreView(),
+            journalBlockedExecutionIds = journalBlocked(),
         )
     }
 
@@ -650,6 +671,18 @@ class MissionHost(
             instanceId, response.jobResponseId, response.executionId, content,
             if (duplicate) ResponseDisposition.RESTART_DUPLICATE else ResponseDisposition.SENT,
         )
+        if (!duplicate) {
+            val journal = checkNotNull(records.journalRow(response.jobOrderId))
+            val snapshot = json.createObjectNode().apply {
+                put("instanceId",instanceId); put("executionId",response.executionId)
+                put("jobOrderId",response.jobOrderId); put("robotId",journal.robotId)
+                put("workMasterId",journal.workMasterId)
+                if(journal.missionVersion == null) putNull("missionVersion") else put("missionVersion",journal.missionVersion)
+                put("physicalState",response.physicalState.name)
+                set<com.fasterxml.jackson.databind.JsonNode>("jobResponse",json.valueToTree(view(response)))
+            }
+            records.appendResult(instanceId,response.jobResponseId,snapshot)
+        }
     }
 
     /**
@@ -708,6 +741,8 @@ class MissionHost(
      * 스킬 적합은 지금 활성 정의로 작업 지시를 계획해, 경로가 로봇인 단위의 스킬이 기체가 선언한 스킬에 다 있는가다.
      * 도는 실행은 그 기체의 실행 중 물리 상태가 정착하지 않은 것이다. 운영자 보류에 선 실행도 도는 실행이다(스펙 §12).
      */
+    private fun journalBlocked(): List<String> = middleware.executions().filter { it.order.jobOrderId !in journaled }.map { it.executionId }
+
     private fun judge(order: JobOrder, robotId: String, applied: Boolean): HostEligibility {
         val active = requireNotNull(catalog.active(order.workMasterId)) { "카탈로그에 없는 WorkMaster 다: ${order.workMasterId}" }
         val needed = active.capability.plan(order).filter { it.route == Route.ROBOT }.map { it.skillType }.toSortedSet()
@@ -729,8 +764,9 @@ class MissionHost(
             if (running != null) add("도는 실행이 있다: $running")
             unrestoredOn(robotId).takeIf { it.isNotEmpty() }?.let { add("$UNRESTORED_REASON: ${it.joinToString(", ")}") }
             if (!applied) add(UNAPPLIED_REASON)
+            if (journalBlocked().isNotEmpty()) add("실행 일지 저장 실패: 호스트 복구 전 배정 차단")
         }
-        return HostEligibility(robotId, fit, missing, running, passed = reasons.isEmpty(), reasons = reasons)
+        return HostEligibility(robotId, fit, missing, running, passed = reasons.isEmpty(), reasons = reasons, requiredSkills = needed.toList(), availableSkills = declared?.sorted())
     }
 
     /**

@@ -96,6 +96,29 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
     /** [action] 을 한 트랜잭션으로 돈다. 예외가 나가면 아무것도 남지 않는다. */
     fun <T> inTransaction(action: () -> T): T = transactions.execute { action() } as T
 
+    /** Serialized transactional counter: allocation order is commit order, with no rollback gaps. */
+    fun appendResult(instance: String, responseId: String, snapshot: com.fasterxml.jackson.databind.JsonNode) {
+        check(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+        jdbc.sql("SELECT last_sequence FROM mission.result_producer WHERE singleton FOR UPDATE").query(Long::class.java).single()
+        val exists = jdbc.sql("SELECT count(*) FROM mission.result_outbox WHERE instance_id=:instance AND response_id=:response")
+            .param("instance",instance).param("response",responseId).query(Long::class.java).single() > 0
+        if (exists) return
+        val sequence = jdbc.sql("UPDATE mission.result_producer SET last_sequence=last_sequence+1 WHERE singleton RETURNING last_sequence").query(Long::class.java).single()
+        jdbc.sql("INSERT INTO mission.result_outbox(sequence,instance_id,response_id,snapshot) VALUES(:sequence,:instance,:response,CAST(:snapshot AS JSONB))")
+            .param("sequence",sequence).param("instance",instance).param("response",responseId).param("snapshot",snapshot.toString()).update()
+    }
+
+    fun resultEvents(after: Long, limit: Int): Map<String,Any> {
+        require(after >= 0 && limit in 1..200)
+        val producer = jdbc.sql("SELECT producer_id,last_sequence FROM mission.result_producer WHERE singleton")
+            .query {rs,_ -> rs.getString(1) to rs.getLong(2)}.single()
+        require(after <= producer.second) { "cursor exceeds producer watermark" }
+        val events = jdbc.sql("SELECT sequence,snapshot,recorded_at FROM mission.result_outbox WHERE sequence>:after AND sequence<=:watermark ORDER BY sequence LIMIT :limit")
+            .param("after",after).param("watermark",producer.second).param("limit",limit)
+            .query {rs,_ -> mapOf("sequence" to rs.getLong(1),"snapshot" to json.readTree(rs.getString(2)),"recordedAt" to rs.getString(3))}.list()
+        return mapOf("producerId" to producer.first,"highWatermark" to producer.second,"events" to events)
+    }
+
     // ── 실행 일지
 
     fun journal(

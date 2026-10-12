@@ -60,6 +60,7 @@ data class MockSample(
     val slots: List<String>,
     val material: String,
     val presentation: String,
+    val equipment:List<EquipmentRequirement> = emptyList(),
 )
 
 /**
@@ -121,6 +122,9 @@ class MockRunner(
         val wallStart = System.nanoTime()
         fun wall(): Duration = Duration.ofNanos(System.nanoTime() - wallStart)
 
+        val planned=DefinedCapability(definition).plan(order)
+        if(planned.isEmpty() || planned.map{it.unitId}.distinct().size!=planned.size || definition.steps.filterIsInstance<dev.picasso.middleware.mission.UnitStep>().any{step -> order.equipmentRequirements.none{it.equipmentUse==step.forEach}})
+            return MockRunResult(false,MockRunFailure.DEFINITION,"샘플 입력에서 실행 단계가 비거나 단위 ID가 겹칩니다",ROBOT_ID,sample,null,emptyList(),0,wall().toMillis())
         val ideal = idealSignals(definition)
             ?: return MockRunResult(
                 passed = false, failure = MockRunFailure.DEFINITION, detail = conflict(definition), robotId = ROBOT_ID,
@@ -200,13 +204,14 @@ class MockRunner(
             }
 
     private fun sample(order: JobOrder): MockSample {
-        val source = order.equipmentRequirements.first { it.equipmentUse == EquipmentUse.SOURCE }
+        val source = order.equipmentRequirements.firstOrNull { it.equipmentUse == EquipmentUse.SOURCE }
         return MockSample(
             jobOrderId = order.jobOrderId,
             requiredEvidence = order.requiredEvidence.name,
             slots = order.equipmentRequirements.filter { it.equipmentUse == EquipmentUse.DESTINATION }.map { it.id },
-            material = source.properties.getValue(EquipmentUse.PROP_MATERIAL),
-            presentation = source.id,
+            material = source?.properties?.get(EquipmentUse.PROP_MATERIAL)?:"",
+            presentation = source?.id?:"",
+            equipment=order.equipmentRequirements,
         )
     }
 

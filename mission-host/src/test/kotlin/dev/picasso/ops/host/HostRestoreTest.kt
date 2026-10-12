@@ -272,7 +272,7 @@ class HostRestoreTest {
         const val WAIT = "rack-arrival"
         const val S01 = "RACK-204.S01"
 
-        val EXECUTIONS_FIELDS = listOf("instanceId", "pumpedAt", "executions", "restore")
+        val EXECUTIONS_FIELDS = listOf("instanceId", "pumpedAt", "executions", "restore", "journalBlockedExecutionIds")
 
         val EXECUTION_FIELDS = listOf(
             "executionId", "jobOrderId", "workMasterId", "missionVersion", "robotId", "physicalState", "units", "jobResponse", "restoredFrom",

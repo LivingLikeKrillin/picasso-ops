@@ -116,13 +116,13 @@ class MissionOperations(
 ) {
     private val runner = HostOperationRunner(log, requeryDelay, json)
 
-    fun saveDraft(actor: Actor, workMasterId: String, definition: String): MissionOperationOutcome {
+    fun saveDraft(actor: Actor, workMasterId: String, definition: String,sample:JsonNode?=null): MissionOperationOutcome {
         val request = json.createObjectNode().put("op", OP_SAVE_DRAFT).put("workMasterId", workMasterId).put("definition", definition)
         val ran = runner.run(
             actor, workMasterId, request, null,
             accepted = { body -> if (body.path("draft").path("draftId").isIntegralNumber) OperationResult.SUCCEEDED else null },
             recheck = { id -> recheck(id, "draft") },
-        ) { id -> host.saveDraft(workMasterId, definition, actor.user, id) }
+        ) { id -> if(sample==null)host.saveDraft(workMasterId, definition, actor.user, id) else host.saveDraftWithSample(workMasterId,definition,sample,actor.user,id) }
         return outcome(workMasterId, ran, emptyList())
     }
 

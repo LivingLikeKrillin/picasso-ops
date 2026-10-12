@@ -201,10 +201,12 @@ class SiteCellTest {
     private fun Bench.signal(name: String): CellSignal = cell.snapshot.signals.single { it.name == name }
 
     @Test
-    fun `표준 픽스처는 신호 셋을 처음 값으로 내고 GET cell 에 사양과 값이 실린다`() {
+    fun `표준 픽스처는 신호 다섯을 처음 값으로 내고 GET cell 에 사양과 값이 실린다`() {
         Bench().use { bench ->
             assertEquals(
                 listOf(
+                    CellSignal("inspection_ready", null, SignalKind.BOOLEAN, false, "true", null),
+                    CellSignal("inspection_complete", null, SignalKind.BOOLEAN, false, "false", null),
                     CellSignal(RACK_PRESENT, "RACK-204", SignalKind.BOOLEAN, false, "false", null),
                     CellSignal(GUARD_CLOSED, null, SignalKind.BOOLEAN, true, "true", null),
                     CellSignal(LOT_CODE, null, SignalKind.TEXT, false, "LOT-0001", null),
@@ -214,8 +216,8 @@ class SiteCellTest {
 
             val got = http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:${bench.cell.port}/cell")).build(), HttpResponse.BodyHandlers.ofString())
             val signals = json.readTree(got.body())["signals"]
-            assertEquals(listOf(RACK_PRESENT, GUARD_CLOSED, LOT_CODE), signals.map { it["name"].asText() })
-            val rack = signals[0]
+            assertEquals(listOf("inspection_ready", "inspection_complete", RACK_PRESENT, GUARD_CLOSED, LOT_CODE), signals.map { it["name"].asText() })
+            val rack = signals.single { it["name"].asText() == RACK_PRESENT }
             assertEquals(listOf("name", "location", "kind", "safety", "value", "observedAt"), rack.fieldNames().asSequence().toList())
             assertEquals("RACK-204", rack["location"].asText())
             assertEquals("BOOLEAN", rack["kind"].asText())
@@ -224,9 +226,9 @@ class SiteCellTest {
             assertTrue(rack["value"].isTextual, rack.toString())
             assertEquals("false", rack["value"].asText())
             assertTrue(rack["observedAt"].isNull)
-            assertTrue(signals[1]["location"].isNull)
-            assertEquals(true, signals[1]["safety"].asBoolean())
-            assertEquals("TEXT", signals[2]["kind"].asText())
+            assertTrue(signals.single { it["name"].asText() == GUARD_CLOSED }["location"].isNull)
+            assertEquals(true, signals.single { it["name"].asText() == GUARD_CLOSED }["safety"].asBoolean())
+            assertEquals("TEXT", signals.single { it["name"].asText() == LOT_CODE }["kind"].asText())
         }
     }
 

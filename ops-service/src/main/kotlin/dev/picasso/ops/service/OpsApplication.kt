@@ -32,6 +32,7 @@ import java.time.Clock
 import javax.sql.DataSource
 
 /** 운영 서비스(스펙 §7). Flyway 자동설정을 끄는 이유는 [OpsSchema] 에 있다. */
+@org.springframework.scheduling.annotation.EnableScheduling
 @SpringBootApplication(exclude = [FlywayAutoConfiguration::class])
 open class OpsApplication {
 
@@ -156,6 +157,23 @@ open class OpsApplication {
         jdbc: JdbcClient,
         @Suppress("UNUSED_PARAMETER") migrated: OpsSchemaMigrated,
     ): OperationLog = OperationLog(jdbc)
+
+    @Bean
+    open fun missionProfiles(jdbc:JdbcClient,@Suppress("UNUSED_PARAMETER") migrated:OpsSchemaMigrated)=dev.picasso.ops.service.missions.MissionProfiles(jdbc)
+
+    @Bean
+    open fun missionInterfaces(jdbc: JdbcClient, dataSource: DataSource, log: OperationLog,
+        @Suppress("UNUSED_PARAMETER") migrated: OpsSchemaMigrated): dev.picasso.ops.service.interfaces.MissionInterfaces =
+        dev.picasso.ops.service.interfaces.MissionInterfaces(jdbc, TransactionTemplate(DataSourceTransactionManager(dataSource)), log)
+
+    @Bean
+    open fun workRequests(jdbc: JdbcClient, interfaces: dev.picasso.ops.service.interfaces.MissionInterfaces, operations: JobOrderOperations, host: HostClient, dataSource: DataSource): dev.picasso.ops.service.requests.WorkRequests =
+        dev.picasso.ops.service.requests.WorkRequests(jdbc, interfaces, operations, host, TransactionTemplate(DataSourceTransactionManager(dataSource)), durableResults=true)
+
+    @Bean
+    open fun stationCoordinator(jdbc:JdbcClient, dataSource:DataSource, requests:dev.picasso.ops.service.requests.WorkRequests,
+        interfaces:dev.picasso.ops.service.interfaces.MissionInterfaces, host:HostClient, clock:Clock):dev.picasso.ops.service.stations.StationCoordinator =
+        dev.picasso.ops.service.stations.StationCoordinator(jdbc,TransactionTemplate(DataSourceTransactionManager(dataSource)),dev.picasso.ops.service.stations.OpsStationPort(requests,interfaces,host),clock)
 
     companion object {
         /** 설정 파일 이름을 `ops-service` 로 둔다. 같은 JVM 의 registry `application.properties` 와 가리지 않게(스펙 §7.1). */

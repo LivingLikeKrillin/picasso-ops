@@ -34,13 +34,13 @@ data class CellView(val cell: CellSnapshot?)
 class HostController(private val host: MissionHost, private val json: ObjectMapper) {
 
     @PostMapping("/host/eligibility", consumes = [MediaType.APPLICATION_JSON_VALUE])
-    fun eligibility(@RequestBody(required = false) body: ByteArray?): ResponseEntity<Any> = accepting(body, "robotIds") { order, robots ->
-        EligibilityView(host.eligibility(order, robots))
+    fun eligibility(@RequestBody(required = false) body: ByteArray?): ResponseEntity<Any> = accepting(body, "robotIds") { order, robots, mission ->
+        EligibilityView(host.eligibility(order, robots, mission))
     }
 
     @PostMapping("/host/job-orders", consumes = [MediaType.APPLICATION_JSON_VALUE])
-    fun submit(@RequestBody(required = false) body: ByteArray?): ResponseEntity<Any> = accepting(body, "candidates") { order, candidates ->
-        host.submit(order, candidates)
+    fun submit(@RequestBody(required = false) body: ByteArray?): ResponseEntity<Any> = accepting(body, "candidates") { order, candidates, mission ->
+        host.submit(order, candidates, mission)
     }
 
     @GetMapping("/host/executions")
@@ -77,7 +77,7 @@ class HostController(private val host: MissionHost, private val json: ObjectMapp
     private inline fun accepting(
         body: ByteArray?,
         listField: String,
-        action: (dev.picasso.middleware.JobOrder, List<String>) -> Any,
+        action: (dev.picasso.middleware.JobOrder, List<String>,String?) -> Any,
     ): ResponseEntity<Any> {
         val node: JsonNode? = body?.let { runCatching { json.readTree(it) }.getOrNull() }
         val (order, robots) = try {
@@ -85,6 +85,13 @@ class HostController(private val host: MissionHost, private val json: ObjectMapp
         } catch (e: BadRequest) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(HostRejection(e.error, e.message ?: ""))
         }
-        return ResponseEntity.ok(action(order, robots))
+        return try {
+            val pin=node?.get("jobOrder")?.get("missionVersion")?.let {
+                if(!it.isTextual || !(it.asText()=="CODE" || it.asText().toIntOrNull()?.let{number->number>0 && number.toString()==it.asText()}==true))
+                    throw BadRequest(HostRequests.BAD_REQUEST,"missionVersion은 CODE 또는 양의 정수 문자열이어야 합니다")
+                it.asText()
+            }
+            ResponseEntity.ok(action(order, robots,pin))
+        }catch(e:BadRequest){ResponseEntity.badRequest().body(HostRejection(e.error,e.message?:""))}
     }
 }
