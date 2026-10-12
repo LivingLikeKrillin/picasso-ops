@@ -124,5 +124,22 @@ class StationCoordinatorTest {
  @Test fun `안전 신호 또는 누락 신호는 자원 준비 조건으로 등록하지 않는다`() {
   assertFailsWith<RequestRejected>{service.createStation(engineer,json.readTree("""{"stationId":"unsafe","name":"거절","readySignal":"safety","completeSignal":"missing","timeoutSeconds":10}"""))};assertEquals(1,service.stations().size)
  }
+ private fun receipt(id:UUID)=jdbc.sql("SELECT state,detail FROM ops.work_request WHERE receipt_id=:id").param("id",id).query{r,_->r.getString(1) to r.getString(2)}.single()
+ @Test fun `현장 확인 해제는 묶인 접수를 미전송 거절 또는 결과 불명으로 닫는다`() {
+  port.receiptState="IN_DOUBT"
+  val expected=mapOf("WAITING_RESOURCE" to "REJECTED","UNASSIGNED" to "REJECTED","DISPATCHING" to "IN_DOUBT","ACCEPTED" to "ACCEPTED","IN_DOUBT" to "IN_DOUBT","REJECTED" to "REJECTED")
+  for((before,after) in expected) {
+   val run=enqueue();service.tick();assertEquals("REVIEW_REQUIRED",service.get(run.runId).state);assertEquals(run.runId,service.get(run.runId).receiptId)
+   jdbc.sql("UPDATE ops.work_request SET state=:state,detail='before' WHERE receipt_id=:id").param("state",before).param("id",run.runId).update()
+   decide(run.runId,"CONFIRM_CLEAR");assertNull(service.stations().single().owner)
+   val (state,detail)=receipt(run.runId);assertEquals(after,state,before)
+   when {
+    before==after -> assertEquals("before",detail,before)
+    after=="REJECTED" -> assertEquals("현장 확인으로 자원을 해제했습니다. 이 접수는 실행하지 않습니다: 현장 상태 확인",detail)
+    else -> assertEquals("현장 확인으로 자원을 해제했습니다. 제출 결과는 실행 관측으로 확인합니다: 현장 상태 확인",detail)
+   }
+  }
+  assertEquals(expected.size,port.sends)
+ }
 
 }

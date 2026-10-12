@@ -130,7 +130,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   when(decision) {
    "CANCEL_QUEUED" -> {if(current.state!="QUEUED")reject("대기열 작업만 취소할 수 있습니다",409);transition(current,"CANCELLED",reason,by=actor.header())}
    "RESUME_OBSERVATION" -> {if(current.state!="REVIEW_REQUIRED" || current.receiptId==null)reject("접수가 있는 확인 필요 작업만 관측을 재개합니다",409);transition(current,"RUNNING",reason,by=actor.header())}
-   "CONFIRM_CLEAR" -> {if(current.state!="REVIEW_REQUIRED")reject("확인 필요 작업만 현장 확인 후 해제합니다",409);transition(current,"MANUALLY_CLEARED","현장 확인에 의한 자원 해제: $reason",release=true,by=actor.header())}
+   "CONFIRM_CLEAR" -> {if(current.state!="REVIEW_REQUIRED")reject("확인 필요 작업만 현장 확인 후 해제합니다",409);transition(current,"MANUALLY_CLEARED","현장 확인에 의한 자원 해제: $reason",release=true,by=actor.header());cleared(current,reason)}
    else -> reject("지원하지 않는 판단입니다")
   };get(id)
  }!!
@@ -141,6 +141,13 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   if(state in setOf("TIMED_OUT","CANCELLED","REJECTED") && run.receiptId!=null)
    jdbc.sql("UPDATE ops.work_request SET state='REJECTED',detail=:reason,updated_at=clock_timestamp() WHERE receipt_id=:id AND state='WAITING_RESOURCE'").param("id",run.receiptId).param("reason",reason).update()
   event(get(run.runId),reason,by,context)
+ }
+ /** WAITING_RESOURCE never reached DISPATCHING and UNASSIGNED failed eligibility before sending; DISPATCHING may have been sent. */
+ private fun cleared(run:StationRun,reason:String) {
+  val id=run.receiptId ?: return
+  fun close(from:String,to:String,detail:String)=jdbc.sql("UPDATE ops.work_request SET state=:to,detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id AND state IN (:from)").param("to",to).param("detail",detail.take(2000)).param("id",id).param("from",from.split(',')).update()
+  close("WAITING_RESOURCE,UNASSIGNED","REJECTED","현장 확인으로 자원을 해제했습니다. 이 접수는 실행하지 않습니다: $reason")
+  close("DISPATCHING","IN_DOUBT","현장 확인으로 자원을 해제했습니다. 제출 결과는 실행 관측으로 확인합니다: $reason")
  }
  private fun event(run:StationRun,reason:String,by:String,context:JsonNode?=null) {jdbc.sql("INSERT INTO ops.station_event(run_id,state,reason,actor,context,recorded_at) VALUES(:id,:state,:reason,:actor,CAST(:context AS JSONB),:at)").param("id",run.runId).param("state",run.state).param("reason",reason).param("actor",by).param("context",(context?:json.nullNode()).toString()).param("at",java.sql.Timestamp.from(clock.instant())).update()}
  private fun lock(station:String) {jdbc.sql("SELECT station_id FROM ops.rf_station WHERE station_id=:id FOR UPDATE").param("id",station).query(String::class.java).optional().orElseThrow{RequestRejected("STATION_NOT_FOUND","스테이션이 없습니다",404)}}

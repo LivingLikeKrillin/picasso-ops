@@ -521,4 +521,87 @@ class WorkRequestsTest {
   } finally {pool.shutdownNow()}
  }
 
+ @Test fun `접수 저장 뒤 예기치 않은 오류는 미전송 거절로 닫고 오류를 그대로 알린다`() {
+  PostgresSupport.execute("ALTER TABLE ops.work_request ADD CONSTRAINT deny_normalized CHECK (normalized_order IS NULL) NOT VALID")
+  assertFailsWith<org.springframework.dao.DataAccessException>{service.receive("mes",body)}
+  val row=service.list("",null,0,20)["requests"].let{it as List<*>}.single() as Receipt
+  assertEquals("REJECTED",row.state);assertEquals("접수 처리 중 내부 오류; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오",row.detail)
+  val replay=service().receive("mes",body);assertTrue(replay.duplicate);assertEquals("REJECTED",replay.receipt.state);assertTrue(bench.submitted.isEmpty())
+ }
+ @Test fun `접수 저장 뒤 업무 거절은 자기 사유로 닫고 그대로 알린다`() {
+  // A station run that neither owns its station nor is DISPATCHING: admission refuses with 409.
+  jdbc.sql("INSERT INTO ops.rf_station(station_id,name,ready_signal,complete_signal,timeout_seconds,created_by) VALUES('inspection-1','공유 검사','ready','complete',30,'engineer/lee')").update()
+  val run=UUID.randomUUID()
+  jdbc.sql("INSERT INTO ops.station_run(run_id,station_id,payload,actor,state,reason,created_at,phase_at) VALUES(:id,'inspection-1','{}','operator/kim','QUEUED','대기',clock_timestamp(),clock_timestamp())").param("id",run).update()
+  val ex=assertFailsWith<RequestRejected>{service.receiveInterface(Actor(Mode.OPERATOR,"kim"),"asset-check",1,json.readTree("""{"requestId":"${UUID.randomUUID()}","input":${body["input"]}}"""),run)}
+  assertEquals(409,ex.status)
+  val row=service.list("",null,0,20)["requests"].let{it as List<*>}.single() as Receipt
+  assertEquals("REJECTED",row.state);assertEquals("스테이션 점유와 제출 상태를 확인할 수 없습니다",row.detail);assertEquals(ex.message,row.detail);assertTrue(bench.submitted.isEmpty())
+ }
+ @Test fun `정리가 먼저 닫은 접수는 이어서 제출하거나 대기열에 넣지 않는다`() {
+  // Simulates a sweep committing right after the insert ('early') or between normalization and the DISPATCHING claim.
+  PostgresSupport.execute("""CREATE FUNCTION ops.test_swept() RETURNS trigger AS $$ BEGIN
+   IF TG_OP='INSERT' AND NEW.source_system_id='early' OR TG_OP='UPDATE' AND NEW.source_system_id<>'early' AND OLD.normalized_order IS NULL AND NEW.normalized_order IS NOT NULL THEN NEW.state:='REJECTED';NEW.detail:='swept'; END IF;
+   RETURN NEW; END $$ LANGUAGE plpgsql""")
+  PostgresSupport.execute("CREATE TRIGGER test_swept BEFORE INSERT OR UPDATE ON ops.work_request FOR EACH ROW EXECUTE FUNCTION ops.test_swept()")
+  val early=service.receive("early",body);assertEquals("REJECTED",early.receipt.state);assertEquals("swept",early.receipt.detail)
+  val direct=service.receive("mes",body);assertEquals("REJECTED",direct.receipt.state);assertTrue(bench.submitted.isEmpty())
+  resource()
+  assertEquals(409,assertFailsWith<RequestRejected>{manual()}.status)
+  assertEquals(0,coordinator().runs().size);assertTrue(bench.submitted.isEmpty())
+  assertEquals(setOf("REJECTED"),(service.list("",null,0,20)["requests"] as List<*>).map{(it as Receipt).state}.toSet())
+ }
+ private fun raw(state:String,wm:String?="InspectAsset"):UUID {
+  val id=UUID.randomUUID()
+  jdbc.sql("INSERT INTO ops.work_request(receipt_id,source_system_id,external_order_id,payload_hash,payload,job_order_id,state,normalized_order) VALUES(:id,'mes',:key,'hash','{}',:key,:state,CAST(:order AS JSONB))")
+   .param("id",id).param("key",id.toString()).param("state",state).param("order",wm?.let{"""{"workMasterId":"$it"}"""},java.sql.Types.VARCHAR).update()
+  return id
+ }
+ private fun age(id:UUID,seconds:Int) {jdbc.sql("UPDATE ops.work_request SET updated_at=clock_timestamp()-make_interval(secs=>:s) WHERE receipt_id=:id").param("s",seconds).param("id",id).update()}
+ @Test fun `오래 멈춘 접수 전 단계와 제출 중 단계만 정리하고 자원 대기는 두지 않는다`() {
+  val received=raw("RECEIVED",null);val dispatching=raw("DISPATCHING");val waiting=raw("WAITING_RESOURCE");val fresh=raw("RECEIVED");val freshDispatch=raw("DISPATCHING")
+  for(id in listOf(received,dispatching,waiting))age(id,600)
+  assertEquals(2,service.sweepStale(Duration.ofMinutes(5)))
+  assertEquals("REJECTED",service.get(received).state);assertEquals("접수 처리 중단; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오",service.get(received).detail)
+  assertEquals("IN_DOUBT",service.get(dispatching).state);assertEquals("제출 도중 중단; 실행 관측과 현장 확인이 필요합니다",service.get(dispatching).detail)
+  assertEquals("WAITING_RESOURCE",service.get(waiting).state);assertEquals("RECEIVED",service.get(fresh).state);assertEquals("DISPATCHING",service.get(freshDispatch).state)
+  assertEquals(0,service.sweepStale(Duration.ofMinutes(5)));assertTrue(bench.submitted.isEmpty())
+ }
+ @Test fun `결과 수집 주기는 정리 실패와 무관하게 결과를 모은다`() {
+  val row=service.receive("mes",body).receipt;observeResult(row.jobOrderId)
+  val stale=raw("RECEIVED");age(stale,600)
+  PostgresSupport.execute("ALTER TABLE ops.work_request ADD CONSTRAINT deny_sweep CHECK (detail IS NULL OR detail NOT LIKE '접수 처리 중단%') NOT VALID")
+  val collector=WorkResultCollector(service,300);collector.collect()
+  assertEquals("OK",collector.status()["state"]);assertEquals(1,service.result(row.receiptId,"mes",1)["version"]);assertEquals("RECEIVED",service.get(stale).state)
+  PostgresSupport.execute("ALTER TABLE ops.work_request DROP CONSTRAINT deny_sweep")
+  collector.collect();assertEquals("REJECTED",service.get(stale).state)
+ }
+ private fun register(wm:String)=runCatching{service.resources.create(Actor(Mode.ENGINEER,"lee"),wm,"inspection-1","등록")}.exceptionOrNull()?.let{assertEquals(409,(it as RequestRejected).status);true} ?: false
+ private fun reviewed(id:UUID,observation:String) {service.review(id,Actor(Mode.OPERATOR,"kim"),json.valueToTree(mapOf("requestId" to UUID.randomUUID().toString(),"observation" to observation,"reason" to "현장 확인","expectedUpdatedAt" to service.get(id).updatedAt)))}
+ private fun settled(id:UUID,state:String,version:Int=1) {jdbc.sql("""INSERT INTO ops.work_result(receipt_id,version,instance_id,execution_id,response_id,response_version,snapshot,result_hash)
+   VALUES(:id,:v,'mw-1','exec-1',:r,1,CAST(:snapshot AS JSONB),'hash')""").param("id",id).param("v",version).param("r","response-$version").param("snapshot","""{"jobResponse":{"physicalState":"$state"}}""").update()}
+ /** Each case uses its own mission so a successful registration never leaks into the next one. */
+ private fun blocks(state:String,setup:(UUID)->Unit={}):Boolean {val wm="M-${UUID.randomUUID()}";val id=raw(state,wm);setup(id);val blocked=register(wm);jdbc.sql("UPDATE ops.work_request SET state='REJECTED' WHERE receipt_id=:id").param("id",id).update();return blocked}
+ @Test fun `자원 요구 등록은 이 미션에서 아직 진행 중이거나 완료 근거가 없는 접수만 막는다`() {
+  jdbc.sql("INSERT INTO ops.rf_station(station_id,name,ready_signal,complete_signal,timeout_seconds,created_by) VALUES('inspection-1','검사','ready','complete',30,'engineer/lee')").update()
+  val other=raw("RECEIVED","OtherMission");assertFalse(register("InspectAsset"));jdbc.sql("UPDATE ops.work_request SET state='REJECTED' WHERE receipt_id=:id").param("id",other).update()
+  for(state in listOf("RECEIVED","WAITING_RESOURCE","DISPATCHING","IN_DOUBT","ACCEPTED"))assertTrue(blocks(state),state)
+  val unknown=raw("RECEIVED",null);assertTrue(register("M-${UUID.randomUUID()}"));jdbc.sql("UPDATE ops.work_request SET state='REJECTED' WHERE receipt_id=:id").param("id",unknown).update()
+  for(state in listOf("UNASSIGNED","REJECTED"))assertFalse(blocks(state),state)
+  for(result in listOf("PHYSICALLY_DONE","UNVERIFIED","FAILED","ABORTED","PARTIAL"))assertFalse(blocks("ACCEPTED"){settled(it,result)},result)
+  assertTrue(blocks("ACCEPTED"){settled(it,"FAILED");settled(it,"RUNNING",2)})
+  assertTrue(blocks("ACCEPTED"){settled(it,"OPERATOR_HOLD")})
+  assertFalse(blocks("IN_DOUBT"){reviewed(it,"NOT_STARTED")});assertFalse(blocks("IN_DOUBT"){reviewed(it,"COMPLETED")});assertFalse(blocks("ACCEPTED"){reviewed(it,"COMPLETED")})
+  assertTrue(blocks("IN_DOUBT"){reviewed(it,"NOT_CONFIRMED")});assertTrue(blocks("IN_DOUBT"){reviewed(it,"IN_PROGRESS")})
+  assertTrue(blocks("IN_DOUBT"){reviewed(it,"NOT_STARTED");reviewed(it,"NOT_CONFIRMED")})
+  assertTrue(blocks("IN_DOUBT"){reviewed(it,"NOT_STARTED");jdbc.sql("UPDATE ops.work_request SET updated_at=clock_timestamp() WHERE receipt_id=:id").param("id",it).update()})
+ }
+ @Test fun `등록 전 미배정 접수는 등록 뒤 일반 재평가로 자원 요구를 우회하지 못한다`() {
+  bench.judge={ids->HostCall.Ok(ids.map{id->JobOrderBench.running(id,"busy")})}
+  val row=manual().receipt;assertEquals("UNASSIGNED",row.state)
+  resource();bench.judge={ids->HostCall.Ok(ids.map(JobOrderBench::pass))}
+  val ex=assertFailsWith<RequestRejected>{service.recover(row.receiptId,Actor(Mode.OPERATOR,"kim"),json.readTree("""{"requestId":"${UUID.randomUUID()}","reason":"등록 뒤 재평가","expectedUpdatedAt":"${row.updatedAt}"}"""))}
+  assertEquals("RESOURCE_REQUIREMENT",ex.code);assertEquals("UNASSIGNED",service.get(row.receiptId).state);assertEquals(row.updatedAt,service.get(row.receiptId).updatedAt);assertTrue(bench.submitted.isEmpty())
+ }
+
 }
