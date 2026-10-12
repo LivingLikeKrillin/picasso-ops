@@ -46,6 +46,8 @@ WAITING_RESOURCE 접수는 조정기만 제출한다. 제출 직전 DISPATCHING�
 
 브라우저 시험은 모의 로봇·공정 신호와 실제 Ops API·PostgreSQL을 사용했다. 실물 로봇·PLC 검증 결과는 아니다.
 
+브라우저 실행은 `cd ui` 후 `npx playwright test`(생애주기), `npx playwright test --config=playwright.station.config.ts`(공유 자원)로 분리한다. 생애주기 시험은 마지막에 registry를 중단하므로 두 시험은 각각 새 스택에서 실행한다. CI도 같은 순서로 별도 호출한다.
+
 ## 제한과 다음 범위
 
 Ops가 제공하는 호출 경로에 적용한다. mission-host를 직접 호출하는 외부 시스템이나 독립 장비의 제어를 잠그는 물리 인터록은 아니다. 일반 공정 신호와 공통 시계를 사용하며 실물 PLC의 작업 ID echo·fencing token 기반 핸드셰이크는 후속 범위다. 다중 자원 동시 획득·교착 방지와 자원 요구 변경·마이그레이션도 별도 범위다.

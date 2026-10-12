@@ -22,6 +22,8 @@ const gracefulShutdown = { signal: 'SIGTERM' as const, timeout: 15_000 }
  */
 export default defineConfig({
   testDir: './e2e',
+  // Lifecycle shuts registry down; resource verification uses a fresh stack/config.
+  testMatch: '**/lifecycle.spec.ts',
   timeout: 600_000,
   expect: { timeout: 60_000 },
   workers: 1,
