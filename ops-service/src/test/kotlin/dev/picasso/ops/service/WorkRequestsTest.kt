@@ -360,7 +360,65 @@ class WorkRequestsTest {
   }
   assertEquals(1,bench.submitted.size)
  }
-
+ private fun waiting(locktype:String)=jdbc.sql("SELECT count(*) FROM pg_locks WHERE locktype=:type AND NOT granted").param("type",locktype).query(Long::class.java).single()>0
+ private fun await(what:String,done:()->Boolean) {val until=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);while(!done()) {check(System.nanoTime()<until){"$what 대기 시간 초과"};Thread.sleep(20)}}
+ @Test fun `재평가 승인과 커밋 사이의 자원 요구 등록은 재평가 커밋을 기다리고 접수를 제출 중에 남기지 않는다`() {
+  jdbc.sql("INSERT INTO ops.rf_station(station_id,name,ready_signal,complete_signal,timeout_seconds,created_by) VALUES('inspection-1','공유 검사','ready','complete',30,'engineer/lee')").update()
+  bench.judge={ids->HostCall.Ok(ids.map{id->JobOrderBench.running(id,"busy")})}
+  val row=service.receive("mes",body).receipt;assertEquals("UNASSIGNED",row.state)
+  val attempt=UUID.randomUUID()
+  val request=json.createObjectNode().put("requestId",attempt.toString()).put("reason","경합 재평가").put("expectedUpdatedAt",row.updatedAt)
+  bench.judge={ids->HostCall.Ok(ids.map(JobOrderBench::pass))}
+  // Holds recover after its authorize, before its commit: an uncommitted row with the same attempt key makes its INSERT wait.
+  // The row points at another receipt, so recover's own row lock and the mission's in-flight count are untouched.
+  val blocker=PostgresSupport.connection().apply{autoCommit=false}
+  try {
+   blocker.prepareStatement("INSERT INTO ops.work_request_recovery(attempt_id,receipt_id,actor,reason,expected_updated_at) VALUES(?,?,'test','hold','hold')").use{
+    it.setObject(1,attempt);it.setObject(2,raw("REJECTED","OtherMission"));it.executeUpdate()}
+   Executors.newFixedThreadPool(2).use{pool ->
+    val recovered=pool.submit<ReceiptAccepted>{service().recover(row.receiptId,Actor(Mode.OPERATOR,"kim"),request)}
+    await("재평가 정지"){waiting("transactionid")}
+    val created=pool.submit<Map<String,Any?>>{service().resources.create(Actor(Mode.ENGINEER,"lee"),"InspectAsset","inspection-1","재평가 중 등록")}
+    await("등록 대기"){created.isDone || waiting("advisory")}
+    val waited=!created.isDone
+    blocker.rollback()
+    val reply=recovered.get(20,TimeUnit.SECONDS)
+    val refused=assertFailsWith<java.util.concurrent.ExecutionException>{created.get(20,TimeUnit.SECONDS)}.cause as RequestRejected
+    assertTrue(waited,"자원 요구 등록이 재평가 커밋을 기다리지 않았습니다")
+    assertEquals("RESOURCE_REQUIREMENT",refused.code);assertEquals(409,refused.status)
+    assertFalse(reply.duplicate);assertEquals("ACCEPTED",reply.receipt.state)
+   }
+  } finally {blocker.close()}
+  assertNull(service.resources.required("InspectAsset"));assertEquals(1,bench.submitted.size)
+  assertEquals("ACCEPTED",service.get(row.receiptId).state)
+ }
+ /** Commits a requirement together with the DISPATCHING claim, past recover's own check: only dispatch()'s authorize sees it. */
+ private fun requirementOnClaim(sweep:Boolean) {
+  PostgresSupport.execute("""CREATE FUNCTION ops.test_requirement() RETURNS trigger AS $$ BEGIN
+   IF NEW.state='DISPATCHING' AND OLD.state<>'DISPATCHING' THEN
+    INSERT INTO ops.mission_resource_requirement(work_master_id,station_id,created_by,reason) VALUES(NEW.normalized_order->>'workMasterId','inspection-1','engineer/lee','제출 직전 등록');
+    ${if(sweep) "NEW.state:='IN_DOUBT';NEW.detail:='swept';" else ""}
+   END IF; RETURN NEW; END $$ LANGUAGE plpgsql""")
+  PostgresSupport.execute("CREATE TRIGGER test_requirement BEFORE UPDATE ON ops.work_request FOR EACH ROW EXECUTE FUNCTION ops.test_requirement()")
+ }
+ private fun unassignedBeforeRequirement(sweep:Boolean):Receipt {
+  jdbc.sql("INSERT INTO ops.rf_station(station_id,name,ready_signal,complete_signal,timeout_seconds,created_by) VALUES('inspection-1','공유 검사','ready','complete',30,'engineer/lee')").update()
+  bench.judge={ids->HostCall.Ok(ids.map{id->JobOrderBench.running(id,"busy")})}
+  val row=service.receive("mes",body).receipt;assertEquals("UNASSIGNED",row.state)
+  requirementOnClaim(sweep);bench.judge={ids->HostCall.Ok(ids.map(JobOrderBench::pass))}
+  val ex=assertFailsWith<RequestRejected>{service.recover(row.receiptId,Actor(Mode.OPERATOR,"kim"),json.readTree("""{"requestId":"${UUID.randomUUID()}","reason":"제출 직전 변경","expectedUpdatedAt":"${row.updatedAt}"}"""))}
+  assertEquals("RESOURCE_REQUIREMENT",ex.code);assertEquals("필수 자원 접수를 거치지 않은 실행입니다",ex.message);assertTrue(bench.submitted.isEmpty())
+  return service.get(row.receiptId)
+ }
+ @Test fun `제출 직전 자원 요구가 바뀌면 호스트에 보내지 않고 거절로 닫으며 오류를 알린다`() {
+  val after=unassignedBeforeRequirement(sweep=false)
+  assertEquals("REJECTED",after.state);assertEquals("자원 요구가 바뀌어 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오: 필수 자원 접수를 거치지 않은 실행입니다",after.detail)
+  assertNull(after.submission)
+ }
+ @Test fun `제출 직전 자원 거절은 이미 다른 판단으로 닫힌 접수를 덮지 않는다`() {
+  val after=unassignedBeforeRequirement(sweep=true)
+  assertEquals("IN_DOUBT",after.state);assertEquals("swept",after.detail)
+ }
 
  private fun durable(feed:()->HostCall<com.fasterxml.jackson.databind.JsonNode>)=WorkRequests(jdbc,interfaces,operations,
   object:dev.picasso.ops.service.host.HostReads by bench.host {override fun resultEvents(after:Long,limit:Int)=feed()},TransactionTemplate(DataSourceTransactionManager(ds)),durableResults=true)

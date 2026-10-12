@@ -12,13 +12,14 @@ import java.util.UUID
 /** Mission-wide immutable requirements are enforced at durable admission, independent of caller input. */
 class MissionResources(private val jdbc:JdbcClient,private val tx:TransactionTemplate) {
  private val json=ObjectMapper()
- private fun missionLock(wm:String) {jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(:wm))").param("wm",wm).query{_,_->true}.single()}
+ /** Serializes requirement registration with every claim of this mission. Taken first: mission, then station, then receipt row. */
+ fun lockMission(wm:String) {jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(:wm))").param("wm",wm).query{_,_->true}.single()}
  fun list():List<Map<String,Any?>> = jdbc.sql("SELECT * FROM ops.mission_resource_requirement ORDER BY work_master_id").query{r,_->mapOf("workMasterId" to r.getString("work_master_id"),"stationId" to r.getString("station_id"),"revision" to r.getInt("revision"),"createdBy" to r.getString("created_by"),"reason" to r.getString("reason"),"createdAt" to r.getString("created_at"))}.list()
  fun required(wm:String):String? = jdbc.sql("SELECT station_id FROM ops.mission_resource_requirement WHERE work_master_id=:wm").param("wm",wm).query(String::class.java).optional().orElse(null)
  fun create(actor:Actor,wm:String,station:String,reason:String):Map<String,Any?> = tx.execute {
   if(actor.mode!=Mode.ENGINEER)fail("엔지니어만 자원 요구를 등록합니다",403)
   if(wm.isBlank() || wm.length>120 || station.isBlank() || reason.isBlank() || reason.length>1000)fail("미션·스테이션·등록 사유가 필요합니다",400)
-  missionLock(wm)
+  lockMission(wm)
   // In flight for this mission. RECEIVED without a normalized order may still belong to it.
   // IN_DOUBT and unsettled ACCEPTED block unless the latest on-site review, still current, says never started or done.
   val active=jdbc.sql("""SELECT count(*) FROM ops.work_request r WHERE (r.state='RECEIVED' AND r.normalized_order IS NULL) OR
@@ -40,7 +41,7 @@ class MissionResources(private val jdbc:JdbcClient,private val tx:TransactionTem
  /** The receipt already exists. Queue insertion and the fixed resource are committed together. */
  fun admit(id:UUID,actor:Actor,stationRunId:UUID?=null):Boolean = tx.execute {
   val row=jdbc.sql("SELECT normalized_order,payload FROM ops.work_request WHERE receipt_id=:id").param("id",id).query{r,_->json.readTree(r.getString(1)) to json.readTree(r.getString(2))}.single()
-  val wm=row.first["workMasterId"].asText();missionLock(wm)
+  val wm=row.first["workMasterId"].asText();lockMission(wm)
   val required=required(wm)
   if(stationRunId!=null) {
    val station=jdbc.sql("SELECT station_id FROM ops.station_run WHERE run_id=:run").param("run",stationRunId).query(String::class.java).single()
