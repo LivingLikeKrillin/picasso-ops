@@ -50,14 +50,14 @@ export function MissionInterfaces({ session, onChanged,contracts=[],initialWorkM
     finally { setBusy(false) }
   }
   return <section className="managed-interfaces" aria-label="버전별 호출 계약">
-    <div className="mission-section-heading"><div><h2>버전별 호출 계약</h2><p>외부 필드를 업무 입력에 연결하고 저장·공개합니다. 현재 호출 경로는 로컬 Ops PoC용입니다.</p></div><div className="actions">
+    <div className="mission-section-heading"><div><h2>버전별 호출 계약</h2><p>외부 필드를 임무 입력에 연결하고 저장·공개합니다. 현재 호출 경로는 로컬 Ops PoC용입니다.</p></div><div className="actions">
       <button type="button" disabled={busy} onClick={() => setReload(n => n + 1)}>호출 계약 다시 조회</button>
       {session.mode === 'engineer' && <button type="button" className="primary" onClick={() => { setEditorOpened(true); setCreating(value => !value) }}>{creating ? '작성 폼 접기' : '호출 계약 만들기'}</button>}
     </div></div>
     {error && <p role="alert">{error}</p>}{notice && <p role="status" aria-label="호출 계약 처리 결과">{notice}</p>}
     {editorOpened && <div hidden={!creating}><InterfaceEditor key={editorRevision} seed={seed} contracts={contracts} initialWorkMaster={initialWorkMaster} session={session} onSaved={row => { accept(row); setNotice(`${row.interfaceId} v${row.version}: 초안 저장됨`) }} /></div>}
     {rows === null ? <p>호출 계약 목록을 아직 읽지 못했습니다.</p> : rows.length === 0 ? <p>저장된 호출 계약이 없습니다. 입력 매핑을 검증하고 첫 버전을 만들어 보세요.</p> :
-      <div className="table-scroll" tabIndex={0} role="group" aria-label="호출 계약 표 스크롤"><table aria-label="저장된 호출 계약"><thead><tr><th>업무</th><th>식별자·버전</th><th>대상 임무</th><th>상태</th><th>등록자</th><th>선택</th></tr></thead><tbody>{rows.map(row => <tr key={key(row)} className={key(row) === selection ? 'selected' : undefined}><td>{row.name}</td><td><code>{row.interfaceId}/v{row.version}</code></td><td>{row.workMasterId}</td><td>{stateLabel[row.status]}</td><td>{row.createdBy}</td><td><button type="button" disabled={busy} onClick={() => { setSelection(key(row)); setReason(''); setNotice(null) }}>{row.interfaceId} v{row.version} 보기</button></td></tr>)}</tbody></table></div>}
+      <div className="table-scroll" tabIndex={0} role="group" aria-label="호출 계약 표 스크롤"><table aria-label="저장된 호출 계약"><thead><tr><th>임무</th><th>식별자·버전</th><th>대상 임무</th><th>상태</th><th>등록자</th><th>선택</th></tr></thead><tbody>{rows.map(row => <tr key={key(row)} className={key(row) === selection ? 'selected' : undefined}><td>{row.name}</td><td><code>{row.interfaceId}/v{row.version}</code></td><td>{row.workMasterId}</td><td>{stateLabel[row.status]}</td><td>{row.createdBy}</td><td><button type="button" disabled={busy} onClick={() => { setSelection(key(row)); setReason(''); setNotice(null) }}>{row.interfaceId} v{row.version} 보기</button></td></tr>)}</tbody></table></div>}
     {selected && <div className="saved-interface" role="region" aria-label="선택한 호출 계약">
       <h3>{selected.name} · v{selected.version}</h3><p>대상 임무: <code>{selected.workMasterId}</code></p>
       {session.mode === 'engineer' && !creating && <button type="button" onClick={() => {
@@ -95,7 +95,7 @@ function InterfaceEditor({ session, onSaved, seed,contracts=[],initialWorkMaster
     } catch (e: unknown) { setError(errorText(e)) }
     finally { setBusy(false) }
   }
-  return <div className="interface-editor" role="region" aria-label="호출 계약 작성"><h3>입력 매핑과 새 계약 버전</h3><p>JSON Pointer로 원본 입력 위치를 지정합니다. 예: /order/material. 배열은 전체 목록을 연결합니다. 저장 시 샘플을 실제 업무 검증기로 검사합니다.</p>
+  return <div className="interface-editor" role="region" aria-label="호출 계약 작성"><h3>입력 매핑과 새 계약 버전</h3><p>JSON Pointer로 원본 입력 위치를 지정합니다. 예: /order/material. 배열은 전체 목록을 연결합니다. 저장 시 샘플을 실제 임무 검증기로 검사합니다.</p>
     <fieldset disabled={busy || session.mode !== 'engineer'}><legend>계약 정의</legend><div className="interface-fields">
       <label>호출 식별자<input value={id} onChange={e => setId(e.target.value)} /></label><label>계약 버전<input type="number" min="1" value={version} onChange={e => setVersion(e.target.value)} /></label><label>계약 이름<input value={name} onChange={e => setName(e.target.value)} /></label>
       <label>대상 임무<select aria-label="대상 임무" value={wm} onChange={e => { const next = e.target.value as WorkMaster; setWm(next); setMapping(defaults(next,contracts).mapping); setSample(JSON.stringify(defaults(next,contracts).sample, null, 2)); setPreview(null) }}><option value="PrepareSequencedRack">서열 랙 준비</option><option value="InspectAsset">자산 점검</option>{contracts.filter(c=>c.profile).map(c=><option key={c.workMasterId} value={c.workMasterId}>{c.name}</option>)}</select></label>
@@ -193,13 +193,13 @@ function InterfaceCaller({ row, session }: { row: MissionInterfaceView; session:
       <button type="button" disabled={busy || row.status !== 'ENABLED' || !!pending} onClick={assess}>이 입력으로 배정 가능 확인</button>
       {assessmentError && <p role="alert">배정 판정 실패: {assessmentError} · 새 작업 전 다시 확인하세요.</p>}
       {(assessmentDirty || (assessment && !currentAssessment)) && <p role="status">입력 또는 배포 상태가 변경되었습니다. 배정 가능 여부를 다시 확인하세요.</p>}
-      {currentAssessment && <><p>판정한 업무 {currentAssessment.jobOrder.workMasterId} · 임무 {currentAssessment.jobOrder.missionVersion} · 배포 v{currentAssessment.jobOrder.deployment.deploymentVersion} · 요구 근거 {currentAssessment.jobOrder.requiredEvidence}</p>
+      {currentAssessment && <><p>판정한 임무 {currentAssessment.jobOrder.workMasterId} · 임무 버전 {currentAssessment.jobOrder.missionVersion} · 배포 v{currentAssessment.jobOrder.deployment.deploymentVersion} · 요구 근거 {currentAssessment.jobOrder.requiredEvidence}</p>
         <EligibilityTable read={{ view: currentAssessment.eligibility, refusal: null, error: null, formKey: signature }} formKey={signature} />
         <p role="status">{ready ? '현재 배정 가능한 기체가 있습니다. 이 입력으로 작업을 요청할 수 있습니다.' : row.requiredStationId ? '검증된 입력을 작업 요청으로 자원 대기열에 넣을 수 있습니다. 기체 배정은 자원과 설비 준비 후 다시 확인합니다.' : '배정 가능한 기체를 확인하지 못했습니다. 불가·모름 사유를 확인한 뒤 다시 판정하세요.'}</p>
         <details><summary>판정한 정규화 작업</summary><pre aria-label="계약 배정 정규화 작업">{JSON.stringify(currentAssessment.jobOrder, null, 2)}</pre></details></>}
     </section>
     <label><input type="checkbox" checked={confirmed} disabled={busy} onChange={e => setConfirmed(e.target.checked)} />이 입력으로 실제 작업을 지시합니다</label>
-    <button type="button" disabled={busy || !!pending || !canRequest || !!restored.error || !confirmed || row.status !== 'ENABLED' || session.mode !== 'operator'} onClick={() => invoke()}>공개 계약으로 작업 지시</button>
+    <button type="button" disabled={busy || !!pending || !canRequest || !!restored.error || !confirmed || row.status !== 'ENABLED' || session.mode !== 'operator'} onClick={() => invoke()}>호출 계약으로 작업 요청</button>
     {pending && <section className="manual-receipt" aria-label="계약 작업 요청 추적"><h4>계약 작업 요청</h4><p>요청 ID: <code>{pending.requestId}</code></p><p>처리 중·응답 불명인 요청은 새 ID로 재제출하지 마세요.</p><div className="actions"><button type="button" disabled={busy || session.mode !== 'operator'} onClick={() => invoke(true)}>동일 계약 작업 요청 확인</button><button type="button" disabled={busy || !pending.canStartNew} onClick={startNew}>새 계약 요청 작성</button>{pending.receiptId && <a href={`#requests?receipt=${encodeURIComponent(pending.receiptId)}`}>작업 요청·실행 결과 보기</a>}</div><details><summary>보관된 계약 요청 입력</summary><pre>{JSON.stringify(pending.input,null,2)}</pre></details></section>}
     {session.mode !== 'operator' && <p>실제 호출은 운영자 모드에서 가능합니다.</p>}{row.status !== 'ENABLED' && <p>이 계약은 현재 공개되지 않았습니다. 기존 작업 요청 확인은 가능합니다.</p>}
     {error && <p role="alert">{error}</p>}{result && <div role="status" aria-label="계약 호출 결과"><p>작업 지시 {result.receipt.jobOrderId}: {result.receipt.state} · {result.duplicate ? '기존 작업 요청 확인 · 추가 실행 없음' : '작업 요청 저장됨'}</p>{result.receipt.detail && <p>{result.receipt.detail}</p>}<pre aria-label="계약 호출 응답 JSON">{JSON.stringify(result, null, 2)}</pre></div>}

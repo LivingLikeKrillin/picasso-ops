@@ -16,7 +16,7 @@ function identity(detail: Detail): (string | null)[] {
   const deployment = object(order.deployment)
   return [scalar(payload.interfaceId), scalar(payload.interfaceVersion), scalar(order.workMasterId), scalar(order.missionVersion), scalar(deployment.deploymentVersion)]
 }
-const fields = ['호출 계약', '계약 버전', '업무', '고정 임무 버전', '실행 배포 버전']
+const fields = ['호출 계약', '계약 버전', '임무', '고정 임무 버전', '실행 배포 버전']
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
 
 /** Compares persisted receipts, without creating work or treating an equal contract as proof of completion. */
@@ -39,14 +39,14 @@ export function ManufacturingValidation({ session }: { session: Session }) {
   const known = pair !== null && [...left, ...right].every(value => value !== null)
   const same = known && left.every((value, index) => value === right[index])
   return <section className="manufacturing-validation" aria-label="제조 시나리오 검증">
-    <div className="mission-section-heading"><div><h2>업무 계약과 실행 근거 비교</h2><p>같은 업무가 다른 로봇에 배정되었는지, 완료 근거가 어떻게 달라졌는지 작업 요청 기록으로 확인합니다.</p></div></div>
+    <div className="mission-section-heading"><div><h2>호출 계약과 실행 근거 비교</h2><p>같은 임무가 다른 로봇에 배정되었는지, 완료 근거가 어떻게 달라졌는지 작업 요청 기록으로 확인합니다.</p></div></div>
     <ol className="validation-journey">
-      <li><strong>공통 업무</strong><p>두 기종이 지원하는 스테이션 검사 계약을 고정합니다.</p><a href="#missions">임무·호출 계약</a></li>
+      <li><strong>공통 임무</strong><p>두 기종이 지원하는 스테이션 검사 계약을 고정합니다.</p><a href="#missions">임무·호출 계약</a></li>
       <li><strong>케이퍼빌리티 기반 배정</strong><p>두 검사를 연속 호출해 가용 기체에 배정합니다. 집기 미지원 기체의 배제 사유도 확인합니다.</p><a href="#operations">배정·실행 확인</a></li>
       <li><strong>예외와 재작업</strong><p>모의 랙 도착 신호가 누락되면 보류 사유를 확인하고 운영자가 근거를 남겨 재작업합니다.</p><a href="#operations">보류·인시던트 판단</a></li>
       <li><strong>상위 결과</strong><p>원래 작업 요청과 작업 ID를 유지하며 저장 결과를 확인합니다.</p><a href="#requests">작업 요청·결과 추적</a></li>
     </ol>
-    <p>참조 시뮬레이터 시나리오입니다. E0 검사와 설비 관측 E2 공급은 요구 근거가 다른 업무이며, 기종 자체가 근거 등급을 결정하지 않습니다.</p>
+    <p>참조 시뮬레이터 시나리오입니다. E0 검사와 설비 관측 E2 공급은 요구 근거가 다른 임무이며, 기종 자체가 근거 등급을 결정하지 않습니다.</p>
     <form className="actions" aria-label="비교할 작업 요청 검색" onSubmit={async event => {
       event.preventDefault(); setListError(null)
       try { const page = await read<{ requests: WorkReceipt[] }>(`/api/work-requests?search=${encodeURIComponent(search.trim())}&offset=0&limit=20`)
@@ -60,7 +60,7 @@ export function ManufacturingValidation({ session }: { session: Session }) {
       event.preventDefault(); if (busy) return
       setBusy(true); setPair(null); setError(null)
       try {
-        if (ids[0].trim() === ids[1].trim()) throw new Error('서로 다른 두 작업 요청를 선택하세요.')
+        if (ids[0].trim() === ids[1].trim()) throw new Error('서로 다른 두 작업 요청을 선택하세요.')
         const result = await Promise.all(ids.map(id => read<Detail>(`/api/work-requests/${encodeURIComponent(id.trim())}`)))
         if (result.some((detail, index) => detail.receipt?.receiptId !== ids[index].trim())) throw new Error('작업 요청 상세 식별자가 일치하지 않습니다.')
         setPair([result[0], result[1]])

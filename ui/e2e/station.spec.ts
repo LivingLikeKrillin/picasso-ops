@@ -44,7 +44,7 @@ test('공유 스테이션은 설비 준비 후 두 미션을 순차 실행하고
  await expect(workspace.getByRole('region',{name:'임무 필수 자원'})).toContainText('InspectAsset → inspection-1')
  await page.getByLabel('운영자',{exact:true}).check()
  await workspace.getByLabel('사용할 스테이션').selectOption('inspection-1')
- await workspace.getByLabel('호출할 공개 계약').selectOption('shared-inspection/1')
+ await workspace.getByLabel('대상 호출 계약').selectOption('shared-inspection/1')
  await workspace.getByLabel('준비 조건이 충족되면 실제 로봇 작업을 지시합니다').check()
  await workspace.getByRole('button',{name:'스테이션 작업 요청',exact:true}).click()
  await expect(workspace.getByRole('article',{name:'스테이션 작업 근거'})).toBeVisible()

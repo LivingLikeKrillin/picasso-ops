@@ -34,7 +34,7 @@ const AREA_ICONS: Record<AreaId, string> = {
   site: 'M3 20V8l6-4v16M9 10l6-4v14M15 12h6v8H3M6 9v2m6 0v2m6 2v2',
   robots: 'M8 4h8v3H8zM5 9h14v10H5zM9 13h.01M15 13h.01M9 17h6M12 2v2M2 12v4m20-4v4',
   missions: 'M6 3h12v18H6zM9 7h6M9 12h6M9 17h3',
-  stations: '공유 스테이션의 점유와 준비 조건, 임무 실행·완료 근거를 조정합니다.',
+  stations: 'M4 20h16M6 20V9l6-5 6 5v11M10 20v-5h4v5',
   overview: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
   requests: 'M5 3h14v18H5zM8 7h8M8 12h8M8 17h5',
   operations: 'M4 19V5m0 14h16M8 14l4-5 4 3 4-7',

@@ -1142,7 +1142,7 @@ export interface JobContract {
 }
 export async function fetchJobContracts(session: Session): Promise<{ contracts: JobContract[] }> {
   const value = await getHostJson<{ contracts: JobContract[] }>('/api/job-contracts', session)
-  if (!Array.isArray(value.contracts)) throw new Error('지원 업무 계약 응답을 읽을 수 없습니다.')
+  if (!Array.isArray(value.contracts)) throw new Error('지원 임무 계약 응답을 읽을 수 없습니다.')
   return value
 }
 export async function previewJobOrder(session: Session, sample: unknown): Promise<unknown> {

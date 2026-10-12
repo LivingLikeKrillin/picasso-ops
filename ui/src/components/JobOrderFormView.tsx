@@ -49,7 +49,7 @@ export function JobOrderFormView({ draft, cell, mode, busy, problem, onChange, o
       )}
       {mode === 'operator' ? (
         <button type="submit" disabled={busy}>
-          작업 지시 내기
+          작업 요청 내기
         </button>
       ) : (
         <p>작업 지시는 운영자 모드에서 냅니다</p>

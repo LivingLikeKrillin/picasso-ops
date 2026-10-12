@@ -54,7 +54,7 @@ export function FaultPanel({ robots, session, onChanged }: Props) {
       <h2>장애 주입</h2>
       <p>
         기체 하나에 장애를 넣습니다. 받아들임은 현장이 장애를 넣었다는 뜻이고, 그 효과는 운영 영역의 실행 목록과 인시던트,
-        로봇·연결 영역의 기체 목록에서 확인합니다
+        로봇 영역의 기체 목록에서 확인합니다
       </p>
       {last !== null && <FaultNotice what={last.what} sent={last.sent} />}
       {session.mode !== 'engineer' ? (

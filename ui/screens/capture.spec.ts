@@ -478,7 +478,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   const eligibilitySection = page.getByRole('region', { name: '배정 가능', exact: true })
   const executionSection = page.getByRole('region', { name: '실행', exact: true })
   const order = page.getByRole('form', { name: '작업 지시 폼' })
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   await expect(order.getByRole('alert')).toHaveText('점검 대상마다 대상 id 와 장소 이름을 넣으십시오')
   await shot(page.locator('main > .split').first(), 'operations-order-incomplete', {
     area: '운영',
@@ -508,7 +508,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     strings: ['작업 지시는 운영자 모드에서 냅니다', '판정 시각'],
   })
   await radio(page, '운영자')
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   const notice = page.getByRole('status', { name: '제출 결과' })
   await expect(notice).toContainText('InspectAsset 작업 지시: 배정됨')
   await shot(orderSection, 'operations-order-assigned', {
@@ -529,7 +529,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     state: '도는 실행이 있어 모두 불가',
     strings: ['도는 실행이 있다', '불가'],
   })
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   await expect(notice).not.toContainText('배정됨')
   await shot(orderSection, 'operations-order-unassigned', {
     area: '운영',
@@ -657,7 +657,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await order.getByLabel('임무').selectOption('PrepareSequencedRack')
   await order.getByLabel('RACK-204.S01').check()
   await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   const rackRuns = executions.getByRole('row').filter({ hasText: 'PrepareSequencedRack' })
   const graspRun = rackRuns.filter({ hasText: 'RACK-204.S01 pick_place' })
   await expect(graspRun).toContainText('RACK-204.S01 pick_place: RUNNING')
@@ -720,7 +720,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await order.getByLabel('임무').selectOption('PrepareSequencedRack')
   await order.getByLabel('RACK-204.S02').check()
   await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   const holdRun = rackRuns.filter({ hasText: 'rack-arrival equipment_wait' })
   await expect(holdRun).toContainText('rack-arrival equipment_wait: RUNNING')
   const held = incidentTable.getByRole('row').filter({ hasText: '보류 중' })
@@ -816,7 +816,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     section: '전체',
     mode: '운영자',
     state: '흐름을 돈 뒤 운영 영역 전체',
-    strings: ['작업 지시 내기', '실행 호스트 인스턴스', '판단됨', 'rack_present'],
+    strings: ['작업 요청 내기', '실행 호스트 인스턴스', '판단됨', 'rack_present'],
   })
   await radio(page, '엔지니어')
   await shot(page, 'operations-overview-engineer', {

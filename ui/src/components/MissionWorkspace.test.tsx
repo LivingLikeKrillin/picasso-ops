@@ -55,7 +55,7 @@ describe('미션 업무와 호출 연결', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('올바른 JSON')
     await userEvent.clear(input); await userEvent.paste('{"workMasterId":"InspectAsset"}')
     await userEvent.click(screen.getByRole('button', { name: '입력 검증·변환 미리보기' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('선택한 업무와 일치')
+    expect(screen.getByRole('alert')).toHaveTextContent('선택한 임무와 일치')
     expect(fake.calls.filter(c => c.method === 'POST')).toEqual([])
   })
   it('서버의 업무 입력 거절을 표시하고 성공 미리보기를 남기지 않는다', async () => {
