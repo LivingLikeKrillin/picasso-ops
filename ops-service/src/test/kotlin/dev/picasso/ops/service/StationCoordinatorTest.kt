@@ -5,6 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import dev.picasso.ops.service.actor.Actor
 import dev.picasso.ops.service.actor.Mode
 import dev.picasso.ops.service.requests.RequestRejected
+import dev.picasso.ops.service.host.HostCall
+import dev.picasso.ops.service.host.HostWrite
+import dev.picasso.ops.service.incidents.HoldResolutions
+import dev.picasso.ops.service.interfaces.MissionInterfaces
+import dev.picasso.ops.service.joborders.JobOrderOperations
+import dev.picasso.ops.service.log.OperationLog
+import dev.picasso.ops.service.log.OperationResult
+import dev.picasso.ops.service.requests.WorkRequests
 import dev.picasso.ops.service.stations.*
 import dev.picasso.ops.service.store.OpsSchema
 import dev.picasso.registry.PostgresSupport
@@ -31,20 +39,32 @@ class StationCoordinatorTest {
  inner class FakePort:StationPort {
   var signals:Map<String,StationSignal>?=mapOf("ready" to StationSignal(true,now),"complete" to StationSignal(false,now))
   var receiptState="ACCEPTED";var physical:String?=null;var unknown=false;var valid=true;var sends=0;var retries=0
+  /** A result already stored for the receipt when it is sent. */
+  var preResult:String?=null
   val receipts=mutableMapOf<UUID,StationReceipt>()
+  private val written=mutableMapOf<UUID,String>()
   override fun validate(payload:JsonNode){require(valid)}
   override fun signals()=signals
   @Synchronized override fun dispatch(id:UUID,payload:JsonNode,actor:Actor):StationReceipt {
    receipts[id]?.let{return it}
    sends++
    jdbc.sql("INSERT INTO ops.work_request(receipt_id,source_system_id,external_order_id,payload_hash,payload,job_order_id,state) VALUES(:id,'ops:interface',:key,'hash','{}',:key,:state)").param("id",id).param("key",id.toString()).param("state",receiptState).update()
+   preResult?.let{result(id,it)}
    val r=StationReceipt(id,receiptState,receiptState=="UNASSIGNED","v1",physical,null);receipts[id]=r
    if(unknown)error("response lost")
    return r
   }
-  override fun receipt(id:UUID)=receipts.getValue(id).copy(physicalState=physical)
+  /** A changed [physical] is a new stored result version; the latest stored result is what the port reports. */
+  override fun receipt(id:UUID):StationReceipt {
+   physical?.let{if(written[id]!=it){result(id,it);written[id]=it}}
+   val latest=jdbc.sql("SELECT version,snapshot->'jobResponse'->>'physicalState' FROM ops.work_result WHERE receipt_id=:id ORDER BY version DESC LIMIT 1").param("id",id).query{r,_->r.getInt(1) to r.getString(2)}.optional().orElse(null)
+   return receipts.getValue(id).copy(physicalState=latest?.second,resultVersion=latest?.first)
+  }
   override fun retry(receipt:StationReceipt,attempt:UUID,actor:Actor):StationReceipt {retries++;return receipt.copy(state="ACCEPTED",safeToRetry=false).also{receipts[receipt.id]=it}}
  }
+ private fun result(id:UUID,state:String) {jdbc.sql("""INSERT INTO ops.work_result(receipt_id,version,instance_id,execution_id,response_id,response_version,snapshot,result_hash)
+  SELECT :id,COALESCE(max(version),0)+1,'mw-1','exec-1','r-'||(COALESCE(max(version),0)+1),COALESCE(max(version),0)+1,CAST(:snapshot AS JSONB),'hash' FROM ops.work_result WHERE receipt_id=:id""")
+  .param("id",id).param("snapshot","""{"jobResponse":{"physicalState":"$state"}}""").update()}
  @BeforeTest fun fresh(){OpsSchema.flyway(ds,cleanable=true).apply{clean();migrate()};service.createStation(engineer,json.readTree("""{"stationId":"inspection-1","name":"공유 검사","readySignal":"ready","completeSignal":"complete","timeoutSeconds":10}"""))}
  private fun enqueue(id:UUID=UUID.randomUUID())=service.enqueue(operator,json.readTree("""{"requestId":"$id","stationId":"inspection-1","interfaceId":"inspect","interfaceVersion":1,"expectedDeploymentVersion":1,"input":{"assets":[]}}"""))
  private fun signal(ready:Boolean=true,complete:Boolean=false,at:Instant=now){port.signals=mapOf("ready" to StationSignal(ready,at),"complete" to StationSignal(complete,at))}
@@ -87,6 +107,15 @@ class StationCoordinatorTest {
   val run=enqueue();service.tick();port.physical="OPERATOR_HOLD";service.tick();assertEquals("REVIEW_REQUIRED",service.get(run.runId).state)
   decide(run.runId,"RESUME_OBSERVATION");now=now.plusSeconds(1);port.physical="PHYSICALLY_DONE";signal(complete=true);service.tick()
   assertEquals("COMPLETED",service.get(run.runId).state);assertEquals(1,port.sends)
+ }
+ @Test fun `정착한 비성공 물리 상태는 시간 초과 전에 확인 필요로 넘기고 점유를 유지하며 취소 중은 기다린다`() {
+  for(state in listOf("UNVERIFIED","PARTIAL","FAILED","ABORTED","IN_DOUBT","OPERATOR_HOLD")) {
+   port.physical=null;val run=enqueue();service.tick();assertEquals("RUNNING",service.get(run.runId).state,state)
+   port.physical=state;service.tick();assertEquals("REVIEW_REQUIRED",service.get(run.runId).state,state);assertEquals(run.runId,service.stations().single().owner,state)
+   decide(run.runId,"CONFIRM_CLEAR")
+  }
+  port.physical=null;val run=enqueue();service.tick();port.physical="CANCELING";service.tick();service.tick()
+  assertEquals("RUNNING",service.get(run.runId).state);assertEquals(run.runId,service.stations().single().owner)
  }
  @Test fun `같은 요청 재접수는 현재 계약이 바뀌어도 원래 작업을 반환한다`() {
   val run=enqueue();port.valid=false;assertEquals(run,enqueue(run.runId));assertEquals(1,service.runs().size)
@@ -140,6 +169,138 @@ class StationCoordinatorTest {
    }
   }
   assertEquals(expected.size,port.sends)
+ }
+ // Hold resolution through the station rework guard. The host's execution list maps exec-1 to the run's receipt.
+ private val hostBench=JobOrderBench();private val incidents=IncidentBench();private val opsLog=OperationLog(jdbc)
+ private val requests=WorkRequests(jdbc,MissionInterfaces(jdbc,tx,opsLog),JobOrderOperations(hostBench.eligibility,hostBench.host,hostBench.host,opsLog,hostBench.clock),hostBench.host,tx)
+ private class StopProcess:Error("프로세스 중단 모사")
+ private fun listed(job:String,instance:String="i-1"){hostBench.executions=HostCall.Ok(json.readTree("""{"instanceId":"$instance","executions":[{"executionId":"exec-1","jobOrderId":"$job"}]}"""))}
+ private fun resolutions(c:StationCoordinator)=HoldResolutions(incidents.host,opsLog,requeryDelay=Duration.ZERO,clock=clock,rework=StationReworkGuard(requests,c))
+ private fun rework(c:StationCoordinator)=resolutions(c).resolve(operator,"exec-1","rack-arrival","REWORK","i-1","재작업")
+ /** A resource-managed run whose robot holds: REVIEW_REQUIRED and still owning the station. */
+ private fun held(c:StationCoordinator):StationRun {
+  port.physical=null;val run=enqueue();c.tick();assertEquals("RUNNING",c.get(run.runId).state)
+  jdbc.sql("UPDATE ops.work_request SET required_station_id='inspection-1' WHERE receipt_id=:id").param("id",run.runId).update()
+  port.physical="OPERATOR_HOLD";c.tick();assertEquals("REVIEW_REQUIRED",c.get(run.runId).state);assertEquals(run.runId,c.stations().single().owner)
+  listed(run.runId.toString());return c.get(run.runId)
+ }
+ @Test fun `해제 뒤 다른 작업이 점유한 스테이션에서는 이전 작업의 재작업을 호스트에 넘기지 않는다`() {
+  val c=coordinator();val r=held(c);decide(r.runId,"CONFIRM_CLEAR");port.physical=null
+  val r2=enqueue();c.tick();assertEquals("RUNNING",c.get(r2.runId).state);assertEquals(r2.runId,c.stations().single().owner)
+  val ex=assertFailsWith<RequestRejected>{rework(c)};assertEquals(409,ex.status);assertEquals(StationCoordinator.REWORK_HELD,ex.message)
+  assertEquals(emptyList(),incidents.writes());assertEquals("MANUALLY_CLEARED",c.get(r.runId).state)
+  assertEquals("RUNNING",c.get(r2.runId).state);assertEquals(r2.runId,c.stations().single().owner)
+  // Confirming a hold moves nothing, so it is not gated.
+  assertEquals("Resolved",resolutions(c).resolve(operator,"exec-1","rack-arrival","CONFIRM_DONE","i-1","현장 확인").outcome);assertEquals("CONFIRM_DONE",incidents.writes().single().decision)
+ }
+ @Test fun `점유 중이어도 확인 필요 상태가 아니면 재작업을 넘기지 않는다`() {
+  val c=coordinator();port.physical=null;val run=enqueue();c.tick();assertEquals("RUNNING",c.get(run.runId).state)
+  jdbc.sql("UPDATE ops.work_request SET required_station_id='inspection-1' WHERE receipt_id=:id").param("id",run.runId).update();listed(run.runId.toString())
+  val ex=assertFailsWith<RequestRejected>{rework(c)};assertEquals(409,ex.status);assertEquals(StationCoordinator.REWORK_HELD,ex.message)
+  assertEquals(emptyList(),incidents.writes());assertEquals("RUNNING",c.get(run.runId).state);assertEquals(run.runId,c.stations().single().owner)
+ }
+ @Test fun `확인 필요 상태여도 스테이션 점유가 없으면 재작업을 넘기지 않는다`() {
+  val c=coordinator();val r=held(c)
+  // Decisions never reach this (review keeps the owner); it isolates the owner check.
+  jdbc.sql("UPDATE ops.rf_station SET owner=NULL WHERE station_id='inspection-1'").update()
+  assertEquals(409,assertFailsWith<RequestRejected>{rework(c)}.status);assertEquals(emptyList(),incidents.writes());assertEquals("REVIEW_REQUIRED",c.get(r.runId).state)
+ }
+ @Test fun `점유를 유지한 확인 필요 작업의 재작업은 한 번 넘기고 재작업 뒤의 완료 근거만 인정한다`() {
+  val c=coordinator();val r=held(c);val before=r.dispatchedAt!!
+  now=now.plusSeconds(3);signal()
+  var during:String?=null;var clear:Int?=null
+  incidents.onResolve={during=service.get(r.runId).state;clear=runCatching{decide(r.runId,"CONFIRM_CLEAR")}.exceptionOrNull()?.let{(it as RequestRejected).status}}
+  assertEquals("Resolved",rework(c).outcome);assertEquals(1,incidents.writes().size)
+  assertEquals("REWORKING",during);assertEquals(409,clear)
+  val after=c.get(r.runId);assertEquals("RUNNING",after.state);assertEquals(now,after.dispatchedAt);assertTrue(after.dispatchedAt!!.isAfter(before));assertEquals(r.runId,c.stations().single().owner)
+  assertEquals(listOf("REVIEW_REQUIRED","REWORKING","RUNNING"),c.events(r.runId).takeLast(3).map{it["state"]})
+  assertEquals(listOf("operator/kim","operator/kim"),c.events(r.runId).takeLast(2).map{it["actor"]})
+  // A completion signal from before the rework is not this rework's completion.
+  port.physical="PHYSICALLY_DONE";signal(complete=true,at=now.minusSeconds(1));c.tick();assertEquals("RUNNING",c.get(r.runId).state)
+  now=now.plusSeconds(1);signal(complete=true);c.tick();assertEquals("COMPLETED",c.get(r.runId).state)
+ }
+ @Test fun `호스트가 재작업을 거절하거나 결과를 모르면 확인 필요로 되돌리고 점유를 유지한다`() {
+  val c=coordinator();val r=held(c)
+  incidents.resolveAnswer=HostWrite.Answered(200,IncidentBench.resolved(null,"NotHeld"))
+  assertEquals(OperationResult.REJECTED,rework(c).result);assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertEquals("재작업 거절; 점유를 유지하고 현장 확인을 기다립니다",c.get(r.runId).reason)
+  incidents.resolveAnswer=HostWrite.NoResponse("timeout");incidents.incidents=HostCall.Silent("down")
+  assertNull(rework(c).confirmation);assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertEquals("재작업 반영 불명; 실행 관측과 현장 확인 전 점유 유지",c.get(r.runId).reason)
+  incidents.onResolve={error("connection reset")};assertFailsWith<IllegalStateException>{rework(c)};assertEquals("REVIEW_REQUIRED",c.get(r.runId).state)
+  assertEquals(3,incidents.writes().size);assertEquals(r.runId,c.stations().single().owner);assertEquals(r.dispatchedAt,c.get(r.runId).dispatchedAt)
+ }
+ @Test fun `재작업이 반영돼도 설비 완료 신호가 켜져 있거나 신호를 모르면 확인 필요로 남긴다`() {
+  val c=coordinator();val r=held(c)
+  signal(complete=true);rework(c);assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertTrue(c.get(r.runId).reason.startsWith("재작업 반영; 설비 완료 신호가 켜져"))
+  port.signals=null;rework(c);assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertTrue(c.get(r.runId).reason.startsWith("재작업 반영; 현장 신호 관측 불명"))
+  assertEquals(r.dispatchedAt,c.get(r.runId).dispatchedAt);assertEquals(2,incidents.writes().size)
+ }
+ @Test fun `자원 관리가 아닌 실행과 접수 없는 실행과 다른 인스턴스의 재작업은 그대로 넘긴다`() {
+  val c=coordinator()
+  jdbc.sql("INSERT INTO ops.work_request(receipt_id,source_system_id,external_order_id,payload_hash,payload,job_order_id,state) VALUES(:id,'mes','plain','hash','{}','JO-plain','ACCEPTED')").param("id",UUID.randomUUID()).update()
+  listed("JO-plain");assertEquals("Resolved",rework(c).outcome)
+  listed("JO-direct");assertEquals("Resolved",rework(c).outcome)
+  // The host refuses a request naming another instance itself; instance ids never repeat.
+  val r=held(c);listed(r.runId.toString(),instance="i-2");incidents.resolveAnswer=HostWrite.Answered(409,"""{"error":"INSTANCE_MISMATCH","detail":"다른 인스턴스"}""")
+  assertEquals(OperationResult.REJECTED,rework(c).result);assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertEquals(r.revision,c.get(r.runId).revision)
+  assertEquals(3,incidents.writes().size)
+ }
+ @Test fun `실행 목록을 못 읽거나 실행이 없으면 재작업을 넘기지 않는다`() {
+  val c=coordinator();val r=held(c)
+  hostBench.executions=HostCall.Silent("offline");assertEquals(503,assertFailsWith<RequestRejected>{rework(c)}.status)
+  hostBench.executions=HostCall.Ok(json.readTree("""{"instanceId":"i-1","executions":[]}"""));assertEquals(409,assertFailsWith<RequestRejected>{rework(c)}.status)
+  assertEquals(emptyList(),incidents.writes());assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertEquals(r.revision,c.get(r.runId).revision)
+ }
+ @Test fun `재작업 전달 중 프로세스가 멈추면 재기동 뒤 확인 필요로 넘긴다`() {
+  val c=coordinator();val r=held(c)
+  incidents.onResolve={throw StopProcess()}
+  assertFailsWith<StopProcess>{rework(c)};assertEquals("REWORKING",c.get(r.runId).state)
+  assertEquals(409,assertFailsWith<RequestRejected>{decide(r.runId,"CONFIRM_CLEAR")}.status)
+  coordinator().tick();assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertEquals(r.runId,c.stations().single().owner);assertEquals(r.dispatchedAt,c.get(r.runId).dispatchedAt)
+  assertEquals(1,incidents.writes().size)
+ }
+ @Test fun `관측 재개는 재개 뒤의 완료 근거만 인정하고 설비 완료 신호가 켜져 있거나 모르면 거절한다`() {
+  val run=enqueue();service.tick();port.physical="OPERATOR_HOLD";service.tick();val before=service.get(run.runId).dispatchedAt!!
+  now=now.plusSeconds(3)
+  signal(complete=true);assertEquals(409,assertFailsWith<RequestRejected>{decide(run.runId,"RESUME_OBSERVATION")}.status)
+  port.signals=null;assertEquals(503,assertFailsWith<RequestRejected>{decide(run.runId,"RESUME_OBSERVATION")}.status)
+  assertEquals("REVIEW_REQUIRED",service.get(run.runId).state)
+  signal();decide(run.runId,"RESUME_OBSERVATION");assertEquals("RUNNING",service.get(run.runId).state);assertEquals(now,service.get(run.runId).dispatchedAt);assertTrue(now.isAfter(before))
+  port.physical="PHYSICALLY_DONE";signal(complete=true,at=now.minusSeconds(1));service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  now=now.plusSeconds(1);signal(complete=true);service.tick();assertEquals("COMPLETED",service.get(run.runId).state)
+ }
+
+ @Test fun `재작업 뒤 이전 보류 결과로는 확인 필요로 되돌리지 않고 새 결과만 판단에 쓴다`() {
+  val c=coordinator();val r=held(c);now=now.plusSeconds(3);signal();rework(c);assertEquals("RUNNING",c.get(r.runId).state)
+  c.tick();c.tick();assertEquals("RUNNING",c.get(r.runId).state)
+  result(r.runId,"OPERATOR_HOLD");c.tick();assertEquals("REVIEW_REQUIRED",c.get(r.runId).state)
+  now=now.plusSeconds(1);rework(c);assertEquals("RUNNING",c.get(r.runId).state);c.tick();assertEquals("RUNNING",c.get(r.runId).state)
+  result(r.runId,"PHYSICALLY_DONE");now=now.plusSeconds(1);signal(complete=true);c.tick();assertEquals("COMPLETED",c.get(r.runId).state)
+ }
+ @Test fun `관측 재개 뒤 이전 보류 결과로는 확인 필요로 되돌리지 않고 새 결과만 판단에 쓴다`() {
+  val run=enqueue();service.tick();port.physical="OPERATOR_HOLD";service.tick();assertEquals("REVIEW_REQUIRED",service.get(run.runId).state)
+  now=now.plusSeconds(3);decide(run.runId,"RESUME_OBSERVATION");service.tick();service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  result(run.runId,"OPERATOR_HOLD");service.tick();assertEquals("REVIEW_REQUIRED",service.get(run.runId).state)
+  now=now.plusSeconds(1);decide(run.runId,"RESUME_OBSERVATION");service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  result(run.runId,"PHYSICALLY_DONE");now=now.plusSeconds(1);signal(complete=true);service.tick();assertEquals("COMPLETED",service.get(run.runId).state)
+ }
+ @Test fun `처음 실행은 전송 전에 저장된 결과를 판단에 쓰지 않는다`() {
+  port.preResult="OPERATOR_HOLD";val held=enqueue();service.tick();service.tick();assertEquals("RUNNING",service.get(held.runId).state)
+  result(held.runId,"PHYSICALLY_DONE");now=now.plusSeconds(1);signal(complete=true);service.tick();assertEquals("COMPLETED",service.get(held.runId).state)
+  port.preResult="PHYSICALLY_DONE";signal();val done=enqueue();service.tick();assertEquals("RUNNING",service.get(done.runId).state)
+  now=now.plusSeconds(1);signal(complete=true);service.tick();assertEquals("RUNNING",service.get(done.runId).state)
+  result(done.runId,"PHYSICALLY_DONE");now=now.plusSeconds(1);signal(complete=true);service.tick();assertEquals("COMPLETED",service.get(done.runId).state)
+ }
+
+ @Test fun `관측 재개는 같은 실행을 다시 보므로 확인 대기 중 저장된 물리 완료를 새 완료 신호와 함께 인정한다`() {
+  val run=enqueue();service.tick();port.physical="OPERATOR_HOLD";service.tick();assertEquals("REVIEW_REQUIRED",service.get(run.runId).state)
+  result(run.runId,"PHYSICALLY_DONE");now=now.plusSeconds(3);decide(run.runId,"RESUME_OBSERVATION");service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  signal(complete=true,at=now.minusSeconds(1));service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  now=now.plusSeconds(1);signal(complete=true);service.tick();assertEquals("COMPLETED",service.get(run.runId).state)
+ }
+ @Test fun `재작업은 재작업 전에 저장된 물리 완료를 완료 근거로 쓰지 않는다`() {
+  val c=coordinator();val r=held(c);result(r.runId,"PHYSICALLY_DONE");now=now.plusSeconds(3);signal();rework(c);assertEquals("RUNNING",c.get(r.runId).state)
+  now=now.plusSeconds(1);signal(complete=true);c.tick();assertEquals("RUNNING",c.get(r.runId).state)
+  result(r.runId,"PHYSICALLY_DONE");now=now.plusSeconds(1);signal(complete=true);c.tick();assertEquals("COMPLETED",c.get(r.runId).state)
  }
 
 }

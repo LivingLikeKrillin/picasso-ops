@@ -162,6 +162,26 @@ class IncidentControllerTest {
     }
 
     @Test
+    fun `재작업 관문의 거부는 그 상태 코드와 이름이고 호스트를 부르지 않고 기록하지 않으며 확인 판단은 관문을 거치지 않는다`() {
+        val gated = IncidentController(
+            FaultOperations(bench.host, log),
+            HoldResolutions(bench.host, log, requeryDelay = Duration.ZERO, rework = { _, _, _, _ ->
+                throw dev.picasso.ops.service.requests.RequestRejected("STATION_REJECTED", "점유 확인 필요", 409)
+            }),
+            bench.host,
+        )
+        val refused = gated.resolve("exec-1", "rack-arrival", "operator", "kim", RESOLVE.toByteArray())
+        assertEquals(409, refused.statusCode.value())
+        assertEquals(PreRejection("STATION_REJECTED", "점유 확인 필요"), refused.body)
+        assertEquals(emptyList(), bench.calls)
+        assertEquals(emptyList(), log.list())
+
+        val confirm = """{"decision":"CONFIRM_DONE","instanceId":"i-1","reason":"설비 확인"}"""
+        assertEquals(200, gated.resolve("exec-1", "rack-arrival", "operator", "kim", confirm.toByteArray()).statusCode.value())
+        assertEquals("CONFIRM_DONE", bench.writes().single().decision)
+    }
+
+    @Test
     fun `판단 본문에 승인자 칸을 실어도 승인자는 행위자 헤더다`() {
         val reply = resolve(
             "operator", user = "kim",

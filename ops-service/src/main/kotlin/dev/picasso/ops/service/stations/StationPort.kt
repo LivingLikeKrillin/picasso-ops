@@ -7,12 +7,13 @@ import dev.picasso.ops.service.actor.Mode
 import dev.picasso.ops.service.host.HostCall
 import dev.picasso.ops.service.host.HostReads
 import dev.picasso.ops.service.interfaces.MissionInterfaces
+import dev.picasso.ops.service.log.OperationResult
 import dev.picasso.ops.service.requests.WorkRequests
 import java.time.Instant
 import java.util.UUID
 
 data class StationSignal(val value: Boolean, val observedAt: Instant?)
-data class StationReceipt(val id: UUID, val state: String, val safeToRetry: Boolean, val updatedAt: String, val physicalState: String?, val snapshot: JsonNode?)
+data class StationReceipt(val id: UUID, val state: String, val safeToRetry: Boolean, val updatedAt: String, val physicalState: String?, val snapshot: JsonNode?, val resultVersion: Int? = null)
 interface StationPort {
  fun validate(payload: JsonNode)
  fun signals(): Map<String, StationSignal>?
@@ -47,13 +48,27 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
  private fun mapped(id:UUID):StationReceipt {
   val receipt=requests.get(id)
   // Use stored result evidence. A missing current host execution never means the work did not start.
-  val saved=runCatching{requests.result(id,receipt.sourceSystemId)["snapshot"] as? JsonNode}.getOrNull()
-  return StationReceipt(id,receipt.state,receipt.state=="UNASSIGNED" && receipt.submission==null && receipt.lastExecution==null,receipt.updatedAt,saved?.path("jobResponse")?.path("physicalState")?.takeIf{it.isTextual}?.asText(),saved)
+  val stored=runCatching{requests.result(id,receipt.sourceSystemId)}.getOrNull();val saved=stored?.get("snapshot") as? JsonNode
+  return StationReceipt(id,receipt.state,receipt.state=="UNASSIGNED" && receipt.submission==null && receipt.lastExecution==null,receipt.updatedAt,saved?.path("jobResponse")?.path("physicalState")?.takeIf{it.isTextual}?.asText(),saved,stored?.get("version") as? Int)
  }
  override fun retry(receipt:StationReceipt,attempt:UUID,actor:Actor):StationReceipt=error("자원 작업 ID가 필요합니다")
  override fun retryForRun(receipt:StationReceipt,attempt:UUID,actor:Actor,runId:UUID):StationReceipt {
   val body=json.createObjectNode().put("requestId",attempt.toString()).put("expectedUpdatedAt",receipt.updatedAt).put("reason","공유 스테이션의 전송 전 미배정 재평가")
   requests.recover(receipt.id,actor,body,runId)
   return mapped(receipt.id)
+ }
+}
+/** REWORK of a resource-managed receipt goes through station coordination. Executions without one are forwarded unchanged. */
+class StationReworkGuard(private val requests:WorkRequests,private val stations:StationCoordinator):dev.picasso.ops.service.incidents.ReworkGuard {
+ private val json=ObjectMapper()
+ override fun guard(actor:Actor,executionId:String,instanceId:String,forward:()->dev.picasso.ops.service.incidents.HoldResolveOutcome):dev.picasso.ops.service.incidents.HoldResolveOutcome {
+  val receipt=requests.executionReceipt(instanceId,executionId)
+  if(receipt?.requiredStationId==null)return forward()
+  val context=json.createObjectNode().put("executionId",executionId).put("instanceId",instanceId).put("receiptId",receipt.receiptId.toString())
+  return stations.rework(receipt.receiptId,actor,context,forward) {when {
+   it.result==OperationResult.SUCCEEDED || it.confirmation==OperationResult.CONFIRMED_APPLIED -> true
+   it.result==OperationResult.REJECTED || it.confirmation==OperationResult.CONFIRMED_NOT_APPLIED -> false
+   else -> null
+  }}
  }
 }
