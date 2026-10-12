@@ -1,6 +1,24 @@
 # picasso-ops 화면 문서
 
+[공유 스테이션 오케스트레이션](shared-station-orchestration-2026-10-12.md): 자원 점유·설비 준비·미션 실행·완료 근거·현장 확인을 연결합니다.
+
+> 실행 전 배정 확인: [호출 계약의 실제 입력·고정 배포로 기체 적합성 조회](interface-eligibility-2026-10-11.md).
+
+
+> 제조 시나리오 최신: [이기종 검사·설비 보류·재작업 및 접수 비교](manufacturing-scenario-2026-10-11.md). 검증 도구에 계약·배포·완료 근거 비교 화면을 추가했다.
+
+
+새 업무 생성부터 실행까지는 [미션 관리 구현](mission-completion-2026-10-11.md), outbox·장애 복구는 [신뢰성 강화](reliability-implementation-2026-10-11.md)를 참고한다.
+
+> 최신 구현: [상위 업무 중심 후속 7개 구현 및 검증](upstream-followups-2026-10-11.md). 현재 메뉴는 운영 개요·작업 요청·운영·로봇·임무·현장 설정·이력·검증 도구이며 URL로 작업 조회 맥락을 보존한다.
+
 picasso-ops 관리 화면(`ui/`)을 시각 디자이너에게 넘기려고 만든 문서 묶음입니다. 디자이너가 브랜드를 입히고 화면을 다듬을 때, 무엇을 마음대로 바꿔도 되고 무엇을 지키거나 시험과 함께 바꿔야 하는지를 한곳에서 볼 수 있게 했습니다.
+
+현재 스타일 변경 범위는 [첫 스타일 적용](style-refresh.md)을 참고합니다. 아래 화면과 기준 버전은 리터치 전 자료입니다.
+
+최신 미션 화면과 API 동작은 [호출 계약 저장·공개·실행 구현](mission-interface-implementation.md)을 참고합니다.
+
+상위 주문 접수 계층은 [접수·중복 방지·실행 추적](upstream-receipts-2026-10-11.md)을 참고합니다.
 
 ## 기준 버전
 
@@ -91,3 +109,15 @@ cd ui && npx playwright test -c playwright.screens.config.ts
 이 설정은 `playwright.config.ts` 와 같은 스택(Postgres, 런처, 실행 호스트, 운영 서비스, 화면 `npm run build && npm run preview`)을 띄우고 시험 디렉터리만 `./screens` 로 바꿉니다. 작업자는 하나이고 시간 상한은 900초입니다. 촬영을 시작할 때 `docs/screens/img/` 의 PNG 를 모두 지우고(`capture.spec.ts:102-103`) 새로 찍은 뒤 `INDEX.md` 를 새로 씁니다(`capture.spec.ts:97`). CI 의 기본 `npx playwright test` 는 `./e2e` 만 돌리므로 이 촬영은 돌지 않습니다.
 
 다시 찍으면 시각, 인스턴스 id, 작업 지시 id 같은 값이 바뀝니다. 문서 본문은 스크린숏의 이런 값에 기대지 않습니다.
+
+현재 로봇 추가·어댑터·프로파일·시운전 흐름: [로봇 도입 여정 개편](onboarding-refresh.md).
+
+후속 개선 검토: [운영·임무·설정·이력 UX 검토](ux-review-2026-10-10.md). 제안 사항이며 구현 완료 목록과 구분합니다.
+
+미션 관리 최신 개편: [미션 목록·호출 연결·서버 변환 미리보기](mission-refresh.md). 상위 연계 전체 방향: [상위 시스템 중심 계획](upstream-workflow-plan-2026-10-10.md).
+
+- [상위 결과 버전·수신 확인 구현](upstream-results-2026-10-11.md)
+
+- [수동 작업 영속 접수 통합](manual-receipts-2026-10-11.md)
+
+- [미션 필수 자원과 공통 접수](mission-resource-enforcement-2026-10-12.md)

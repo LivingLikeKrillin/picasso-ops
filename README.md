@@ -1,5 +1,13 @@
 # picasso-ops
 
+[공유 스테이션 오케스트레이션](docs/screens/shared-station-orchestration-2026-10-12.md): 자원 점유·설비 준비·미션 실행·완료 근거·현장 확인을 연결합니다.
+
+[호출 계약 기반 실행 전 배정 확인](docs/screens/interface-eligibility-2026-10-11.md): 실제 입력·고정 미션 버전으로 기체 적합성을 확인하고 요청·접수 추적으로 연결합니다.
+
+
+[제조 스테이션 시나리오](docs/screens/manufacturing-scenario-2026-10-11.md): 동일 상류 검사 계약의 이기종 배정, 설비 신호 누락 시 보류·재작업, 저장 결과 비교를 재현합니다.
+
+
 ## 개요
 
 picasso-ops는 picasso를 라이브러리로 활용하는 담는 측 저장소이자 개념 검증(PoC) 프로젝트입니다. 로봇, 임무, 엔드포인트의 운영 가능성을 입증하는 것을 목표로 합니다.
@@ -18,6 +26,20 @@ picasso의 `registry` 모듈은 Spring Boot(`RegistryApplication.kt`)와 Postgre
 가짜 현장은 registry, mimic 기체(`humanoid-01`, `quadruped-01`), 셀 대역으로 이루어집니다. 보안과 인증 절차는 생략합니다.
 운영 중 변경은 코드를 직접 수정하는 대신 관리 화면을 통해 진행하며, 정해진 종류의 현장 변경으로 범위를 한정합니다.
 시스템에서는 미들웨어 작업 진행을 위한 pump, 상태 고정을 나타내는 정착과 봉인, 근거 등급 E0 및 E2, P와 S 단계명 등의 용어를 운영 흐름에 맞춰 사용합니다([용어 풀이](docs/reference.md#용어-풀이)).
+
+## UI 스타일 미리보기
+
+파란색 브랜드와 자체 제공 Pretendard를 적용한 관리 화면입니다. 아래 운영 개요는 **실제 Ops HTTP와 로컬 E2E 스택으로 촬영**했습니다. 저장된 상위 주문·수동 접수와 호스트 관측을 보여주며 실물 로봇·PLC·MES 검증을 의미하지 않습니다.
+
+![Picasso Ops 상위 업무 접수와 로봇 실행 운영 개요](docs/screens/style-preview/overview-fullstack.png)
+
+[다른 화면과 촬영 조건](docs/screens/style-preview/README.md) · [첫 스타일 변경 범위](docs/screens/style-refresh.md) · [미션 관리·호출 연결 개편](docs/screens/mission-refresh.md) · [호출 계약 저장·공개·실행 구현](docs/screens/mission-interface-implementation.md) · [상위 주문 접수·중복 방지](docs/screens/upstream-receipts-2026-10-11.md)
+
+## 상위 업무 접수와 실행 추적
+
+MES/WMS 관점의 작업 요청, 로컬 계약 호출, 영속 접수·중복 방지, 운영 개요, 결과 수집·수신 확인, 실행 배포 이력을 연결했습니다. [후속 7개 구현 범위와 검증](docs/screens/upstream-followups-2026-10-11.md)을 참고하세요. callback은 이 컴퓨터의 Mock MES 수신기에 한정합니다.
+
+새 업무 유형의 입력 스키마·실행 정의를 등록하고 검증·활성화·호출 계약 배포로 연결할 수 있습니다. [미션 관리 구현](docs/screens/mission-completion-2026-10-11.md)을 참고하세요. 결과 전달에는 호스트 영속 outbox와 Ops 커서를 적용하고, 작업 요청 상세에 현장 확인·인계 기록을 추가했습니다. [신뢰성 구현과 검증 현황](docs/screens/reliability-implementation-2026-10-11.md)에 보장 범위와 제한을 구분했습니다.
 
 ## 핵심 장점
 
@@ -482,3 +504,15 @@ Playwright 동작 상세:
 | [picasso `docs/orchestration.md`](https://github.com/LivingLikeKrillin/picasso/blob/74e4d3d68fac3cc83019f5af6b75d1c7cf4351b5/docs/orchestration.md) | §8 작업 응답의 바깥 형식과 별도 배치 저장소를 다룹니다. |
 | [picasso ADR 47](https://github.com/LivingLikeKrillin/picasso/blob/74e4d3d68fac3cc83019f5af6b75d1c7cf4351b5/docs/adr/0047-operator-decision-is-made-by-a-person.md) | 사람의 판단을 다룹니다. |
 | [picasso `docs/glossary.md`](https://github.com/LivingLikeKrillin/picasso/blob/74e4d3d68fac3cc83019f5af6b75d1c7cf4351b5/docs/glossary.md) | 용어 풀이를 다룹니다. |
+
+### 로봇 도입 흐름
+
+로봇 → 로봇 추가에서 기존 유형/새 모델/새 통신 유형에 맞는 준비 경로를 확인하고, 어댑터 등록 → 프로파일 시험·활성화 → 기체 바인딩·현장 명칭 → 임무별 배정 조건 확인으로 이어갑니다. [현재 화면과 책임 경계](docs/screens/onboarding-refresh.md)를 참고하세요.
+
+화면 개편에 맞춘 전체 스택 E2E도 통과했습니다(2026-10-10, 1개 종합 시나리오, 4.8분). 실제 API 대응표와 검증 범위는 [도입 흐름 검증](docs/screens/onboarding-refresh.md)을 참고하세요.
+
+- [상위 결과 버전·수신 확인 구현](docs/screens/upstream-results-2026-10-11.md)
+
+- [수동 작업 영속 접수 통합](docs/screens/manual-receipts-2026-10-11.md)
+
+미션 필수 자원의 공통 접수·대기열과 운영 화면은 [구현 문서](docs/screens/mission-resource-enforcement-2026-10-12.md)를 참고한다.
