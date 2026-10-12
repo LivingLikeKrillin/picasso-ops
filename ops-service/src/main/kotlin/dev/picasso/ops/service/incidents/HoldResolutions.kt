@@ -39,6 +39,19 @@ data class HoldResolveOutcome(
 )
 
 /**
+ * 재작업 관문. 재작업은 보류한 단위를 다시 돌려 로봇이 다시 움직인다. 관문은 호스트에 넘길지 정하고, 넘기지 않으면
+ * [dev.picasso.ops.service.requests.RequestRejected] 를 던져 호스트를 부르지 않는다. 확인 판단(`CONFIRM_DONE`)은 거치지 않는다.
+ */
+fun interface ReworkGuard {
+    fun guard(actor: Actor, executionId: String, instanceId: String, forward: () -> HoldResolveOutcome): HoldResolveOutcome
+
+    companion object {
+        /** 관문 없음. 자원 조정이 없는 시험·구성의 기본값이다. */
+        val NONE = ReworkGuard { _, _, _, forward -> forward() }
+    }
+}
+
+/**
  * 운영자 보류 해소(S4a 스펙 §7, T4·T6). 운영자 모드의 조작이며(모드 검사는 컨트롤러의 몫) 승인자는 행위자(`X-Ops-User`)다.
  * 호스트는 그 id 로 `Approver(id, PERSON)` 을 만든다(ADR 43: 기본값을 두지 않는다). 사유는 picasso 인시던트에 자리가 없어
  * 조작 기록의 사유 칸이 유일한 자리다.
@@ -56,6 +69,8 @@ data class HoldResolveOutcome(
  * 409 `INSTANCE_MISMATCH` 로 막는다. 그 거부는 다른 호스트 4xx 와 같이 거부로 남고 원래 이름이 응답 칸에 있다. 재조회는 목록의
  * `instanceId` 가 요청한 인스턴스와 같을 때만 `incidents` 를 본다. 다르면 호스트가 그 사이 재기동한 것이고 `exec-N` 을 다시
  * 세므로 새 인스턴스의 같은 실행 id 를 잘못 맞출 수 있다. 그때는 `earlier` 에서 요청한 인스턴스의 사본만 본다.
+ *
+ * 재작업은 [rework] 관문을 지난 뒤에만 호스트에 닿는다. 관문이 막으면 사전 거부라 조작 기록에 남지 않는다.
  */
 class HoldResolutions(
     private val host: HostIncidents,
@@ -63,11 +78,26 @@ class HoldResolutions(
     requeryDelay: Duration = Duration.ofSeconds(1),
     private val clock: Clock = Clock.systemUTC(),
     private val json: ObjectMapper = jacksonObjectMapper(),
+    private val rework: ReworkGuard = ReworkGuard.NONE,
 ) {
     private val runner = HostOperationRunner(log, requeryDelay, json)
 
     /** [decision] 은 컨트롤러가 둘 중 하나임을, [instanceId]·[reason] 은 비어 있지 않음을 본 값이다. */
     fun resolve(
+        actor: Actor,
+        executionId: String,
+        unitId: String,
+        decision: String,
+        instanceId: String,
+        reason: String,
+    ): HoldResolveOutcome =
+        if (decision == REWORK) {
+            rework.guard(actor, executionId, instanceId) { send(actor, executionId, unitId, decision, instanceId, reason) }
+        } else {
+            send(actor, executionId, unitId, decision, instanceId, reason)
+        }
+
+    private fun send(
         actor: Actor,
         executionId: String,
         unitId: String,
@@ -136,8 +166,11 @@ class HoldResolutions(
         const val NOT_HELD = "NotHeld"
         const val REFUSED = "Refused"
 
+        /** 보류한 단위를 다시 돌려 로봇이 움직이는 판단. [ReworkGuard] 를 거친다. */
+        const val REWORK = "REWORK"
+
         /** 판단 종류 둘(picasso `OperatorDecision`). */
-        val DECISIONS: Set<String> = setOf("CONFIRM_DONE", "REWORK")
+        val DECISIONS: Set<String> = setOf("CONFIRM_DONE", REWORK)
 
         /** 재조회가 읽는 인시던트 수. 호스트가 받는 최대다(S4a JSON 계약 §3). */
         const val REQUERY_LIMIT = 500

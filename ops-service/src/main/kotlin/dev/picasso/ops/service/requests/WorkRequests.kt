@@ -331,6 +331,19 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   check(response.path("incompleteUnits").isObject && response["incompleteUnits"].all{it.isTextual})
   check(response.path("operatorRequired").isBoolean && response.path("residualHold").isTextual)
  }
+ /**
+  * The receipt behind a host execution, through the same execution read as observation. Null: no receipt (direct job order), or
+  * [instanceId] is not the host's current instance, which the host itself refuses (instance ids never repeat). Unreadable or
+  * unlisted executions fail closed: their resource management cannot be known.
+  */
+ fun executionReceipt(instanceId:String,executionId:String):Receipt? {
+  val body=(host.executions() as? HostCall.Ok)?.value?.takeIf { it["instanceId"]?.isTextual == true && it["executions"]?.isArray == true }
+   ?: throw RequestRejected("HOST_SILENT","실행 목록을 읽지 못해 자원 관리 작업인지 확인할 수 없습니다",503)
+  if(body["instanceId"].asText()!=instanceId)return null
+  val job=body["executions"].firstOrNull { it["executionId"]?.asText()==executionId }?.get("jobOrderId")?.takeIf { it.isTextual }?.asText()
+   ?: throw RequestRejected("EXECUTION_NOT_FOUND","실행을 찾지 못해 자원 관리 작업인지 확인할 수 없습니다",409)
+  return jdbc.sql("SELECT * FROM ops.work_request WHERE job_order_id=:job").param("job",job).query(::row).optional().orElse(null)
+ }
  fun detail(id:UUID,source:String?=null):Map<String,Any?> {
   get(id,source) // Authorize before any host read.
   val observedAt=java.time.Instant.now()

@@ -9,6 +9,7 @@ import dev.picasso.ops.service.host.HostIncident
 import dev.picasso.ops.service.host.HostIncidents
 import dev.picasso.ops.service.incidents.FaultOperations
 import dev.picasso.ops.service.incidents.HoldResolutions
+import dev.picasso.ops.service.requests.RequestRejected
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -35,6 +36,9 @@ import org.springframework.web.bind.annotation.RestController
  *
  * 재기동 뒤(S4b 스펙 T9): 목록은 이전 인스턴스의 사본 `earlier`·`earlierTotal` 을 그대로 넘긴다. 상세는 `instanceId` 쿼리를
  * 그대로 넘기고(빈 값은 400 `INCIDENT_BAD_REQUEST`), 판단 본문은 `instanceId` 가 필수다(없거나 비면 400 `RESOLVE_BAD_REQUEST`).
+ *
+ * 재작업 관문의 거부(자원 관리 작업의 점유 확인, 실행 목록을 못 읽음)는 그 상태 코드와 이름으로 넘긴다. 호스트에 닿지 않은 사전
+ * 거부라 조작 기록에 남지 않는다.
  */
 @RestController
 class IncidentController(
@@ -108,7 +112,11 @@ class IncidentController(
                 "instanceId 는 비어 있지 않은 문자열이다(인시던트 상세의 instanceId)",
             )
         val reason = reason(node) ?: return@guarded reject(HttpStatus.BAD_REQUEST, REASON_REQUIRED, "판단 사유가 없다")
-        ResponseEntity.ok(resolutions.resolve(actor, executionId, unitId, decision, instanceId, reason))
+        try {
+            ResponseEntity.ok(resolutions.resolve(actor, executionId, unitId, decision, instanceId, reason))
+        } catch (e: RequestRejected) {
+            reject(HttpStatus.valueOf(e.status), e.code, e.message)
+        }
     }
 
     private fun read(body: ByteArray?): JsonNode? = body?.let { runCatching { json.readTree(it) }.getOrNull() }?.takeIf { it.isObject }

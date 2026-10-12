@@ -146,10 +146,14 @@ open class OpsApplication {
     @Bean
     open fun faultOperations(host: HostClient, log: OperationLog): FaultOperations = FaultOperations(host, log)
 
-    /** 재조회 대조의 «요청 직전 실제 시각» 은 운영 서비스 시계에서 읽는다(S4a JSON 계약 §5.4). */
+    /**
+     * 재조회 대조의 «요청 직전 실제 시각» 은 운영 서비스 시계에서 읽는다(S4a JSON 계약 §5.4). 재작업은 자원 관리 작업이면 스테이션
+     * 조정을 거친다.
+     */
     @Bean
-    open fun holdResolutions(host: HostClient, log: OperationLog, clock: Clock): HoldResolutions =
-        HoldResolutions(host, log, clock = clock)
+    open fun holdResolutions(host: HostClient, log: OperationLog, clock: Clock, requests: dev.picasso.ops.service.requests.WorkRequests,
+        stations: dev.picasso.ops.service.stations.StationCoordinator): HoldResolutions =
+        HoldResolutions(host, log, clock = clock, rework = dev.picasso.ops.service.stations.StationReworkGuard(requests, stations))
 
     /** [migrated] 는 쓰지 않는다. 받는 것만으로 ops 마이그레이션 뒤에 이 빈이 만들어진다. */
     @Bean

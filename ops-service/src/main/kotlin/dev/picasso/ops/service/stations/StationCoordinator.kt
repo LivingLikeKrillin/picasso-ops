@@ -12,7 +12,7 @@ import java.time.Instant
 import java.util.UUID
 
 data class RfStation(val stationId:String,val name:String,val readySignal:String,val completeSignal:String,val timeoutSeconds:Int,val owner:UUID?,val createdBy:String,val createdAt:String)
-data class StationRun(val runId:UUID,val stationId:String,val payload:JsonNode,val actor:String,val state:String,val reason:String,val receiptId:UUID?,val attempt:Int,val revision:Int,val createdAt:Instant,val phaseAt:Instant,val dispatchedAt:Instant?)
+data class StationRun(val runId:UUID,val stationId:String,val payload:JsonNode,val actor:String,val state:String,val reason:String,val receiptId:UUID?,val attempt:Int,val revision:Int,val createdAt:Instant,val phaseAt:Instant,val dispatchedAt:Instant?,val resultBaseline:Int?=null,val baselineReviewOnly:Boolean=false)
 /** Durable station arbitration. Database locks cover decisions, never network calls. */
 class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionTemplate,private val port:StationPort,private val clock:Clock=Clock.systemUTC()) {
  private val json=ObjectMapper().findAndRegisterModules().disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
@@ -74,6 +74,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
      }
     }
     if(run.state=="RETRYING") transition(run,"REVIEW_REQUIRED","재평가 중 프로세스 중단; 실행 관측과 현장 확인 필요")
+    // rework() holds this monitor across its host call, so REWORKING seen here was left by a stopped process.
+    if(run.state=="REWORKING") transition(run,"REVIEW_REQUIRED","재작업 전달 중 프로세스 중단; 반영 여부는 실행 관측과 현장 확인 필요")
     if(run.state in setOf("RUNNING","WAITING_ROBOT") && expired(run,current)) transition(run,"REVIEW_REQUIRED","작업 시간 초과; 물리 상태 확인 전 점유를 유지합니다")
     null
    }
@@ -116,12 +118,18 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
    lock(run.stationId);val current=get(run.runId);if(current.state!="RUNNING")return@execute
    if(signals?.get(station.readySignal)==null || signals[station.completeSignal]==null) {transition(current,"REVIEW_REQUIRED","현장 신호 관측 불명; 점유를 유지하고 현장 확인을 기다립니다");return@execute}
    val complete=signals[station.completeSignal]
-   if(receipt.physicalState=="PHYSICALLY_DONE" && complete?.value==true && complete.observedAt!=null && current.dispatchedAt!=null && complete.observedAt.isAfter(current.dispatchedAt))
+   // A result stored before this attempt (re)entered RUNNING is the previous attempt's: keep waiting, the timeout still applies.
+   // A resume re-observes the same execution, so a completion stored during review still counts; a stale hold does not.
+   val fresh=(receipt.resultVersion?:0)>(current.resultBaseline?:0);val physical=receipt.physicalState?.takeIf{fresh}
+   if(receipt.physicalState=="PHYSICALLY_DONE" && (fresh || current.baselineReviewOnly) && complete?.value==true && complete.observedAt!=null && current.dispatchedAt!=null && complete.observedAt.isAfter(current.dispatchedAt))
     transition(current,"COMPLETED","로봇 물리 완료와 이번 작업의 설비 완료 신호 확인; 자원 해제",release=true,context=json.createObjectNode().apply{set<JsonNode>("execution",receipt.snapshot?:json.nullNode());set<JsonNode>("signals",json.valueToTree(signals))})
-   else if(receipt.physicalState in setOf("OPERATOR_HOLD","IN_DOUBT","FAILED","STOPPED","ABORTED")) transition(current,"REVIEW_REQUIRED","로봇 ${receipt.physicalState}; 자동 재실행 없이 점유 유지",context=receipt.snapshot)
+   else if(physical in REVIEW_PHYSICAL_STATES) transition(current,"REVIEW_REQUIRED","로봇 $physical; 자동 재실행 없이 점유 유지",context=receipt.snapshot)
   }
  }
- fun decide(id:UUID,actor:Actor,p:JsonNode):StationRun = tx.execute {
+ fun decide(id:UUID,actor:Actor,p:JsonNode):StationRun {
+  // Signals are a host read: taken before the station lock, judged under it.
+  val signals=if(actor.mode==Mode.OPERATOR && p.path("decision").asText()=="RESUME_OBSERVATION") runCatching{port.signals()}.getOrNull() else null
+  return tx.execute {
   if(actor.mode!=Mode.OPERATOR)reject("운영자만 확인합니다",403)
   exact(p,setOf("expectedRevision","decision","reason"))
   val run=get(id);lock(run.stationId);val current=get(id)
@@ -129,14 +137,54 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   val decision=text(p,"decision",32);val reason=text(p,"reason",1000)
   when(decision) {
    "CANCEL_QUEUED" -> {if(current.state!="QUEUED")reject("대기열 작업만 취소할 수 있습니다",409);transition(current,"CANCELLED",reason,by=actor.header())}
-   "RESUME_OBSERVATION" -> {if(current.state!="REVIEW_REQUIRED" || current.receiptId==null)reject("접수가 있는 확인 필요 작업만 관측을 재개합니다",409);transition(current,"RUNNING",reason,by=actor.header())}
+   "RESUME_OBSERVATION" -> {if(current.state!="REVIEW_REQUIRED" || current.receiptId==null)reject("접수가 있는 확인 필요 작업만 관측을 재개합니다",409)
+    // Only completion evidence newer than the resume counts, and a completion signal still on cannot be told apart from this run's.
+    val complete=signals?.get(station(current.stationId).completeSignal) ?: reject("현장 신호를 확인할 수 없어 관측을 재개하지 않습니다",503)
+    if(complete.value)reject("설비 완료 신호가 켜져 있습니다. 신호를 초기화한 뒤 관측을 재개하십시오",409)
+    transition(current,"RUNNING",reason,dispatch=true,by=actor.header(),reviewOnly=true)}
    "CONFIRM_CLEAR" -> {if(current.state!="REVIEW_REQUIRED")reject("확인 필요 작업만 현장 확인 후 해제합니다",409);transition(current,"MANUALLY_CLEARED","현장 확인에 의한 자원 해제: $reason",release=true,by=actor.header());cleared(current,reason)}
    else -> reject("지원하지 않는 판단입니다")
   };get(id)
  }!!
+ }
+ /**
+  * REWORK re-runs a held unit, so the robot moves again. Only the run still owning its station in review may forward it.
+  * The claim (REWORKING) blocks other decisions; the host call runs under this monitor, never under a DB lock.
+  * [applied]: true applied, false refused, null unknown. Anything but a confirmed rework returns to review.
+  */
+ @Synchronized fun <T> rework(receiptId:UUID,actor:Actor,context:JsonNode,forward:()->T,applied:(T)->Boolean?):T {
+  val claimed=tx.execute {
+   val run=jdbc.sql("SELECT * FROM ops.station_run WHERE receipt_id=:id ORDER BY created_at,run_id LIMIT 1").param("id",receiptId).query(::row).optional().orElse(null) ?: reject(REWORK_HELD,409)
+   lock(run.stationId);val current=get(run.runId)
+   if(station(current.stationId).owner!=current.runId || current.state!="REVIEW_REQUIRED")reject(REWORK_HELD,409)
+   transition(current,"REWORKING","재작업 전달 중; 반영 확인 전 다른 판단을 막습니다",by=actor.header(),context=context);get(current.runId)
+  }!!
+  val outcome=try {forward()} catch(e:Exception) {runCatching{reworked(claimed,null,actor,context)}.onFailure(e::addSuppressed);throw e}
+  reworked(claimed,applied(outcome),actor,context);return outcome
+ }
+ private fun reworked(run:StationRun,applied:Boolean?,actor:Actor,context:JsonNode) {
+  val signals=if(applied==true) runCatching{port.signals()}.getOrNull() else null
+  tx.execute {
+   lock(run.stationId);val current=get(run.runId);if(current.state!="REWORKING")return@execute
+   val station=station(run.stationId);val complete=signals?.get(station.completeSignal)
+   when {
+    applied==false -> transition(current,"REVIEW_REQUIRED","재작업 거절; 점유를 유지하고 현장 확인을 기다립니다",by=actor.header(),context=context)
+    applied==null -> transition(current,"REVIEW_REQUIRED","재작업 반영 불명; 실행 관측과 현장 확인 전 점유 유지",by=actor.header(),context=context)
+    signals?.get(station.readySignal)==null || complete==null -> transition(current,"REVIEW_REQUIRED","재작업 반영; 현장 신호 관측 불명이라 점유를 유지하고 현장 확인을 기다립니다",by=actor.header(),context=context)
+    complete.value -> transition(current,"REVIEW_REQUIRED","재작업 반영; 설비 완료 신호가 켜져 있어 이번 재작업의 완료와 구분할 수 없습니다. 신호 초기화 후 관측을 재개하십시오",by=actor.header(),context=context)
+    // Only a robot completion and a completion signal newer than this rework count.
+    else -> transition(current,"RUNNING","재작업 반영; 재작업 뒤의 로봇 완료와 새 설비 완료 신호를 기다립니다",dispatch=true,by=actor.header(),context=context)
+   }
+  }
+ }
+ private fun station(id:String)=stations().single{it.stationId==id}
  private fun expired(run:StationRun,station:RfStation)=!clock.instant().isBefore(run.phaseAt.plusSeconds(station.timeoutSeconds.toLong()))
- private fun transition(run:StationRun,state:String,reason:String,release:Boolean=false,dispatch:Boolean=false,by:String="system/station",context:JsonNode?=null) {
-  jdbc.sql("UPDATE ops.station_run SET state=:state,reason=:reason,revision=revision+1,phase_at=:at,dispatched_at=CASE WHEN :dispatch THEN :at ELSE dispatched_at END WHERE run_id=:id").param("state",state).param("reason",reason).param("at",java.sql.Timestamp.from(clock.instant())).param("dispatch",dispatch).param("id",run.runId).update()
+ /** Every (re)entry to RUNNING records the receipt's latest stored result version: only newer results speak for this attempt. */
+ private fun transition(run:StationRun,state:String,reason:String,release:Boolean=false,dispatch:Boolean=false,by:String="system/station",context:JsonNode?=null,baseline:Boolean=state=="RUNNING",reviewOnly:Boolean=false) {
+  jdbc.sql("""UPDATE ops.station_run SET state=:state,reason=:reason,revision=revision+1,phase_at=:at,dispatched_at=CASE WHEN :dispatch THEN :at ELSE dispatched_at END,
+   result_baseline=CASE WHEN :baseline THEN (SELECT COALESCE(max(v.version),0) FROM ops.work_result v WHERE v.receipt_id=station_run.receipt_id) ELSE result_baseline END,
+   baseline_review_only=CASE WHEN :baseline THEN :reviewOnly ELSE baseline_review_only END WHERE run_id=:id""")
+   .param("state",state).param("reason",reason).param("at",java.sql.Timestamp.from(clock.instant())).param("dispatch",dispatch).param("baseline",baseline).param("reviewOnly",reviewOnly).param("id",run.runId).update()
   if(release)jdbc.sql("UPDATE ops.rf_station SET owner=NULL WHERE station_id=:station AND owner=:id").param("station",run.stationId).param("id",run.runId).update()
   if(state in setOf("TIMED_OUT","CANCELLED","REJECTED") && run.receiptId!=null)
    jdbc.sql("UPDATE ops.work_request SET state='REJECTED',detail=:reason,updated_at=clock_timestamp() WHERE receipt_id=:id AND state='WAITING_RESOURCE'").param("id",run.receiptId).param("reason",reason).update()
@@ -152,9 +200,14 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  private fun event(run:StationRun,reason:String,by:String,context:JsonNode?=null) {jdbc.sql("INSERT INTO ops.station_event(run_id,state,reason,actor,context,recorded_at) VALUES(:id,:state,:reason,:actor,CAST(:context AS JSONB),:at)").param("id",run.runId).param("state",run.state).param("reason",reason).param("actor",by).param("context",(context?:json.nullNode()).toString()).param("at",java.sql.Timestamp.from(clock.instant())).update()}
  private fun lock(station:String) {jdbc.sql("SELECT station_id FROM ops.rf_station WHERE station_id=:id FOR UPDATE").param("id",station).query(String::class.java).optional().orElseThrow{RequestRejected("STATION_NOT_FOUND","스테이션이 없습니다",404)}}
  private fun actor(run:StationRun)=Actor(Mode.OPERATOR,run.actor.substringAfter('/'))
- private fun row(r:java.sql.ResultSet,@Suppress("UNUSED_PARAMETER") i:Int)=StationRun(r.getObject("run_id",UUID::class.java),r.getString("station_id"),json.readTree(r.getString("payload")),r.getString("actor"),r.getString("state"),r.getString("reason"),r.getObject("receipt_id",UUID::class.java),r.getInt("attempt"),r.getInt("revision"),r.getTimestamp("created_at").toInstant(),r.getTimestamp("phase_at").toInstant(),r.getTimestamp("dispatched_at")?.toInstant())
+ private fun row(r:java.sql.ResultSet,@Suppress("UNUSED_PARAMETER") i:Int)=StationRun(r.getObject("run_id",UUID::class.java),r.getString("station_id"),json.readTree(r.getString("payload")),r.getString("actor"),r.getString("state"),r.getString("reason"),r.getObject("receipt_id",UUID::class.java),r.getInt("attempt"),r.getInt("revision"),r.getTimestamp("created_at").toInstant(),r.getTimestamp("phase_at").toInstant(),r.getTimestamp("dispatched_at")?.toInstant(),r.getObject("result_baseline") as Int?,r.getBoolean("baseline_review_only"))
  private fun exact(p:JsonNode,fields:Set<String>) {if(!p.isObject || p.fieldNames().asSequence().toSet()!=fields)reject("요청 필드를 확인하세요")}
  private fun text(p:JsonNode,key:String,max:Int)=p[key]?.takeIf{it.isTextual && it.asText().isNotBlank() && it.asText().length<=max}?.asText() ?: reject("$key 문자열이 필요합니다")
  private fun uuid(s:String)=runCatching{UUID.fromString(s)}.getOrNull()?.takeIf{it.toString()==s} ?: reject("정규 UUID가 필요합니다")
  private fun reject(message:String,status:Int=400):Nothing=throw RequestRejected("STATION_REJECTED",message,status)
+ companion object {
+  /** picasso PhysicalState: settled states other than PHYSICALLY_DONE, plus OPERATOR_HOLD and IN_DOUBT. CANCELING is transient. */
+  val REVIEW_PHYSICAL_STATES=setOf("OPERATOR_HOLD","IN_DOUBT","UNVERIFIED","FAILED","ABORTED","PARTIAL")
+  const val REWORK_HELD="자원 관리 작업의 재작업은 스테이션 점유를 유지한 확인 필요 상태에서만 할 수 있습니다"
+ }
 }
