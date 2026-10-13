@@ -49,13 +49,13 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | 구성 요소 | 역할 | 포트·바인딩 | 저장 |
 |---|---|---|---|
 | `ui/` | React·Vite·TypeScript 관리 화면, 운영 서비스만 호출, 메뉴 아홉(운영 개요, 작업 요청, 공유 자원, 운영, 로봇, 임무, 현장 설정, 이력, 검증 도구) | dev 5173, Playwright preview 4173 | 없음 |
-| `ops-service/` | 화면의 유일한 백엔드, 외부 주문 API(`/integration/v1/...`), 작업 요청 영속 저장·결과 버전·수신 확인·콜백 전달, 공유 스테이션 조정, registry·실행 호스트 REST 호출, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백(`server.address=127.0.0.1`) | 스키마 `ops`, 마이그레이션 V1~V16, 표 15개와 뷰 1개 |
+| `ops-service/` | 화면의 유일한 백엔드, 외부 주문 API(`/integration/v1/...`), 작업 요청 영속 저장·결과 버전·수신 확인·콜백 전달, 공유 스테이션 조정, registry·실행 호스트 REST 호출, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백(`server.address=127.0.0.1`) | 스키마 `ops`, 마이그레이션 V1~V17, 표 15개와 뷰 1개 |
 | `mission-host/` | picasso 미들웨어로 작업 지시 실행, 임무 정의 검증·모의 실행·활성화, 250ms 마다 셀 대역 읽기·pump, 내보낸 작업 응답을 결과 outbox 에 기록하고 `GET /host/result-events` 로 내줌, 호출자는 운영 서비스뿐 | `HOST_PORT=8785`, 루프백 | 스키마 `mission`, 마이그레이션 V1~V4, 표 10개 |
 | `site/` | registry·mimic·`site-runner`·셀 대역을 한 프로세스에서 구동 | 아래 세부 구성 요소 참조 | registry 마이그레이션을 런처가 실행 |
 | `registry` | 기체 원장, 어댑터·리비전·바인딩·명칭·생존 보고 | `REGISTRY_PORT=8781`, 루프백 | Postgres public |
 | `mimic` | `humanoid-01`·`quadruped-01` 가상 기체, 가상 시계, seed 0 | `MIMIC_GRPC_PORT=8783`, 모든 인터페이스 | 메모리 |
 | `site-runner` | 1초마다 리비전 시험 요청을 집어 별도 mimic 으로 시험, registry 에 결과 기록 | 없음 | registry |
-| 셀 대역 | 셀 신호·자리·슬롯 관측, 신호 쓰기·장애 주입 입구, 신호 다섯(`inspection_ready`, `inspection_complete`, `rack_present`, 안전 신호 `guard_closed`, 텍스트 `lot_code`) | `SITE_CELL_PORT=8784`, 루프백 | 메모리 |
+| 셀 대역 | 셀 신호·자리·슬롯 관측, 신호 쓰기·장애 주입 입구, 신호 일곱(`inspection_ready`, `inspection_complete`, 텍스트 `inspection_job`, `inspection_job_done`, `rack_present`, 안전 신호 `guard_closed`, 텍스트 `lot_code`) | `SITE_CELL_PORT=8784`, 루프백 | 메모리 |
 | Postgres | registry public, 운영 서비스 `ops`, 실행 호스트 `mission` | `127.0.0.1:55432` | `postgres:16-alpine`, DB `picasso`, `site/compose.yaml` |
 | `picasso/` | 고정 커밋 `74e4d3d` 의 읽기 전용 서브모듈, Gradle `includeBuild` | 없음 | 없음 |
 | `e2e/` | 한 JVM 에 Postgres·registry·mimic·실행 호스트·운영 서비스를 띄우는 통합 시험 | 시험 스택 | Testcontainers |
@@ -68,6 +68,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - V6~V9: `work_request`(작업 요청), `work_result`(결과 버전), `work_request_recovery`(미배정 재평가 기록), `work_result_delivery`(콜백 전달 상태)
 - V10~V13: `interface_deployment`(호출 계약 배포, 변경·삭제 금지), `mission_profile`(데이터 임무 입력 프로파일, 변경·삭제 금지), `result_cursor`(호스트 결과 피드 커서, 한 행), `work_request_review`(현장 확인 기록, 변경·삭제 금지)
 - V14~V16: `rf_station`(공유 스테이션, 점유 작업 칸 `owner`), `station_run`(스테이션 작업), `station_event`(스테이션 작업 상태 이력, 변경·삭제·통째 비우기 금지), `mission_resource_requirement`(임무 필수 자원, 변경·삭제·통째 비우기 금지), V15 가 `work_request.required_station_id` 와 상태 `WAITING_RESOURCE` 를, V16 이 `station_run.result_baseline`·`baseline_review_only` 를 더함
+- V17: 표를 새로 만들지 않고 `rf_station` 에 칸 넷(`job_signal`, `job_echo_signal`, `quarantined_by`, `quarantined_at`)과 제약 둘(`station_job_pair`, `station_quarantine_pair`, `job_signal`·`job_echo_signal` 은 각각 유일)을 더함
 
 `mission` 스키마의 표는 다음과 같습니다.
 
@@ -88,7 +89,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - 화면 작업 요청: 운영 화면 `POST /api/work-requests/manual`, 호출 계약 `POST /api/mission-interfaces/{id}/{version}/invoke`, 기존 경로 `POST /api/job-orders` 가 모두 같은 작업 요청 경로를 지남
 - 작업 지시 배정: 운영 서비스가 배정 가능 기체만 후보로 선정 → 실행 호스트의 picasso 미들웨어가 하나 선택 → mimic 기체에서 실행
 - 결과 회신: 실행 호스트가 작업 응답을 `mission.result_outbox` 에 순번과 함께 기록 → 운영 서비스가 5초마다 `GET /host/result-events` 를 커서로 읽어 `ops.work_result` 버전으로 저장 → 콜백 설정이 있으면 2초마다 루프백 Mock MES 로 전달 → Mock MES 가 `POST /integration/v1/job-orders/{id}/results/{version}/ack` 로 수신 확인
-- 공유 스테이션: 운영 서비스 스테이션 워커가 2초마다 `tick` → 대기열 맨 앞 작업이 스테이션을 점유 → 셀 대역의 준비·완료 신호를 실행 호스트 `GET /host/cell` 로 읽음 → 조건이 맞으면 작업 요청 제출
+- 공유 스테이션: 운영 서비스 스테이션 워커가 2초마다 `tick` → 대기열 맨 앞 작업이 스테이션을 점유 → 셀 대역의 준비·완료 신호를 실행 호스트 `GET /host/cell` 로 읽음 → 조건이 맞으면, 작업 번호 쌍이 있는 스테이션은 작업 번호를 `POST /host/cell/signals/{name}` 으로 먼저 쓴 뒤 작업 요청 제출
 
 ### 기타 구성 및 설정
 
@@ -183,27 +184,27 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 ## 공유 스테이션 조정
 
-공유 스테이션(`ops.rf_station`)은 엔지니어가 등록합니다(`POST /api/stations`). 준비 신호와 완료 신호는 셀 대역에 선언된 안전 신호가 아닌 일반 BOOLEAN 신호여야 하고 서로 달라야 하며, 단계 기한 `timeout_seconds` 는 5~3600초입니다. 등록 뒤 바꿀 수 없습니다. 스테이션은 한 번에 한 작업만 점유합니다(`rf_station.owner`, 부분 유일 색인 `station_one_owner`). 스테이션 작업(`ops.station_run`)은 두 길로 생깁니다. 운영자가 `POST /api/stations/runs` 로 직접 요청하거나(요청 ID, 스테이션, 호출 계약과 버전, 조회한 배포 버전, 입력), 임무에 필수 자원(`ops.mission_resource_requirement`, 임무당 스테이션 하나, 엔지니어 등록, 변경·삭제 금지)이 있으면 모든 작업 요청 경로가 작업 요청을 `WAITING_RESOURCE` 로 두고 같은 id 의 스테이션 작업을 대기열에 넣습니다. 스테이션 워커(`StationWorker`)가 `ops.stations.poll-ms`(기본 2000ms)마다 `StationCoordinator.tick` 을 부릅니다. 상태가 바뀔 때마다 `revision` 이 오르고 `ops.station_event` 에 한 행이 남습니다. 근거는 `GET /api/stations/runs/{id}/evidence`(스키마 `ops.station.evidence/1`)로 읽습니다.
+공유 스테이션(`ops.rf_station`)은 엔지니어가 등록합니다(`POST /api/stations`). 준비 신호와 완료 신호는 셀 대역에 선언된 안전 신호가 아닌 일반 BOOLEAN 신호여야 하고 서로 달라야 하며, 단계 기한 `timeout_seconds` 는 5~3600초입니다. 등록 뒤 바꿀 수 없습니다. 선택 칸인 작업 번호 송신 신호 `jobSignal` 와 작업 번호 반환 신호 `jobEchoSignal`(DB 칸 `job_signal`, `job_echo_signal`)은 둘 다 있거나 둘 다 없어야 하고(DB 제약 `station_job_pair`), 서로 달라야 하며, 셀 대역에 선언된 안전 아닌 TEXT 신호여야 합니다(거부 문구 «작업 번호 송신·반환 신호는 둘 다 연결하거나 둘 다 비워야 합니다.», «현장에 선언된 TEXT 신호가 필요합니다.»). 격리 칸은 `rf_station.quarantined_by`(격리를 건 스테이션 작업 id, `station_run` 참조)와 `quarantined_at`(둘 다 있거나 둘 다 없음, 제약 `station_quarantine_pair`)입니다. `GET /api/stations` 의 스테이션 행에 `jobSignal`, `jobEchoSignal`, `quarantinedBy`, `quarantinedAt` 이 실립니다. 설비 쪽 요구 사양은 [공유 스테이션 설비 연동 요구 사양](station-equipment-requirements.md) 에 있습니다. 스테이션은 한 번에 한 작업만 점유합니다(`rf_station.owner`, 부분 유일 색인 `station_one_owner`). 스테이션 작업(`ops.station_run`)은 두 길로 생깁니다. 운영자가 `POST /api/stations/runs` 로 직접 요청하거나(요청 ID, 스테이션, 호출 계약과 버전, 조회한 배포 버전, 입력), 임무에 필수 자원(`ops.mission_resource_requirement`, 임무당 스테이션 하나, 엔지니어 등록, 변경·삭제 금지)이 있으면 모든 작업 요청 경로가 작업 요청을 `WAITING_RESOURCE` 로 두고 같은 id 의 스테이션 작업을 대기열에 넣습니다. 스테이션 워커(`StationWorker`)가 `ops.stations.poll-ms`(기본 2000ms)마다 `StationCoordinator.tick` 을 부릅니다. 상태나 대기 사유가 바뀔 때마다 `revision` 이 오르고 `ops.station_event` 에 한 행이 남습니다. 근거는 `GET /api/stations/runs/{id}/evidence`(스키마 `ops.station.evidence/1`)로 읽습니다.
 
 ### 스테이션 작업 상태
 
 | 상태 | 뜻 | 다음 상태 |
 | --- | --- | --- |
 | `QUEUED` | 대기열에서 차례를 기다림 | 스테이션에 점유 작업이 없으면 가장 먼저 들어온 작업(`created_at`, `run_id` 순)이 점유해 `WAITING_READY`. 운영자 `CANCEL_QUEUED` 면 `CANCELLED` |
-| `WAITING_READY` | 스테이션을 점유하고 설비 준비를 기다림. 로봇에는 아직 보내지 않음 | 준비 신호가 true 이고 완료 신호가 false 면 `DISPATCHING`(이때 `dispatched_at` 기록). 단계 기한이 지나면 `TIMED_OUT` |
+| `WAITING_READY` | 스테이션을 점유하고 설비 준비를 기다림. 로봇에는 아직 보내지 않음 | 준비 신호가 true 이고 완료 신호가 false 면 `DISPATCHING`(이때 `dispatched_at` 기록). 단계 기한이 지나면 `TIMED_OUT`. 격리 중이면 운영자 `CONFIRM_STATION_IDLE` 전까지 보내지 않으며(사유 «스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다») 단계 기한은 멈춤. 작업 번호 쌍이 있는 스테이션은 작업 번호 쓰기 성공 뒤 `DISPATCHING`(근거 `jobSignal`·`jobToken`·`signals`), 쓰기 실패면 `WAITING_READY` 에 남음(사유 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다») |
 | `DISPATCHING` | 고정한 호출 계약으로 작업 요청을 제출함 | 제출 결과가 `ACCEPTED` 면 `RUNNING`, 전송 전 미배정이면 `WAITING_ROBOT`, `REJECTED` 면 `REJECTED`, 그 밖이거나 호출 결과를 모르면 `REVIEW_REQUIRED`. 프로세스가 이 상태에서 멈췄다면 다음 `tick` 이 같은 키로 작업 요청을 다시 찾아볼 뿐 새로 보내지 않음 |
-| `RUNNING` | 로봇이 받아 실행 중. 저장된 결과와 새 설비 완료 신호를 기다림 | 완료 조건(아래 기준선 절)이 맞으면 `COMPLETED`. 기준선보다 새 결과의 물리 상태가 `OPERATOR_HOLD`·`IN_DOUBT`·`UNVERIFIED`·`FAILED`·`ABORTED`·`PARTIAL` 이면 `REVIEW_REQUIRED`. 셀 신호를 읽을 수 없거나 단계 기한이 지나도 `REVIEW_REQUIRED` |
+| `RUNNING` | 로봇이 받아 실행 중. 저장된 결과와 새 설비 완료 신호를 기다림 | 완료 조건(아래 기준선 절)이 맞으면 `COMPLETED`. 기준선보다 새 결과의 물리 상태가 `OPERATOR_HOLD`·`IN_DOUBT`·`UNVERIFIED`·`FAILED`·`ABORTED`·`PARTIAL` 이면 `REVIEW_REQUIRED`. 셀 신호를 읽을 수 없거나 단계 기한이 지나도 `REVIEW_REQUIRED`. 작업 번호 쌍이 있는 스테이션은 완료 신호가 true 이고 반환 번호가 다르면 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다» 로 `REVIEW_REQUIRED`(근거 `expected`·`echoed`·`signals`), 반환 신호가 읽기에 없어도 `REVIEW_REQUIRED` |
 | `WAITING_ROBOT` | 호스트에 보내기 전 배정 가능 기체가 없었음 | 설비가 여전히 준비 상태이고 이 상태에 들어온 지 5초가 지났으며 재평가가 3번 미만이면 `RETRYING` 으로 선점한 뒤 미배정 재평가. 작업 요청이 더는 전송 전 미배정이 아니면 그 상태에 따라 전이. 단계 기한이 지나면 `REVIEW_REQUIRED` |
 | `RETRYING` | 미배정 재평가를 호스트에 보내는 중 | 결과에 따라 `RUNNING`·`WAITING_ROBOT`·`REJECTED`·`REVIEW_REQUIRED`, 결과를 모르면 `REVIEW_REQUIRED`. `tick` 이 이 상태를 처음 보면 앞 프로세스가 멈춘 것으로 읽고 `REVIEW_REQUIRED` |
 | `REWORKING` | 운영자 재작업을 실행 호스트에 전달하는 중. 다른 판단을 막음 | 아래 재작업 관문 절. `tick` 이 이 상태를 보면 앞 프로세스가 멈춘 것으로 읽고 `REVIEW_REQUIRED` |
-| `REVIEW_REQUIRED` | 자동으로 판단하지 않고 점유를 유지한 채 현장 확인을 기다림 | 운영자 `RESUME_OBSERVATION` 이면 `RUNNING`, `CONFIRM_CLEAR` 면 `MANUALLY_CLEARED`, 재작업 관문을 지나면 `REWORKING` |
+| `REVIEW_REQUIRED` | 자동으로 판단하지 않고 점유를 유지한 채 현장 확인을 기다림 | 운영자 `RESUME_OBSERVATION` 이면 `RUNNING`, `CONFIRM_CLEAR` 면 `MANUALLY_CLEARED`, 재작업 관문을 지나면 `REWORKING`. 작업 번호 쌍이 없고 보낸 적(`dispatched_at`)이 있는 작업은 `CONFIRM_CLEAR` 시 스테이션 격리도 걸림 |
 | `COMPLETED` | 로봇 물리 완료와 이번 작업의 설비 완료 신호를 확인하고 점유를 풂 | 종료 |
 | `TIMED_OUT` | 설비 준비 단계 기한 초과, 로봇에 보내기 전에 점유를 풂 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE` 면 `REJECTED` |
 | `CANCELLED` | 운영자가 대기열에서 취소 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE` 면 `REJECTED` |
 | `REJECTED` | 작업 요청 제출이 거부되어 점유를 풂 | 종료 |
-| `MANUALLY_CLEARED` | 운영자가 현장 확인 뒤 점유를 풂. 물리 완료 판정이 아님 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE`·`UNASSIGNED` 면 `REJECTED`(실행하지 않음), `DISPATCHING` 이면 `IN_DOUBT`(실행 관측으로 확인), `IN_DOUBT`·`ACCEPTED`·`REJECTED` 는 그대로 |
+| `MANUALLY_CLEARED` | 운영자가 현장 확인 뒤 점유를 풂. 물리 완료 판정이 아님 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE`·`UNASSIGNED` 면 `REJECTED`(실행하지 않음), `DISPATCHING` 이면 `IN_DOUBT`(실행 관측으로 확인), `IN_DOUBT`·`ACCEPTED`·`REJECTED` 는 그대로. 작업 번호 쌍이 없는 스테이션에서 `dispatched_at` 이 있는 스테이션 작업을 `CONFIRM_CLEAR` 로 해제하면 같은 트랜잭션에서 스테이션을 격리함(이력에 «자원 해제에 따른 스테이션 격리» 기록) |
 
-단계 기한은 그 상태에 들어온 시각(`phase_at`)부터 스테이션의 `timeout_seconds` 로 잽니다. 실행 중 기한 초과는 점유를 유지하고 자동으로 다시 실행하지 않습니다. 미배정 재평가 요청 ID 는 스테이션 작업 id 와 시도 번호로 정해지는 UUID 이고, 재평가는 최대 3번입니다.
+단계 기한은 그 상태에 들어온 시각(`phase_at`)부터 스테이션의 `timeout_seconds` 로 잽니다. 실행 중 기한 초과는 점유를 유지하고 자동으로 다시 실행하지 않습니다. 대기 사유만 바뀌는 경우(작업 번호 쓰기 실패, 격리)는 `phase_at` 을 바꾸지 않으며, 격리 중 설비 준비 기한은 멈추고 `CONFIRM_STATION_IDLE` 판단 시각부터 다시 셉니다. 미배정 재평가 요청 ID 는 스테이션 작업 id 와 시도 번호로 정해지는 UUID 이고, 재평가는 최대 3번입니다.
 
 ### 운영자 판단
 
@@ -211,7 +212,8 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 - `CANCEL_QUEUED`: `QUEUED` 만 `CANCELLED` 로 바꿉니다.
 - `RESUME_OBSERVATION`: 작업 요청이 묶인 `REVIEW_REQUIRED` 만 대상으로 합니다. 셀 신호를 스테이션 잠금 전에 읽고, 읽지 못하면 503, 설비 완료 신호가 켜져 있으면 409(신호를 초기화한 뒤 다시 하라)를 반환합니다. 통과하면 `RUNNING` 으로 돌리고 `dispatched_at` 을 지금으로 다시 정합니다. 로봇에 아무것도 다시 보내지 않습니다.
-- `CONFIRM_CLEAR`: `REVIEW_REQUIRED` 만 `MANUALLY_CLEARED` 로 바꿉니다. 점유를 풀고 같은 트랜잭션에서 묶인 작업 요청을 위 표처럼 닫습니다.
+- `CONFIRM_CLEAR`: `REVIEW_REQUIRED` 만 `MANUALLY_CLEARED` 로 바꿉니다. 점유를 풀고 같은 트랜잭션에서 묶인 작업 요청을 위 표처럼 닫습니다. 해제는 실행 호스트의 실행을 멈추지 않습니다. 판단 전(잠금 밖)에 셀 신호와 해제할 작업의 작업 요청을 읽어 이력 근거에 `signals`, `receiptId`, `physicalState`, `resultVersion`, `quarantined` 를 남기며, 셀 신호를 읽지 못해도 해제는 막지 않습니다(근거의 `signals` 는 null). 작업 번호 쌍이 없는 스테이션에서 `dispatched_at` 이 있는 스테이션 작업을 해제하면 같은 트랜잭션에서 스테이션을 격리하고, 해제한 작업의 이력에 «자원 해제에 따른 스테이션 격리» 한 행을 더 남깁니다(정상 완료, 대기 취소, 전송 전 시간 초과, 제출 거부는 격리하지 않음).
+- `CONFIRM_STATION_IDLE`: 격리된 스테이션을 점유해 `WAITING_READY` 인 스테이션 작업에만 씁니다(아니면 409 «격리된 스테이션을 점유해 설비 준비를 기다리는 작업만 격리를 해제합니다»). 셀 신호를 스테이션 잠금 전에 읽고, 읽지 못하면 503 «현장 신호를 확인할 수 없어 격리를 해제하지 않습니다», 완료 신호가 켜져 있으면 409 «설비 완료 신호가 켜져 있습니다. 신호가 꺼진 것을 확인한 뒤 격리를 해제하십시오». 통과하면 격리 칸을 비우고 상태는 `WAITING_READY` 그대로 새 단계로 다시 들어가며(단계 기한이 그 판단 시각부터 다시 시작), 이력에 «현장 확인 후 격리 해제: {사유}» 와 근거 `releasedRunId`·`quarantinedAt`·`signals` 를 남깁니다. 로봇에 아무것도 보내지 않습니다.
 
 ### 재작업 관문
 
@@ -219,11 +221,19 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 ### 결과 버전 기준선
 
-V16 이 `station_run.result_baseline` 과 `baseline_review_only` 를 더했습니다. `RUNNING` 에 들어갈 때마다(제출 수락, 미배정 재평가 수락, 관측 재개, 재작업 반영) 같은 잠금 트랜잭션에서 그 작업 요청의 최신 결과 버전을 `result_baseline` 으로 적습니다. 그보다 새 결과만 이번 시도의 근거로 씁니다. 그래서 재작업이나 관측 재개 직후 이미 저장된 이전 보류 결과로 곧바로 `REVIEW_REQUIRED` 로 되돌아가지 않습니다. 관측 재개는 같은 실행을 다시 보는 것이므로 `baseline_review_only` 를 true 로 둡니다. 이때는 확인 대기 중 저장된 `PHYSICALLY_DONE` 도 완료 근거로 인정하되, `REVIEW_REQUIRED` 로 넘기는 판단에는 기준선보다 새 결과만 씁니다. 재작업은 재작업 전에 저장된 물리 완료를 완료 근거로 쓰지 않습니다. `COMPLETED` 조건 전체는 저장된 최신 결과의 물리 상태가 `PHYSICALLY_DONE` 이고(기준선보다 새 결과이거나 관측 재개), 설비 완료 신호가 true 이며, 그 신호의 `observedAt` 이 `dispatched_at` 보다 뒤여야 합니다. 설비 완료 신호의 `observedAt` 은 셀 대역에서 그 값이 마지막으로 쓰인 시각입니다.
+V16 이 `station_run.result_baseline` 과 `baseline_review_only` 를 더했습니다. `RUNNING` 에 들어갈 때마다(제출 수락, 미배정 재평가 수락, 관측 재개, 재작업 반영) 같은 잠금 트랜잭션에서 그 작업 요청의 최신 결과 버전을 `result_baseline` 으로 적습니다. 그보다 새 결과만 이번 시도의 근거로 씁니다. 그래서 재작업이나 관측 재개 직후 이미 저장된 이전 보류 결과로 곧바로 `REVIEW_REQUIRED` 로 되돌아가지 않습니다. 관측 재개는 같은 실행을 다시 보는 것이므로 `baseline_review_only` 를 true 로 둡니다. 이때는 확인 대기 중 저장된 `PHYSICALLY_DONE` 도 완료 근거로 인정하되, `REVIEW_REQUIRED` 로 넘기는 판단에는 기준선보다 새 결과만 씁니다. 재작업은 재작업 전에 저장된 물리 완료를 완료 근거로 쓰지 않습니다. `COMPLETED` 조건 전체는 (가) 저장된 최신 결과의 물리 상태가 `PHYSICALLY_DONE`이고 기준선보다 새 결과이거나 관측 재개여야 하며, (나) 설비 완료 신호가 true이고, (다) 그 읽기가 이번 `RUNNING` 진입 뒤의 것이어야 하며, (라) 작업 번호 쌍이 있는 스테이션은 같은 읽기의 반환 번호가 이번 작업 번호여야 합니다. `tick`은 셀 신호를 읽기 직전에 운영 서비스 시계로 `readAt`을 적고, `readAt`이 `phase_at`(이번 `RUNNING` 진입 시각, 운영 서비스 시계)보다 앞이면 그 읽기의 완료 true는 판단하지 않습니다. 현장 시계와 운영 서비스 시계가 다르므로 신호의 `observedAt`(현장 시계)은 비교하지 않고 근거에만 남깁니다. `RUNNING`에 들어가는 길(제출 수락 전 준비 확인, 미배정 재평가 전, 관측 재개, 재작업 반영)은 모두 그 직전에 완료 신호 false를 확인합니다.
+
+### 작업 번호 신호와 스테이션 격리
+
+작업 번호 쌍이 있는 스테이션은 등록 칸 `jobSignal`·`jobEchoSignal`(TEXT)을 씁니다. 작업 번호는 스테이션 작업 id(UUID 문자열)입니다. 운영 서비스가 `WAITING_READY`에서 준비 true·완료 false를 읽으면 잠금 밖에서 `jobSignal`에 번호를 씁니다(`OpsStationPort.write`, `CellSignalOperations.write` 경유로 운영 서비스 → 실행 호스트 → 현장, 조작 기록 `WRITE_CELL_SIGNAL`, 행위자는 그 스테이션 작업의 요청자). 현장이 받아들였거나 응답 없음 뒤 다시 읽은 값이 같으면 성공입니다. 그 뒤 다시 스테이션 잠금 안에서 상태·`revision`·점유·격리 여부가 그대로인지 확인하고 `DISPATCHING`으로 넘깁니다. 바뀌었으면 넘기지 않고, 실패면 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다»로 남깁니다. 설비는 시작 때 번호를 붙들고, 완료 신호를 올리기 전에 반환 신호에 그 번호를 써야 합니다. 완료 true인데 반환 번호가 다르면 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다»로 `REVIEW_REQUIRED`가 되며 점유를 유지합니다. 운영자가 신호를 내리고 `RESUME_OBSERVATION`을 하면 이번 번호로 완료할 수 있습니다. 설비 세부 요구는 [공유 스테이션 설비 연동 요구 사양](station-equipment-requirements.md)을 봅니다.
+
+외부 검토 실험 A1에서 확인되었듯, 스테이션 작업 X를 보낸 뒤 로봇이 끝나지 않아 실행 기한 초과로 `REVIEW_REQUIRED`가 되었을 때 운영자가 `CONFIRM_CLEAR`로 해제해도 실행 호스트에서 X의 실행이 멈추지 않습니다. 해제는 실행을 멈추지 않으므로, 다음 작업 Y가 보내진 뒤 X 쪽 설비가 늦게 완료 신호를 올리면 Y의 완료로 잘못 받아들일 위험이 있습니다. 따라서 작업 번호 쌍이 없는 스테이션은 보낸 적이 있는 스테이션 작업을 `CONFIRM_CLEAR`로 해제하면 스테이션을 격리합니다. 격리되면 다음 작업은 `WAITING_READY`에서 보내지 않고 기한이 멈추며, `CONFIRM_STATION_IDLE`로 풉니다. 해제 조건과 구체적인 거부 사유는 운영자 판단 절을 봅니다.
+
+이 격리 방식에도 한계는 남습니다. 작업 번호 쌍이 없는 스테이션에서 X가 정상 완료한 뒤 X 쪽 설비가 완료 신호를 다시 true로 쓰면, 실행 중인 Y의 로봇이 물리 완료일 때 Y의 완료로 받아들일 수 있습니다(정상 완료는 격리하지 않습니다). 둘을 가를 수 있는 것은 작업 번호 쌍뿐입니다.
 
 ### 잠금과 실행 단위
 
-DB 잠금(스테이션 행 `FOR UPDATE`, 임무별 advisory 잠금 `pg_advisory_xact_lock(hashtext(임무 id))`)은 판단에만 쓰고 호스트 호출 동안에는 잡지 않습니다. `tick` 과 `rework` 는 JVM 의 `@Synchronized` 로 한 프로세스 안에서 서로 겹치지 않습니다. `tick` 이 `RETRYING`·`REWORKING` 을 보면 앞 프로세스가 멈췄다고 읽는 것은 조정기가 하나뿐일 때만 맞습니다. 배포 전제는 [보장 범위](guarantees.md) 링크를 봅니다.
+DB 잠금(스테이션 행 `FOR UPDATE`, 임무별 advisory 잠금 `pg_advisory_xact_lock(hashtext(임무 id))`)은 판단에만 쓰고 호스트 호출 동안에는 잡지 않습니다. 작업 번호 쓰기도 호스트 호출이라 잠금 밖에서 하고 그 뒤 잠금 안에서 상태·`revision`·점유·격리를 다시 확인한 뒤에만 `DISPATCHING`으로 넘깁니다. `tick` 과 `rework` 는 JVM 의 `@Synchronized` 로 한 프로세스 안에서 서로 겹치지 않습니다. `tick` 이 `RETRYING`·`REWORKING` 을 보면 앞 프로세스가 멈췄다고 읽는 것은 조정기가 하나뿐일 때만 맞습니다. 배포 전제는 [보장 범위](guarantees.md) 링크를 봅니다.
 
 ## 시스템 동작 및 운영 상세
 
@@ -272,7 +282,7 @@ DB 잠금(스테이션 행 `FOR UPDATE`, 임무별 advisory 잠금 `pg_advisory_
 
 `quadruped-01` 기체는 `pick_place` 케이퍼빌리티가 없으므로 연결 상태 장애만 발생할 수 있습니다.
 
-신호는 다섯입니다. 공유 검사 스테이션의 일반 공정 신호 `inspection_ready`(처음 true)와 `inspection_complete`(처음 false), 랙 자리 `RACK-204`의 `rack_present`(처음 false), 안전 신호 `guard_closed`(처음 true), 텍스트 신호 `lot_code`(처음 `LOT-0001`)로 구성됩니다. 시간이 지나도 스스로 바뀌지 않고 `POST /cell/signals/{name}`로만 바뀌며, 안전 신호 쓰기는 거부됩니다. 신호의 `observedAt`은 마지막으로 값을 쓴 시각이고, 한 번도 쓰지 않은 처음 값은 `observedAt`이 비어 있습니다.
+신호는 일곱입니다. 공유 검사 스테이션의 일반 공정 신호 `inspection_ready`(처음 true)와 `inspection_complete`(처음 false), 작업 번호 송신·반환 텍스트 신호 `inspection_job`·`inspection_job_done`(처음 빈 문자열), 랙 자리 `RACK-204`의 `rack_present`(처음 false), 안전 신호 `guard_closed`(처음 true), 텍스트 신호 `lot_code`(처음 `LOT-0001`)로 구성됩니다. 운영 서비스가 전송 전에 `inspection_job`에 번호를 쓰고 설비 역할이 `inspection_job_done`에 반환합니다. 시간이 지나도 스스로 바뀌지 않고 `POST /cell/signals/{name}`로만 바뀌며, 안전 신호 쓰기는 거부됩니다. 셀 대역 화면의 신호 표는 TEXT 신호에 조작 버튼을 두지 않습니다. 신호의 `observedAt`은 마지막으로 값을 쓴 시각이고, 한 번도 쓰지 않은 처음 값은 `observedAt`이 비어 있습니다.
 
 신호 사양은 셀 대역 픽스처 코드에 상수로 정의되어 있으며, 화면 편집이나 버전 관리를 지원하지 않습니다.
 
@@ -388,15 +398,15 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-13에 `main 511d5bc`의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 아래 표의 실행 기록과 같습니다. UI는 2026-10-13 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 23개 파일 213개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-13에 PR #26(작업 번호 신호와 스테이션 격리 변경)의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-13 PR #26 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 23개 파일 217개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 360 | PR #22 의 실행 기록(357 에서 360 으로 늘고 모두 통과) |
+| `ops-service` | 377 | 로컬 시험 결과 XML 377건(360 에서 17 늘어남, 모두 `StationCoordinatorTest`) |
 | `mission-host` | 83 | 로컬 시험 결과 XML 83건 |
 | `site` | 38 | 로컬 시험 결과 XML 38건 |
-| `e2e` | 67(시험 클래스 14개) | PR #21 의 실행 기록(14개 클래스 67건 모두 통과) |
-| `ui`(vitest) | 213(시험 파일 23개) | 2026-10-13 로컬 실행 |
+| `e2e` | 69(시험 클래스 15개, `StationLateCompletionTest` 2건 추가) | 로컬 시험 결과 XML 69건 |
+| `ui`(vitest) | 217(시험 파일 23개, `StationWorkspace.test.tsx` 에 4건 추가) | 2026-10-13 로컬 실행 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
 
@@ -414,13 +424,15 @@ Kotlin 네 모듈은 2026-10-13에 `main 511d5bc`의 `<모듈>/src/test` 아래 
 
 `StationScenarioTest`는 데이터 임무 `StationInspection`(예제 `docs/examples/mission-profile-station-inspection.json`)을 활성화하고 호출 계약 `station-check`를 배포한 뒤 스테이션 `inspection-1`에 작업 둘을 넣어, 두 번째가 `QUEUED`로 기다리고 첫 작업이 로봇 물리 완료만으로는 `RUNNING`에 머물다가 설비 완료 신호를 켜야 `COMPLETED`가 되는 것을 봅니다. `MixedResourceScenarioTest`는 `InspectAsset`에 필수 자원을 등록한 뒤 외부 주문, 호출 계약 호출, 수동 요청, 기존 `POST /api/job-orders` 네 경로가 모두 같은 스테이션 대기열을 지나 차례로 실행되고 외부 주문 재전송이 같은 작업 요청을 돌려주는 것을 봅니다. `ManufacturingScenarioTest`는 스테이션을 쓰지 않습니다. 같은 검사 호출 계약으로 낸 작업 요청 둘이 두 기체에 하나씩 배정되고, 시운전을 마쳤어도 `pick_place`가 없는 기체는 순차 공급(`PrepareSequencedRack`) 후보에서 빠지며, 운영자 보류에 선 순차 공급을 재작업으로 해소하고 끝낸 뒤에도 같은 요청 ID 재전송이 같은 작업 요청·작업 지시·변환 결과를 돌려주는 것을 봅니다. `StationPhysicalStateParityTest`는 스택을 띄우지 않고 스테이션 조정기의 확인 필요 물리 상태 목록(`StationCoordinator.REVIEW_PHYSICAL_STATES`)을 picasso `PhysicalState`와 이름으로 맞댑니다. 운영 서비스 main과 그 시험에는 picasso 미들웨어가 클래스패스에 없어 이 모듈에서 봅니다.
 
-`SkeletonTest`는 `ops.flyway_schema_history`의 성공한 버전이 1부터 16까지인지 봅니다.
+`StationLateCompletionTest`는 `StationScenarioTest`와 같은 데이터 임무 `StationInspection`과 호출 계약 `station-check`로 스테이션 `inspection-1`(단계 기한 20초)을 씁니다. X를 보내고 로봇을 끝내지 않아 실행 기한 초과 → `REVIEW_REQUIRED` → `CONFIRM_CLEAR`. 작업 번호 쌍(`inspection_job`·`inspection_job_done`) 변형: Y가 다른 기체로 `RUNNING`, `inspection_job`에 Y의 번호가 쓰여 있음, 시험이 설비 역할로 X의 번호와 완료 true를 쓰면 Y는 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다»로 `REVIEW_REQUIRED`이고 점유 유지, 신호를 내리고 관측 재개 뒤 Y의 번호와 완료를 쓰면 `COMPLETED`. 쌍이 없는 변형: X 해제 뒤 스테이션이 격리되고 Y는 `WAITING_READY`(작업 요청 없음)에 머물며, 완료 신호가 켜져 있으면 `CONFIRM_STATION_IDLE`이 409, 끄고 판단하면 격리가 풀리고 Y가 실행되어 완료. 두 변형 모두 `build/reports/station-late-completion-echo.json`, `station-late-completion-quarantine.json`에 근거를 남깁니다.
 
-시험 클래스는 14개로, `SkeletonTest`, `LifecycleTest`, `AdapterTest`, `CommissioningTest`, `SiteSettingsTest`, `JobOrderTest`, `MissionVersionTest`, `SiteTimingsTest`, `FaultIncidentTest`, `RestartRecoveryTest`에 `StationScenarioTest`, `MixedResourceScenarioTest`, `ManufacturingScenarioTest`, `StationPhysicalStateParityTest`가 더해졌습니다. 도우미 파일은 그대로 `E2eStack`, `ExecutionDriver`, `Commissioned`입니다. `E2eStack.start(integrationToken = …)`로 외부 주문 API를 켠 스택을 띄웁니다.
+`SkeletonTest`는 `ops.flyway_schema_history`의 성공한 버전이 1부터 17까지인지 봅니다.
+
+시험 클래스는 15개로, `SkeletonTest`, `LifecycleTest`, `AdapterTest`, `CommissioningTest`, `SiteSettingsTest`, `JobOrderTest`, `MissionVersionTest`, `SiteTimingsTest`, `FaultIncidentTest`, `RestartRecoveryTest`에 `StationScenarioTest`, `MixedResourceScenarioTest`, `ManufacturingScenarioTest`, `StationPhysicalStateParityTest`, `StationLateCompletionTest`가 더해졌습니다. 도우미 파일은 그대로 `E2eStack`, `ExecutionDriver`, `Commissioned`입니다. `E2eStack.start(integrationToken = …)`로 외부 주문 API를 켠 스택을 띄웁니다.
 
 ### 입증 근거 통합 시험 메서드
 
-통합 시험 소스 파일 경로는 `e2e/src/test/kotlin/dev/picasso/ops/e2e/<클래스>.kt`이며, 메서드 이름 뒤의 괄호는 `main 511d5bc` 기준 행 번호입니다. 옛 목록의 행 번호는 `511d5bc`에서 다시 대조해 모두 같았습니다.
+통합 시험 소스 파일 경로는 `e2e/src/test/kotlin/dev/picasso/ops/e2e/<클래스>.kt`이며, 메서드 이름 뒤의 괄호는 `main 511d5bc` 기준 행 번호입니다. 옛 목록의 행 번호는 `511d5bc`에서 다시 대조해 모두 같았습니다. `StationLateCompletionTest`의 행 번호는 PR #26 기준이고, 다른 클래스의 행 번호는 PR #26에서도 같습니다.
 
 `LifecycleTest`:
 
@@ -501,6 +513,11 @@ Kotlin 네 모듈은 2026-10-13에 `main 511d5bc`의 `<모듈>/src/test` 아래 
 `StationPhysicalStateParityTest`:
 
 - `확인 필요 물리 상태는 정착한 비성공 상태와 운영자 보류와 결과 불명이다`(15)
+
+`StationLateCompletionTest`:
+
+- `작업 번호 반환 스테이션은 해제한 이전 작업의 늦은 완료 신호를 실제 스택에서 다음 작업의 완료로 채택하지 않는다`(46)
+- `작업 번호 반환이 없는 스테이션은 보낸 작업을 해제하면 격리하고 현장 확인 후 격리 해제 전에는 실제 스택에서 다음 작업을 보내지 않는다`(69)
 
 ### Playwright 화면 시험
 
@@ -591,6 +608,8 @@ cd ui && npx playwright test -c playwright.screens.config.ts
 - 스테이션 작업(`station_run`): 공유 스테이션 하나를 차례로 점유하는 단위입니다. 필수 자원 경로에서는 작업 요청과 같은 id입니다.
 - 결과 버전(`work_result`): 작업 요청마다 1부터 붙는 저장 결과입니다. 수신 확인은 버전과 `resultHash`에 묶입니다.
 - 기준선(`result_baseline`): 스테이션 작업이 `RUNNING`에 들어갈 때 적은 최신 결과 버전입니다. 그보다 새 결과만 이번 시도의 근거입니다.
+- 작업 번호(`jobSignal`·`jobEchoSignal`): 스테이션 작업 id를 설비에 넘기고 돌려받는 TEXT 신호 쌍입니다. 반환 번호가 이번 번호와 같아야 완료 근거가 됩니다.
+- 격리(`quarantined_by`): 쌍이 없는 스테이션에서 보낸 작업을 현장 확인으로 해제했을 때 걸리는 표시입니다. 운영자 `CONFIRM_STATION_IDLE` 전까지 다음 작업을 보내지 않습니다.
 
 ## 추가 화면 참고
 

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import dev.picasso.ops.service.actor.Actor
 import dev.picasso.ops.service.actor.Mode
+import dev.picasso.ops.service.cell.CellSignalOperations
 import dev.picasso.ops.service.host.HostCall
 import dev.picasso.ops.service.host.HostReads
 import dev.picasso.ops.service.interfaces.MissionInterfaces
@@ -13,17 +14,24 @@ import java.time.Instant
 import java.util.UUID
 
 data class StationSignal(val value: Boolean, val observedAt: Instant?)
+/** A declared non-safety TEXT signal: the job-number command and its echo. */
+data class StationText(val value: String, val observedAt: Instant?)
+/** One cell read. A completion and its job-number echo are judged from the same snapshot. */
+data class StationSignals(val flags: Map<String, StationSignal>, val texts: Map<String, StationText> = emptyMap())
 data class StationReceipt(val id: UUID, val state: String, val safeToRetry: Boolean, val updatedAt: String, val physicalState: String?, val snapshot: JsonNode?, val resultVersion: Int? = null)
 interface StationPort {
  fun validate(payload: JsonNode)
  fun signals(): Map<String, StationSignal>?
+ fun read(): StationSignals? = signals()?.let{StationSignals(it)}
+ /** Writes a TEXT command signal on the site. True only when the site holds the value. */
+ fun write(name: String, value: String, actor: Actor): Boolean
  fun dispatch(id: UUID, payload: JsonNode, actor: Actor): StationReceipt
  fun receipt(id: UUID): StationReceipt
  fun retryForRun(receipt:StationReceipt,attempt:UUID,actor:Actor,runId:UUID):StationReceipt=retry(receipt,attempt,actor)
  fun retry(receipt: StationReceipt, attempt: UUID, actor: Actor): StationReceipt
 }
 /** Uses durable receipts; an uncertain submission is never sent again. */
-class OpsStationPort(private val requests: WorkRequests, private val interfaces: MissionInterfaces, private val host: HostReads): StationPort {
+class OpsStationPort(private val requests: WorkRequests, private val interfaces: MissionInterfaces, private val host: HostReads, private val cell: CellSignalOperations? = null): StationPort {
  private val json=ObjectMapper()
  override fun validate(payload:JsonNode) {
   val wm=interfaces.get(payload["interfaceId"].asText(),payload["interfaceVersion"].asInt()).workMasterId
@@ -33,10 +41,18 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
   val deployment=(draft as dev.picasso.ops.service.joborders.DeployedJobOrderDraft).deployment
   require(deployment["deploymentVersion"].asInt()==payload["expectedDeploymentVersion"].asInt()) { "조회한 계약 배포가 변경되었습니다" }
  }
- override fun signals():Map<String,StationSignal>? {
+ override fun signals()=read()?.flags
+ override fun read():StationSignals? {
   val list=(host.cell() as? HostCall.Ok)?.value?.path("cell")?.path("signals")?.takeIf{it.isArray} ?: return null
-  return list.filter { it.path("kind").asText()=="BOOLEAN" && it.path("safety").isBoolean && !it.path("safety").asBoolean() && it.path("value").asText() in setOf("true","false") }
-   .associate { it.path("name").asText() to StationSignal(it.path("value").asText()=="true",it.path("observedAt").takeIf{it.isTextual}?.asText()?.let(Instant::parse)) }
+  val plain=list.filter{it.path("safety").isBoolean && !it.path("safety").asBoolean() && it.path("value").isTextual}
+  fun at(node:JsonNode)=node.path("observedAt").takeIf{it.isTextual}?.asText()?.let(Instant::parse)
+  return StationSignals(plain.filter{it.path("kind").asText()=="BOOLEAN" && it.path("value").asText() in setOf("true","false")}.associate{it.path("name").asText() to StationSignal(it.path("value").asText()=="true",at(it))},
+   plain.filter{it.path("kind").asText()=="TEXT"}.associate{it.path("name").asText() to StationText(it.path("value").asText(),at(it))})
+ }
+ /** Same path as an operator's signal write (host → site), logged; a lost response counts only when the requery shows the value. */
+ override fun write(name:String,value:String,actor:Actor):Boolean {
+  val outcome=(cell ?: return false).write(actor,name,value)
+  return outcome.result==OperationResult.SUCCEEDED || outcome.confirmation==OperationResult.CONFIRMED_APPLIED
  }
  override fun dispatch(id:UUID,payload:JsonNode,actor:Actor):StationReceipt {
   if(payload["receiptId"]!=null)return mapped(requests.dispatchQueued(UUID.fromString(payload["receiptId"].asText()),actor).receipt.receiptId)

@@ -1211,7 +1211,8 @@ export async function createMissionProfile(session:Session,profile:MissionProfil
  return body
 }
 
-export interface RfStation { stationId:string; name:string; readySignal:string; completeSignal:string; timeoutSeconds:number; owner:string|null }
+/** jobSignal·jobEchoSignal: 작업 번호 송신·반환 TEXT 신호(둘 다 있거나 둘 다 없음). quarantinedBy: 현장 확인 해제로 격리를 건 작업. */
+export interface RfStation { stationId:string; name:string; readySignal:string; completeSignal:string; timeoutSeconds:number; owner:string|null; jobSignal?:string|null; jobEchoSignal?:string|null; quarantinedBy?:string|null; quarantinedAt?:string|null }
 export interface StationRun { runId:string; stationId:string; payload:{receiptId?:string;workMasterId?:string;interfaceId?:string;interfaceVersion?:number;expectedDeploymentVersion?:number;input?:unknown}; actor:string; state:string; reason:string; receiptId:string|null; attempt:number; revision:number; createdAt:string; phaseAt:string; dispatchedAt:string|null }
 export interface StationEvent { state:string;reason:string;actor:string;recordedAt:string;context:unknown }
 export const fetchStations = (session:Session) => getHostJson<{stations:RfStation[];runs:StationRun[]}>('/api/stations',session)

@@ -176,8 +176,8 @@ open class OpsApplication {
 
     @Bean
     open fun stationCoordinator(jdbc:JdbcClient, dataSource:DataSource, requests:dev.picasso.ops.service.requests.WorkRequests,
-        interfaces:dev.picasso.ops.service.interfaces.MissionInterfaces, host:HostClient, clock:Clock):dev.picasso.ops.service.stations.StationCoordinator =
-        dev.picasso.ops.service.stations.StationCoordinator(jdbc,TransactionTemplate(DataSourceTransactionManager(dataSource)),dev.picasso.ops.service.stations.OpsStationPort(requests,interfaces,host),clock)
+        interfaces:dev.picasso.ops.service.interfaces.MissionInterfaces, host:HostClient, cell:CellSignalOperations, clock:Clock):dev.picasso.ops.service.stations.StationCoordinator =
+        dev.picasso.ops.service.stations.StationCoordinator(jdbc,TransactionTemplate(DataSourceTransactionManager(dataSource)),dev.picasso.ops.service.stations.OpsStationPort(requests,interfaces,host,cell),clock)
 
     companion object {
         /** 설정 파일 이름을 `ops-service` 로 둔다. 같은 JVM 의 registry `application.properties` 와 가리지 않게(스펙 §7.1). */

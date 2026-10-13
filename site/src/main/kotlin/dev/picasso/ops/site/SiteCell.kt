@@ -67,6 +67,8 @@ data class CellFixture(
          *
          * 기본 신호 셋은 picasso 시험 픽스처 `MissionFixtures.SIGNALS` 와 같은 사양이다. `rack_present` 는 랙 자리 `RACK-204` 가
          * 내고 처음에는 랙이 없다(`false`). `guard_closed` 는 안전 신호이고 처음에 닫혀 있다(`true`). `lot_code` 는 텍스트 신호다. inspection_ready·inspection_complete는 공유 검사 스테이션의 일반 공정 신호다.
+         * inspection_job·inspection_job_done 은 그 스테이션의 작업 번호 송신·반환 텍스트 신호이고 처음에 비어 있다. 운영 서비스가 전송 전에
+         * 번호를 쓰고 설비가 완료와 함께 반환한다.
          */
         val STANDARD = CellFixture(
             presentations = linkedMapOf("SEQ-IN-02.BIN-A" to "ENGINE-COVER-A"),
@@ -74,6 +76,8 @@ data class CellFixture(
             signals = listOf(
                 SignalFixture("inspection_ready", SignalKind.BOOLEAN, initial = "true"),
                 SignalFixture("inspection_complete", SignalKind.BOOLEAN, initial = "false"),
+                SignalFixture("inspection_job", SignalKind.TEXT, initial = ""),
+                SignalFixture("inspection_job_done", SignalKind.TEXT, initial = ""),
                 SignalFixture("rack_present", SignalKind.BOOLEAN, location = "RACK-204", initial = "false"),
                 SignalFixture("guard_closed", SignalKind.BOOLEAN, safety = true, initial = "true"),
                 SignalFixture("lot_code", SignalKind.TEXT, initial = "LOT-0001"),
