@@ -191,7 +191,7 @@ describe('운영 영역', () => {
     open(engineer)
     await fillTarget(1, 'T1', 'bay-7')
     expect(screen.queryByRole('button', { name: '작업 요청 내기' })).not.toBeInTheDocument()
-    expect(screen.getByText('작업 지시는 운영자 모드에서 냅니다')).toBeInTheDocument()
+    expect(screen.getByText('작업 요청은 운영자 모드에서 합니다.')).toBeInTheDocument()
     expect(await screen.findByRole('table', { name: '기체별 배정 가능' })).toBeInTheDocument()
   })
 

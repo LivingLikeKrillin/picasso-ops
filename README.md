@@ -55,6 +55,11 @@ MES·WMS 같은 상위 시스템은 외부 주문을 전달하고, 로봇은 기
 | `site` | registry·mimic·셀 대역을 띄우는 로컬 현장 런처 |
 | `picasso/` | 고정 커밋의 읽기 전용 Core 서브모듈, Gradle composite build로 사용 |
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture.dark.svg">
+  <img alt="picasso-ops 프로세스 셋, Postgres, site 런처, picasso 서브모듈 연결" src="docs/diagrams/architecture.svg">
+</picture>
+
 Ops는 공유 스테이션 실행 근거를 `GET /api/stations/runs/{id}/evidence` 응답(스키마 `ops.station.evidence/1`)으로 제공하며, [picasso-narrator](https://github.com/LivingLikeKrillin/picasso-narrator)는 이 응답을 저장한 파일을 읽어 설명할 수 있습니다. 설명은 Ops 상태를 변경하지 않으며, 현재 Ops UI와 자동으로 연결되어 있지 않습니다.
 
 ## 운영 흐름
@@ -222,7 +227,7 @@ npm run build
 npm run lint
 ```
 
-브라우저 검증은 전체 스택을 직접 띄웁니다. **종료 시 compose 프로젝트 `site`의 볼륨을 삭제하므로 보존할 데이터가 없는 시험 환경에서 실행하세요.** 기본 생애주기와 스테이션 시험은 각각 실행합니다.
+브라우저 검증은 전용 compose 프로젝트 `picasso-ops-e2e`로 Postgres를 띄웁니다. **시작과 종료 시 해당 프로젝트를 정리(`down -v`)하며, 평소 쓰는 `site` 프로젝트의 컨테이너와 볼륨은 건드리지 않습니다.** 기본 생애주기와 스테이션 시험은 각각 실행합니다.
 
 ```bash
 cd ui
@@ -267,5 +272,6 @@ npx playwright test --config=playwright.station.config.ts
 | [임무 자원 실행](docs/screens/mission-resource-enforcement-2026-10-12.md) | 공통 작업 요청·자원 소유·혼합 호출 검증 |
 | [상위 결과 회신](docs/screens/upstream-results-2026-10-11.md) | 버전·해시·수신 확인과 전달 |
 | [로봇 도입](docs/screens/onboarding-refresh.md) | 신규 유형과 기존 기체의 준비 절차 |
-| [상세 참조](docs/reference.md) | 초기 구성·상태·운영 제약의 상세 기록 |
+| [운영 보장 명세](docs/guarantees.md) | 보장·비보장 범위·배포 전제·릴리스 조합 표기 |
+| [상세 참조](docs/reference.md) | 구성·스키마·핵심 경로·상태 모델의 상세 기록 |
 | [화면 자료](docs/screens/README.md) | 촬영 조건과 다시 찍는 방법 |
