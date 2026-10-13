@@ -8,7 +8,7 @@
 
 - 단계마다 자동 동작의 근거 시험 이름을 붙입니다. 시험 위치는 운영 서비스 시험 `ops-service/src/test/kotlin/dev/picasso/ops/service/`, 실행 호스트 시험 `mission-host/src/test/kotlin/dev/picasso/ops/host/`, 통합 시험 `e2e/src/test/kotlin/dev/picasso/ops/e2e/`, 화면 시험 `ui/e2e/` 입니다. 코드 위치 접두 `ops-service/src/main/kotlin/dev/picasso/ops/service/` 는 줄여 `requests/WorkRequests.kt` 처럼 씁니다.
 - 용어에서 배포는 같은 호출 계약 버전(`interfaceId`, `interfaceVersion`)의 `deploymentVersion` 입니다. 조합은 (호출 계약 버전, 배포 버전, 임무 버전) 셋입니다.
-- 모드에서 배포 적용은 엔지니어 모드, 미배정 재평가·현장 확인 기록·스테이션 판단은 운영자 모드에서만 됩니다. API 는 `X-Ops-Mode`·`X-Ops-User` 헤더로 모드와 사용자를 고릅니다(인증 아님).
+- 모드에서 배포 적용은 엔지니어 모드, 미배정 재평가·현장 확인 기록·스테이션 판단·실행 취소·기체 빈손 확인은 운영자 모드에서만 됩니다. API 는 `X-Ops-Mode`·`X-Ops-User` 헤더로 모드와 사용자를 고릅니다(인증 아님).
 - 화면 상세 응답과 API 는 같은 값입니다: 작업 요청 상세는 `GET /api/work-requests/{id}` 입니다.
 
 ## C1 운영 중 호출 계약 배포 변경과 되돌림
@@ -110,7 +110,7 @@
 - 확인할 곳: 운영 → «실행» 위의 복원 보고(문구 «다시 지었습니다», «미룬 실행», «포기한 실행»)와 실행 id 옆 이전 인스턴스 표시, «작업 응답 송신 기록» 의 처분 칸, 작업 요청 상세입니다.
 - 기대하는 결과:
   - 자동으로 일어나는 것: 기동 때 pump 를 시작하기 전에 일지에서 정착하지 않은 행을 받은 순서와 받은 때 임무 버전으로 다시 짓습니다. 다시 지은 실행은 같은 태스크 id 로 다시 붙고 새 태스크를 내지 않습니다. 인스턴스 id 가 바뀌고 실행 id 는 `exec-1` 부터 다시 셉니다. 복원 결과는 `RESTORED`(다시 지음), `DEFERRED`(기체 스냅숏을 못 읽음, pump 마다 다시 시도, 그동안 그 기체는 배정에서 빠짐), `GAVE_UP`(그 밖의 거부, 다시 짓지 않음, 그 작업 지시의 태스크가 끝날 때까지 그 기체를 판정에서 뺌)입니다. 새 인스턴스에서 어떤 작업 지시의 첫 작업 응답이 가장 최근 송신 기록과 내용이 같으면 `RESTART_DUPLICATE`(화면 «재기동 중복(송신 안 함)»)로 적고 결과 outbox 에 넣지 않으므로 운영 서비스에 새 결과 버전이 생기지 않습니다. 운영 서비스는 `IN_DOUBT` 작업 요청의 작업 지시가 새 인스턴스 실행 목록에 보이면(일지 차단 실행이 아니면) `ACCEPTED` 로 올리고 `executionInstanceId` 를 새 인스턴스로 적습니다.
-  - 일어나지 않는 것: `IN_DOUBT` 작업 요청을 자동으로 다시 제출하지 않습니다. 보류 판단을 다시 넣지 않습니다. 다시 선 보류는 사람이 다시 판단하고, 이전 인스턴스 id 를 실은 판단은 409 `INSTANCE_MISMATCH` 입니다. 이전 인스턴스의 인시던트와 판단은 `earlier` 에서 봅니다.
+  - 일어나지 않는 것: `IN_DOUBT` 작업 요청을 자동으로 다시 제출하지 않습니다. 보류 판단을 다시 넣지 않습니다. 다시 선 보류는 사람이 다시 판단하고, 이전 인스턴스 id 를 실은 판단은 409 `INSTANCE_MISMATCH` 입니다. 이전 인스턴스의 인시던트와 판단은 `earlier` 에서 봅니다. 운영자 취소를 다시 걸지 않습니다(재기동 전에 `ABORTED` 로 정착하지 못한 취소는 다시 지은 실행에 걸리지 않고, 새 실행의 `cancel` 칸은 null; 그 실행이 아직 부분 완료면 새 실행 id 로 다시 취소). 이전 인스턴스 id 를 실은 취소도 409 `INSTANCE_MISMATCH` 입니다. 잔여 파지 표시는 그대로 남아 그 기체를 계속 뺍니다(자동으로 풀리지 않음). 근거 시험: `ExecutionControlTest` 의 `든 채 실패로 정착한 실행의 표시는 재기동해도 기체를 빼고 해소도 재기동 뒤까지 남으며 표시는 작업 지시마다 하나다`, `취소는 정착한 실행과 없는 실행을 받지 않고 다른 인스턴스는 409 이며 에이전트 승인자는 거부한다`.
 - 다르면: 복원 중 DB 가 실패하면 기동이 멈추므로 DB 부터 확인합니다. «포기한 실행» 이 있으면 화면 안내대로 그 기체의 남은 태스크를 운영자가 확인합니다. «미룬 실행» 이 오래 남으면 그 기체의 상태(로봇 메뉴)를 확인합니다.
 - 근거 시험: 실행 호스트 시험 `HostRestoreTest` 의 `도는 실행을 재기동하면 같은 작업 지시가 새 인스턴스의 실행으로 다시 서고 끝난 단위는 끝난 대로 새 태스크 없이 이어 끝까지 간다`, `재작업한 로봇 단위를 재기동하면 @rN 태스크에 다시 붙고 새 태스크를 내지 않는다`, `받은 뒤 다른 임무 버전을 활성화하고 재기동해도 받은 때의 임무 정의로 다시 짓는다`, `기체 스냅숏을 못 읽으면 미루고 그 기체를 판정에서 빼며 pump 마다 다시 시도해 읽히면 다시 짓고 그 밖의 거부는 포기한다`, `운영자 보류에 선 실행을 두 번 다시 띄워도 새 인스턴스의 첫 보류 응답은 재기동 중복이고 같은 인스턴스의 다음 보류는 송신이다`(결과 피드에 `RESTART_DUPLICATE` 응답이 들어가지 않고 피드 이벤트가 `SENT` 행과 하나씩 맞음) 입니다. `HostJournalTest` 의 `재기동 뒤 이전 인스턴스의 인시던트와 판단은 earlier 와 instanceId 상세에만 있고 그 인스턴스를 실은 판단은 409 다` 입니다. 통합 시험 `RestartRecoveryTest` 의 단계 2(태스크마다 `ACCEPTED` 한 번), 단계 4, 단계 6 입니다. 운영 서비스 시험 `WorkRequestsTest` 의 `전송 불명은 실행 관측으로 확정하고 호스트 단절 후에도 직전 관측을 보존한다`, `응답 불명과 제출 중단 상태는 재접수로 다시 실행하지 않는다`, `결과 불명 작업 요청은 재기동한 호스트에서 다시 지은 실행이 보일 때만 수락이 되고 일지 없는 실행은 사라져도 결과 불명으로 남는다`(재기동한 호스트에 다시 지은 실행이 보일 때만 `ACCEPTED`, 새 인스턴스 id 기록) 입니다.
 
@@ -146,12 +146,15 @@
 | 스테이션 `REVIEW_REQUIRED` | 점유를 쥐고 다음 작업을 보내지 않습니다. | 운영자 판단(API `POST /api/stations/runs/{id}/decision`, 본문 `expectedRevision`, `decision`, `reason`)을 합니다: «재실행 없이 관측 재개»(`RESUME_OBSERVATION`, 설비 완료 신호가 켜져 있으면 409), «현장 확인 후 자원 해제»(`CONFIRM_CLEAR`, 로봇에 보낸 작업이고 작업 번호 신호 쌍이 없으면 스테이션 격리), 또는 인시던트 판단의 재작업입니다. | `StationCoordinatorTest` 의 `재평가 중 재기동은 자동 재전송 없이 현장 확인으로 넘긴다`, `재작업 전달 중 프로세스가 멈추면 재기동 뒤 확인 필요로 넘긴다` |
 | 스테이션 격리 | 다음 작업이 `WAITING_READY`(«스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다»), 설비 준비 기한이 멈춥니다. | 설비가 비었고 이전 로봇이 멈췄는지 현장 확인 뒤 «현장 확인 후 격리 해제»(`CONFIRM_STATION_IDLE`)를 합니다. 격리된 스테이션을 점유한 `WAITING_READY` 작업이 아니면 409, 셀 신호를 못 읽으면 503, 완료 신호가 켜져 있으면 409 입니다. | `StationCoordinatorTest` 의 `작업 번호 반환이 없는 스테이션은 보낸 작업을 해제하면 격리하고 현장 확인 후 격리 해제 전에는 다음 작업을 보내지 않는다`, `격리 해제 판단은 격리된 스테이션을 점유한 설비 준비 대기 작업에서 운영자가 조회 버전으로 한다` |
 | 이전 인스턴스의 보류 판단 | 409 `INSTANCE_MISMATCH` 입니다. | 지금 인스턴스 id 로 다시 판단합니다. | `IncidentResolveTest` 의 `판단 요청에 instanceId 가 없으면 400 이고 지금 인스턴스가 아니면 409 INSTANCE_MISMATCH 이며 판단하지 않는다`, 통합 시험 `RestartRecoveryTest` 의 단계 6 |
+| 부분 완료 실행 | 판정 사유 «도는 실행이 있다: exec-N», 실행 목록 물리 상태 `PARTIAL`. 같은 작업 지시의 리비전도 `UNASSIGNED`. | 현장 확인 뒤 운영 › 실행 «실행 취소»(운영자 모드, API `POST /api/executions/{id}/cancel`, 본문 `instanceId`·`reason`). 다음 pump 에 `ABORTED` 로 정착하고 `ABORTED` 작업 응답이 나감. 이미 정착했거나 취소를 건 실행은 `NOT_CANCELABLE`, 다른 인스턴스는 409. | `MissionHostTest` 의 `부분 완료 실행의 기체는 도는 실행으로 판정과 제출에서 빠진다`, `ExecutionControlTest` 의 `빈손 부분 완료를 운영자가 취소하면 ABORTED 로 정착해 작업 응답이 나가고 표시 없이 기체가 다시 배정된다` |
+| 잔여 파지 표시 | 판정 사유 «잔여 파지 확인 필요: <작업 지시 id> <단위 id>», 운영 › 배정 가능 아래 «잔여 파지 확인» 표, API `GET /api/robots/residual-holds`. 재기동해도 남음. | 로봇 손·그리퍼가 비었는지 현장에서 직접 본 뒤 «기체 빈손 확인»(운영자 모드, API `POST /api/robots/{robotId}/residual-holds/{markerId}/clear`, 본문 `reason`). 없는 표시 404 `RESIDUAL_HOLD_NOT_FOUND`, 이미 해소 409 `RESIDUAL_HOLD_ALREADY_CLEARED`. | `ExecutionControlTest` 의 `든 채 끝난 부분 완료를 취소하면 정착 때 잔여 파지 표시가 서고 사람이 해소해야 기체가 다시 배정된다`, `든 채 실패로 정착한 실행의 표시는 재기동해도 기체를 빼고 해소도 재기동 뒤까지 남으며 표시는 작업 지시마다 하나다` |
 
 ### D1 에서 확인하는 기록
 | 기록 | 화면 | API | 알 수 있는 것 |
 |---|---|---|---|
 | 작업 요청 상태와 상세 | 작업 요청 → «작업 요청 상세», 구역 «거부 사유» | `GET /api/work-requests/{id}` | `receipt.state`·`detail`, `hostRead`, `journalBlocked`, `executionInstanceId`, `reviews`, `recoveries`, `resource`, `rejection`(호스트가 거부한 `REJECTED` 만, 그 밖 null) |
-| 실행 목록과 복원 보고 | 운영 → «실행» | `GET /api/executions` | 지금 인스턴스, 다시 지은 실행과 이전 인스턴스, `journalBlockedExecutionIds`, `restore` |
+| 실행 목록과 복원 보고 | 운영 → «실행» | `GET /api/executions` | 지금 인스턴스, 다시 지은 실행과 이전 인스턴스, `journalBlockedExecutionIds`, `restore`, `executions[].cancel`(이 인스턴스에서 건 운영자 취소: 승인자, 사유, 건 때 물리 상태, 기록 시각, 없으면 null). 화면은 물리 상태 칸 뒤 «(취소 요청: <승인자>, <사유>)». |
+| 잔여 파지 표시 | 운영 → «배정 가능» 아래 «잔여 파지 확인» | `GET /api/robots/residual-holds` | 미해소 표시(`markerId`, `robotId`, `jobOrderId`, `executionId`, `instanceId`, `unitId`, `objectRef`, `recordedAt`). 해소한 표시는 목록에서 빠지고 해소 기록(승인자·사유·시각)은 호스트 표 `mission.robot_residual_hold_clearing` 과 조작 기록 `CONFIRM_ROBOT_EMPTY` 행에 있음. |
 | 작업 응답 송신 기록 | 운영 → «작업 응답 송신 기록» | `GET /api/job-responses?jobOrderId=` | `SENT` 와 `RESTART_DUPLICATE` 처분 |
 | 결과 버전과 전달 | «외부 결과 · 수신 확인», «로컬 Mock MES 결과 전달» | `GET /api/work-requests/{id}` 의 `latestResult`·`deliveries`, `GET /integration/v1/job-orders/{id}/results/{version}` | 결과 버전, `resultHash`, 전달 상태, 수신 확인 |
 | 결과 수집 상태 | 운영 개요 «결과 자동 수집» | `GET /api/work-requests/collector` | 커서 순번, 마지막 번호, 생산자 id |

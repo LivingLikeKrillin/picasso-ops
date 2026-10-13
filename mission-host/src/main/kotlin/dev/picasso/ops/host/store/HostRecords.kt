@@ -5,6 +5,7 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
+import java.sql.Types
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -85,8 +86,37 @@ data class IncidentCopyRow(
     val resolution: CopyResolutionRow?,
 )
 
+/** 운영자 실행 취소 한 행(P0-b2, V5). [physicalState] 는 취소를 건 때의 물리 상태다. */
+data class CancelRow(
+    val cancelId: Long,
+    val instanceId: String,
+    val executionId: String,
+    val jobOrderId: String,
+    val physicalState: String,
+    val approverId: String,
+    val approverKind: String,
+    val reason: String,
+    val recordedAt: Instant,
+)
+
+/** 잔여 파지 표시 한 행(P0-b2, V5). [objectRef] 는 관측이 이름을 싣지 않았으면 `null` 이다. */
+data class ResidualHoldRow(
+    val markerId: Long,
+    val robotId: String,
+    val jobOrderId: String,
+    val executionId: String,
+    val instanceId: String,
+    val unitId: String,
+    val objectRef: String?,
+    val recordedAt: Instant,
+)
+
+/** 잔여 파지 표시의 해소 한 행(P0-b2, V5). */
+data class ResidualHoldClearingRow(val markerId: Long, val approverId: String, val approverKind: String, val reason: String, val clearedAt: Instant)
+
 /**
  * 실행 호스트의 기록(S4b 스펙 §6.1). 실행 일지와 그 이벤트, 송신 기록, 인시던트 사본과 판단의 다섯 표다. 덧붙이기와 읽기만 있다.
+ * P0-b2 의 V5 가 운영자 실행 취소, 잔여 파지 표시와 그 해소의 세 표를 더한다.
  *
  * pump 뒤 기록은 [inTransaction] 하나로 묶는다(§6.2). 그 밖의 호출은 문장 하나가 한 트랜잭션이다. 호스트 잠금 아래에서 부를 수
  * 있고, 연결을 쥔 채 호스트 잠금을 기다리는 길은 없다(S3b 와 같은 잠금 순서).
@@ -329,6 +359,137 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             .optional()
             .orElse(null)
 
+    // ── 운영자 실행 취소와 잔여 파지 표시(P0-b2)
+
+    fun cancel(
+        instanceId: String,
+        executionId: String,
+        jobOrderId: String,
+        physicalState: String,
+        approverId: String,
+        approverKind: String,
+        reason: String,
+    ): CancelRow =
+        jdbc.sql(
+            """
+            INSERT INTO mission.execution_cancel (instance_id, execution_id, job_order_id, physical_state, approver_id, approver_kind, reason)
+            VALUES (:instanceId, :executionId, :jobOrderId, :physicalState, :approverId, :approverKind, :reason)
+            RETURNING $CANCEL_COLUMNS
+            """.trimIndent(),
+        )
+            .param("instanceId", instanceId)
+            .param("executionId", executionId)
+            .param("jobOrderId", jobOrderId)
+            .param("physicalState", physicalState)
+            .param("approverId", approverId)
+            .param("approverKind", approverKind)
+            .param("reason", reason)
+            .query { rs, _ -> cancelRow(rs) }
+            .single()
+
+    /** 그 인스턴스의 운영자 취소. 적은 순서다. */
+    fun cancels(instanceId: String): List<CancelRow> =
+        jdbc.sql("SELECT $CANCEL_COLUMNS FROM mission.execution_cancel WHERE instance_id = :instanceId ORDER BY cancel_id")
+            .param("instanceId", instanceId)
+            .query { rs, _ -> cancelRow(rs) }
+            .list()
+
+    /**
+     * 잔여 파지 표시를 적는다. 그 작업 지시에 이미 표시가 있으면 아무것도 적지 않고 `null` 이다(재기동·중복 정착에도 하나).
+     * [objectRef] 가 빈 문자열이면 `null` 로 적는다.
+     */
+    fun markResidualHold(robotId: String, jobOrderId: String, executionId: String, instanceId: String, unitId: String, objectRef: String?): ResidualHoldRow? =
+        jdbc.sql(
+            """
+            INSERT INTO mission.robot_residual_hold (robot_id, job_order_id, execution_id, instance_id, unit_id, object_ref)
+            VALUES (:robotId, :jobOrderId, :executionId, :instanceId, :unitId, :objectRef)
+            ON CONFLICT (job_order_id) DO NOTHING
+            RETURNING $HOLD_COLUMNS
+            """.trimIndent(),
+        )
+            .param("robotId", robotId)
+            .param("jobOrderId", jobOrderId)
+            .param("executionId", executionId)
+            .param("instanceId", instanceId)
+            .param("unitId", unitId)
+            .param("objectRef", objectRef?.takeIf { it.isNotEmpty() }, Types.VARCHAR)
+            .query { rs, _ -> holdRow(rs) }
+            .optional()
+            .orElse(null)
+
+    /** 해소 행이 없는 표시. 적은 순서다. */
+    fun openResidualHolds(): List<ResidualHoldRow> =
+        jdbc.sql(
+            """
+            SELECT $HOLD_COLUMNS FROM mission.robot_residual_hold h
+            WHERE NOT EXISTS (SELECT 1 FROM mission.robot_residual_hold_clearing c WHERE c.marker_id = h.marker_id)
+            ORDER BY marker_id
+            """.trimIndent(),
+        )
+            .query { rs, _ -> holdRow(rs) }
+            .list()
+
+    /** 표시 하나와 그 해소. 표시가 없으면 `null` 이다. */
+    fun residualHold(markerId: Long): Pair<ResidualHoldRow, ResidualHoldClearingRow?>? {
+        val hold = jdbc.sql("SELECT $HOLD_COLUMNS FROM mission.robot_residual_hold WHERE marker_id = :markerId")
+            .param("markerId", markerId)
+            .query { rs, _ -> holdRow(rs) }
+            .optional()
+            .orElse(null) ?: return null
+        val clearing = jdbc.sql("SELECT $CLEARING_COLUMNS FROM mission.robot_residual_hold_clearing WHERE marker_id = :markerId")
+            .param("markerId", markerId)
+            .query { rs, _ -> clearingRow(rs) }
+            .optional()
+            .orElse(null)
+        return hold to clearing
+    }
+
+    fun clearResidualHold(markerId: Long, approverId: String, approverKind: String, reason: String): ResidualHoldClearingRow =
+        jdbc.sql(
+            """
+            INSERT INTO mission.robot_residual_hold_clearing (marker_id, approver_id, approver_kind, reason)
+            VALUES (:markerId, :approverId, :approverKind, :reason)
+            RETURNING $CLEARING_COLUMNS
+            """.trimIndent(),
+        )
+            .param("markerId", markerId)
+            .param("approverId", approverId)
+            .param("approverKind", approverKind)
+            .param("reason", reason)
+            .query { rs, _ -> clearingRow(rs) }
+            .single()
+
+    private fun cancelRow(rs: ResultSet) = CancelRow(
+        cancelId = rs.getLong("cancel_id"),
+        instanceId = rs.getString("instance_id"),
+        executionId = rs.getString("execution_id"),
+        jobOrderId = rs.getString("job_order_id"),
+        physicalState = rs.getString("physical_state"),
+        approverId = rs.getString("approver_id"),
+        approverKind = rs.getString("approver_kind"),
+        reason = rs.getString("reason"),
+        recordedAt = instant(rs, "recorded_at"),
+    )
+
+    private fun holdRow(rs: ResultSet) = ResidualHoldRow(
+        markerId = rs.getLong("marker_id"),
+        robotId = rs.getString("robot_id"),
+        jobOrderId = rs.getString("job_order_id"),
+        executionId = rs.getString("execution_id"),
+        instanceId = rs.getString("instance_id"),
+        unitId = rs.getString("unit_id"),
+        objectRef = rs.getString("object_ref"),
+        recordedAt = instant(rs, "recorded_at"),
+    )
+
+    private fun clearingRow(rs: ResultSet) = ResidualHoldClearingRow(
+        markerId = rs.getLong("marker_id"),
+        approverId = rs.getString("approver_id"),
+        approverKind = rs.getString("approver_kind"),
+        reason = rs.getString("reason"),
+        clearedAt = instant(rs, "cleared_at"),
+    )
+
     private fun journalRow(rs: ResultSet) = JournalRow(
         journalId = rs.getLong("journal_id"),
         jobOrderId = rs.getString("job_order_id"),
@@ -396,6 +557,10 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             "log_id, instance_id, job_response_id, job_order_id, execution_id, version, physical_state, required_evidence, " +
                 "reached_evidence, completed_units, unverified_units, incomplete_units, in_doubt_units, operator_required, " +
                 "residual_hold, blocked_by, disposition, recorded_at"
+        const val CANCEL_COLUMNS =
+            "cancel_id, instance_id, execution_id, job_order_id, physical_state, approver_id, approver_kind, reason, recorded_at"
+        const val HOLD_COLUMNS = "marker_id, robot_id, job_order_id, execution_id, instance_id, unit_id, object_ref, recorded_at"
+        const val CLEARING_COLUMNS = "marker_id, approver_id, approver_kind, reason, cleared_at"
         const val COPY_SELECT =
             "SELECT c.copy_id, c.instance_id, c.incident_id, c.detail, r.decision, r.decided_at, r.wall_clock_at, r.decided_by_id, r.decided_by_kind " +
                 "FROM mission.incident_copy c LEFT JOIN mission.incident_copy_resolution r " +

@@ -175,6 +175,9 @@ class HostBench(
     /** 지금 뜬 호스트의 빈. */
     val host: MissionHost get() = context.getBean(MissionHost::class.java)
 
+    /** 지금 뜬 호스트 컨텍스트의 빈 하나. 시험이 기록 저장소를 직접 부를 때 쓴다. */
+    fun <T : Any> bean(type: Class<T>): T = context.getBean(type)
+
     /** 이 세트와 같은 인자로 호스트를 하나 띄운다. 기동이 실패하면 예외가 그대로 나간다. */
     fun startHost(): ConfigurableApplicationContext = MissionHostApplication.builder(HostClock { now() }, if (gated) gatedPort() else null).run(
         *buildList {

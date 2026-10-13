@@ -43,10 +43,10 @@ sealed interface HostWrite {
 enum class HostSkillFit { FIT, MISSING, UNKNOWN }
 
 /**
- * 호스트 판정 한 행(S3a JSON 계약 §2.2). 호스트는 스킬 적합과 도는 실행만 보고, 시운전·연결은 운영 서비스가 합친다(T3).
+ * 호스트 판정 한 행(S3a JSON 계약 §2.2). 호스트는 자기 쪽 이유만 보고, 시운전·연결은 운영 서비스가 합친다(T3).
  *
- * @param runningExecutionId 이 기체에서 물리 상태가 정착하지 않은 실행. 없으면 널. 운영자 보류도 도는 실행이다
- * @param passed 스킬 적합이고 도는 실행이 없다
+ * @param runningExecutionId 이 기체를 쥔 실행. 정착하지 않은 실행과 부분 완료(`PARTIAL`) 실행이다. 없으면 널. 운영자 보류도 도는 실행이다
+ * @param passed 호스트가 막을 이유가 하나도 없다([reasons] 가 비었다). 스킬 부적합, 도는 실행, 복원 못 한 실행, 잔여 파지 확인 필요, 시간값 미적용, 일지 차단이 그 이유다
  * @param reasons 통과하지 못한 이유(화면 표시용). 통과면 비어 있다
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -235,6 +235,28 @@ fun interface HostJobResponses {
     fun jobResponses(jobOrderId: String?, limit: Int?): HostCall<JsonNode>
 }
 
+/**
+ * 운영자 실행 취소와 잔여 파지 표시(P0-b2). 시험이 호스트 없이 대신 끼운다.
+ *
+ * 읽기 둘은 본문을 해석하지 않고 넘긴다. 쓰기 둘은 응답이 오면 코드와 본문을 그대로 넘기고 분류는 부르는 쪽이 한다.
+ */
+interface HostExecutionControls {
+    /** `GET /host/executions` 본문 그대로. 취소의 응답 없음 뒤 재조회가 쓴다. */
+    fun executions(): HostCall<JsonNode>
+
+    /**
+     * `POST /host/executions/{executionId}/cancel`. [instanceId] 는 실행 목록에서 받은 인스턴스이고 지금 인스턴스가 아니면 호스트가
+     * 409 `INSTANCE_MISMATCH` 로 막는다. 결과(CANCELED·NOT_CANCELABLE·NOT_FOUND·REFUSED)는 200 본문의 `result` 에 있다.
+     */
+    fun cancelExecution(executionId: String, approverId: String, reason: String, instanceId: String, requestId: UUID): HostWrite
+
+    /** `GET /host/robots/residual-holds` 본문 그대로. */
+    fun residualHolds(): HostCall<JsonNode>
+
+    /** `POST /host/robots/{robotId}/residual-holds/{markerId}/clear`. 없는 표시는 404, 이미 해소한 표시는 409 다. */
+    fun clearResidualHold(robotId: String, markerId: Long, approverId: String, reason: String, requestId: UUID): HostWrite
+}
+
 /** 장애 주입 전달(S4a 스펙 §7, T1). 시험이 호스트 없이 대신 끼운다. */
 fun interface HostFaults {
     /** `POST /host/faults`. 호스트는 [body] 를 해석하지 않고 현장에 넘기며 현장의 상태 코드와 본문을 그대로 돌려준다. */
@@ -242,7 +264,8 @@ fun interface HostFaults {
 }
 
 /**
- * 실행 호스트 REST 클라이언트(S3a 스펙 §8, S3b 스펙 §7, S3c 스펙 §8, S4a 스펙 §7, S4b 스펙 §7). 호스트는 루프백·무인증이라 토큰을 싣지 않는다.
+ * 실행 호스트 REST 클라이언트(S3a 스펙 §8, S3b 스펙 §7, S3c 스펙 §8, S4a 스펙 §7, S4b 스펙 §7, P0-b2). 호스트는 루프백·무인증이라 토큰을 싣지
+ * 않는다.
  *
  * 연결 제한은 registry 와 같고 요청 제한은 더 길다. 호스트는 판정과 제출을 자기 잠금 아래에서 하며, 그 안에서 mimic 에
  * gRPC 를 부르고, mimic 은 엔진 잠금 아래에서 registry 로 태스크 관측을 동기 HTTP 로 적재한다(요청 제한 3초, 스펙 §5.3).
@@ -259,7 +282,7 @@ class HostClient(
     private val requestTimeout: Duration = REQUEST_TIMEOUT,
     private val mockRunTimeout: Duration = MOCK_RUN_TIMEOUT,
 ) : HostReads, HostWrites, HostMissions, HostSignals, HostSiteTimings, HostIncidents, HostFaults, HostJobResponses,
-    AutoCloseable {
+    HostExecutionControls, AutoCloseable {
 
     private val base = checkBaseUrl(baseUrl)
 
@@ -389,6 +412,25 @@ class HostClient(
             .put("requestId", requestId.toString())
             .put("instanceId", instanceId)
         return post("/host/executions/${segment(executionId)}/units/${segment(unitId)}/resolve", body)
+    }
+
+    override fun cancelExecution(executionId: String, approverId: String, reason: String, instanceId: String, requestId: UUID): HostWrite {
+        val body = json.createObjectNode()
+            .put("approverId", approverId)
+            .put("reason", reason)
+            .put("instanceId", instanceId)
+            .put("requestId", requestId.toString())
+        return post("/host/executions/${segment(executionId)}/cancel", body)
+    }
+
+    override fun residualHolds(): HostCall<JsonNode> = get("/host/robots/residual-holds")
+
+    override fun clearResidualHold(robotId: String, markerId: Long, approverId: String, reason: String, requestId: UUID): HostWrite {
+        val body = json.createObjectNode()
+            .put("approverId", approverId)
+            .put("reason", reason)
+            .put("requestId", requestId.toString())
+        return post("/host/robots/${segment(robotId)}/residual-holds/$markerId/clear", body)
     }
 
     override fun jobResponses(jobOrderId: String?, limit: Int?): HostCall<JsonNode> {

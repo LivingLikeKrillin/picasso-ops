@@ -31,6 +31,7 @@ import { ELIGIBILITY_DEBOUNCE_MS, POLL_MS, SIGNAL_SETTLE_MS } from '../poll'
 import { CellBand } from './CellBand'
 import { EligibilityTable } from './EligibilityTable'
 import type { EligibilityRead } from './EligibilityTable'
+import { ResidualHolds } from './ExecutionControls'
 import { ExecutionList } from './ExecutionList'
 import type { HostRead } from './ExecutionList'
 import { IncidentSection } from './IncidentSection'
@@ -51,7 +52,7 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 
 /**
  * «운영» 영역(S3a 스펙 §9). 작업 지시 폼, 기체별 배정 가능 표, 실행 목록, 인시던트와 운영자 판단(S4a 스펙 §8.2·§8.3),
- * 셀 대역 표시와 신호 조작(S3b 스펙 §8), 작업 응답 송신 기록(S4b 스펙 §8).
+ * 셀 대역 표시와 신호 조작(S3b 스펙 §8), 작업 응답 송신 기록(S4b 스펙 §8), 운영자 실행 취소와 잔여 파지 확인(P0-b2).
  *
  * 실행 목록·인시던트·셀·배정 가능은 실행 호스트를 거친다. 그래서 App 의 다섯 조회(`Promise.all`)와 따로, 이 영역이 열려 있을 때만
  * 읽는다(S3a 스펙 §9.3). 호스트가 멈춰도 다섯 조회가 직전 값이 되지 않게 하기 위해서다. 셋은 서로도 따로 실패하고, 못 읽으면
@@ -244,7 +245,7 @@ export function OperationsArea({ session, onChanged }: Props) {
   }
 
   // 바뀐 값은 실행 호스트의 다음 pump 부터 보인다. 곧바로 한 번, pump 가 돈 뒤 한 번 더 읽는다. 조작이 잇따르면 마지막 조작
-  // 뒤의 한 번이 앞의 것을 대신한다. 신호 조작과 운영자 판단이 같이 쓴다.
+  // 뒤의 한 번이 앞의 것을 대신한다. 신호 조작, 운영자 판단, 실행 취소, 기체 빈손 확인이 같이 쓴다.
   const rereadNowAndAfterPump = () => {
     setTick((value) => value + 1)
     if (settle.current !== null) clearTimeout(settle.current)
@@ -302,11 +303,12 @@ export function OperationsArea({ session, onChanged }: Props) {
         <section aria-label="배정 가능">
           <h2>배정 가능</h2>
           <EligibilityTable read={eligibility} formKey={formKey} />
+          <ResidualHolds session={session} tick={tick} onConfirmed={rereadNowAndAfterPump} />
         </section>
       </div>
       <section aria-label="실행">
         <h2>실행</h2>
-        <ExecutionList read={executions} highlight={submitted} />
+        <ExecutionList read={executions} highlight={submitted} session={session} onCanceled={rereadNowAndAfterPump} />
       </section>
       <IncidentSection read={incidents} session={session} tick={tick} onDecided={rereadNowAndAfterPump} />
       <section aria-label="셀 대역">

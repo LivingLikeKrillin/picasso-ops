@@ -104,6 +104,39 @@ class MissionHostTest {
         }
     }
 
+    /**
+     * 부분 완료(`PARTIAL`)는 리비전으로 남은 단위가 다시 돌 수 있어 그 기체를 쥔다(picasso `PhysicalState.occupiesRobot`). 둘째 슬롯의
+     * 자재(B형)에 출발 자리가 없어 그 단위는 계획 때 실패하고, 첫 슬롯만 끝나 실행이 부분 완료가 된다. 근거 등급 E0 이라 셀 확인 없이 끝난다.
+     * 정착한 실행(`ABORTED`)의 기체가 다시 배정되는 것은 MissionVersionsTest 의 대기 기한 시험이 본다.
+     */
+    @Test
+    fun `부분 완료 실행의 기체는 도는 실행으로 판정과 제출에서 빠진다`() {
+        HostBench().use { bench ->
+            val partial = """
+                {"jobOrderId":"JO-1","workMasterId":"PrepareSequencedRack","version":1,"requiredEvidence":"E0","parameters":{},
+                 "materialRequirements":[{"materialDefinitionId":"${HostBench.MATERIAL}","quantity":1},{"materialDefinitionId":"ENGINE-COVER-B","quantity":1}],
+                 "equipmentRequirements":[{"id":"RACK-204.S01","equipmentUse":"destination","properties":{"material":"${HostBench.MATERIAL}"}},
+                  {"id":"RACK-204.S02","equipmentUse":"destination","properties":{"material":"ENGINE-COVER-B"}},
+                  {"id":"${HostBench.SOURCE}","equipmentUse":"source","properties":{"material":"${HostBench.MATERIAL}"}}]}
+            """.trimIndent()
+            val first = bench.post("/host/job-orders", request(partial, "candidates", HUMANOID)).body!!
+            assertEquals("ACCEPTED", first["result"].asText(), first.toString())
+            val executionId = first["executionId"].asText()
+            val settled = bench.driveUntil(executionId, setOf("PHYSICALLY_DONE", "FAILED", "UNVERIFIED", "ABORTED", "PARTIAL"))
+            assertEquals("PARTIAL", settled["physicalState"].asText(), settled.toString())
+
+            val judged = bench.post("/host/eligibility", request(rack("JO-2", "RACK-204.S03"), "robotIds", HUMANOID)).body!!["robots"].single()
+            assertEquals(executionId, judged["runningExecutionId"].asText(), judged.toString())
+            assertEquals(false, judged["passed"].asBoolean())
+            assertEquals(listOf("도는 실행이 있다: $executionId"), judged["reasons"].map { it.asText() })
+
+            val second = bench.post("/host/job-orders", request(rack("JO-2", "RACK-204.S03"), "candidates", HUMANOID)).body!!
+            assertEquals("UNASSIGNED", second["result"].asText(), second.toString())
+            assertEquals(executionId, second["excluded"].single()["runningExecutionId"].asText())
+            assertEquals(1, bench.get("/host/executions")["executions"].size())
+        }
+    }
+
     @Test
     fun `끝난 InspectAsset 를 같은 id 로 다시 내면 IDEMPOTENT 이고 실행에 마지막 작업 응답이 붙는다`() {
         HostBench().use { bench ->

@@ -50,14 +50,14 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 |---|---|---|---|
 | `ui/` | React·Vite·TypeScript 관리 화면, 운영 서비스만 호출, 메뉴 아홉(운영 개요, 작업 요청, 공유 자원, 운영, 로봇, 임무, 현장 설정, 이력, 검증 도구) | dev 5173, Playwright preview 4173 | 없음 |
 | `ops-service/` | 화면의 유일한 백엔드, 외부 주문 API(`/integration/v1/...`), 작업 요청 영속 저장·결과 버전·수신 확인·콜백 전달, 공유 스테이션 조정, registry·실행 호스트 REST 호출, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백(`server.address=127.0.0.1`) | 스키마 `ops`, 마이그레이션 V1~V17, 표 15개와 뷰 1개 |
-| `mission-host/` | picasso 미들웨어로 작업 지시 실행, 임무 정의 검증·모의 실행·활성화, 250ms 마다 셀 대역 읽기·pump, 내보낸 작업 응답을 결과 outbox 에 기록하고 `GET /host/result-events` 로 내줌, 호출자는 운영 서비스뿐 | `HOST_PORT=8785`, 루프백 | 스키마 `mission`, 마이그레이션 V1~V4, 표 10개 |
+| `mission-host/` | picasso 미들웨어로 작업 지시 실행, 임무 정의 검증·모의 실행·활성화, 250ms 마다 셀 대역 읽기·pump, 내보낸 작업 응답을 결과 outbox 에 기록하고 `GET /host/result-events` 로 내줌, 호출자는 운영 서비스뿐 | `HOST_PORT=8785`, 루프백 | 스키마 `mission`, 마이그레이션 V1~V5, 표 13개 |
 | `site/` | registry·mimic·`site-runner`·셀 대역을 한 프로세스에서 구동 | 아래 세부 구성 요소 참조 | registry 마이그레이션을 런처가 실행 |
 | `registry` | 기체 원장, 어댑터·리비전·바인딩·명칭·생존 보고 | `REGISTRY_PORT=8781`, 루프백 | Postgres public |
 | `mimic` | `humanoid-01`·`quadruped-01` 가상 기체, 가상 시계, seed 0 | `MIMIC_GRPC_PORT=8783`, 모든 인터페이스 | 메모리 |
 | `site-runner` | 1초마다 리비전 시험 요청을 집어 별도 mimic 으로 시험, registry 에 결과 기록 | 없음 | registry |
 | 셀 대역 | 셀 신호·자리·슬롯 관측, 신호 쓰기·장애 주입 입구, 신호 일곱(`inspection_ready`, `inspection_complete`, 텍스트 `inspection_job`, `inspection_job_done`, `rack_present`, 안전 신호 `guard_closed`, 텍스트 `lot_code`) | `SITE_CELL_PORT=8784`, 루프백 | 메모리 |
 | Postgres | registry public, 운영 서비스 `ops`, 실행 호스트 `mission` | `127.0.0.1:55432` | `postgres:16-alpine`, DB `picasso`, `site/compose.yaml` |
-| `picasso/` | 고정 커밋 `74e4d3d` 의 읽기 전용 서브모듈, Gradle `includeBuild` | 없음 | 없음 |
+| `picasso/` | 고정 커밋 `79e074d` 의 읽기 전용 서브모듈, Gradle `includeBuild` | 없음 | 없음 |
 | `e2e/` | 한 JVM 에 Postgres·registry·mimic·실행 호스트·운영 서비스를 띄우는 통합 시험 | 시험 스택 | Testcontainers |
 | `scripts/mock-mes.mjs` | Mock MES 역할로 외부 주문 API 를 부르는 로컬 도구 | 없음 | 없음 |
 
@@ -76,6 +76,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - V2: `execution_journal`, `execution_journal_event`, `job_response_log`, `incident_copy`, `incident_copy_resolution`(S4b)
 - V3: `draft.sample_order` 칸 추가
 - V4: `result_producer`(생산자 id 와 마지막 순번을 든 한 행), `result_outbox`(순번이 붙은 결과 이벤트, 변경·삭제·통째 비우기 금지)
+- V5: `execution_cancel`(운영자 실행 취소, 실행 호스트가 미들웨어 `cancel` 을 부르기 직전에 적음, `(instance_id, execution_id)` 유일), `robot_residual_hold`(잔여 파지 표시, `job_order_id` 유일), `robot_residual_hold_clearing`(표시 해소, `marker_id` 가 기본 키라 표시마다 많아야 하나). 셋 다 변경·삭제·통째 비우기 금지(V2 의 `mission_record_append_only()` 트리거), `approver_kind` 는 `'PERSON'` 만, 사유는 공백만이면 안 됨. 시각은 DB `clock_timestamp()`.
 
 마이그레이션 수와 표 수는 `ops-service/src/main/resources/db/ops/` 와 `mission-host/src/main/resources/db/mission/` 의 SQL 파일을 세고 `CREATE TABLE`·`CREATE VIEW` 를 세어 얻은 값입니다.
 
@@ -94,7 +95,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 ### 기타 구성 및 설정
 
 - 모의 실행: 실행 호스트 내부의 별도 mimic과 가상 시계로 표본 작업 지시 하나를 실행합니다. 현장 기체, 셀 대역, registry 에는 접근하지 않으며 프로파일로 `mission-host/mock-run/humanoid-a.json` 을 사용합니다.
-- 서브모듈: `picasso 74e4d3d` 커밋으로 고정된 읽기 전용 서브모듈입니다. 버전 카탈로그 `picasso/gradle/libs.versions.toml` 을 공유하며 picasso 라이브러리 측 수정은 picasso 저장소 PR 로 반영합니다. picasso main 은 `344e22b` 까지 나아갔지만 Ops 는 이를 전제하지 않습니다.
+- 서브모듈: `picasso 79e074d` 커밋(picasso PR #91 머지, 2026-10-13)으로 고정된 읽기 전용 서브모듈입니다. 버전 카탈로그 `picasso/gradle/libs.versions.toml` 을 공유하며 picasso 라이브러리 측 수정은 picasso 저장소 PR 로 반영합니다. 고정 커밋은 picasso main `79e074d` 와 같습니다. 실행 호스트가 #91 의 `PhysicalState.occupiesRobot`(판정)·`pumps`(취소 대상)를 씁니다.
 - 환경 변수(`.env`): `SITE_ID`, `PICASSO_DB_URL`, `PICASSO_DB_USER`, `PICASSO_DB_PASSWORD`, `REGISTRY_PORT`, `OPS_PORT`, `MIMIC_GRPC_PORT`, `SITE_CELL_PORT`, `HOST_PORT`, `PICASSO_OPERATOR_TOKEN`, `PICASSO_INGEST_TOKEN`. 실제 값은 커밋된 `.env` 를 따릅니다.
 - `.env` 밖의 선택 환경 변수(운영 서비스): `PICASSO_INTEGRATION_TOKEN`(비면 외부 주문 API 꺼짐), `PICASSO_INTEGRATION_SOURCE`(기본 `mock-mes`), `PICASSO_LOCAL_CALLBACK_URL`(루프백 IP 리터럴 http 주소만, 비면 콜백 전달 꺼짐), `PICASSO_LOCAL_CALLBACK_TOKEN`
 - 운영 서비스 주기 속성(`ops-service.properties`): `ops.results.poll-ms=5000`(결과 수집과 멈춘 작업 요청 정리), `ops.requests.stale-seconds=300`, `ops.results.delivery-ms=2000`, 스테이션 워커 `ops.stations.poll-ms` 는 속성 파일에 없고 코드 기본값 2000
@@ -120,7 +121,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
   <img alt="작업 지시 시퀀스" src="diagrams/sequence-job-order.svg">
 </picture>
 
-- 배정 가능 판정 분담: 운영 서비스는 시운전과 연결 상태를 판정하고, 실행 호스트는 실행 중인 작업과 스킬 적합성을 판정합니다. 운영 서비스는 배정 가능한 기체만을 후보로 전달합니다.
+- 배정 가능 판정 분담: 운영 서비스는 시운전과 연결 상태를 판정하고, 실행 호스트는 스킬 적합, 도는 실행(picasso `PhysicalState.occupiesRobot`, 정착하지 않은 실행과 부분 완료 `PARTIAL` 실행, 운영자 보류 포함), 복원 못 한 실행, 미해소 잔여 파지 표시, 현장 시간값 미적용, 실행 일지 차단을 판정합니다. 운영 서비스는 배정 가능한 기체만을 후보로 전달합니다. 같은 작업 지시 id 의 리비전도 그 기체의 부분 완료 실행이나 잔여 파지 표시에 걸려 `UNASSIGNED` 로 남습니다.
 - 기록 시점: 화면의 작업 지시 폼은 `POST /api/work-requests/manual` 로 작업 요청을 만듭니다. 운영 서비스는 실행 호스트를 부르기 전에 `ops.work_request` 행을 `RECEIVED` 로 따로 커밋하고, 입력을 작업 지시로 변환해 저장한 뒤 `DISPATCHING` 으로 바꾸고 나서 `POST /host/job-orders` 를 부릅니다. 작업 지시 id 는 `JO-<작업 요청 id>` 로 작업 요청마다 고정됩니다. 실행 호스트는 새 실행 정보를 응답하기 전에 실행 일지에 먼저 기록합니다. 운영 서비스는 응답을 받은 뒤 조작 기록에 남기고 작업 요청 상태를 `ACCEPTED`, `UNASSIGNED`, `REJECTED`, `IN_DOUBT` 가운데 하나로 정합니다.
 - 작업 응답 처리: 실행 호스트가 작업 지시를 받은 시점(`ACCEPTED`)에는 작업 응답을 만들지 않습니다. pump 가 mimic 에서 태스크를 시작하고, 실행이 정착하거나 보류될 때 작업 응답을 송신 기록(`job_response_log`)에 남깁니다. 처분이 송신인 작업 응답은 같은 트랜잭션에서 결과 outbox(`result_outbox`)에도 순번과 함께 기록됩니다.
 - 재조회 동작: 응답이 없으면 운영 서비스가 1초 뒤 실행 목록을 한 번 재조회합니다. 목록에 그 작업 지시가 보이면 `ACCEPTED` 이고, 보이지 않아도 보내지 않았다는 증거로 보지 않아 `IN_DOUBT` 로 둡니다.
@@ -250,6 +251,8 @@ DB 잠금(스테이션 행 `FOR UPDATE`, 임무별 advisory 잠금 `pg_advisory_
 
 스냅숏 읽기에 실패하면 해당 행의 처리를 미루고 매 pump마다 재시도를 수행합니다. 해당 기체는 «복원 못 한 실행이 있다» 상태로 분류되어 배정 대상에서 제외됩니다.
 
+미해소 잔여 파지 표시는 기동 복원 때 `mission.robot_residual_hold` 에서 해소 행이 없는 것을 다시 읽어 판정에 씁니다(재기동 뒤에도 그 기체를 빼고, 해소도 재기동 뒤까지 남습니다). 운영자 취소는 이 인스턴스의 실행 id 에 묶여 있어, 취소를 적은 뒤 다음 pump 가 `ABORTED` 로 정착시키기 전에 재기동하면 다시 지은 실행(새 실행 id)에 다시 걸지 않습니다. 그 취소 행은 기록으로만 남고 새 인스턴스 실행 목록의 `cancel` 칸에도 실리지 않습니다(이전 인스턴스 취소는 싣지 않습니다). 사람이 새 실행 id 로 다시 취소해야 합니다.
+
 재기동 후에도 활성 임무 버전은 그대로 유지되며, 이전 인스턴스의 인시던트는 사본을 통해 조회합니다.
 
 실행 호스트는 작업 응답마다 처분을 송신 기록(`job_response_log`)에 남깁니다. 새 인스턴스에서 어떤 작업 지시의 첫 작업 응답이 그 작업 지시의 가장 최근 송신 기록과 내용이 같으면 재기동 중복(`RESTART_DUPLICATE`)으로 적고 결과 outbox에 넣지 않습니다. 처분이 송신(`SENT`)인 응답만 `result_outbox`를 거쳐 운영 서비스의 결과 버전이 되고, 콜백이 설정되어 있으면 Mock MES로 전달됩니다. 상위 시스템 연계는 로컬 Mock MES 하나로만 검증했습니다.
@@ -262,9 +265,9 @@ DB 잠금(스테이션 행 `FOR UPDATE`, 임무별 advisory 잠금 `pg_advisory_
 
 기한 보류는 재기동 후 기한만큼 지연되어 다시 발생하며, 그동안 화면에는 도는 것으로 표시됩니다.
 
-실행 일지, 송신 기록, 사본에는 별도의 보존 기한이 없습니다. 결과 outbox와 운영 서비스의 작업 요청·결과 버전·스테이션 작업 기록에도 보존 기한이나 삭제 코드가 없습니다.
+실행 일지, 송신 기록, 사본, 운영자 취소(`execution_cancel`), 잔여 파지 표시와 그 해소(`robot_residual_hold`, `robot_residual_hold_clearing`)에는 별도의 보존 기한이 없습니다. 결과 outbox와 운영 서비스의 작업 요청·결과 버전·스테이션 작업 기록에도 보존 기한이나 삭제 코드가 없습니다.
 
-`mission` 스키마의 표는 이제 10개입니다(임무 버전 표 3, S4b 표 5, V4의 `result_producer`·`result_outbox`). 이 가운데 `result_producer`는 마지막 순번을 올리는 한 행짜리 카운터라 UPDATE를 하고, 나머지 9개는 트리거가 UPDATE·DELETE·TRUNCATE를 막습니다. 데이터를 지우려면 스키마째 지웁니다.
+`mission` 스키마의 표는 이제 13개입니다(임무 버전 표 3, S4b 표 5, V4의 `result_producer`·`result_outbox`, V5의 `execution_cancel`·`robot_residual_hold`·`robot_residual_hold_clearing`). 이 가운데 `result_producer`는 마지막 순번을 올리는 한 행짜리 카운터라 UPDATE를 하고, 나머지 12개는 트리거가 UPDATE·DELETE·TRUNCATE를 막습니다. 데이터를 지우려면 스키마째 지웁니다.
 
 셀 신호 값은 런처 재기동 시 처음 값으로 재설정됩니다.
 
@@ -348,7 +351,7 @@ mimic gRPC 서비스는 picasso가 지정한 주소에 따라 모든 인터페�
 
 배정 가능 판정에서 물어보지 못한 칸은 «모름»이고, «모름»이 하나라도 있으면 그 기체는 배정 불가입니다.
 
-단위가 보류되면 운영자가 인시던트 상세 화면에서 직접 판단을 내려야 합니다. 운영자가 판단하지 않으면 실행이 정착되지 않으며 해당 기체도 새로 배정할 수 없습니다.
+단위가 보류되면 운영자가 인시던트 상세 화면에서 직접 판단(완료 확인·재작업)을 내리거나 운영자 실행 취소로도 닫을 수 있습니다(운영자 보류 `OPERATOR_HOLD` 도 취소 대상, 다음 pump 에 `ABORTED` 로 정착). 둘 다 하지 않으면 실행이 정착되지 않으며 기체도 배정에서 빠집니다. 정착할 때 마지막 로봇 단위가 든 채였으면 잔여 파지 표시가 서서 사람이 빈손을 확인할 때까지 계속 빠집니다.
 
 재작업을 선택하면 해당 단위를 다시 계획하며, 대기 단위의 경우 새로운 기한이 적용됩니다.
 
@@ -365,6 +368,12 @@ mimic gRPC 서비스는 picasso가 지정한 주소에 따라 모든 인터페�
 registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 값에 «모름» 상태를 병합하여 유지합니다.
 
 리비전 시험 실행기(`site-runner`)는 리비전 시험마다 자기 mimic을 따로 띄우므로 현장 기체의 보고와 상태를 바꾸지 않습니다.
+
+- 부분 완료와 운영자 실행 취소: 판정의 «도는 실행» 은 picasso `PhysicalState.occupiesRobot` 이라 부분 완료(`PARTIAL`) 실행의 기체도 뺍니다(리비전으로 남은 단위가 다시 돌 수 있어 기체가 비지 않음). 운영 서비스는 작업 지시 id 를 다시 쓰지 않아 리비전으로 닫지 못하므로, 운영자가 `POST /api/executions/{executionId}/cancel`(운영자 모드만, 본문 `{instanceId, reason}`, `instanceId` 는 실행 목록의 것)로 취소합니다. 운영 서비스가 실행 호스트 `POST /host/executions/{executionId}/cancel` 에 `{approverId(=X-Ops-User), reason, instanceId, requestId}` 를 보냅니다. 실행 호스트는 잠금 아래에서 판정한 뒤 취소 행(`mission.execution_cancel`)을 먼저 적고 미들웨어 `cancel` 을 부릅니다(못 적으면 500 `RECORD_WRITE_FAILED`, 취소하지 않음). 실제 중단은 다음 pump 가 하류를 읽고 확정: `ABORTED`, 일지 `SETTLED` 이벤트(사유 `ABORTED`), `ABORTED` 작업 응답이 송신 기록과 결과 outbox 로 갑니다(그래서 운영 서비스에 새 결과 버전). 결과는 200 본문 `result`: `CANCELED`(조작 기록 `SUCCEEDED`), `NOT_CANCELABLE`(정착한 실행, 이미 취소를 건 실행(`CANCELING` 또는 이 인스턴스 취소 행 있음), 실행 일지에 없는 실행), `NOT_FOUND`(지금 인스턴스에 없음), `REFUSED`(에이전트 승인자, REST 로는 안 남), 셋 다 `REJECTED`. 다른 인스턴스는 409 `INSTANCE_MISMATCH`. 조작 기록 `op` = `CANCEL_EXECUTION`, 대상 = 실행 id, 사유 = 입력 사유(호스트 표에도 남음). 실행 목록의 실행마다 `cancel` 칸 `{approverId, approverKind, reason, physicalState(취소를 건 때), recordedAt}`(없으면 null).
+- 응답 없음 뒤 재조회(취소): 1초 뒤 `GET /host/executions` 한 번. 인스턴스가 같고 그 실행의 `cancel.approverId` 가 행위자이며 `recordedAt` 이 보내기 직전 운영 서비스 시계 이후면 `CONFIRMED_APPLIED`, 실행이 없거나 그런 `cancel` 이 없으면 `CONFIRMED_NOT_APPLIED`, 인스턴스가 바뀌었거나 못 읽으면 확인 행 없음. 운영 서비스 시계와 DB 시계를 비교하므로 같은 머신 전제.
+- 잔여 파지 표시와 기체 빈손 확인: 정착할 때 마지막 로봇 단위(계획 순서)의 파지 관측이 `HOLDING` 이면 표시가 서고, 해소할 때까지 판정 이유 «잔여 파지 확인 필요: <jobOrderId> <unitId>» 로 그 기체를 뺍니다(같은 작업 지시의 리비전도). 운영자가 현장에서 빈손을 확인한 뒤 `POST /api/robots/{robotId}/residual-holds/{markerId}/clear`(운영자 모드만, 본문 `{reason}`)로 해소합니다. 조작 기록 `op` = `CONFIRM_ROBOT_EMPTY`, 대상 `<robotId>/<markerId>`. 해소 200 은 `SUCCEEDED`, 404 `RESIDUAL_HOLD_NOT_FOUND`(그 기체에 그 표시 없음)·409 `RESIDUAL_HOLD_ALREADY_CLEARED` 는 `REJECTED`. 응답 없음 뒤 재조회는 미해소 목록 `GET /host/robots/residual-holds` 에 그 표시가 없으면 반영됨. 미해소 목록 읽기 `GET /api/robots/residual-holds` 는 모드와 무관, 호스트가 안 닿으면 503 `HOST_SILENT`.
+- 두 조작 모두 사전 거부(400 `ACTOR_REQUIRED`, 403 `MODE_NOT_ALLOWED`, 400 `CANCEL_BAD_REQUEST`·`CLEAR_BAD_REQUEST`, 400 `REASON_REQUIRED`)는 조작 기록에 남지 않습니다.
+- 한계: 표시는 시각 순서가 아니라 계획 순서의 마지막 로봇 단위로 정합니다. 화면의 현장 확인 체크박스는 서버가 집행하지 않습니다(사유만 서버 필수). 표시는 실행 호스트의 운영 정책(ADR 41)이고 picasso 보장이 아닙니다(picasso 는 정착한 파지를 정보로 둠, §15.146). 스킬이 취소를 받지 않으면(`CANCEL_UNSUPPORTED`) 미들웨어는 도는 단위를 끝까지 두고 다음 경계에서 멈춥니다. 호스트는 그 거부를 읽지 않아 화면에 보이지 않습니다.
 
 ## 현장 시간값 상세
 
@@ -398,15 +407,15 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-14에 `fix/rejection-detail` 브랜치(거부 정보 전달 변경)의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-14 `fix/rejection-detail` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 23개 파일 221개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-14에 `fix/residual-hold` 브랜치(운영자 실행 취소·잔여 파지 표시 변경)의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-14 `fix/residual-hold` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 24개 파일 229개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 385 | 로컬 시험 결과 XML 385건(382 에서 3 늘어남, 모두 `WorkRequestsTest`) |
-| `mission-host` | 86 | 로컬 시험 결과 XML 86건(83 에서 3 늘어남, `MissionHostTest` 1, 새 파일 `SubmitOutcomeTest` 2) |
+| `ops-service` | 391 | 로컬 시험 결과 XML 391건(385 에서 6 늘어남, 새 파일 `ExecutionControlsTest` 6) |
+| `mission-host` | 94 | 로컬 시험 결과 XML 94건(86 에서 8 늘어남, 새 파일 `ExecutionControlTest` 6, `MissionHostTest` 1, `MissionStoreTest` 1) |
 | `site` | 38 | 로컬 시험 결과 XML 38건 |
 | `e2e` | 69(시험 클래스 15개, `StationLateCompletionTest` 2건 추가) | 로컬 시험 결과 XML 69건 |
-| `ui`(vitest) | 221(시험 파일 23개, `WorkRequests.test.tsx` 에 4건 추가) | 2026-10-14 로컬 실행 |
+| `ui`(vitest) | 229(시험 파일 24개, 새 파일 `ExecutionControls.test.tsx` 8건) | 2026-10-14 로컬 실행 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
 
@@ -598,8 +607,8 @@ cd ui && npx playwright test -c playwright.screens.config.ts
 
 ## 용어 풀이
 
-- pump: 실행 호스트가 250ms 고정 지연으로 셀 대역 `GET /cell`을 읽고 `Middleware.pump()`를 호출하는 한 라운드입니다(`MissionHost.kt:829` `PUMP_PERIOD`).
-- 정착: 실행이 종료 상태에 도달함을 뜻합니다. 일지 이벤트 `SETTLED`는 `PHYSICALLY_DONE`, `UNVERIFIED`, `FAILED`, `ABORTED`에만 기록되며, `PARTIAL`은 제외됩니다.
+- pump: 실행 호스트가 250ms 고정 지연으로 셀 대역 `GET /cell`을 읽고 `Middleware.pump()`를 호출하는 한 라운드입니다(`MissionHost.kt:992` `PUMP_PERIOD`).
+- 정착: 실행이 종료 상태에 도달함을 뜻합니다. 일지 이벤트 `SETTLED`는 `PHYSICALLY_DONE`, `UNVERIFIED`, `FAILED`, `ABORTED`에만 기록되며, `PARTIAL`은 제외됩니다. `PARTIAL`은 미들웨어가 계속 돌리므로(`pumps`) 정착으로 적지 않고 판정에서 기체를 쥔 것으로 봅니다. 운영자가 취소한 `PARTIAL`은 다음 pump에 `ABORTED`로 정착해 `SETTLED`(사유 `ABORTED`)가 적힙니다. 정착을 적는 같은 트랜잭션에서 잔여 파지 표시가 설 수 있습니다.
 - 봉인: 라운드 종료 시 `sealIncidents`로 인시던트를 확정하는 작업입니다. `unresolved`는 봉인 시점에 단위가 OPERATOR_HOLD 또는 IN_DOUBT였는지를 나타내는 칸이며, 봉인 뒤에는 그 값을 유지합니다(picasso `docs/glossary.md` 206행).
 - 근거 등급: E2는 셀 슬롯 관측 근거로 확인된 등급이고, E0은 복원 뒤 앞선 단위 등과 같이 설비 근거가 없는 등급입니다.
 - P/S: P는 picasso 저장소 단계, S는 picasso-ops 단계를 뜻합니다.
@@ -610,6 +619,7 @@ cd ui && npx playwright test -c playwright.screens.config.ts
 - 기준선(`result_baseline`): 스테이션 작업이 `RUNNING`에 들어갈 때 적은 최신 결과 버전입니다. 그보다 새 결과만 이번 시도의 근거입니다.
 - 작업 번호(`jobSignal`·`jobEchoSignal`): 스테이션 작업 id를 설비에 넘기고 돌려받는 TEXT 신호 쌍입니다. 반환 번호가 이번 번호와 같아야 완료 근거가 됩니다.
 - 격리(`quarantined_by`): 쌍이 없는 스테이션에서 보낸 작업을 현장 확인으로 해제했을 때 걸리는 표시입니다. 운영자 `CONFIRM_STATION_IDLE` 전까지 다음 작업을 보내지 않습니다.
+- 잔여 파지 표시(`robot_residual_hold`): 실행이 정착할 때 마지막 로봇 단위의 파지 관측이 `HOLDING`이면 실행 호스트가 그 기체에 거는 표시입니다. 운영자 `CONFIRM_ROBOT_EMPTY`(화면 «기체 빈손 확인») 전까지 그 기체를 배정에서 뺍니다. 실행 호스트 운영 정책(ADR 41)이며 picasso 보장이 아닙니다.
 
 ## 추가 화면 참고
 

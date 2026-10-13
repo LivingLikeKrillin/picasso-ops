@@ -122,9 +122,9 @@ InspectAsset 예:
 |---|---|
 | `skillFit` | `FIT`(경로가 로봇인 단위의 스킬이 기체 선언에 다 있음) · `MISSING`(모자람) · `UNKNOWN`(기체 케이퍼빌리티를 못 물어봄, 예: mimic 이 모르는 기체, mimic 불통) |
 | `missingSkills` | `MISSING` 일 때 모자란 스킬(이름순). 그 밖에는 `[]` |
-| `runningExecutionId` | 이 기체에서 물리 상태가 정착하지 않은 실행 id. 없으면 null. `OPERATOR_HOLD` 도 도는 실행이다 |
-| `passed` | `skillFit == FIT` 이고 `runningExecutionId == null` |
-| `reasons` | 통과 못 한 이유(한국어, 화면 표시용). 순서: 스킬(`모자란 스킬: a, b` 또는 `기체 케이퍼빌리티를 못 물어봤다`), 그다음 `도는 실행이 있다: exec-N`. 통과면 `[]` |
+| `runningExecutionId` | 이 기체를 쥔 실행 id(picasso `PhysicalState.occupiesRobot` = `!isSettled \|\| PARTIAL`): 정착하지 않은 실행과 부분 완료(`PARTIAL`) 실행. `OPERATOR_HOLD` 도 포함. 없으면 null. 잔여 파지 표시만 있으면 null |
+| `passed` | `reasons` 가 비었을 때만 참(`skillFit == FIT`, `runningExecutionId == null`, 복원 못 한 실행 없음, 미해소 잔여 파지 표시 없음, 현장 시간값 적용됨, 실행 일지 차단 없음). 코드: `HostEligibility.passed` KDoc «스킬 적합이고 도는 실행이 없으며 판정 이유가 하나도 없다» |
+| `reasons` | 통과 못 한 이유(한국어, 화면 표시용). 순서: 스킬(`모자란 스킬: a, b` 또는 `기체 케이퍼빌리티를 못 물어봤다`) → `도는 실행이 있다: exec-N` → `복원 못 한 실행이 있다: <jobOrderId>[, …]`(S4b H2) → `잔여 파지 확인 필요: <jobOrderId> <unitId>[, <jobOrderId> <unitId>…]`(P0-b2, 미해소 표시마다) → `현장 시간값 미적용: 실행 호스트가 현장 설정을 아직 읽지 못했다`(S3c §8.3) → `실행 일지 저장 실패: 호스트 복구 전 배정 차단`. 통과면 `[]` |
 
 ## 3. `POST /host/eligibility`
 
@@ -210,7 +210,7 @@ InspectAsset 예:
 {"kind": "NONE", "cause": "DEPTH_LIMIT", "unmet": [{"subject": "PRECONDITION_SUBJECT_HOLD", "required": "HOLD_KIND_EMPTY", "observed": "HOLD_KIND_HOLDING", "detail": "든 채다"}]}
 ```
 
-- 같은 `jobOrderId` 를 그 실행이 도는 중에 다시 내면, 그 기체가 `runningExecutionId` 로 빠져 UNASSIGNED 다.
+- 같은 `jobOrderId` 를 그 실행이 도는 중에 다시 내면, 그 기체가 `runningExecutionId` 로 빠져 UNASSIGNED 다. 그 실행이 부분 완료(`PARTIAL`)여도 같다(리비전도 UNASSIGNED, 부분 완료는 운영자 취소로 닫음). 그 작업 지시에 미해소 잔여 파지 표시가 있어도 그 기체가 `잔여 파지 확인 필요` 로 빠져 UNASSIGNED(이때 `runningExecutionId` 는 null). 근거: `MissionHostTest` 의 `부분 완료 실행의 기체는 도는 실행으로 판정과 제출에서 빠진다`, `ExecutionControlTest` 의 `든 채 실패로 정착한 실행의 표시는 재기동해도 기체를 빼고 해소도 재기동 뒤까지 남으며 표시는 작업 지시마다 하나다`.
 
 ## 5. `GET /host/executions`
 
@@ -267,6 +267,66 @@ InspectAsset 예:
 | `jobResponse.incompleteUnits` | 단위 id → 사유 문자열 객체 |
 | `jobResponse.connection` | `CONNECTION_STATE_*` 이름 |
 
+공통: 루프백·무인증, 호출자는 운영 서비스뿐, 모드 검사와 조작 기록은 운영 서비스 몫, POST 는 `application/json` 만(아니면 415), 400 본문은 2절 모양 `{"error":"BAD_REQUEST","detail":…}`, 승인자는 늘 `Approver(approverId, PERSON)`, `requestId` 는 없거나 null 이거나 UUID 문자열이고 응답에 그대로 돌려줄 뿐 저장하지 않음, 사유는 앞뒤 공백을 뗌. 기록을 못 적으면 500 `RECORD_WRITE_FAILED`(`detail` 은 DB 오류 문장)이고 아무것도 바꾸지 않음.
+
+### 5.1 실행의 `cancel` 칸(P0-b2)
+
+실행마다 끝에 `cancel`(S4b H1 의 `restoredFrom` 뒤, 열째 칸). 이 인스턴스에서 그 실행에 건 운영자 취소. 없으면 null. 이전 인스턴스의 취소는 싣지 않음. 칸 5개 이 순서. `physicalState` 는 취소를 건 때의 물리 상태, `recordedAt` 은 DB 시각.
+
+```json
+"cancel": {"approverId": "kim", "approverKind": "PERSON", "reason": "둘째 슬롯 결품으로 부분 완료를 닫는다", "physicalState": "PARTIAL", "recordedAt": "2026-10-14T01:02:03.456789Z"}
+```
+
+### 5.2 `POST /host/executions/{executionId}/cancel`(P0-b2)
+
+판정 순서 본문(400) → `instanceId` 가 지금 인스턴스인가(아니면 409 `INSTANCE_MISMATCH`, `detail` «취소 요청의 인스턴스(<요청>)가 지금 인스턴스(<지금>)가 아니다», 취소하지 않음) → 결과. 결과는 늘 200 본문 `result`. 400 은 본문이 객체가 아님(«본문이 JSON 객체가 아니다»), `approverId`·`reason`·`instanceId` 가 비어 있지 않은 문자열이 아님(«<칸> 가 비어 있지 않은 문자열이 아니다»), `requestId` 가 UUID 문자열이 아님. `CANCELED` 면 취소 행을 적고 미들웨어 `cancel` 을 부른 것이며 실제 중단은 다음 pump(`ABORTED`, 일지 `SETTLED`, `ABORTED` 작업 응답과 결과 outbox).
+
+| `result` | 언제 | `physicalState` | `detail` |
+|---|---|---|---|
+| `CANCELED` | 물리 상태가 `pumps`(정착하지 않음 또는 `PARTIAL`)이고 아직 취소를 안 걸었고 실행 일지에 있음 | 건 때의 상태 | null |
+| `NOT_CANCELABLE` | 정착함(`정착한 실행은 취소하지 않는다: <상태>`), 이미 취소를 건 실행(`CANCELING` 이거나 이 인스턴스의 취소 행이 있음, `이미 취소를 건 실행이다`), 실행 일지에 없음(`실행 일지에 없는 실행이다`) | 지금 상태 | 사유 |
+| `NOT_FOUND` | 지금 인스턴스에 그 실행이 없음 | null | `그 실행이 지금 인스턴스에 없다` |
+| `REFUSED` | 승인자가 사람이 아님. REST 는 늘 사람 승인자라 호스트 메서드를 직접 부를 때만 | null | `에이전트는 실행을 취소하지 못한다. 실행 중단은 사람의 것이다: <approverId>` |
+
+```json
+{"approverId": "kim", "reason": "둘째 슬롯 결품으로 부분 완료를 닫는다", "instanceId": "mw-3f0c...", "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
+```
+
+```json
+{"result": "CANCELED", "executionId": "exec-1", "physicalState": "PARTIAL", "detail": null, "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
+{"result": "NOT_CANCELABLE", "executionId": "exec-1", "physicalState": "ABORTED", "detail": "정착한 실행은 취소하지 않는다: ABORTED", "requestId": null}
+```
+
+### 5.3 `GET /host/robots/residual-holds`(P0-b2)
+
+200 늘. 해소 행이 없는 표시를 적은 순서로. 표시 칸 8개 이 순서. `objectRef` 는 관측이 이름을 싣지 않았으면 null. `instanceId`·`executionId` 는 표시를 적은 인스턴스의 것(재기동 뒤에도 그대로).
+
+```json
+{"holds": [{"markerId": 1, "robotId": "humanoid-01", "jobOrderId": "JO-1", "executionId": "exec-1", "instanceId": "mw-3f0c...", "unitId": "RACK-204.S02", "objectRef": "C-1", "recordedAt": "2026-10-14T01:02:05.123456Z"}]}
+```
+
+### 5.4 `POST /host/robots/{robotId}/residual-holds/{markerId}/clear`(P0-b2)
+
+`markerId` 가 양의 정수가 아니면 400 `BAD_REQUEST`(«markerId 는 양의 정수다: <값>»). 본문 `{approverId, reason, requestId?}`(규칙은 5.2 와 같음). 200 본문 칸 3개 `hold`(5.3 의 표시 하나)·`clearing`(4칸 `approverId`·`approverKind`·`reason`·`clearedAt`)·`requestId`. 404 `RESIDUAL_HOLD_NOT_FOUND`(그 기체에 그 표시 없음, «기체 <robotId> 에 잔여 파지 표시 <markerId> 가 없다»), 409 `RESIDUAL_HOLD_ALREADY_CLEARED`(«잔여 파지 표시 <markerId> 는 이미 해소했다(<approverId>, <clearedAt>)»), 403 `APPROVER_REFUSED`(에이전트 승인자, REST 로는 안 남). 해소하면 판정이 곧바로 그 기체를 다시 봄.
+
+```json
+{"approverId": "park", "reason": "현장에서 기체 빈손 확인", "requestId": "0b7d4c55-9a51-4f3e-8d5c-6b7a6f1c2a9e"}
+```
+
+```json
+{
+  "hold": {"markerId": 1, "robotId": "humanoid-01", "jobOrderId": "JO-1", "executionId": "exec-1", "instanceId": "mw-3f0c...", "unitId": "RACK-204.S02", "objectRef": "C-1", "recordedAt": "2026-10-14T01:02:05.123456Z"},
+  "clearing": {"approverId": "park", "approverKind": "PERSON", "reason": "현장에서 기체 빈손 확인", "clearedAt": "2026-10-14T01:10:00.000001Z"},
+  "requestId": "0b7d4c55-9a51-4f3e-8d5c-6b7a6f1c2a9e"
+}
+```
+
+```json
+{"error": "RESIDUAL_HOLD_ALREADY_CLEARED", "detail": "잔여 파지 표시 1 는 이미 해소했다(park, 2026-10-14T01:10:00.000001Z)"}
+```
+
+(예의 시각·id 값은 보기다. 근거 시험: `ExecutionControlTest` 여섯, 칸 순서는 거기서 대조.)
+
 ## 6. `GET /host/cell`
 
 응답 200 늘:
@@ -292,9 +352,12 @@ InspectAsset 예:
 | `POST /host/job-orders` | 결과 넷 전부 | `UNKNOWN_WORK_MASTER`·`BAD_REQUEST` | JSON 아님 |
 | `GET /host/executions` | 늘 | 없음 | 없음 |
 | `GET /host/cell` | 늘(`cell` null 가능) | 없음 | 없음 |
+| `POST /host/executions/{executionId}/cancel` | 결과 넷 전부(5.2) | `BAD_REQUEST`(그 밖 409 `INSTANCE_MISMATCH`, 500 `RECORD_WRITE_FAILED`) | JSON 아님 |
+| `GET /host/robots/residual-holds` | 늘 | 없음 | 없음 |
+| `POST /host/robots/{robotId}/residual-holds/{markerId}/clear` | 해소함 | `BAD_REQUEST`(그 밖 404 `RESIDUAL_HOLD_NOT_FOUND`, 409 `RESIDUAL_HOLD_ALREADY_CLEARED`, 403 `APPROVER_REFUSED`(REST 로는 안 남), 500 `RECORD_WRITE_FAILED`) | JSON 아님 |
 | 현장 `GET /cell` | 늘 | 없음(405·404 는 위 1절) | 없음 |
 
-호스트가 안 닿으면(연결 실패) 운영 서비스가 503·NO_RESPONSE 로 다룬다(스펙 §8). 호스트 자신은 5xx 를 의도해 내지 않는다.
+호스트가 안 닿으면(연결 실패) 운영 서비스가 503·NO_RESPONSE 로 다룬다(스펙 §8). 취소·해소 기록 실패는 500 `RECORD_WRITE_FAILED`(P0-b2), 실행 일지 쓰기 실패는 500 `JOURNAL_WRITE_FAILED`(S4b H6, 이 PR 전부터)다. 운영 서비스는 호스트 5xx 를 응답 없음으로 다루고 재조회한다.
 
 ---
 
@@ -396,7 +459,7 @@ InspectAsset 예:
 | 보고 없음 | `생존 보고가 없다` |
 | 호스트 불통 | `실행 호스트가 답하지 않아 스킬 적합·도는 실행을 모른다` |
 | 호스트가 그 기체 행을 안 줌 | `실행 호스트가 이 기체를 판정하지 않았다` |
-| 호스트 판정 | 2.2 의 `reasons` 그대로(`모자란 스킬: a, b`, `기체 케이퍼빌리티를 못 물어봤다`, `도는 실행이 있다: exec-N`) |
+| 호스트 판정 | 2.2 의 `reasons` 그대로(`모자란 스킬: a, b`, `기체 케이퍼빌리티를 못 물어봤다`, `도는 실행이 있다: exec-N`, `잔여 파지 확인 필요: <jobOrderId> <unitId>`, 그 밖 S4b·S3c 이유도 그대로 옴) |
 
 400 은 9.1 의 셋뿐이다. 403·`ACTOR_REQUIRED` 는 없다.
 
@@ -485,3 +548,41 @@ InspectAsset 예:
 | `POST /api/job-orders` | 제출함(결과는 본문) | `ACTOR_REQUIRED`·폼 셋·`NO_ELIGIBLE_ROBOT` | `MODE_NOT_ALLOWED` | JSON 아님 | 없음 |
 | `GET /api/executions` | 호스트 본문 | 없음 | 없음 | 없음 | `HOST_SILENT` |
 | `GET /api/cell` | 호스트 본문 | 없음 | 없음 | 없음 | `HOST_SILENT` |
+| `GET /api/robots/residual-holds` | 호스트 본문 | 없음 | 없음 | 없음 | `HOST_SILENT` |
+| `POST /api/executions/{executionId}/cancel` | 보냄(결과는 본문) | `ACTOR_REQUIRED`·`CANCEL_BAD_REQUEST`·`REASON_REQUIRED` | `MODE_NOT_ALLOWED` | JSON 아님 | 없음 |
+| `POST /api/robots/{robotId}/residual-holds/{markerId}/clear` | 보냄(결과는 본문) | `ACTOR_REQUIRED`·`CLEAR_BAD_REQUEST`·`REASON_REQUIRED` | `MODE_NOT_ALLOWED` | JSON 아님 | 없음 |
+
+### 9.7 운영자 실행 취소와 기체 빈손 확인(P0-b2)
+
+- `GET /api/robots/residual-holds`: 모드 헤더 없이 됨. 호스트 5.3 본문 그대로. 호스트가 안 닿으면 503 `HOST_SILENT`(«실행 호스트가 답하지 않는다: <cause>»).
+- 두 POST 공통: 운영자 모드만. 판정 순서 1) 400 `ACTOR_REQUIRED` 2) 403 `MODE_NOT_ALLOWED` 3) 본문(취소: 본문이 객체가 아니거나 `instanceId` 가 비어 있지 않은 문자열이 아니면 400 `CANCEL_BAD_REQUEST` «instanceId 는 비어 있지 않은 문자열이다(실행 목록의 instanceId)»; 해소: `markerId` 가 양의 정수가 아니면 400 `CLEAR_BAD_REQUEST` «markerId 는 양의 정수다: <값>») 4) 사유(앞뒤 공백 뗀 뒤 비면 400 `REASON_REQUIRED`, «취소 사유가 없다»·«빈손 확인 사유가 없다»). 1~4 는 조작 기록에 남지 않음. 그 뒤는 호스트가 무엇을 답했든 200. 승인자는 본문에 없고 `X-Ops-User`. 요청 id 는 운영 서비스가 만들어 호스트에 넘김.
+- 취소 본문 `{instanceId, reason}`, 200 칸 7개 이 순서 `requestId`·`executionId`·`result`·`confirmation`·`outcome`(호스트 `result` 이름, 호스트가 200 으로 답했을 때만)·`answer`(호스트 200 본문)·`rejection`(호스트 4xx 일 때 `{status, error, detail}`).
+- 빈손 확인 본문 `{reason}`, 200 칸 7개 이 순서 `requestId`·`robotId`·`markerId`·`result`·`confirmation`·`answer`·`rejection`.
+- `result`: 취소는 `CANCELED` → `SUCCEEDED`, `NOT_CANCELABLE`·`NOT_FOUND`·`REFUSED` 와 호스트 4xx → `REJECTED`. 빈손 확인은 200 본문에 객체 `clearing` 이 있으면 `SUCCEEDED`, 404·409 → `REJECTED`. 둘 다 연결 실패·시간 초과·5xx·200 인데 본문을 못 읽음 → `NO_RESPONSE` 와 1초 뒤 재조회 한 번: 취소는 `GET /host/executions` 의 인스턴스가 요청 인스턴스와 같고 그 실행의 `cancel.approverId` 가 행위자이며 `recordedAt` ≥ 보내기 직전 운영 서비스 시각이면 `CONFIRMED_APPLIED`, 실행이 없거나 그런 `cancel` 이 없으면 `CONFIRMED_NOT_APPLIED`, 인스턴스가 다르거나 못 읽으면 null(확인 행 없음). 빈손 확인은 `GET /host/robots/residual-holds` 에 그 `markerId` 가 없으면 `CONFIRMED_APPLIED`, 있으면 `CONFIRMED_NOT_APPLIED`, 못 읽으면 null.
+- 조작 기록: 취소 `target` = 실행 id, `request` = `{"op":"CANCEL_EXECUTION","executionId","approverId","instanceId"}`; 빈손 확인 `target` = `<robotId>/<markerId>`, `request` = `{"op":"CONFIRM_ROBOT_EMPTY","robotId","markerId"(수),"approverId"}`; `reason` = 입력 사유; `targetResponse` 와 재조회 행 규칙은 9.3 과 같음(재조회 행 `observed` 는 취소면 그 실행, 빈손 확인이면 남아 있는 표시 또는 null).
+
+```json
+{
+  "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a",
+  "executionId": "exec-1",
+  "result": "SUCCEEDED",
+  "confirmation": null,
+  "outcome": "CANCELED",
+  "answer": {"result": "CANCELED", "executionId": "exec-1", "physicalState": "PARTIAL", "detail": null, "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"},
+  "rejection": null
+}
+```
+
+```json
+{
+  "requestId": "0b7d4c55-9a51-4f3e-8d5c-6b7a6f1c2a9e",
+  "robotId": "humanoid-01",
+  "markerId": 1,
+  "result": "REJECTED",
+  "confirmation": null,
+  "answer": null,
+  "rejection": {"status": 409, "error": "RESIDUAL_HOLD_ALREADY_CLEARED", "detail": "잔여 파지 표시 1 는 이미 해소했다(park, 2026-10-14T01:10:00.000001Z)"}
+}
+```
+
+(근거 시험: `ExecutionControlsTest` 여섯.)
