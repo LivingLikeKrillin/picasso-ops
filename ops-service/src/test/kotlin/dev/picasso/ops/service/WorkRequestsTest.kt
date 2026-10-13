@@ -115,9 +115,9 @@ class WorkRequestsTest {
   assertEquals(404,assertFailsWith<RequestRejected>{service.get(row.receiptId,"other")}.status)
  }
 
- private fun observeResult(job:String,version:Int=1,state:String="PHYSICALLY_DONE",blocked:Boolean=false) {
+ private fun observeResult(job:String,version:Int=1,state:String="PHYSICALLY_DONE",blocked:Boolean=false,missionVersion:Int?=null) {
   bench.executions=HostCall.Ok(json.readTree("""{"instanceId":"mw-1","journalBlockedExecutionIds":${if(blocked) "[\"exec-1\"]" else "[]"},"executions":[{
-   "executionId":"exec-1","jobOrderId":"$job","workMasterId":"InspectAsset","missionVersion":null,"robotId":"humanoid-01","physicalState":"$state",
+   "executionId":"exec-1","jobOrderId":"$job","workMasterId":"InspectAsset","missionVersion":$missionVersion,"robotId":"humanoid-01","physicalState":"$state",
    "jobResponse":{"jobResponseId":"response-$version","version":$version,"physicalState":"$state","requiredEvidence":"E2","reachedEvidence":"E2",
    "completedUnits":["T1"],"unverifiedUnits":[],"incompleteUnits":{},"inDoubtUnits":[],"operatorRequired":false,"residualHold":"EMPTY","blockedBy":[],"connection":"ONLINE"}}]}"""))
  }
@@ -507,10 +507,12 @@ class WorkRequestsTest {
   resource();ready(false);val receipt=service.receive("mes",body).receipt;val second=manual().receipt
   val c=coordinator();c.tick();assertTrue(bench.submitted.isEmpty())
   interfaces.state("asset-check",1,"ENABLED","DISABLED","대기 중 공개 중단",Actor(Mode.ENGINEER,"lee"))
+  interfaces.deploy("asset-check",1,"7",1,"대기 중 배포 변경",Actor(Mode.ENGINEER,"lee"))
   ready(true);c.tick();coordinator().tick()
   assertEquals(1,bench.submitted.size);assertEquals(receipt.jobOrderId,bench.submitted.single().first["jobOrderId"].asText())
   assertEquals("ACCEPTED",service.get(receipt.receiptId).state);assertEquals("WAITING_RESOURCE",service.get(second.receiptId).state)
   assertEquals(receipt.receiptId,c.stations().single().owner)
+  assertEquals(1,bench.submitted.single().first["deployment"]["deploymentVersion"].asInt());assertEquals("CODE",bench.submitted.single().first["missionVersion"].asText())
   val saved=service.get(receipt.receiptId).normalizedOrder
   assertEquals(saved,bench.submitted.single().first)
  }
@@ -662,4 +664,133 @@ class WorkRequestsTest {
   assertEquals("RESOURCE_REQUIREMENT",ex.code);assertEquals("UNASSIGNED",service.get(row.receiptId).state);assertEquals(row.updatedAt,service.get(row.receiptId).updatedAt);assertTrue(bench.submitted.isEmpty())
  }
 
+ private fun pinned(order:com.fasterxml.jackson.databind.JsonNode?)=order!!.let{it["deployment"]["deploymentVersion"].asInt() to it["missionVersion"].asText()}
+ private fun invocation(expected:Int)=json.readTree("""{"requestId":"${UUID.randomUUID()}","input":${body["input"]},"expectedDeploymentVersion":$expected}""")
+ @Test fun `배포를 바꾸고 되돌려도 먼저 받은 작업 요청은 받은 때의 계약 배포 임무 버전을 유지하고 이력에 남긴다`() {
+  val engineer=Actor(Mode.ENGINEER,"lee");val operator=Actor(Mode.OPERATOR,"kim")
+  interfaces.deploy("asset-check",1,"7",1,"v7 배포",engineer)
+  val firstCall=invocation(2);val r1=service.receiveInterface(operator,"asset-check",1,firstCall).receipt
+  assertEquals("ACCEPTED",r1.state);assertEquals(2 to "7",pinned(r1.normalizedOrder))
+  interfaces.deploy("asset-check",1,"8",2,"v8 배포",engineer)
+  val r2=service.receiveInterface(operator,"asset-check",1,invocation(3)).receipt;assertEquals(3 to "8",pinned(r2.normalizedOrder))
+  // v7 로 받은 실행이 v8 배포 뒤에 실패로 끝난다.
+  observeResult(r1.jobOrderId,1,"FAILED",missionVersion=7);service().detail(r1.receiptId)
+  val failed=service.result(r1.receiptId,"ops:interface",1);val snapshot=failed["snapshot"] as com.fasterxml.jackson.databind.JsonNode
+  assertEquals(2,snapshot["deployment"]["deploymentVersion"].asInt());assertEquals(7,snapshot["missionVersion"].asInt())
+  assertEquals("FAILED",snapshot["jobResponse"]["physicalState"].asText())
+  val sent=bench.submitted.size
+  val replay=service().receiveInterface(operator,"asset-check",1,firstCall)
+  assertTrue(replay.duplicate);assertEquals(r1.receiptId,replay.receipt.receiptId);assertEquals(r1.jobOrderId,replay.receipt.jobOrderId)
+  assertEquals(2 to "7",pinned(replay.receipt.normalizedOrder));assertEquals(sent,bench.submitted.size)
+  interfaces.deploy("asset-check",1,"7",3,"v7 로 되돌림",engineer)
+  val r3=service.receiveInterface(operator,"asset-check",1,invocation(4)).receipt;assertEquals(4 to "7",pinned(r3.normalizedOrder))
+  assertEquals(r1.normalizedOrder,service().get(r1.receiptId).normalizedOrder);assertEquals(r2.normalizedOrder,service().get(r2.receiptId).normalizedOrder)
+  assertEquals(failed,service().result(r1.receiptId,"ops:interface",1))
+  assertEquals(listOf(2 to "7",3 to "8",4 to "7"),bench.submitted.map{pinned(it.first)})
+  val records=log.list()
+  for(r in listOf(r1,r2,r3)) {
+   val submit=records.single{it.target==r.jobOrderId};val order=json.readTree(submit.request)["jobOrder"]
+   assertEquals(r.receiptId,submit.requestId)
+   assertEquals(r.normalizedOrder!!["deployment"],order["deployment"]);assertEquals(r.normalizedOrder!!["missionVersion"],order["missionVersion"])
+  }
+  assertEquals(listOf("v7 배포","v8 배포","v7 로 되돌림"),records.filter{it.target=="interface:asset-check/v1" && json.readTree(it.request)["op"].asText()=="INTERFACE_DEPLOY"}.map{it.reason}.reversed())
+  assertEquals(listOf(4 to "7",3 to "8",2 to "7",1 to "CODE"),interfaces.deployments("asset-check",1).map{it["deploymentVersion"].asInt() to it["missionVersion"].asText()})
+ }
+ @Test fun `배포가 바뀐 뒤 미배정 재평가는 원래 배포로 제출하고 변환이 달라지면 RECOVERY_INPUT_CHANGED 로 막는다`() {
+  val operator=Actor(Mode.OPERATOR,"kim")
+  bench.judge={ids->HostCall.Ok(ids.map{id->JobOrderBench.running(id,"busy")})}
+  val (r1,r2,r3)=(1..3).map{service.receiveInterface(operator,"asset-check",1,invocation(1)).receipt}
+  for(r in listOf(r1,r2,r3))assertEquals("UNASSIGNED",r.state)
+  interfaces.deploy("asset-check",1,"7",1,"v7 배포",Actor(Mode.ENGINEER,"lee"))
+  bench.judge={ids->HostCall.Ok(ids.map(JobOrderBench::pass))}
+  fun recover(r:Receipt)=service().recover(r.receiptId,operator,json.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("reason","기체 준비 완료").put("expectedUpdatedAt",service.get(r.receiptId).updatedAt))
+  assertEquals("ACCEPTED",recover(r1).receipt.state)
+  val order=bench.submitted.single().first
+  assertEquals(r1.jobOrderId,order["jobOrderId"].asText());assertEquals(1 to "CODE",pinned(order))
+  // 변환 코드가 바뀐 업그레이드: 같은 원래 입력이 저장본과 다른 작업 지시가 된다.
+  jdbc.sql("UPDATE ops.work_request SET normalized_order=jsonb_set(normalized_order,'{version}','2') WHERE receipt_id=:id").param("id",r2.receiptId).update()
+  val before=service.get(r2.receiptId)
+  val changed=assertFailsWith<RequestRejected>{recover(r2)}
+  assertEquals("RECOVERY_INPUT_CHANGED",changed.code);assertEquals(409,changed.status)
+  val after=service.get(r2.receiptId)
+  assertEquals("UNASSIGNED",after.state);assertEquals(before.updatedAt,after.updatedAt)
+  assertTrue((service.detail(r2.receiptId)["recoveries"] as List<*>).isEmpty());assertEquals(1,bench.submitted.size)
+  interfaces.state("asset-check",1,"ENABLED","DISABLED","공개 중단",Actor(Mode.ENGINEER,"lee"))
+  val disabled=assertFailsWith<RequestRejected>{recover(r3)}
+  assertEquals("INTERFACE_NOT_ENABLED",disabled.code);assertEquals(409,disabled.status)
+  assertEquals("UNASSIGNED",service.get(r3.receiptId).state);assertEquals(1,bench.submitted.size)
+ }
+ @Test fun `배포가 바뀌면 대기 중인 스테이션 작업은 새 배포로 옮기지 않고 거부로 닫고 점유를 푼다`() {
+  resource();ready(false)
+  val run=UUID.randomUUID();val c=coordinator()
+  c.enqueue(Actor(Mode.OPERATOR,"kim"),json.readTree("""{"requestId":"$run","stationId":"inspection-1","interfaceId":"asset-check","interfaceVersion":1,"expectedDeploymentVersion":1,"input":${body["input"]}}"""))
+  c.tick();assertEquals("WAITING_READY",c.get(run).state);assertEquals(run,c.stations().single().owner)
+  interfaces.deploy("asset-check",1,"7",1,"v7 배포",Actor(Mode.ENGINEER,"lee"))
+  ready(true);coordinator().tick()
+  val closed=coordinator().get(run);assertEquals("REJECTED",closed.state)
+  val receipt=service.get(closed.receiptId!!)
+  assertEquals("REJECTED",receipt.state);assertContains(receipt.detail!!,"배포가 변경");assertNull(receipt.normalizedOrder)
+  val station=coordinator().stations().single();assertNull(station.owner);assertNull(station.quarantinedBy)
+  assertTrue(bench.submitted.isEmpty())
+ }
+
+ private fun execution(id:String,job:String,extra:String="")="""{"executionId":"$id","jobOrderId":"$job","workMasterId":"InspectAsset","missionVersion":null,"robotId":"humanoid-01","physicalState":"RUNNING","units":[],"jobResponse":null$extra}"""
+ @Test fun `결과 불명 작업 요청은 재기동한 호스트에서 다시 지은 실행이 보일 때만 수락이 되고 일지 없는 실행은 사라져도 결과 불명으로 남는다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-$n")
+  // R1: 제출 응답 없음, 실행 목록 불통.
+  bench.answer=HostWrite.NoResponse("timeout");bench.executions=HostCall.Silent("offline")
+  val r1=service.receive("mes",order(1)).receipt;assertEquals("IN_DOUBT",r1.state)
+  // R2: 일지 쓰기 실패 500, 재조회도 불통.
+  bench.answer=HostWrite.Answered(500,"""{"error":"JOURNAL_WRITE_FAILED","detail":"실행 일지 저장 실패"}""")
+  val r2=service.receive("mes",order(2)).receipt;assertEquals("IN_DOUBT",r2.state)
+  // R3: 응답 없음, 재조회는 읽혔고 실행이 없다.
+  bench.answer=HostWrite.NoResponse("timeout");bench.executions=bench.executionsWith()
+  val r3=service.receive("mes",order(3)).receipt;assertEquals("IN_DOUBT",r3.state)
+  assertEquals(listOf(dev.picasso.ops.service.log.OperationResult.NO_RESPONSE,dev.picasso.ops.service.log.OperationResult.CONFIRMED_NOT_APPLIED),log.list().filter{it.target==r3.jobOrderId}.map{it.result}.reversed())
+  // 재기동 전: R2 실행은 일지 없이 메모리에만 있다.
+  bench.executions=HostCall.Ok(json.readTree("""{"instanceId":"mw-1","pumpedAt":null,"journalBlockedExecutionIds":["exec-2"],"executions":[${execution("exec-1",r1.jobOrderId)},${execution("exec-2",r2.jobOrderId)}]}"""))
+  val blocked=service.detail(r2.receiptId)
+  assertEquals(true,blocked["journalBlocked"]);assertEquals("IN_DOUBT",(blocked["receipt"] as Receipt).state)
+  // 실행 호스트 재기동: 일지에 있던 R1 실행만 새 인스턴스에서 다시 선다.
+  val restoredFrom=""","restoredFrom":{"instanceId":"mw-1","executionId":"exec-1"}"""
+  bench.executions=HostCall.Ok(json.readTree("""{"instanceId":"mw-2","pumpedAt":null,"journalBlockedExecutionIds":[],"executions":[${execution("exec-1",r1.jobOrderId,restoredFrom)}]}"""))
+  val restarted=service()
+  val resumed=restarted.detail(r1.receiptId)["receipt"] as Receipt
+  assertEquals("ACCEPTED",resumed.state);assertEquals("mw-2",resumed.executionInstanceId);assertEquals("mw-1",resumed.lastExecution!!["restoredFrom"]["instanceId"].asText())
+  val gone=restarted.detail(r2.receiptId)
+  assertEquals("OK",gone["hostRead"]);assertNull(gone["execution"]);assertEquals(false,gone["journalBlocked"]);assertEquals("IN_DOUBT",(gone["receipt"] as Receipt).state)
+  fun refused(r:Receipt)=assertFailsWith<RequestRejected>{restarted.recover(r.receiptId,Actor(Mode.OPERATOR,"kim"),json.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("reason","재기동 뒤 재평가").put("expectedUpdatedAt",restarted.get(r.receiptId).updatedAt))}.code
+  assertEquals("RECOVERY_NOT_SAFE",refused(r2))
+  reviewed(r2.receiptId,"NOT_STARTED")
+  assertEquals("IN_DOUBT",(restarted.detail(r2.receiptId)["receipt"] as Receipt).state)
+  assertEquals("IN_DOUBT",(restarted.detail(r3.receiptId)["receipt"] as Receipt).state);assertEquals("RECOVERY_NOT_SAFE",refused(r3))
+  assertEquals(3,bench.submitted.size)
+ }
+ @Test fun `전달 중 멈춘 결과와 닫힌 수신처는 임대가 끝난 뒤 같은 키로 버전마다 한 번 다시 보낸다`() {
+  val row=service.receive("mes",body).receipt
+  observeResult(row.jobOrderId,1,"PARTIAL");assertEquals(1,service.result(row.receiptId,"mes")["version"])
+  observeResult(row.jobOrderId,2);assertEquals(2,service.result(row.receiptId,"mes")["version"])
+  val port=java.net.ServerSocket(0,0,java.net.InetAddress.getByName("127.0.0.1")).use{it.localPort}
+  val url="http://127.0.0.1:$port/results"
+  fun rows()=jdbc.sql("SELECT version,state,last_error FROM ops.work_result_delivery ORDER BY version").query{rs,_ -> listOf(rs.getString(1),rs.getString(2),rs.getString(3))}.list()
+  // 수신처가 닫혀 있다.
+  WorkResultDelivery(jdbc,service,url,"","mes").deliver()
+  assertEquals(listOf(listOf("1","RETRY","로컬 연결 실패 또는 응답 불명"),listOf("2","RETRY","로컬 연결 실패 또는 응답 불명")),rows())
+  // v1 은 보내던 프로세스가 멈춰 IN_FLIGHT 로 남았고 임대가 끝났다. v2 는 재시도 시각이 지났다.
+  jdbc.sql("UPDATE ops.work_result_delivery SET state='IN_FLIGHT',claim_token=:claim,next_attempt_at=clock_timestamp()-interval '1 second' WHERE version=1").param("claim",UUID.randomUUID()).update()
+  jdbc.sql("UPDATE ops.work_result_delivery SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE version=2").update()
+  val server=com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1",port),0)
+  val seen=java.util.Collections.synchronizedList(mutableListOf<Pair<String,Int>>())
+  server.createContext("/results") { exchange ->
+   seen+=exchange.requestHeaders.getFirst("Idempotency-Key") to json.readTree(exchange.requestBody.readAllBytes())["version"].asInt()
+   exchange.sendResponseHeaders(204,-1);exchange.close()
+  };server.start()
+  try {
+   WorkResultDelivery(jdbc,service(),url,"","mes").deliver()
+   assertEquals(listOf("DELIVERED","DELIVERED"),rows().map{it[1]})
+   WorkResultDelivery(jdbc,service(),url,"","mes").deliver()
+   assertEquals(listOf("${row.receiptId}/v1" to 1,"${row.receiptId}/v2" to 2),seen.sortedBy{it.second})
+  } finally {server.stop(0)}
+  assertNull(service.result(row.receiptId,"mes",1)["acknowledgedAt"]);assertNull(service.result(row.receiptId,"mes",2)["acknowledgedAt"])
+ }
 }
