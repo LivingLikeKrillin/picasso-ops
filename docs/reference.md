@@ -378,7 +378,7 @@ cd ui && npx playwright test -c playwright.screens.config.ts
 
 ## 추가 화면 참고
 
-![코드 정의 InspectAsset 실행](screens/img/32-operations-executions-running.png)
+![코드 정의 InspectAsset 실행](screens/img/12-operations-executions.png)
 
 위 화면은 `32-operations-executions-running.png`로, 코드 정의 `InspectAsset` 실행과 실행 호스트 인스턴스 및 마지막 pump 상태를 보여 줍니다(크기 1408×258, 실제 스택 환경).
 
