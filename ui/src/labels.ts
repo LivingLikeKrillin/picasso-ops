@@ -185,3 +185,16 @@ export const DECISION_LABEL: Record<HoldDecision, string> = {
 }
 
 export const reviewLabels:Record<string,string>={NOT_CONFIRMED:'현장 상태 미확인',NOT_STARTED:'현장 미착수 확인',IN_PROGRESS:'현장 진행 중 확인',COMPLETED:'현장 완료 관측'}
+
+/** 공유 스테이션의 작업 번호 검증과 격리 문구. 서버 사유와 같은 낱말을 쓴다. */
+export const STATION_TEXT={
+  jobSignal:'작업 번호 송신 신호',
+  jobEchoSignal:'작업 번호 반환 신호',
+  jobHelp:'작업 번호 일치를 검증하는 신호로, 설비는 시작 시 받은 번호를 유지했다가 완료 신호와 함께 반환해야 합니다. 연결하지 않으면 현장 확인 후 작업 해제 시 스테이션이 격리됩니다.',
+  echoing:'작업번호 검증',
+  quarantined:'격리 상태',
+  idleButton:'현장 확인 후 격리 해제',
+  idleWarning:'설비가 비어 있고 이전 작업 로봇이 멈췄는지 현장에서 확인하세요. 설비 완료 신호가 꺼진 것을 확인한 뒤 판단하세요.',
+  idleConfirm:'설비·로봇 상태와 격리 해제 가능 여부를 확인했습니다',
+  clearNote:'자원을 해제해도 이전 작업은 멈추지 않으며 해당 스테이션은 격리됩니다.',
+} as const

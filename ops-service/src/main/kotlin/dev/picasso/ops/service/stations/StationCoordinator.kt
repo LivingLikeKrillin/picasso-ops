@@ -2,6 +2,7 @@ package dev.picasso.ops.service.stations
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import dev.picasso.ops.service.actor.Actor
 import dev.picasso.ops.service.actor.Mode
 import dev.picasso.ops.service.requests.RequestRejected
@@ -11,12 +12,16 @@ import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 
-data class RfStation(val stationId:String,val name:String,val readySignal:String,val completeSignal:String,val timeoutSeconds:Int,val owner:UUID?,val createdBy:String,val createdAt:String)
+/**
+ * [jobSignal]/[jobEchoSignal]: optional TEXT pair. Ops writes the run token before dispatch and the equipment returns it with its completion.
+ * [quarantinedBy]: a dispatched run released on site confirmation at a station without the pair. Its execution may still raise the completion signal.
+ */
+data class RfStation(val stationId:String,val name:String,val readySignal:String,val completeSignal:String,val timeoutSeconds:Int,val owner:UUID?,val createdBy:String,val createdAt:String,val jobSignal:String?=null,val jobEchoSignal:String?=null,val quarantinedBy:UUID?=null,val quarantinedAt:String?=null)
 data class StationRun(val runId:UUID,val stationId:String,val payload:JsonNode,val actor:String,val state:String,val reason:String,val receiptId:UUID?,val attempt:Int,val revision:Int,val createdAt:Instant,val phaseAt:Instant,val dispatchedAt:Instant?,val resultBaseline:Int?=null,val baselineReviewOnly:Boolean=false)
 /** Durable station arbitration. Database locks cover decisions, never network calls. */
 class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionTemplate,private val port:StationPort,private val clock:Clock=Clock.systemUTC()) {
  private val json=ObjectMapper().findAndRegisterModules().disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
- fun stations():List<RfStation> = jdbc.sql("SELECT * FROM ops.rf_station ORDER BY station_id").query {r,_->RfStation(r.getString("station_id"),r.getString("name"),r.getString("ready_signal"),r.getString("complete_signal"),r.getInt("timeout_seconds"),r.getObject("owner",UUID::class.java),r.getString("created_by"),r.getString("created_at"))}.list()
+ fun stations():List<RfStation> = jdbc.sql("SELECT * FROM ops.rf_station ORDER BY station_id").query {r,_->RfStation(r.getString("station_id"),r.getString("name"),r.getString("ready_signal"),r.getString("complete_signal"),r.getInt("timeout_seconds"),r.getObject("owner",UUID::class.java),r.getString("created_by"),r.getString("created_at"),r.getString("job_signal"),r.getString("job_echo_signal"),r.getObject("quarantined_by",UUID::class.java),r.getString("quarantined_at"))}.list()
  fun runs():List<StationRun> = jdbc.sql("SELECT * FROM ops.station_run ORDER BY created_at DESC,run_id LIMIT 100").query(::row).list()
  fun get(id:UUID):StationRun = jdbc.sql("SELECT * FROM ops.station_run WHERE run_id=:id").param("id",id).query(::row).optional().orElseThrow{RequestRejected("RUN_NOT_FOUND","스테이션 작업이 없습니다",404)}
  fun events(id:UUID):List<Map<String,Any?>> {get(id);return jdbc.sql("SELECT * FROM ops.station_event WHERE run_id=:id ORDER BY event_id").param("id",id).query {r,_->mapOf("state" to r.getString("state"),"reason" to r.getString("reason"),"actor" to r.getString("actor"),"recordedAt" to r.getString("recorded_at"),"context" to json.readTree(r.getString("context")))}.list()}
@@ -27,13 +32,17 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  }!!
  fun createStation(actor:Actor,p:JsonNode):List<RfStation> {
   if(actor.mode!=Mode.ENGINEER) reject("엔지니어만 자원을 등록합니다",403)
-  exact(p,setOf("stationId","name","readySignal","completeSignal","timeoutSeconds"))
+  val required=setOf("stationId","name","readySignal","completeSignal","timeoutSeconds");val fields=p.fieldNames().asSequence().toSet()
+  if(!p.isObject || !fields.containsAll(required) || !(required+JOB_FIELDS).containsAll(fields))reject("요청 필드를 확인하세요")
   val id=text(p,"stationId",64);val name=text(p,"name",120);val ready=text(p,"readySignal",120);val complete=text(p,"completeSignal",120)
+  if(JOB_FIELDS.count{p[it]?.isNull==false}==1)reject(JOB_PAIR)
+  val job=p["jobSignal"]?.takeUnless{it.isNull}?.let{text(p,"jobSignal",120)};val echo=p["jobEchoSignal"]?.takeUnless{it.isNull}?.let{text(p,"jobEchoSignal",120)}
   val timeout=p["timeoutSeconds"]
-  if(!id.matches(Regex("[a-z][a-z0-9-]{0,63}")) || ready==complete || timeout?.isIntegralNumber!=true || !timeout.canConvertToInt() || timeout.asInt() !in 5..3600) reject("식별자·서로 다른 신호·5~3600초 기한이 필요합니다")
-  val signals=port.signals() ?: reject("현장 신호를 확인할 수 없습니다",503)
-  if(ready !in signals || complete !in signals) reject("현재 현장에 선언된 일반 BOOLEAN 신호만 연결할 수 있습니다")
-  val n=jdbc.sql("INSERT INTO ops.rf_station(station_id,name,ready_signal,complete_signal,timeout_seconds,created_by) VALUES(:id,:name,:ready,:complete,:timeout,:actor) ON CONFLICT DO NOTHING").param("id",id).param("name",name).param("ready",ready).param("complete",complete).param("timeout",timeout.asInt()).param("actor",actor.header()).update()
+  if(!id.matches(Regex("[a-z][a-z0-9-]{0,63}")) || ready==complete || job!=null && job==echo || timeout?.isIntegralNumber!=true || !timeout.canConvertToInt() || timeout.asInt() !in 5..3600) reject("식별자·서로 다른 신호·5~3600초 기한이 필요합니다")
+  val signals=port.read() ?: reject("현장 신호를 확인할 수 없습니다",503)
+  if(ready !in signals.flags || complete !in signals.flags) reject("현재 현장에 선언된 일반 BOOLEAN 신호만 연결할 수 있습니다")
+  if(job!=null && (job !in signals.texts || echo !in signals.texts)) reject(TEXT_REQUIRED)
+  val n=jdbc.sql("INSERT INTO ops.rf_station(station_id,name,ready_signal,complete_signal,timeout_seconds,created_by,job_signal,job_echo_signal) VALUES(:id,:name,:ready,:complete,:timeout,:actor,:job,:echo) ON CONFLICT DO NOTHING").param("id",id).param("name",name).param("ready",ready).param("complete",complete).param("timeout",timeout.asInt()).param("actor",actor.header()).param("job",job).param("echo",echo).update()
   if(n==0)reject("이미 등록된 스테이션입니다",409)
   return stations()
  }
@@ -56,20 +65,25 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  }
  private fun replay(id:UUID,p:JsonNode,actor:Actor):StationRun {val run=get(id);if(run.payload!=p || run.actor!=actor.header())reject("같은 요청 ID에 다른 입력·요청자가 있습니다",409);return run}
  @Synchronized fun tick() {
-  val signals=runCatching{port.signals()}.getOrNull()
+  // Ops clock time of this read. Only a read taken after a run (re)entered RUNNING may speak for that run.
+  val readAt=clock.instant();val signals=runCatching{port.read()}.getOrNull()
   for(station in stations()) {
-   val dispatch=tx.execute {
+   val next=tx.execute {
     lock(station.stationId)
     var current=stations().single{it.stationId==station.stationId}
     if(current.owner==null) {
      val queued=jdbc.sql("SELECT run_id FROM ops.station_run WHERE station_id=:station AND state='QUEUED' ORDER BY created_at,run_id LIMIT 1").param("station",station.stationId).query(UUID::class.java).optional().orElse(null)
-     if(queued!=null) {jdbc.sql("UPDATE ops.rf_station SET owner=:id WHERE station_id=:station").param("id",queued).param("station",station.stationId).update();transition(get(queued),"WAITING_READY","자원 확보; 설비 준비와 완료 신호 초기화를 기다립니다");current=current.copy(owner=queued)}
+     if(queued!=null) {jdbc.sql("UPDATE ops.rf_station SET owner=:id WHERE station_id=:station").param("id",queued).param("station",station.stationId).update();transition(get(queued),"WAITING_READY",if(current.quarantinedBy!=null)QUARANTINED else "자원 확보; 설비 준비와 완료 신호 초기화를 기다립니다");current=current.copy(owner=queued)}
     }
     val run=current.owner?.let(::get) ?: return@execute null
     if(run.state=="WAITING_READY") {
+     // Quarantine pauses the readiness deadline: the run waits for the on-site decision, never times out into the next queued run.
+     if(current.quarantinedBy!=null) {hold(run,QUARANTINED);return@execute null}
      if(expired(run,current)) {transition(run,"TIMED_OUT","설비 준비 시간 초과; 로봇 전송 전 자원 해제",release=true);return@execute null}
-     if(signals?.get(current.readySignal)?.value==true && signals[current.completeSignal]?.value==false) {
-      transition(run,"DISPATCHING","설비 준비 확인; 고정 계약을 제출합니다",dispatch=true,context=json.valueToTree(signals))
+     if(signals?.flags?.get(current.readySignal)?.value==true && signals.flags[current.completeSignal]?.value==false) {
+      // The job number is written outside the lock first; DISPATCHING is claimed only after the site holds it.
+      if(current.jobSignal!=null)return@execute run
+      transition(run,"DISPATCHING","설비 준비 확인; 고정 계약을 제출합니다",dispatch=true,context=snapshot(signals))
       return@execute get(run.runId)
      }
     }
@@ -79,12 +93,25 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
     if(run.state in setOf("RUNNING","WAITING_ROBOT") && expired(run,current)) transition(run,"REVIEW_REQUIRED","작업 시간 초과; 물리 상태 확인 전 점유를 유지합니다")
     null
    }
+   val dispatch=if(next?.state=="WAITING_READY") numbered(next,signals) else next
    if(dispatch!=null) dispatch(dispatch)
    val owner=stations().single{it.stationId==station.stationId}.owner ?: continue
    val run=get(owner)
    // A previous process may have stopped after committing DISPATCHING. Same-key receipt lookup is safe, blind retry is not.
    if(run.state=="DISPATCHING" && dispatch==null) dispatch(run)
-   if(run.state in setOf("RUNNING","WAITING_ROBOT")) observe(run,station,signals)
+   if(run.state in setOf("RUNNING","WAITING_ROBOT")) observe(run,station,signals,readAt)
+  }
+ }
+ /** Writes the run token to the job-number signal outside locks. A failed write keeps WAITING_READY and the next tick writes again. */
+ private fun numbered(run:StationRun,signals:StationSignals?):StationRun? {
+  val name=station(run.stationId).jobSignal!!;val token=run.runId.toString()
+  val written=runCatching{port.write(name,token,actor(run))}.getOrDefault(false)
+  return tx.execute {
+   lock(run.stationId);val current=get(run.runId);val station=station(run.stationId)
+   if(current.state!="WAITING_READY" || current.revision!=run.revision || station.owner!=run.runId || station.quarantinedBy!=null)return@execute null
+   if(!written) {hold(current,WRITE_FAILED,json.createObjectNode().put("jobSignal",name).put("jobToken",token));return@execute null}
+   transition(current,"DISPATCHING","설비 준비 확인; 고정 계약을 제출합니다",dispatch=true,context=json.createObjectNode().put("jobSignal",name).put("jobToken",token).set("signals",snapshot(signals)))
+   get(run.runId)
   }
  }
  private fun dispatch(run:StationRun) {
@@ -100,11 +127,11 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   receipt.state=="REJECTED" -> transition(run,"REJECTED","계약 제출 거부; 자원 해제",release=true)
   else -> transition(run,"REVIEW_REQUIRED","작업 요청 ${receipt.state}; 실행 여부 확인 전 점유 유지")
  }}
- private fun observe(run:StationRun,station:RfStation,signals:Map<String,StationSignal>?) {
+ private fun observe(run:StationRun,station:RfStation,signals:StationSignals?,readAt:Instant) {
   val receipt=run.receiptId?.let{runCatching{port.receipt(it)}.getOrNull()} ?: return
   if(run.state=="WAITING_ROBOT") {
    if(!receipt.safeToRetry) {tx.execute{lock(run.stationId);if(get(run.runId).state==run.state)received(get(run.runId),receipt)};return}
-   if(signals?.get(station.readySignal)?.value!=true || signals[station.completeSignal]?.value!=false)return
+   if(signals?.flags?.get(station.readySignal)?.value!=true || signals.flags[station.completeSignal]?.value!=false)return
    if(run.attempt>=3 || clock.instant().isBefore(run.phaseAt.plusSeconds(5)))return
    // Claim a retry before calling out. Crashes at this boundary require review, never another retry.
    val claimed=tx.execute{lock(run.stationId);val r=get(run.runId);if(r.state!="WAITING_ROBOT" || r.revision!=run.revision)false else {jdbc.sql("UPDATE ops.station_run SET attempt=attempt+1 WHERE run_id=:id").param("id",r.runId).update();transition(get(r.runId),"RETRYING","호스트 전송 전 미배정의 제한 재평가");true}}!!
@@ -116,19 +143,27 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   }
   tx.execute {
    lock(run.stationId);val current=get(run.runId);if(current.state!="RUNNING")return@execute
-   if(signals?.get(station.readySignal)==null || signals[station.completeSignal]==null) {transition(current,"REVIEW_REQUIRED","현장 신호 관측 불명; 점유를 유지하고 현장 확인을 기다립니다");return@execute}
-   val complete=signals[station.completeSignal]
+   val echo=station.jobEchoSignal
+   if(signals?.flags?.get(station.readySignal)==null || signals.flags[station.completeSignal]==null || echo!=null && signals.texts[echo]==null) {transition(current,"REVIEW_REQUIRED","현장 신호 관측 불명; 점유를 유지하고 현장 확인을 기다립니다");return@execute}
+   // Every (re)entry to RUNNING required the completion signal off. A true read after that entry is new; one read before it is not judged.
+   // Both instants are on the ops clock. The signal's own observedAt is the field clock and is not compared.
+   val on=signals.flags.getValue(station.completeSignal).value && !readAt.isBefore(current.phaseAt)
+   val token=current.runId.toString();val echoed=echo?.let{signals.texts.getValue(it).value}
    // A result stored before this attempt (re)entered RUNNING is the previous attempt's: keep waiting, the timeout still applies.
    // A resume re-observes the same execution, so a completion stored during review still counts; a stale hold does not.
    val fresh=(receipt.resultVersion?:0)>(current.resultBaseline?:0);val physical=receipt.physicalState?.takeIf{fresh}
-   if(receipt.physicalState=="PHYSICALLY_DONE" && (fresh || current.baselineReviewOnly) && complete?.value==true && complete.observedAt!=null && current.dispatchedAt!=null && complete.observedAt.isAfter(current.dispatchedAt))
-    transition(current,"COMPLETED","로봇 물리 완료와 이번 작업의 설비 완료 신호 확인; 자원 해제",release=true,context=json.createObjectNode().apply{set<JsonNode>("execution",receipt.snapshot?:json.nullNode());set<JsonNode>("signals",json.valueToTree(signals))})
+   if(on && echo!=null && echoed!=token)
+    transition(current,"REVIEW_REQUIRED",ECHO_MISMATCH,context=json.createObjectNode().put("expected",token).put("echoed",echoed).set("signals",snapshot(signals)))
+   else if(receipt.physicalState=="PHYSICALLY_DONE" && (fresh || current.baselineReviewOnly) && on)
+    transition(current,"COMPLETED","로봇 물리 완료와 이번 작업의 설비 완료 신호 확인; 자원 해제",release=true,context=json.createObjectNode().apply{set<JsonNode>("execution",receipt.snapshot?:json.nullNode());set<JsonNode>("signals",snapshot(signals))})
    else if(physical in REVIEW_PHYSICAL_STATES) transition(current,"REVIEW_REQUIRED","로봇 $physical; 자동 재실행 없이 점유 유지",context=receipt.snapshot)
   }
  }
  fun decide(id:UUID,actor:Actor,p:JsonNode):StationRun {
-  // Signals are a host read: taken before the station lock, judged under it.
-  val signals=if(actor.mode==Mode.OPERATOR && p.path("decision").asText()=="RESUME_OBSERVATION") runCatching{port.signals()}.getOrNull() else null
+  // Signals and the released run's stored result are read before the station lock, judged under it.
+  val asked=p.path("decision").asText()
+  val signals=if(actor.mode==Mode.OPERATOR && asked in SIGNAL_DECISIONS) runCatching{port.read()}.getOrNull() else null
+  val released=if(actor.mode==Mode.OPERATOR && asked=="CONFIRM_CLEAR") runCatching{get(id).receiptId?.let(port::receipt)}.getOrNull() else null
   return tx.execute {
   if(actor.mode!=Mode.OPERATOR)reject("운영자만 확인합니다",403)
   exact(p,setOf("expectedRevision","decision","reason"))
@@ -139,10 +174,23 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
    "CANCEL_QUEUED" -> {if(current.state!="QUEUED")reject("대기열 작업만 취소할 수 있습니다",409);transition(current,"CANCELLED",reason,by=actor.header())}
    "RESUME_OBSERVATION" -> {if(current.state!="REVIEW_REQUIRED" || current.receiptId==null)reject("작업 요청이 있는 확인 필요 작업만 관측을 재개합니다",409)
     // Only completion evidence newer than the resume counts, and a completion signal still on cannot be told apart from this run's.
-    val complete=signals?.get(station(current.stationId).completeSignal) ?: reject("현장 신호를 확인할 수 없어 관측을 재개하지 않습니다",503)
+    val complete=signals?.flags?.get(station(current.stationId).completeSignal) ?: reject("현장 신호를 확인할 수 없어 관측을 재개하지 않습니다",503)
     if(complete.value)reject("설비 완료 신호가 켜져 있습니다. 신호를 초기화한 뒤 관측을 재개하십시오",409)
     transition(current,"RUNNING",reason,dispatch=true,by=actor.header(),reviewOnly=true)}
-   "CONFIRM_CLEAR" -> {if(current.state!="REVIEW_REQUIRED")reject("확인 필요 작업만 현장 확인 후 해제합니다",409);transition(current,"MANUALLY_CLEARED","현장 확인에 의한 자원 해제: $reason",release=true,by=actor.header());cleared(current,reason)}
+   "CONFIRM_CLEAR" -> {if(current.state!="REVIEW_REQUIRED")reject("확인 필요 작업만 현장 확인 후 해제합니다",409)
+    // Release never stops the execution. Without the job-number pair a late completion cannot be told apart, so a dispatched run quarantines the station.
+    val station=station(current.stationId);val quarantine=current.dispatchedAt!=null && station.jobSignal==null
+    val context=json.createObjectNode().apply{set<JsonNode>("signals",snapshot(signals));put("receiptId",current.receiptId?.toString());put("physicalState",released?.physicalState);put("resultVersion",released?.resultVersion);put("quarantined",quarantine)}
+    transition(current,"MANUALLY_CLEARED","현장 확인에 의한 자원 해제: $reason",release=true,by=actor.header(),context=context);cleared(current,reason)
+    if(quarantine) {jdbc.sql("UPDATE ops.rf_station SET quarantined_by=:id,quarantined_at=:at WHERE station_id=:station").param("id",current.runId).param("at",java.sql.Timestamp.from(clock.instant())).param("station",station.stationId).update()
+     event(get(id),QUARANTINE,actor.header(),context.deepCopy().put("stationId",station.stationId))}}
+   "CONFIRM_STATION_IDLE" -> {val station=station(current.stationId)
+    if(station.quarantinedBy==null || station.owner!=current.runId || current.state!="WAITING_READY")reject("격리된 스테이션을 점유해 설비 준비를 기다리는 작업만 격리를 해제합니다",409)
+    val complete=signals?.flags?.get(station.completeSignal) ?: reject("현장 신호를 확인할 수 없어 격리를 해제하지 않습니다",503)
+    if(complete.value)reject("설비 완료 신호가 켜져 있습니다. 신호가 꺼진 것을 확인한 뒤 격리를 해제하십시오",409)
+    jdbc.sql("UPDATE ops.rf_station SET quarantined_by=NULL,quarantined_at=NULL WHERE station_id=:station").param("station",station.stationId).update()
+    // A new phase: the readiness deadline starts again from the on-site decision.
+    transition(current,"WAITING_READY","$IDLE_CONFIRMED: $reason",by=actor.header(),context=json.createObjectNode().put("releasedRunId",station.quarantinedBy.toString()).put("quarantinedAt",station.quarantinedAt).set("signals",snapshot(signals)))}
    else -> reject("지원하지 않는 판단입니다")
   };get(id)
  }!!
@@ -178,6 +226,14 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   }
  }
  private fun station(id:String)=stations().single{it.stationId==id}
+ /** Name → {value, observedAt} for BOOLEAN and TEXT signals of one read. */
+ private fun snapshot(signals:StationSignals?):JsonNode=signals?.let{json.valueToTree<ObjectNode>(it.flags).setAll<JsonNode>(json.valueToTree<ObjectNode>(it.texts))} ?: json.nullNode()
+ /** Keeps the state and its phase clock (a waiting deadline is not reset), records a changed reason once. */
+ private fun hold(run:StationRun,reason:String,context:JsonNode?=null) {
+  if(run.reason==reason)return
+  jdbc.sql("UPDATE ops.station_run SET reason=:reason,revision=revision+1 WHERE run_id=:id").param("reason",reason).param("id",run.runId).update()
+  event(get(run.runId),reason,"system/station",context)
+ }
  private fun expired(run:StationRun,station:RfStation)=!clock.instant().isBefore(run.phaseAt.plusSeconds(station.timeoutSeconds.toLong()))
  /** Every (re)entry to RUNNING records the receipt's latest stored result version: only newer results speak for this attempt. */
  private fun transition(run:StationRun,state:String,reason:String,release:Boolean=false,dispatch:Boolean=false,by:String="system/station",context:JsonNode?=null,baseline:Boolean=state=="RUNNING",reviewOnly:Boolean=false) {
@@ -209,5 +265,14 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   /** picasso PhysicalState: settled states other than PHYSICALLY_DONE, plus OPERATOR_HOLD and IN_DOUBT. CANCELING is transient. */
   val REVIEW_PHYSICAL_STATES=setOf("OPERATOR_HOLD","IN_DOUBT","UNVERIFIED","FAILED","ABORTED","PARTIAL")
   const val REWORK_HELD="자원 관리 작업의 재작업은 스테이션 점유를 유지한 확인 필요 상태에서만 할 수 있습니다"
+  val JOB_FIELDS=listOf("jobSignal","jobEchoSignal")
+  val SIGNAL_DECISIONS=setOf("RESUME_OBSERVATION","CONFIRM_CLEAR","CONFIRM_STATION_IDLE")
+  const val JOB_PAIR="작업 번호 송신·반환 신호는 둘 다 연결하거나 둘 다 비워야 합니다."
+  const val TEXT_REQUIRED="현장에 선언된 TEXT 신호가 필요합니다."
+  const val ECHO_MISMATCH="설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다"
+  const val WRITE_FAILED="작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다"
+  const val QUARANTINED="스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다"
+  const val QUARANTINE="자원 해제에 따른 스테이션 격리"
+  const val IDLE_CONFIRMED="현장 확인 후 격리 해제"
  }
 }

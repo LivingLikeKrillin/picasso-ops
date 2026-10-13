@@ -356,10 +356,11 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 
 확인 대화(`confirm`)는 없습니다.
 
-체크박스 관문 셋은 다음과 같습니다.
+체크박스 관문 넷은 다음과 같습니다.
 - «이 입력으로 실제 작업을 지시합니다»(호출 계약으로 작업 요청)
 - «준비 조건이 충족되면 실제 로봇 작업을 지시합니다»(공유 스테이션 작업 요청)
 - «현장 작업과 자원 해제 가능 여부를 확인했습니다»(현장 확인 후 자원 해제)
+- «설비·로봇 상태와 격리 해제 가능 여부를 확인했습니다»(현장 확인 후 격리 해제)
 
 사유 입력 관문은 비면 보내지 않거나 버튼을 비활성화합니다.
 해당 관문은 다음과 같습니다.
@@ -712,16 +713,16 @@ h4 «외부 결과 · 수신 확인» 이 있습니다.
 | 항목 | 내용 |
 |---|---|
 | 목적 | 공유 스테이션(설비) 하나를 한 번에 한 작업만 점유하게 하고, 설비 준비 신호와 이번 작업의 설비 완료 신호를 확인한 뒤 자원을 해제합니다. 임무마다 필수 스테이션을 등록하면 외부 주문, 운영 화면, 직접 제출이 같은 대기열을 거칩니다. |
-| 누가 | 엔지니어는 공유 스테이션 등록과 임무 필수 자원 등록을 합니다. 운영자는 공유 스테이션 작업 요청, 대기 작업 취소, 현장 확인 후 자원 해제, 재실행 없이 관측 재개를 합니다. 조회는 두 모드에서 합니다. |
+| 누가 | 엔지니어는 공유 스테이션 등록과 임무 필수 자원 등록을 합니다. 운영자는 공유 스테이션 작업 요청, 대기 작업 취소, 현장 확인 후 자원 해제, 현장 확인 후 격리 해제, 재실행 없이 관측 재개를 합니다. 조회는 두 모드에서 합니다. |
 | 진입 | 메뉴 3번, 작업 요청 상세의 «공유 자원에서 점유·복구 확인»과 «공유 자원에서 관측·복구» 링크로 진입합니다. |
 | 컴포넌트 | `StationWorkspace.tsx`(구역 `section[aria-label=공유 스테이션 운영]`), `MissionResourceSettings.tsx`입니다. 모드나 사용자가 바뀌면 `StationWorkspace` 가 다시 마운트됩니다. |
-| API | GET `/api/stations`(스테이션과 최근 작업), GET `/api/mission-interfaces`(5초, 둘을 함께), GET `/api/stations/runs/{runId}`, 링크 `/api/stations/runs/{runId}/evidence`, POST `/api/stations`(등록), POST `/api/stations/runs`(작업 요청), POST `/api/stations/runs/{runId}/decision` `{expectedRevision, decision, reason}`(decision 은 `CANCEL_QUEUED`, `CONFIRM_CLEAR`, `RESUME_OBSERVATION`), GET·POST `/api/mission-resources`입니다. 쓰기는 `interfaceRequest`(§2.6.2)를 사용합니다. |
+| API | GET `/api/stations`(스테이션과 최근 작업, 스테이션 행에 `jobSignal`, `jobEchoSignal`, `quarantinedBy`, `quarantinedAt`이 실림), GET `/api/mission-interfaces`(5초, 둘을 함께), GET `/api/stations/runs/{runId}`, 링크 `/api/stations/runs/{runId}/evidence`, POST `/api/stations`(등록, 본문 선택 칸 `jobSignal`·`jobEchoSignal`, 빈 칸은 보내지 않음), POST `/api/stations/runs`(작업 요청), POST `/api/stations/runs/{runId}/decision` `{expectedRevision, decision, reason}`(decision 은 `CANCEL_QUEUED`, `CONFIRM_CLEAR`, `RESUME_OBSERVATION`, `CONFIRM_STATION_IDLE`), GET·POST `/api/mission-resources`입니다. 쓰기는 `interfaceRequest`(§2.6.2)를 사용합니다. |
 
 | 구역 | 내용과 글자 | 상태 |
 |---|---|---|
 | 머리와 흐름 | h2 «공유 자원과 작업 흐름», 설명 «스테이션을 확보하고 설비 준비를 확인한 뒤 임무를 호출합니다. 로봇 완료와 이번 작업의 설비 완료 근거를 확인해야 자원을 해제합니다.». 단계 넷(`ol.validation-journey`): «자원 확보»(«스테이션별 작업 요청 순서로 한 작업만 점유합니다.»), «설비 준비»(«준비 true·완료 false를 확인합니다.»), «임무 수행»(«고정 배포를 호출하고 작업 요청을 추적합니다.»), «완료 확인»(«로봇 물리 완료와 새 설비 완료 신호가 필요합니다.»). 안내 «임무에 필수 자원을 등록하면 외부 주문·운영 화면·직접 제출도 같은 대기열을 거칩니다. 외부 장비의 독립 제어를 잠그는 현장 인터록은 아닙니다. 설비 신호는 일반 공정 신호이며 안전 제어를 대체하지 않습니다.» | 조회 실패 alert «자원 조회 실패: ${error} · 표는 직전 값입니다. 조작 전 다시 조회하세요.», 조작 실패 alert(서버 detail 그대로), 보관 복원 실패 alert |
-| 스테이션 점유 | 버튼 «자원 상태 새로고침». 표 `table[aria-label=스테이션 점유]`(스크롤 감싸개 «자원 표 가로 스크롤»), 열 넷: «스테이션»(이름과 id), «준비 / 완료 신호»(값 «${readySignal} / ${completeSignal}»), «단계 기한»(값 «${n}초»), «점유 작업»(버튼 «점유 작업 보기» 또는 «비어 있음») | 빈 «등록된 공유 스테이션이 없습니다. 엔지니어 모드에서 현장 신호를 연결하세요.» |
-| 공유 스테이션 등록(엔지니어, 접기 «공유 스테이션 등록») | 칸 «스테이션 ID»(64자), «스테이션 이름», «준비 신호 이름»(처음 값 `inspection_ready`), «완료 신호 이름»(처음 값 `inspection_complete`), «단계 기한 초»(5~3600, 처음 값 120). 안내 «현재 선언된 일반 BOOLEAN 신호만 등록됩니다. 등록 후 설정은 고정됩니다.» 버튼 «스테이션 등록»(조회 실패 중 비활성) | - |
+| 스테이션 점유 | 버튼 «자원 상태 새로고침». 표 `table[aria-label=스테이션 점유]`(스크롤 감싸개 «자원 표 가로 스크롤»), 열 넷: «스테이션»(이름과 id, 격리된 스테이션(`quarantinedBy`가 있음)이면 이름과 id 아래에 강조 글자 «격리 상태»를 더 보임), «준비 / 완료 신호»(값 «${readySignal} / ${completeSignal}», 작업 번호 신호가 있는 스테이션이면 아래 줄에 강조 글자 «작업번호 검증»과 «${jobSignal} / ${jobEchoSignal}»를 더 보임), «단계 기한»(값 «${n}초»), «점유 작업»(버튼 «점유 작업 보기» 또는 «비어 있음») | 빈 «등록된 공유 스테이션이 없습니다. 엔지니어 모드에서 현장 신호를 연결하세요.» |
+| 공유 스테이션 등록(엔지니어, 접기 «공유 스테이션 등록») | 칸 «스테이션 ID»(64자), «스테이션 이름», «준비 신호 이름»(처음 값 `inspection_ready`), «완료 신호 이름»(처음 값 `inspection_complete`), 선택 칸 «작업 번호 송신 신호»(최대 120자, 처음 값 빈 칸), «작업 번호 반환 신호»(최대 120자, 처음 값 빈 칸), «단계 기한 초»(5~3600, 처음 값 120). 두 칸 아래 도움말 문단(두 칸의 `aria-describedby`가 가리킴) «작업 번호 일치를 검증하는 신호로, 설비는 시작 시 받은 번호를 유지했다가 완료 신호와 함께 반환해야 합니다. 연결하지 않으면 현장 확인 후 작업 해제 시 스테이션이 격리됩니다.». 빈 칸(공백만 있는 칸 포함)은 요청 본문에 `jobSignal`·`jobEchoSignal`을 넣지 않습니다. 한쪽만 채운 등록은 서버가 거부하고 화면은 서버 문구 «작업 번호 송신·반환 신호는 둘 다 연결하거나 둘 다 비워야 합니다.»를 alert로 그대로 보입니다. 서버는 «현장에 선언된 TEXT 신호가 필요합니다.»로도 거부할 수 있습니다. 안내 «준비·완료 신호는 안전 신호가 아닌 BOOLEAN 신호, 선택 항목인 작업 번호 송신·반환 신호는 TEXT 신호만 연결할 수 있습니다. 등록 후 설정은 변경할 수 없습니다.» 설비 쪽 요구는 문서 [공유 스테이션 설비 연동 요구 사양](../station-equipment-requirements.md)에 있습니다. 버튼 «스테이션 등록»(조회 실패 중 비활성) | - |
 | 공유 스테이션 작업 요청(운영자, 펼친 접기 «공유 스테이션 작업 요청») | select «사용할 스테이션»(첫 보기 «스테이션 선택»), select «대상 호출 계약»(첫 보기 «계약 선택», 공개되고 배포가 있는 호출 계약만 «${name} · v${version}»), 고르면 «고정 배포 v${n} · 임무 ${missionVersion} · 필수 자원 ${stationId}»(필수 자원이 없으면 «미지정»), textarea «스테이션 계약 입력»(계약 샘플로 채움), 체크 «준비 조건이 충족되면 실제 로봇 작업을 지시합니다», 버튼 «스테이션 작업 요청». 버튼은 체크 전, 조회 실패 중, 보관 요청이 있을 때, 그리고 계약의 필수 자원이 고른 스테이션과 다를 때 비활성. 보관 중: status «요청 ${requestId}가 보관되어 있습니다. 응답이 불명확하면 새 ID로 보내지 마세요.» 와 버튼 «동일 스테이션 요청 확인». 보내기 전 오류: «호출 계약·배포와 실제 작업 지시를 확인하세요.», «입력은 JSON 객체입니다.», 응답 확인 오류 «작업 요청 ID가 일치하지 않습니다. 동일 요청으로 재확인하세요.», 보관 복원 실패 «보관 요청을 읽을 수 없습니다. 새 작업 요청을 보내기 전에 기존 스테이션 작업을 확인하세요.» | - |
 | 임무 필수 자원 | §3.3.2 | - |
 | 최근 작업과 대기 사유 | h3 «최근 작업과 대기 사유», «최근 100건입니다. 시작 후 불명확해진 작업은 자동 재할당하지 않습니다. 전송 전 미배정만 5초 간격으로 최대 3회 재평가합니다.» 표 `table[aria-label=스테이션 작업]`(스크롤 감싸개 «스테이션 작업 표 가로 스크롤»), 열: 작업(작업 id 앞 8자 버튼) / 스테이션 / 상태(§2.7.3 의 스테이션 작업 상태 글자) / 이유(서버 문장) / 작업 요청(링크 «작업 요청·실행 결과» → `#requests?receipt=…`, 아직 없으면 «아직 연결되지 않음») | - |
@@ -744,9 +745,12 @@ status에는 «${상태 글자} · ${reason}»이 표시됩니다.
 
 상태 이력 `ol.station-timeline`에는 항목마다 상태 글자, 이유, «${actor} · ${recordedAt}», 접기 «기록된 근거»(JSON)가 포함됩니다.
 
-운영자 판단 폼은 운영자 모드이고 상태가 QUEUED 또는 REVIEW_REQUIRED일 때만 표시됩니다. 칸 «운영자 판단 근거»(1000자)가 비어 있으면 버튼이 비활성화됩니다:
+운영자 판단 폼은 운영자 모드이고 상태가 QUEUED 또는 REVIEW_REQUIRED이거나, 격리된 스테이션의 `WAITING_READY` 작업일 때만 표시됩니다. 칸 «운영자 판단 근거»(1000자)가 비어 있으면 버튼이 비활성화됩니다:
 - QUEUED 상태에서는 버튼 «대기 작업 취소»(`CANCEL_QUEUED`)를 제공합니다.
-- REVIEW_REQUIRED 상태에서는 문장 «해제는 물리 완료 판정이 아닙니다. 로봇 작업·잔류 물체·설비 상태를 현장에서 확인한 뒤 판단하세요.»가 표시됩니다. 또한 체크 «현장 작업과 자원 해제 가능 여부를 확인했습니다»와 버튼 «현장 확인 후 자원 해제»(`CONFIRM_CLEAR`, 체크 전 비활성), «재실행 없이 관측 재개»(`RESUME_OBSERVATION`, 작업 요청이 연결된 작업만)를 제공합니다.
+- REVIEW_REQUIRED 상태에서는 문장 «해제는 물리 완료 판정이 아닙니다. 로봇 작업·잔류 물체·설비 상태를 현장에서 확인한 뒤 판단하세요.»가 표시됩니다. 또한 체크 «현장 작업과 자원 해제 가능 여부를 확인했습니다»와 버튼 «현장 확인 후 자원 해제»(`CONFIRM_CLEAR`, 체크 전 비활성), «재실행 없이 관측 재개»(`RESUME_OBSERVATION`, 작업 요청이 연결된 작업만)를 제공합니다. 버튼 «현장 확인 후 자원 해제» 바로 아래에, 그 작업의 스테이션에 작업 번호 신호가 없을 때만 문장 «자원을 해제해도 이전 작업은 멈추지 않으며 해당 스테이션은 격리됩니다.»가 보입니다. 작업 번호 신호가 있는 스테이션에서는 이 문장이 없습니다.
+- 격리된 스테이션의 `WAITING_READY` 작업에서는 `role="note"` 문단 «설비가 비어 있고 이전 작업 로봇이 멈췄는지 현장에서 확인하세요. 설비 완료 신호가 꺼진 것을 확인한 뒤 판단하세요.», 칸 «운영자 판단 근거»(1000자), 체크 «설비·로봇 상태와 격리 해제 가능 여부를 확인했습니다», 버튼 «현장 확인 후 격리 해제»(`CONFIRM_STATION_IDLE`, 사유가 비었거나 체크 전이거나 조회 실패 중이면 비활성)를 제공합니다. 판단 뒤 선택 작업을 다시 조회하고 칸과 체크를 비웁니다. 이 폼이 보일 때 «현장 확인 후 자원 해제» 버튼은 없습니다.
+
+서버가 상태 줄과 «이유» 칸, 상태 이력에 내는 새 사유는 서버 문장 그대로 보입니다: `WAITING_READY`의 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다», «스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다», `REVIEW_REQUIRED`의 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다», 해제한 작업 이력의 «자원 해제에 따른 스테이션 격리», 격리 해제 뒤 이력의 «현장 확인 후 격리 해제: ${사유}». 설비 쪽 요구는 문서 [공유 스테이션 설비 연동 요구 사양](../station-equipment-requirements.md)에 있습니다.
 
 판단은 조회한 버전(`expectedRevision`)을 함께 보냅니다.
 
@@ -1070,7 +1074,7 @@ region «배정 가능»(h2 «배정 가능», `EligibilityTable.tsx`)에서는 
 - «보내지 않음(${풀이}). ${detail}»
 - «결과 모름(${cause}). 셀 대역 신호 표에서 확인하십시오»
 
-실제 스택의 신호는 `rack_present`, 공유 자원용 `inspection_ready`, `inspection_complete` 가 있습니다. 슬롯과 자재는 작업 지시 폼의 PrepareSequencedRack 보기가 됩니다.
+실제 스택의 신호는 `rack_present`, 공유 자원용 `inspection_ready`, `inspection_complete` 가 있습니다. 공유 자원용 작업 번호 TEXT 신호 `inspection_job`, `inspection_job_done` 도 있고 신호 표에서 조작 칸은 «-»를 보입니다. 슬롯과 자재는 작업 지시 폼의 PrepareSequencedRack 보기가 됩니다.
 
 #### 3.4.7 작업 응답 송신 기록
 
@@ -1921,7 +1925,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | table | «인시던트 목록»·«이전 인스턴스 인시던트 목록»·«근거 윈도우» | `IncidentSection.test.tsx` |
 | table | «셀 대역 신호»·«셀 대역 자리» | `OperationsArea.test.tsx` |
 | table | «송신 기록 목록» | `JobResponseLog.test.tsx`, `lifecycle.spec.ts` |
-| table | «스테이션 점유»·«스테이션 작업» | `station.spec.ts` |
+| table | «스테이션 점유»(`StationWorkspace.test.tsx`도 봄)·«스테이션 작업» | `station.spec.ts` |
 | table | «인스턴스 목록»·«제품·빌드 목록» | `AdaptersSection.test.tsx` |
 | table | «리비전 목록» | `ProfilesSection.test.tsx`, `lifecycle.spec.ts` |
 | table | «임무 버전 이력»·«임무 초안 목록» | `MissionsArea.test.tsx` |
@@ -1940,7 +1944,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | form | «기체 선언», «리비전 제출», «바인딩», «빌드 선언», «제품 선언», «인스턴스 등록», «운영자 판단», «작업 지시 폼», «장애 주입 폼», «퇴역», «현장 설정 변경» | 영역별 vitest |
 | status | «제출 결과», «판단 결과», «신호 조작 결과», «임무 조작 결과», «장애 주입 결과», «계약 호출 결과», «호출 계약 처리 결과» | 영역별 vitest |
 
-다음은 버튼과 링크에 기대는 글자입니다. 버튼 이름은 98가지가 시험에 나옵니다.
+다음은 버튼과 링크에 기대는 글자입니다. 버튼 이름은 99가지가 시험에 나옵니다.
 
 | 구분 | 글자 | 시험 파일 |
 |---|---|---|
@@ -1950,7 +1954,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | 버튼 | «미배정 재평가» | `FollowupWorkspace.test.tsx`, `MissionResourceSettings.test.tsx` |
 | 버튼 | «현장 확인 기록 저장» | `RequestReview.test.tsx`, `lifecycle.spec.ts` |
 | 버튼 | «스테이션 등록»·«스테이션 작업 요청» | `StationWorkspace.test.tsx`, `station.spec.ts` |
-| 버튼 | «현장 확인 후 자원 해제»·«점유 작업 보기» | `StationWorkspace.test.tsx` |
+| 버튼 | «현장 확인 후 자원 해제»·«현장 확인 후 격리 해제»·«점유 작업 보기» | `StationWorkspace.test.tsx` |
 | 버튼 | «필수 자원 등록» | `MissionResourceSettings.test.tsx`, `station.spec.ts` |
 | 버튼 | «로봇 추가»·«운영에서 배정 조건 확인» | `OnboardingGuide.test.tsx`, `lifecycle.spec.ts` |
 | 버튼 | «작업 요청 다시 조회» | `WorkRequests.test.tsx`, `lifecycle.spec.ts` |
@@ -1964,7 +1968,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | 링크 | «판정 근거 JSON» | `StationWorkspace.test.tsx` |
 | 링크 | «공유 자원에서 관측·복구» | `MissionResourceSettings.test.tsx` |
 
-다음은 입력 라벨에 기대는 글자입니다. 라벨은 70가지가 시험에 나옵니다.
+다음은 입력 라벨에 기대는 글자입니다. 라벨은 73가지가 시험에 나옵니다.
 
 | 구분 | 글자 | 시험 파일 |
 |---|---|---|
@@ -1974,6 +1978,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | 라벨 | «대상 호출 계약»·«사용할 스테이션»·«스테이션 ID»·«스테이션 이름» | `StationWorkspace.test.tsx`, `station.spec.ts` |
 | 라벨 | «준비 조건이 충족되면 실제 로봇 작업을 지시합니다» | `StationWorkspace.test.tsx`, `station.spec.ts` |
 | 라벨 | «현장 작업과 자원 해제 가능 여부를 확인했습니다»·«운영자 판단 근거» | `StationWorkspace.test.tsx` |
+| 라벨 | «작업 번호 송신 신호»·«작업 번호 반환 신호»·«설비·로봇 상태와 격리 해제 가능 여부를 확인했습니다» | `StationWorkspace.test.tsx` |
 | 라벨 | «이 입력으로 실제 작업을 지시합니다» | `MissionInterfaces.test.tsx`, `lifecycle.spec.ts` |
 | 라벨 | «작업 요청 A ID»·«작업 요청 B ID» | `ManufacturingValidation.test.tsx`, `lifecycle.spec.ts` |
 | 라벨 | «연결 기준 시간(초)»·«stallWindow(초)»·«변경 사유» | `SiteArea.test.tsx`, `lifecycle.spec.ts` |
@@ -1988,6 +1993,16 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | 구별용 접근 이름 | «외부 결과 필터»(select) | 시험 없음 |
 | 구별용 접근 이름 | 표 스크롤 감싸개의 이름들(§2.9) | 시험 없음 |
 | 구별용 접근 이름 | 지표 카드 «총 작업 요청»(같은 영역의 링크 «전체 작업 요청» 과 겹치지 않게 PR #23 에서 바꿈) | `lifecycle.spec.ts` |
+
+공유 자원 화면에서 시험이 이름이 아니라 글자로 보는 항목은 다음과 같습니다. 이 글자들은 `labels.ts`의 `STATION_TEXT`와 서버 문구에서 옵니다.
+
+| 구분 | 글자 | 시험 파일 |
+|---|---|---|
+| note(이름 없음) | «설비가 비어 있고 이전 작업 로봇이 멈췄는지 현장에서 확인하세요. 설비 완료 신호가 꺼진 것을 확인한 뒤 판단하세요.» | `StationWorkspace.test.tsx` |
+| 접근 설명(송신 칸) | «작업 번호 일치를 검증하는 신호로, 설비는 시작 시 받은 번호를 유지했다가 완료 신호와 함께 반환해야 합니다. 연결하지 않으면 현장 확인 후 작업 해제 시 스테이션이 격리됩니다.» | `StationWorkspace.test.tsx` |
+| 표 행 글자 | «작업번호 검증 inspection_job / inspection_job_done»·«격리 상태» | `StationWorkspace.test.tsx` |
+| 문장 | «자원을 해제해도 이전 작업은 멈추지 않으며 해당 스테이션은 격리됩니다.» | `StationWorkspace.test.tsx` |
+| alert | «작업 번호 송신·반환 신호는 둘 다 연결하거나 둘 다 비워야 합니다.» | `StationWorkspace.test.tsx` |
 
 ### 4.4 해시 경로
 

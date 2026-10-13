@@ -91,7 +91,7 @@ class MissionVersionTest {
         // 판정 입력은 현장의 실제 값이다. 신호 사양은 셀 대역 픽스처의 선언, 현장 스킬은 시운전 완료 기체 둘의 스킬 합이다.
         val inputs = validated["outcome"]["inputs"]
         assertEquals(listOf(HUMANOID, QUADRUPED), inputs["robotIds"].map { it.asText() }, "$inputs")
-        assertEquals(listOf("inspection_ready", "inspection_complete", "rack_present", "guard_closed", "lot_code"), inputs["signals"].map { it["name"].asText() }, "$inputs")
+        assertEquals(listOf("inspection_ready", "inspection_complete", "inspection_job", "inspection_job_done", "rack_present", "guard_closed", "lot_code"), inputs["signals"].map { it["name"].asText() }, "$inputs")
         assertTrue(inputs["siteSkills"].any { it.asText() == "pick_place" }, "$inputs")
 
         val mocked = engineer("$MISSIONS/drafts/$draftId/mock-run", "{}")
