@@ -54,8 +54,8 @@ class MissionController(
         val workMaster = MissionRequests.workMaster(workMasterId)
         val request = MissionRequests.draft(read(body))
         val sample=read(body)?.get("sampleOrder")
-        if(workMaster!="PrepareSequencedRack" && sample==null)throw BadRequest(HostRequests.BAD_REQUEST,"새 미션은 모의 실행할 sampleOrder가 필요합니다")
-        sample?.let{if(HostRequests.jobOrder(it).workMasterId!=workMaster)throw BadRequest(HostRequests.BAD_REQUEST,"표본 작업의 미션 ID가 다릅니다")}
+        if(workMaster!="PrepareSequencedRack" && sample==null)throw BadRequest(HostRequests.BAD_REQUEST,"새 임무는 모의 실행할 sampleOrder가 필요합니다")
+        sample?.let{if(HostRequests.jobOrder(it).workMasterId!=workMaster)throw BadRequest(HostRequests.BAD_REQUEST,"표본 작업의 임무 ID가 다릅니다")}
         versions.saveDraft(workMaster, request.definition, request.actor, request.requestId,sample?.toString())
     }
 

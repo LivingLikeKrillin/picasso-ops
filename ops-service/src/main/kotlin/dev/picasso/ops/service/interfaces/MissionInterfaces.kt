@@ -112,7 +112,7 @@ class MissionInterfaces(private val jdbc: JdbcClient, private val tx: Transactio
         if (reason.isBlank() || reason.length > 1000) throw InterfaceRejected("REASON_REQUIRED", "공개 상태 변경 사유를 1~1000자로 입력하세요")
         val original = get(id, version)
         transform(original.workMasterId, original.mapping, original.sample)
-        if(next=="ENABLED" && deployment(id,version)==null)throw InterfaceRejected("DEPLOYMENT_REQUIRED","검증·활성화한 미션 버전을 먼저 배포하세요",409)
+        if(next=="ENABLED" && deployment(id,version)==null)throw InterfaceRejected("DEPLOYMENT_REQUIRED","검증·활성화한 임무 버전을 먼저 배포하세요",409)
         return tx.execute {
             val count = jdbc.sql("UPDATE ops.mission_interface SET status=:next WHERE interface_id=:id AND version=:version AND status=:expected")
                 .param("next", next).param("id", id).param("version", version).param("expected", expected).update()
@@ -137,9 +137,9 @@ class MissionInterfaces(private val jdbc: JdbcClient, private val tx: Transactio
             .put("createdBy",rs.getString("created_by")).put("reason",rs.getString("reason")).put("createdAt",rs.getString("created_at")) as JsonNode }.list()
     fun deploy(id:String,version:Int,mission:String,expected:Int,reason:String,actor:Actor):InterfaceView = tx.execute {
         if(reason.isBlank() || reason.length>1000 || !(mission=="CODE" || mission.toIntOrNull()?.let{it>0 && it.toString()==mission}==true))
-            throw InterfaceRejected("BAD_DEPLOYMENT","미션 버전 CODE 또는 양의 정수와 사유가 필요합니다")
+            throw InterfaceRejected("BAD_DEPLOYMENT","임무 버전 CODE 또는 양의 정수와 사유가 필요합니다")
         val view=get(id,version)
-        if(mission=="CODE" && profiles.find(view.workMasterId)!=null)throw InterfaceRejected("BAD_DEPLOYMENT","새 미션은 숫자 버전이 필요합니다",409)
+        if(mission=="CODE" && profiles.find(view.workMasterId)!=null)throw InterfaceRejected("BAD_DEPLOYMENT","새 임무는 숫자 버전이 필요합니다",409)
         jdbc.sql("SELECT version FROM ops.mission_interface WHERE interface_id=:id AND version=:version FOR UPDATE").param("id",id).param("version",version).query(Int::class.java).single()
         val old=deployment(id,version)?.get("deploymentVersion")?.asInt()?:0
         if(old!=expected) throw InterfaceRejected("STALE_DEPLOYMENT","배포 버전이 바뀌었습니다. 다시 조회하세요",409)

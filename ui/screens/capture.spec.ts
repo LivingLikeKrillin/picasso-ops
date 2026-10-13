@@ -137,7 +137,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   })
 
   await go(page, '임무')
-  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
+  await page.getByRole('navigation', { name: '임무 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
   await expect(page.getByText('코드 정의는 정의 JSON 이 없습니다', { exact: true })).toBeVisible()
   await shot(page, 'missions-overview-initial', {
     area: '임무',
@@ -221,13 +221,13 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await build.getByLabel('버전').fill('1.0.0')
   await build.getByLabel('계약 semver').fill('0.8.0')
   await build.getByRole('button', { name: '빌드 선언' }).click()
-  await expect(detailArea.getByText('acme/fleet 1.0.0 빌드 선언: 거절됨', { exact: true })).toBeVisible()
+  await expect(detailArea.getByText('acme/fleet 1.0.0 빌드 선언: 거부됨', { exact: true })).toBeVisible()
   await shot(detailArea, 'robots-notice-build-rejected', {
     area: '로봇',
     section: '로봇 작업 영역',
     mode: '엔지니어',
-    state: '조작 거절 알림과 발견 카드(같은 빌드 버전에 다른 계약값)',
-    strings: ['acme/fleet 1.0.0 빌드 선언: 거절됨', '관측값과 기대값', '해결 담당'],
+    state: '조작 거부 알림과 발견 카드(같은 빌드 버전에 다른 계약값)',
+    strings: ['acme/fleet 1.0.0 빌드 선언: 거부됨', '관측값과 기대값', '해결 담당'],
   })
   const instance = page.getByRole('form', { name: '인스턴스 등록' })
   await instance.getByLabel('instance_id').fill('fleet-gw-01')
@@ -263,13 +263,13 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     if (model === 'humanoid-a') {
       // 시험 전에 활성화하면 거절된다.
       await row.getByRole('button', { name: '활성화' }).click()
-      await expect(detailArea.getByText(`picasso-ref/${model}#${revision} 활성화: 거절됨`, { exact: true })).toBeVisible()
+      await expect(detailArea.getByText(`picasso-ref/${model}#${revision} 활성화: 거부됨`, { exact: true })).toBeVisible()
       await shot(page, 'robots-overview-activation-rejected', {
         area: '로봇',
         section: '전체',
         mode: '엔지니어',
-        state: '시험 전 활성화 거절 알림과 발견 카드, 리비전 VALIDATED',
-        strings: [`picasso-ref/${model}#${revision} 활성화: 거절됨`, '관측값과 기대값', '요청 없음'],
+        state: '시험 전 활성화 거부 알림과 발견 카드, 리비전 VALIDATED',
+        strings: [`picasso-ref/${model}#${revision} 활성화: 거부됨`, '관측값과 기대값', '요청 없음'],
       })
     }
     await row.getByRole('button', { name: '시험 요청' }).click()
@@ -410,13 +410,13 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   expect(other.ok()).toBe(true)
   await change.getByLabel('변경 사유').fill('정체 표시 되돌림')
   await change.getByRole('button', { name: '변경' }).click()
-  await expect(settings.getByText('stallWindow 300초로 변경: 거절됨', { exact: true })).toBeVisible()
+  await expect(settings.getByText('stallWindow 300초로 변경: 거부됨', { exact: true })).toBeVisible()
   await shot(settings, 'site-settings-version-conflict', {
     area: '현장 설정',
     section: '현장 설정',
     mode: '엔지니어',
-    state: '기준 버전이 낡아 거절된 알림과 발견 카드',
-    strings: ['stallWindow 300초로 변경: 거절됨', '관측값과 기대값', '다른 화면에서 먼저 기록'],
+    state: '기준 버전이 낡아 거부된 알림과 발견 카드',
+    strings: ['stallWindow 300초로 변경: 거부됨', '관측값과 기대값', '다른 화면에서 먼저 기록'],
   })
   await expect(settings.getByText('실행 호스트 반영: 버전 4', { exact: true })).toBeVisible({ timeout: 15_000 })
 
@@ -478,7 +478,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   const eligibilitySection = page.getByRole('region', { name: '배정 가능', exact: true })
   const executionSection = page.getByRole('region', { name: '실행', exact: true })
   const order = page.getByRole('form', { name: '작업 지시 폼' })
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   await expect(order.getByRole('alert')).toHaveText('점검 대상마다 대상 id 와 장소 이름을 넣으십시오')
   await shot(page.locator('main > .split').first(), 'operations-order-incomplete', {
     area: '운영',
@@ -508,7 +508,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     strings: ['작업 지시는 운영자 모드에서 냅니다', '판정 시각'],
   })
   await radio(page, '운영자')
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   const notice = page.getByRole('status', { name: '제출 결과' })
   await expect(notice).toContainText('InspectAsset 작업 지시: 배정됨')
   await shot(orderSection, 'operations-order-assigned', {
@@ -529,7 +529,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     state: '도는 실행이 있어 모두 불가',
     strings: ['도는 실행이 있다', '불가'],
   })
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   await expect(notice).not.toContainText('배정됨')
   await shot(orderSection, 'operations-order-unassigned', {
     area: '운영',
@@ -554,7 +554,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   // ── 임무 ────────────────────────────────────────────────────────────
   await radio(page, '엔지니어')
   await go(page, '임무')
-  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
+  await page.getByRole('navigation', { name: '임무 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
   const editor = page.getByRole('region', { name: '임무 편집' })
   const missionNotice = editor.getByRole('status', { name: '임무 조작 결과' })
   const textarea = editor.getByLabel('임무 정의 JSON')
@@ -610,7 +610,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await editor.getByLabel('활성화 사유').fill('데이터 정의로 옮김')
   await editor.getByRole('button', { name: '활성화', exact: true }).click()
   await expect(missionNotice).toHaveText('초안 2 활성화: 버전 1 활성화됨. 다음 작업 지시부터 이 버전을 씁니다')
-  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '버전·배포', exact: true }).click()
+  await page.getByRole('navigation', { name: '임무 관리' }).getByRole('button', { name: '버전·배포', exact: true }).click()
   const missionVersions = page.getByRole('table', { name: '임무 버전 이력' })
   await expect(missionVersions.getByRole('row', { name: /^버전 1 \(활성\) 초안 2 local 데이터 정의로 옮김 / })).toBeVisible()
   await shot(page, 'missions-overview-active', {
@@ -657,7 +657,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await order.getByLabel('임무').selectOption('PrepareSequencedRack')
   await order.getByLabel('RACK-204.S01').check()
   await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   const rackRuns = executions.getByRole('row').filter({ hasText: 'PrepareSequencedRack' })
   const graspRun = rackRuns.filter({ hasText: 'RACK-204.S01 pick_place' })
   await expect(graspRun).toContainText('RACK-204.S01 pick_place: RUNNING')
@@ -703,7 +703,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   // ── 운영자 보류와 판단 ─────────────────────────────────────────────────────
   await radio(page, '엔지니어')
   await go(page, '임무')
-  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
+  await page.getByRole('navigation', { name: '임무 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
   await editor.getByRole('button', { name: '운영자 보류 대기 템플릿 불러오기' }).click()
   await editor.getByRole('button', { name: '초안 저장' }).click()
   await expect(missionNotice).toHaveText('초안 저장: 초안 3 저장됨')
@@ -720,7 +720,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
   await order.getByLabel('임무').selectOption('PrepareSequencedRack')
   await order.getByLabel('RACK-204.S02').check()
   await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
-  await order.getByRole('button', { name: '작업 지시 내기' }).click()
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
   const holdRun = rackRuns.filter({ hasText: 'rack-arrival equipment_wait' })
   await expect(holdRun).toContainText('rack-arrival equipment_wait: RUNNING')
   const held = incidentTable.getByRole('row').filter({ hasText: '보류 중' })
@@ -749,7 +749,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     section: '인시던트 상세',
     mode: '운영자',
     state: '보류 중 상세와 운영자 판단 폼',
-    strings: ['보류를 판단합니다. 판단자는 local 입니다', '판단 사유', '완료 확인', '재작업', 'SIGNAL_DEADLINE'],
+    strings: ['보류 해소 방식(완료 확인 또는 재작업)을 결정합니다. 결정자는 local입니다.', '판단 사유', '완료 확인', '재작업', 'SIGNAL_DEADLINE'],
   })
   await radio(page, '엔지니어')
   await expect(incidentDetail.getByText('보류 중입니다. 운영자 판단은 운영자 모드에서 합니다', { exact: true })).toBeVisible()
@@ -816,7 +816,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     section: '전체',
     mode: '운영자',
     state: '흐름을 돈 뒤 운영 영역 전체',
-    strings: ['작업 지시 내기', '실행 호스트 인스턴스', '판단됨', 'rack_present'],
+    strings: ['작업 요청 내기', '실행 호스트 인스턴스', '판단됨', 'rack_present'],
   })
   await radio(page, '엔지니어')
   await shot(page, 'operations-overview-engineer', {
@@ -1101,7 +1101,7 @@ test('화면 설계서 스크린숏을 영역·구역·상태마다 찍는다', 
     strings: ['직전 값입니다. 실행 호스트 불통: 실행 호스트가 답하지 않는다: java.net.ConnectException', '직전 값입니다 (운영 서비스 응답 503)', 'registry 응답 확인'],
   })
   await go(page, '임무')
-  await page.getByRole('navigation', { name: '미션 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
+  await page.getByRole('navigation', { name: '임무 관리' }).getByRole('button', { name: '실행 정의', exact: true }).click()
   await expect(page.getByText(/^모름: 임무 버전을 아직 읽지 못했습니다/)).toBeVisible()
   await shot(page, 'missions-overview-host-down-mock', {
     area: '임무',

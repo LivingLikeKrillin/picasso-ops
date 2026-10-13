@@ -10,7 +10,7 @@ function open(withDraft = false) {
   render(<MissionsArea session={session} onChanged={() => undefined} />)
   return fake
 }
-const nav = (name: string) => userEvent.click(within(screen.getByRole('navigation', { name: '미션 관리' })).getByRole('button', { name }))
+const nav = (name: string) => userEvent.click(within(screen.getByRole('navigation', { name: '임무 관리' })).getByRole('button', { name }))
 afterEach(() => vi.unstubAllGlobals())
 describe('미션 업무와 호출 연결', () => {
   it('기본 목록은 지원 업무 두 개와 편집 가능 범위를 보여준다', async () => {
@@ -26,7 +26,7 @@ describe('미션 업무와 호출 연결', () => {
     const editor = screen.getByRole('textbox', { name: '임무 정의 JSON' })
     await userEvent.clear(editor); await userEvent.type(editor, 'draft in progress')
     await nav('호출 연결'); await nav('버전·배포')
-    expect(screen.getByRole('region', { name: '공개와 배포 상태' })).toHaveTextContent('호출 연결에서 검증된 미션 버전을 배포하고 계약을 공개합니다')
+    expect(screen.getByRole('region', { name: '공개와 배포 상태' })).toHaveTextContent('호출 연결에서 검증된 임무 버전을 배포하고 계약을 공개합니다')
     await nav('실행 정의'); expect(editor).toHaveValue('draft in progress')
   })
   it('버전 화면에서 초안을 열면 실행 정의 편집으로 이동한다', async () => {
@@ -55,7 +55,7 @@ describe('미션 업무와 호출 연결', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('올바른 JSON')
     await userEvent.clear(input); await userEvent.paste('{"workMasterId":"InspectAsset"}')
     await userEvent.click(screen.getByRole('button', { name: '입력 검증·변환 미리보기' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('선택한 업무와 일치')
+    expect(screen.getByRole('alert')).toHaveTextContent('선택한 임무와 일치')
     expect(fake.calls.filter(c => c.method === 'POST')).toEqual([])
   })
   it('서버의 업무 입력 거절을 표시하고 성공 미리보기를 남기지 않는다', async () => {

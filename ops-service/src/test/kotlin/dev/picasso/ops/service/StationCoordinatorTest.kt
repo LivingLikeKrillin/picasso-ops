@@ -164,7 +164,7 @@ class StationCoordinatorTest {
    val (state,detail)=receipt(run.runId);assertEquals(after,state,before)
    when {
     before==after -> assertEquals("before",detail,before)
-    after=="REJECTED" -> assertEquals("현장 확인으로 자원을 해제했습니다. 이 접수는 실행하지 않습니다: 현장 상태 확인",detail)
+    after=="REJECTED" -> assertEquals("현장 확인으로 자원을 해제했습니다. 이 작업 요청은 실행하지 않습니다: 현장 상태 확인",detail)
     else -> assertEquals("현장 확인으로 자원을 해제했습니다. 제출 결과는 실행 관측으로 확인합니다: 현장 상태 확인",detail)
    }
   }
@@ -222,7 +222,7 @@ class StationCoordinatorTest {
  @Test fun `호스트가 재작업을 거절하거나 결과를 모르면 확인 필요로 되돌리고 점유를 유지한다`() {
   val c=coordinator();val r=held(c)
   incidents.resolveAnswer=HostWrite.Answered(200,IncidentBench.resolved(null,"NotHeld"))
-  assertEquals(OperationResult.REJECTED,rework(c).result);assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertEquals("재작업 거절; 점유를 유지하고 현장 확인을 기다립니다",c.get(r.runId).reason)
+  assertEquals(OperationResult.REJECTED,rework(c).result);assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertEquals("재작업 거부; 점유를 유지하고 현장 확인을 기다립니다",c.get(r.runId).reason)
   incidents.resolveAnswer=HostWrite.NoResponse("timeout");incidents.incidents=HostCall.Silent("down")
   assertNull(rework(c).confirmation);assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertEquals("재작업 반영 불명; 실행 관측과 현장 확인 전 점유 유지",c.get(r.runId).reason)
   incidents.onResolve={error("connection reset")};assertFailsWith<IllegalStateException>{rework(c)};assertEquals("REVIEW_REQUIRED",c.get(r.runId).state)

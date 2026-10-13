@@ -361,7 +361,7 @@ async function deliver<T = OperationOutcome>(
       const detail =
         typeof refusal.detail === 'string' && refusal.detail !== ''
           ? refusal.detail
-          : `운영 서비스가 요청을 거절했습니다(HTTP ${response.status})`
+          : `운영 서비스가 요청을 거부했습니다(HTTP ${response.status})`
       return { kind: 'refused', refusal: { error: refusal.error ?? '', detail } }
     }
     return { kind: 'unknown', cause: `운영 서비스 응답 ${response.status}` }
@@ -629,7 +629,7 @@ export async function submitManualJobOrder(session: Session, form: JobOrderForm,
     body: JSON.stringify({ requestId, form }),
   })
   if(sent.kind === 'outcome' && (typeof sent.outcome?.receipt?.receiptId !== 'string' || typeof sent.outcome?.receipt?.jobOrderId !== 'string' || typeof sent.outcome?.duplicate !== 'boolean'))
-    return { kind: 'unknown', cause: '접수 응답 형식을 확인할 수 없습니다' }
+    return { kind: 'unknown', cause: '작업 요청 응답 형식을 확인할 수 없습니다' }
   return sent
 }
 /** Reuse the existing execution notice without confusing a durable receipt with physical completion. */
@@ -1142,7 +1142,7 @@ export interface JobContract {
 }
 export async function fetchJobContracts(session: Session): Promise<{ contracts: JobContract[] }> {
   const value = await getHostJson<{ contracts: JobContract[] }>('/api/job-contracts', session)
-  if (!Array.isArray(value.contracts)) throw new Error('지원 업무 계약 응답을 읽을 수 없습니다.')
+  if (!Array.isArray(value.contracts)) throw new Error('지원 임무 계약 응답을 읽을 수 없습니다.')
   return value
 }
 export async function previewJobOrder(session: Session, sample: unknown): Promise<unknown> {
@@ -1206,8 +1206,8 @@ export interface MissionProfile {
 export async function createMissionProfile(session:Session,profile:MissionProfile):Promise<MissionProfile> {
  const response=await fetch('/api/mission-profiles',{method:'POST',headers:{...actorHeaders(session),'Content-Type':'application/json'},body:JSON.stringify(profile)})
  const body=await response.json()
- if(!response.ok)throw new Error(body.detail??`미션 생성 HTTP ${response.status}`)
- if(body.workMasterId!==profile.workMasterId)throw new Error('생성된 미션 ID를 확인할 수 없습니다')
+ if(!response.ok)throw new Error(body.detail??`임무 생성 HTTP ${response.status}`)
+ if(body.workMasterId!==profile.workMasterId)throw new Error('생성된 임무 ID를 확인할 수 없습니다')
  return body
 }
 

@@ -436,12 +436,12 @@ class MissionHost(
 
     /** 기체마다 호스트 판정을 낸다. [order] 의 WorkMaster 는 부르는 쪽이 [WORK_MASTERS] 로 거른다. */
     private fun selectedMission(workMaster:String,version:String?):dev.picasso.middleware.ActiveMission? {
-        if(version==null){if(catalog.active(workMaster)==null)throw BadRequest(HostRequests.UNKNOWN_WORK_MASTER,"활성화하지 않은 미션입니다: $workMaster");return null}
-        if(version=="CODE"){if(workMaster !in WORK_MASTERS)throw BadRequest(HostRequests.BAD_REQUEST,"새 미션은 숫자 버전이 필요합니다");return catalog.mission(workMaster,null)}
+        if(version==null){if(catalog.active(workMaster)==null)throw BadRequest(HostRequests.UNKNOWN_WORK_MASTER,"활성화하지 않은 임무입니다: $workMaster");return null}
+        if(version=="CODE"){if(workMaster !in WORK_MASTERS)throw BadRequest(HostRequests.BAD_REQUEST,"새 임무는 숫자 버전이 필요합니다");return catalog.mission(workMaster,null)}
         val number=version.toIntOrNull()?.takeIf{it>0 && it.toString()==version}
-            ?: throw BadRequest(HostRequests.BAD_REQUEST,"고정 미션 버전이 잘못되었습니다")
+            ?: throw BadRequest(HostRequests.BAD_REQUEST,"고정 임무 버전이 잘못되었습니다")
         val row=store.version(workMaster,number)
-            ?: throw BadRequest(HostRequests.BAD_REQUEST,"고정 미션 버전을 찾을 수 없습니다: $workMaster/v$number")
+            ?: throw BadRequest(HostRequests.BAD_REQUEST,"고정 임무 버전을 찾을 수 없습니다: $workMaster/v$number")
         return catalog.mission(workMaster,row)
     }
     fun eligibility(order:JobOrder,robotIds:List<String>,missionVersion:String?=null):List<HostEligibility> = lock.withLock {

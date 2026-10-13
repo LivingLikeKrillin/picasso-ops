@@ -108,7 +108,7 @@ function noResponse(confirmation: JobOrderOutcome['confirmation']): string {
     case 'CONFIRMED_APPLIED':
       return '응답은 없었으나 다시 읽어 보니 실행이 있음. 실행 목록에서 보십시오'
     case 'CONFIRMED_NOT_APPLIED':
-      return '응답 없음. 현재 실행이 보이지 않습니다. 기존 요청 ID로 접수를 확인하세요'
+      return '응답 없음. 현재 실행이 보이지 않습니다. 기존 요청 ID로 작업 요청을 확인하세요'
     default:
       return '반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오'
   }

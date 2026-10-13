@@ -18,7 +18,7 @@ class MissionResources(private val jdbc:JdbcClient,private val tx:TransactionTem
  fun required(wm:String):String? = jdbc.sql("SELECT station_id FROM ops.mission_resource_requirement WHERE work_master_id=:wm").param("wm",wm).query(String::class.java).optional().orElse(null)
  fun create(actor:Actor,wm:String,station:String,reason:String):Map<String,Any?> = tx.execute {
   if(actor.mode!=Mode.ENGINEER)fail("엔지니어만 자원 요구를 등록합니다",403)
-  if(wm.isBlank() || wm.length>120 || station.isBlank() || reason.isBlank() || reason.length>1000)fail("미션·스테이션·등록 사유가 필요합니다",400)
+  if(wm.isBlank() || wm.length>120 || station.isBlank() || reason.isBlank() || reason.length>1000)fail("임무·스테이션·등록 사유가 필요합니다",400)
   lockMission(wm)
   // In flight for this mission. RECEIVED without a normalized order may still belong to it.
   // IN_DOUBT and unsettled ACCEPTED block unless the latest on-site review, still current, says never started or done.
@@ -31,11 +31,11 @@ class MissionResources(private val jdbc:JdbcClient,private val tx:TransactionTem
   val stationActive=jdbc.sql("""SELECT count(*) FROM ops.station_run r JOIN ops.mission_interface i
    ON i.interface_id=r.payload->>'interfaceId' AND i.version=(r.payload->>'interfaceVersion')::integer
    WHERE i.work_master_id=:wm AND r.state NOT IN ('COMPLETED','TIMED_OUT','REJECTED','MANUALLY_CLEARED','CANCELLED')""").param("wm",wm).query(Long::class.java).single()
-  if(active>0 || stationActive>0)fail("처리 중이거나 완료 근거가 없는 접수가 있습니다. 자원 요구 등록 전 기존 작업을 확인하세요")
+  if(active>0 || stationActive>0)fail("처리 중이거나 완료 근거가 없는 작업 요청이 있습니다. 자원 요구 등록 전 기존 작업을 확인하세요")
   val exists=jdbc.sql("SELECT station_id FROM ops.rf_station WHERE station_id=:station").param("station",station).query(String::class.java).optional().orElse(null)
   if(exists==null)fail("등록된 스테이션을 선택하세요",404)
   val count=jdbc.sql("INSERT INTO ops.mission_resource_requirement(work_master_id,station_id,created_by,reason) VALUES(:wm,:station,:actor,:reason) ON CONFLICT DO NOTHING").param("wm",wm).param("station",station).param("actor",actor.header()).param("reason",reason.trim()).update()
-  if(count==0)fail("미션의 자원 요구는 이미 고정되어 있습니다")
+  if(count==0)fail("임무의 자원 요구는 이미 고정되어 있습니다")
   list().single{it["workMasterId"]==wm}
  }!!
  /** The receipt already exists. Queue insertion and the fixed resource are committed together. */
@@ -46,7 +46,7 @@ class MissionResources(private val jdbc:JdbcClient,private val tx:TransactionTem
   if(stationRunId!=null) {
    val station=jdbc.sql("SELECT station_id FROM ops.station_run WHERE run_id=:run").param("run",stationRunId).query(String::class.java).single()
    stationLock(station)
-   if(required!=null && required!=station)fail("미션이 요구하는 스테이션과 다릅니다")
+   if(required!=null && required!=station)fail("임무가 요구하는 스테이션과 다릅니다")
    val allowed=jdbc.sql("SELECT count(*) FROM ops.station_run r JOIN ops.rf_station s ON s.owner=r.run_id WHERE r.run_id=:run AND r.state='DISPATCHING'").param("run",stationRunId).query(Long::class.java).single()
    if(allowed!=1L)fail("스테이션 점유와 제출 상태를 확인할 수 없습니다")
    jdbc.sql("UPDATE ops.work_request SET required_station_id=:station WHERE receipt_id=:id").param("station",station).param("id",id).update()
@@ -58,15 +58,15 @@ class MissionResources(private val jdbc:JdbcClient,private val tx:TransactionTem
   val payload=json.createObjectNode().put("receiptId",id.toString()).put("workMasterId",wm)
   for(key in listOf("interfaceId","interfaceVersion","input"))row.second[key]?.let{payload.set<JsonNode>(key,it)}
   row.first["deployment"]?.let{payload.put("expectedDeploymentVersion",it["deploymentVersion"].asInt())}
-  jdbc.sql("INSERT INTO ops.station_run(run_id,station_id,payload,actor,state,reason,receipt_id,created_at,phase_at) VALUES(:id,:station,CAST(:payload AS JSONB),:actor,'QUEUED','미션 필수 자원 순서를 기다립니다',:id,clock_timestamp(),clock_timestamp())").param("id",id).param("station",required).param("payload",payload.toString()).param("actor",actor.header()).update()
-  jdbc.sql("INSERT INTO ops.station_event(run_id,state,reason,actor,context,recorded_at) VALUES(:id,'QUEUED','공통 접수의 필수 자원 대기',:actor,CAST(:context AS JSONB),clock_timestamp())").param("id",id).param("actor",actor.header()).param("context",json.createObjectNode().put("workMasterId",wm).put("requiredStationId",required).put("requirementRevision",1).toString()).update()
-  if(jdbc.sql("UPDATE ops.work_request SET required_station_id=:station,state='WAITING_RESOURCE',detail='필수 공유 자원 대기',updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'").param("station",required).param("id",id).update()!=1)fail("접수가 이미 종료되었습니다")
+  jdbc.sql("INSERT INTO ops.station_run(run_id,station_id,payload,actor,state,reason,receipt_id,created_at,phase_at) VALUES(:id,:station,CAST(:payload AS JSONB),:actor,'QUEUED','임무 필수 자원 순서를 기다립니다',:id,clock_timestamp(),clock_timestamp())").param("id",id).param("station",required).param("payload",payload.toString()).param("actor",actor.header()).update()
+  jdbc.sql("INSERT INTO ops.station_event(run_id,state,reason,actor,context,recorded_at) VALUES(:id,'QUEUED','공통 작업 요청의 필수 자원 대기',:actor,CAST(:context AS JSONB),clock_timestamp())").param("id",id).param("actor",actor.header()).param("context",json.createObjectNode().put("workMasterId",wm).put("requiredStationId",required).put("requirementRevision",1).toString()).update()
+  if(jdbc.sql("UPDATE ops.work_request SET required_station_id=:station,state='WAITING_RESOURCE',detail='필수 공유 자원 대기',updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'").param("station",required).param("id",id).update()!=1)fail("작업 요청이 이미 종료되었습니다")
   true
  }!!
  fun authorize(id:UUID,wm:String) {
   val station=jdbc.sql("SELECT required_station_id FROM ops.work_request WHERE receipt_id=:id").param("id",id).query{r,_->r.getString(1) to true}.single().first
   val required=required(wm)
-  if(required!=null && required!=station)fail("필수 자원 접수를 거치지 않은 실행입니다")
+  if(required!=null && required!=station)fail("필수 자원 대기열을 거치지 않은 실행입니다.")
   if(station!=null) {
    val owned=jdbc.sql("SELECT count(*) FROM ops.station_run r JOIN ops.rf_station s ON s.owner=r.run_id WHERE r.receipt_id=:id AND s.station_id=:station AND r.state IN ('DISPATCHING','RETRYING')").param("id",id).param("station",station).query(Long::class.java).single()
    if(owned!=1L)fail("필수 자원을 점유한 조정기만 실행할 수 있습니다")

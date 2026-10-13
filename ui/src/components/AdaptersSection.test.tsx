@@ -152,7 +152,7 @@ describe('어댑터', () => {
     await userEvent.type(within(form).getByLabelText('버전'), '1.0.0')
     await userEvent.type(within(form).getByLabelText('계약 semver'), '1.0.0')
     await userEvent.click(within(form).getByRole('button', { name: '빌드 선언' }))
-    const notice = (await screen.findByText('acme/fleet 1.0.0 빌드 선언: 거절됨')).closest('[role="status"]') as HTMLElement
+    const notice = (await screen.findByText('acme/fleet 1.0.0 빌드 선언: 거부됨')).closest('[role="status"]') as HTMLElement
     expect(within(notice).getByText('같은 버전에 다른 계약값')).toBeInTheDocument()
     expect(within(notice).getByText(/existing_contract_semver=0\.9\.0/)).toBeInTheDocument()
     expect(within(notice).getByText('엔지니어(화면 안): 다른 버전 번호로')).toBeInTheDocument()

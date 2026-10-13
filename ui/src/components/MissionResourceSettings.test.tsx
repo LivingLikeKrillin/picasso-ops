@@ -10,8 +10,8 @@ afterEach(()=>{vi.unstubAllGlobals();sessionStorage.clear()})
 it('엔지니어는 미션의 필수 자원과 사유를 등록한다',async()=>{
  const fake=installFakeOps({registry:'OK',checkedAt:'t1',robots:[],robotsAsOf:'t1'});fake.answers.set('/api/mission-resources',{status:200,body:{requirements:[]}})
  render(<MissionResourceSettings session={session} stations={[station]} contracts={[]} onSaved={()=>{}}/>);
- await userEvent.click(screen.getByText('미션 자원 요구 등록'));await screen.findByText('등록된 미션 자원 요구가 없습니다.')
- await userEvent.selectOptions(screen.getByLabelText('자원이 필요한 미션'),'InspectAsset');await userEvent.selectOptions(screen.getByLabelText('필수 스테이션'),'inspection-1');fireEvent.change(screen.getByLabelText('자원 요구 등록 사유'),{target:{value:'공유 설비 검사'}})
+ await userEvent.click(screen.getByText('임무 자원 요구 등록'));await screen.findByText('등록된 임무 자원 요구가 없습니다.')
+ await userEvent.selectOptions(screen.getByLabelText('자원이 필요한 임무'),'InspectAsset');await userEvent.selectOptions(screen.getByLabelText('필수 스테이션'),'inspection-1');fireEvent.change(screen.getByLabelText('자원 요구 등록 사유'),{target:{value:'공유 설비 검사'}})
  fake.answers.set('/api/mission-resources',{status:200,body:{workMasterId:'InspectAsset',stationId:'inspection-1',revision:1,createdBy:'engineer/lee',reason:'공유 설비 검사',createdAt:'t1'}})
  await userEvent.click(screen.getByRole('button',{name:'필수 자원 등록'}));await waitFor(()=>expect(fake.calls.find(c=>c.method==='POST'&&c.url==='/api/mission-resources')?.body).toEqual({workMasterId:'InspectAsset',stationId:'inspection-1',reason:'공유 설비 검사'}))
  expect(await screen.findByText(/InspectAsset → inspection-1/)).toBeVisible()

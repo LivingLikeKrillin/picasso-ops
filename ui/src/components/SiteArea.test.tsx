@@ -314,7 +314,7 @@ describe('현장·자원 영역', () => {
     const form = await fill('120', '늦은 변경')
     await userEvent.click(within(form).getByRole('button', { name: '변경' }))
     const notice = await screen.findByRole('status')
-    expect(notice).toHaveTextContent('연결 기준 시간 120초로 변경: 거절됨')
+    expect(notice).toHaveTextContent('연결 기준 시간 120초로 변경: 거부됨')
     expect(field(notice, '종류')).toBe('현장 설정 버전 충돌')
     expect(field(notice, '관측값과 기대값')).toBe('현재 버전 2 / 기대: 기준 버전 1')
     expect(field(notice, '근거 버전')).toBe('해당 없음')

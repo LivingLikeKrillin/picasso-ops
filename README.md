@@ -1,47 +1,47 @@
 # picasso-ops
 
-**상위 시스템의 주문을 로봇 미션에 연결하고, 접수부터 실행·결과 회신까지 운영하는 미들웨어 PoC입니다.**
+**상위 시스템의 외부 주문을 로봇 임무에 연결하고, 작업 요청부터 실행·결과 회신까지 운영하는 미들웨어 PoC입니다.**
 
-MES·WMS 같은 상위 시스템은 주문을 전달하고, 로봇은 기종별 능력에 맞춰 작업을 수행합니다. 그 사이에는 입력 규격, 실행 버전, 배정 조건, 설비 사용 순서, 중복 요청 및 통신 단절을 처리하는 운영 계층이 필요합니다. picasso-ops는 이 흐름을 [picasso](https://github.com/LivingLikeKrillin/picasso) 기반으로 구현합니다.
+MES·WMS 같은 상위 시스템은 외부 주문을 전달하고, 로봇은 기종별 케이퍼빌리티에 맞춰 작업을 수행합니다. 그 사이에는 입력 규격, 실행 버전, 배정 조건, 설비 사용 순서, 중복 요청 및 통신 단절을 처리하는 운영 계층이 필요합니다. picasso-ops는 이 흐름을 [picasso](https://github.com/LivingLikeKrillin/picasso) 기반으로 구현합니다.
 
-현재 스택은 PostgreSQL, picasso registry·mimic, 셀 대역, 실행 호스트, 운영 API, React UI로 구성됩니다. **실물 로봇·PLC·상용 MES 연계는 검증하지 않았습니다.**
+현재 스택은 PostgreSQL, picasso registry·mimic, 셀 대역, 실행 호스트, 운영 API, React UI로 구성됩니다. **실제 로봇 하드웨어·PLC·상용 MES 연계는 검증하지 않았습니다.**
 
 ![운영 개요: 요청과 실행 상태를 확인하는 화면](docs/screens/style-preview/overview-fullstack.png)
 
-## 대표 시나리오: 상위 주문에서 작업 결과까지
+## 대표 시나리오: 외부 주문에서 작업 결과까지
 
-설비 점검 임무를 정의해 상위 주문에 노출하는 전체 흐름입니다.
+설비 점검 임무를 정의해 외부 주문에 노출하는 전체 흐름입니다.
 
 1. **임무 정의**: 입력 스키마, 샘플, 매핑 및 실행 초안을 작성합니다. 검증과 모의 실행을 거쳐 버전을 활성화합니다.
 2. **인터페이스 배포**: 상위 입력을 임무 입력에 매핑하고, 실행 버전을 고정한 배포를 활성화합니다.
-3. **주문 접수**: Mock MES가 주문 API를 호출합니다. 접수 번호를 영속 저장하며, 동일한 외부 주문이 재전송되면 기존 접수 결과를 반환합니다.
-4. **실행 조정**: 로봇 배정 조건과 미션 필수 자원을 확인합니다. 공유 스테이션이 사용 중이면 대기열에 진입하고, 자원을 확보한 뒤 실행합니다.
+3. **외부 주문 수신**: Mock MES가 외부 주문 API를 호출합니다. 작업 요청 번호를 영속 저장하며, 동일한 외부 주문이 재전송되면 기존 작업 요청 결과를 반환합니다.
+4. **실행 조정**: 로봇 배정 조건과 임무 필수 자원을 확인합니다. 공유 스테이션이 사용 중이면 대기열에 진입하고, 자원을 확보한 뒤 실행합니다.
 5. **결과 확인**: 로봇 실행 근거와 설비 신호를 확인합니다. 완료 여부가 불확실하면 자원 소유권을 유지하고 운영자 확인을 요청합니다.
 6. **상위 회신**: 결과 버전과 해시를 기준으로 수신 확인(ACK)을 기록합니다. 결과 전달 실패와 실제 작업 실패는 구분하여 관리합니다.
 
-이 흐름이 범용 MES 커넥터 제공을 의미하지는 않습니다. 현재 상위 연계는 단일 Mock MES 식별자와 주문 계약으로 검증합니다.
+이 흐름이 범용 MES 커넥터 제공을 의미하지는 않습니다. 현재 상위 연계는 단일 Mock MES 식별자와 외부 주문 계약으로 검증합니다.
 
 ## 핵심 가치와 검증 근거
 
 | 운영에서 생기는 문제 | 구현한 대응 | 근거 |
 |---|---|---|
-| 미션이 바뀌면 상위 호출도 흔들림 | 입력 계약·매핑·실행 버전을 나누고 배포에 버전 고정 | [미션 완료 범위](docs/screens/mission-completion-2026-10-11.md) |
-| 요청 재전송·재기동으로 중복 실행 위험 | 영속 접수, 요청 식별자, 재기동 복구·확인 절차 | [수동 접수](docs/screens/manual-receipts-2026-10-11.md), [신뢰성](docs/screens/reliability-implementation-2026-10-11.md) |
-| 여러 호출 경로가 같은 설비를 사용 | 미션 필수 자원을 공통 대기열과 소유 관리에 연결 | [자원 실행 검증](docs/screens/mission-resource-enforcement-2026-10-12.md) |
-| 실행 완료와 결과 전달 완료를 혼동 | 결과 버전·해시·ACK와 전달 이력을 별도 관리 | [상위 결과 회신](docs/screens/upstream-results-2026-10-11.md) |
+| 임무가 바뀌면 상위 호출도 흔들림 | 입력 계약·매핑·실행 버전을 나누고 배포에 버전 고정 | [임무 완료 범위](docs/screens/mission-completion-2026-10-11.md) |
+| 요청 재전송·재기동으로 중복 실행 위험 | 영속 작업 요청, 요청 식별자, 재기동 복구·확인 절차 | [수동 작업 요청](docs/screens/manual-receipts-2026-10-11.md), [신뢰성](docs/screens/reliability-implementation-2026-10-11.md) |
+| 여러 호출 경로가 같은 설비를 사용 | 임무 필수 자원을 공통 대기열과 소유 관리에 연결 | [자원 실행 검증](docs/screens/mission-resource-enforcement-2026-10-12.md) |
+| 실행 완료와 결과 전달 완료를 혼동 | 결과 버전·해시·수신 확인과 전달 이력을 별도 관리 | [상위 결과 회신](docs/screens/upstream-results-2026-10-11.md) |
 | 새 로봇 도입 절차가 운영자에게 숨겨짐 | 어댑터·프로파일·바인딩·현장 명칭·배정 조건을 단계별 안내 | [로봇 도입 흐름](docs/screens/onboarding-refresh.md) |
 
 ## 주요 화면
 
-아래 화면은 실제 로컬 API, PostgreSQL, mimic 환경의 브라우저 시나리오에서 캡처한 것으로, 실물 장비를 촬영한 결과는 아닙니다.
+아래 화면은 실제 로컬 API, PostgreSQL, mimic 환경의 브라우저 시나리오에서 캡처한 것으로, 실제 하드웨어를 촬영한 결과는 아닙니다.
 
-| 임무와 상위 계약 | 작업 접수와 결과 추적 |
+| 임무와 상위 계약 | 작업 요청과 결과 추적 |
 |---|---|
-| ![미션 입력 계약과 실행 정의](docs/screens/style-preview/new-mission-contract-fullstack.png) | ![상위 주문과 수동 요청의 접수 목록](docs/screens/style-preview/workspace-requests-fullstack.png) |
+| ![임무 입력 계약과 실행 정의](docs/screens/style-preview/new-mission-contract-fullstack.png) | ![외부 주문과 수동 요청의 작업 요청 목록](docs/screens/style-preview/workspace-requests-fullstack.png) |
 
 | 필수 자원과 대기열 | 불확실한 요청의 확인과 복구 |
 |---|---|
-| ![미션 필수 자원 설정과 공통 대기열](docs/screens/style-preview/mission-resource-fullstack.png) | ![요청 복구와 운영자 확인](docs/screens/style-preview/reliability-recovery-fullstack.png) |
+| ![임무 필수 자원 설정과 공통 대기열](docs/screens/style-preview/mission-resource-fullstack.png) | ![요청 복구와 운영자 확인](docs/screens/style-preview/reliability-recovery-fullstack.png) |
 
 [전체 화면과 촬영 조건](docs/screens/style-preview/README.md)에서 모바일 화면과 각 검증 장면도 확인할 수 있습니다.
 
@@ -50,8 +50,8 @@ MES·WMS 같은 상위 시스템은 주문을 전달하고, 로봇은 기종별 
 | 구성 요소 | 책임 |
 |---|---|
 | `ui` | 운영 개요, 작업 요청, 공유 자원, 운영, 로봇, 임무, 현장 설정, 이력, 검증 도구 |
-| `ops-service` | 운영 API, 상위 주문 계약, 영속 접수·결과·ACK, 공유 자원 조정 |
-| `mission-host` | picasso를 사용하는 실행 호스트, 미션 검증·모의 실행·실행 복원 |
+| `ops-service` | 운영 API, 외부 주문 계약, 영속 작업 요청·결과·수신 확인, 공유 자원 조정 |
+| `mission-host` | picasso를 사용하는 실행 호스트, 임무 검증·모의 실행·실행 복원 |
 | `site` | registry·mimic·셀 대역을 띄우는 로컬 현장 런처 |
 | `picasso/` | 고정 커밋의 읽기 전용 Core 서브모듈, Gradle composite build로 사용 |
 
@@ -62,23 +62,23 @@ Ops는 공유 스테이션 실행 근거를 `GET /api/stations/runs/{id}/evidenc
 | 사용자 목적 | 화면에서 이어지는 경로 |
 |---|---|
 | 새 로봇을 투입 | 로봇 추가 → 어댑터 등록 → 프로파일 시험·활성화 → 바인딩·현장 명칭 → 배정 조건 |
-| 새 미션을 노출 | 임무 입력 계약 → 실행 초안 → 검증·모의 실행 → 활성화 → 인터페이스 매핑·배포 |
-| 작업을 요청하고 추적 | 작업 요청 → 상위 주문 또는 수동 접수 → 접수 상세 → 실행·결과·수신 확인 |
+| 새 임무를 노출 | 임무 입력 계약 → 실행 초안 → 검증·모의 실행 → 활성화 → 인터페이스 매핑·배포 |
+| 작업을 요청하고 추적 | 작업 요청 → 외부 주문 또는 수동 등록 → 작업 요청 상세 → 실행·결과·수신 확인 |
 | 설비 경합을 처리 | 공유 자원 → 대기열·소유자·신호 확인 → 불확실 상태 검토 |
 | 변경 근거를 확인 | 이력 → 조작 주체·사유·결과 확인 |
 
-새 미션은 지원하는 입력 스키마와 순차 실행 노드로 정의합니다. 자유로운 DAG, 분기, 임의 코드 실행이나 새로운 로봇 스킬 생성은 제공하지 않습니다.
+새 임무는 지원하는 입력 스키마와 순차 실행 노드로 정의합니다. 자유로운 DAG, 분기, 임의 코드 실행이나 새로운 로봇 스킬 생성은 제공하지 않습니다.
 
 ## 상위 인터페이스
 
 | 경로 | 용도와 경계 |
 |---|---|
-| `POST /integration/v1/job-orders` | Bearer 토큰으로 식별하는 Mock MES 주문 접수. 신규 202, 동일 주문 재접수 200 |
-| `GET /integration/v1/job-orders/{id}` | 해당 상위 식별자가 접수한 주문 조회 |
-| `POST /api/work-requests/manual` | 화면의 수동 작업 접수. `requestId`로 중복 접수 방지 |
-| `POST /api/job-orders` | 기존 호출 경로. 영속 접수와 자원 조정에 연결되지만 요청 ID 기반 재전송 보장은 제공하지 않음 |
+| `POST /integration/v1/job-orders` | Bearer 토큰으로 식별하는 Mock MES 외부 주문 수신. 신규 202, 동일 외부 주문 재전송 200 |
+| `GET /integration/v1/job-orders/{id}` | 해당 상위 식별자가 보낸 외부 주문 조회 |
+| `POST /api/work-requests/manual` | 화면의 수동 작업 요청. `requestId`로 중복 작업 요청 방지 |
+| `POST /api/job-orders` | 기존 호출 경로. 영속 작업 요청과 자원 조정에 연결되지만 요청 ID 기반 재전송 보장은 제공하지 않음 |
 
-외부 주문 API는 `PICASSO_INTEGRATION_TOKEN`이 비어 있으면 비활성화됩니다. 현재 인증은 단일 서버 설정 식별자이며 다중 테넌트 IAM이 아닙니다. 상위 결과와 ACK의 전체 계약은 [구현 문서](docs/screens/upstream-results-2026-10-11.md)를 참고하세요. Mock MES 호출 도구는 `scripts/mock-mes.mjs`입니다.
+외부 주문 API는 `PICASSO_INTEGRATION_TOKEN`이 비어 있으면 비활성화됩니다. 현재 인증은 단일 서버 설정 식별자이며 다중 테넌트 IAM이 아닙니다. 상위 결과와 수신 확인의 전체 계약은 [구현 문서](docs/screens/upstream-results-2026-10-11.md)를 참고하세요. Mock MES 호출 도구는 `scripts/mock-mes.mjs`입니다.
 
 ## 선행 도구
 
@@ -207,7 +207,7 @@ bash site/smoke.sh
 
 ## 첫 체험 경로
 
-전체 스택을 띄운 뒤 화면을 처음 열면 로봇 영역이 나옵니다(운영 개요는 메뉴의 첫 항목). 새 기체는 로봇 추가 안내를 따라 준비하고, 임무에서 배정 조건을 확인합니다. 미션 입력 계약과 실행 버전을 만든 뒤 인터페이스를 배포하고, 작업 요청에서 수동 요청 또는 Mock MES 주문을 추적합니다. Mock MES 주문을 추적하려면 6단계에서 설정한 PICASSO_INTEGRATION_TOKEN이 필요하고, `node scripts/mock-mes.mjs order.json --poll`로 주문을 한 번 보냅니다(order.json은 직접 만든 주문 파일). 공유 자원에서는 실행 중인 소유자와 대기열, 확인이 필요한 요청을 볼 수 있습니다.
+전체 스택을 띄운 뒤 화면을 처음 열면 로봇 영역이 나옵니다(운영 개요는 메뉴의 첫 항목). 새 기체는 로봇 추가 안내를 따라 준비하고, 임무에서 배정 조건을 확인합니다. 임무 입력 계약과 실행 버전을 만든 뒤 인터페이스를 배포하고, 작업 요청에서 수동 요청 또는 Mock MES 주문을 추적합니다. Mock MES 주문을 추적하려면 6단계에서 설정한 PICASSO_INTEGRATION_TOKEN이 필요하고, `node scripts/mock-mes.mjs order.json --poll`로 외부 주문을 한 번 보냅니다(order.json은 직접 만든 외부 주문 파일). 공유 자원에서는 실행 중인 소유자와 대기열, 확인이 필요한 요청을 볼 수 있습니다.
 
 정확한 입력값과 실행 순서는 [브라우저 생애주기 시나리오](ui/e2e/lifecycle.spec.ts)에 있습니다. 공유 자원 경합은 [별도 시나리오](ui/e2e/station.spec.ts)로 검증합니다.
 
@@ -249,8 +249,8 @@ npx playwright test --config=playwright.station.config.ts
 
 ## 중요한 한계
 
-- 로컬 대역으로 운영 흐름을 검증합니다. 실물 로봇·PLC·산업 안전·벤더 호환성은 입증하지 않습니다.
-- 미션 필수 자원은 현재 미션당 하나입니다. 소유 관리와 설비 신호 확인은 안전 PLC나 장비 측 fencing을 대신하지 않습니다. 실행 호스트를 직접 호출하는 외부 제어 경로까지 통제하지 않습니다.
+- 로컬 대역으로 운영 흐름을 검증합니다. 실제 로봇 하드웨어·PLC·산업 안전·벤더 호환성은 입증하지 않습니다.
+- 임무 필수 자원은 현재 임무당 하나입니다. 소유 관리와 설비 신호 확인은 안전 PLC나 장비 측 fencing을 대신하지 않습니다. 실행 호스트를 직접 호출하는 외부 제어 경로까지 통제하지 않습니다.
 - 로봇과 설비의 완료가 불확실하면 소유를 유지하고 확인을 요구합니다. 운영자가 현장을 확인해 자원을 해제한 사실을 물리 완료로 기록하지 않습니다.
 - 실행 호스트 복원과 로봇 측 태스크 장부의 지속성은 다릅니다. 현장 런처·어댑터까지 재기동한 경우 같은 태스크 ID의 중복 물리 실행을 방지한다고 보장하지 않습니다.
 - 외부 주문 토큰은 있으나 운영자 모드·사용자명은 제품 수준의 인증·권한 체계가 아닙니다. 실행 호스트와 셀 대역도 인증되지 않습니다.
@@ -262,10 +262,10 @@ npx playwright test --config=playwright.station.config.ts
 | 문서 | 내용 |
 |---|---|
 | [화면 설계서](docs/screens/screen-design.md) | 메뉴와 사용자 여정, 화면 책임 |
-| [미션 완료 범위](docs/screens/mission-completion-2026-10-11.md) | 입력 계약·실행·인터페이스 배포 |
-| [신뢰성 구현](docs/screens/reliability-implementation-2026-10-11.md) | 영속 접수·복원·확인 절차 |
-| [미션 자원 실행](docs/screens/mission-resource-enforcement-2026-10-12.md) | 공통 접수·자원 소유·혼합 호출 검증 |
-| [상위 결과 회신](docs/screens/upstream-results-2026-10-11.md) | 버전·해시·ACK와 전달 |
+| [임무 완료 범위](docs/screens/mission-completion-2026-10-11.md) | 입력 계약·실행·인터페이스 배포 |
+| [신뢰성 구현](docs/screens/reliability-implementation-2026-10-11.md) | 영속 작업 요청·복원·확인 절차 |
+| [임무 자원 실행](docs/screens/mission-resource-enforcement-2026-10-12.md) | 공통 작업 요청·자원 소유·혼합 호출 검증 |
+| [상위 결과 회신](docs/screens/upstream-results-2026-10-11.md) | 버전·해시·수신 확인과 전달 |
 | [로봇 도입](docs/screens/onboarding-refresh.md) | 신규 유형과 기존 기체의 준비 절차 |
 | [상세 참조](docs/reference.md) | 초기 구성·상태·운영 제약의 상세 기록 |
 | [화면 자료](docs/screens/README.md) | 촬영 조건과 다시 찍는 방법 |

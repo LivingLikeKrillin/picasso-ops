@@ -41,9 +41,9 @@ class MissionResourceController(private val requests:dev.picasso.ops.service.req
  @PostMapping("/api/mission-resources") fun create(@RequestHeader(Actor.MODE_HEADER,required=false) mode:String?,@RequestHeader(Actor.USER_HEADER,required=false) user:String?,@RequestBody(required=false) body:ByteArray?)=guarded(mode,user,Mode.ENGINEER){actor->
   try {
    val p=body?.takeIf{it.size<=4096}?.let{runCatching{json.readTree(it)}.getOrNull()}
-   if(p?.isObject!=true || p.fieldNames().asSequence().toSet()!=setOf("workMasterId","stationId","reason") || listOf("workMasterId","stationId","reason").any{p[it]?.isTextual!=true})throw RequestRejected("BAD_RESOURCE","미션·스테이션·사유가 필요합니다")
+   if(p?.isObject!=true || p.fieldNames().asSequence().toSet()!=setOf("workMasterId","stationId","reason") || listOf("workMasterId","stationId","reason").any{p[it]?.isTextual!=true})throw RequestRejected("BAD_RESOURCE","임무·스테이션·사유가 필요합니다")
    val wm=p["workMasterId"].asText()
-   if(wm !in dev.picasso.ops.service.joborders.JobOrderForm.WORK_MASTERS && interfaces.profiles.find(wm)==null)throw RequestRejected("BAD_RESOURCE","등록된 미션만 자원 요구를 선언합니다")
+   if(wm !in dev.picasso.ops.service.joborders.JobOrderForm.WORK_MASTERS && interfaces.profiles.find(wm)==null)throw RequestRejected("BAD_RESOURCE","등록된 임무만 자원 요구를 선언합니다")
    ResponseEntity.ok(requests.resources.create(actor,wm,p["stationId"].asText(),p["reason"].asText()))
   }catch(e:RequestRejected){ResponseEntity.status(e.status).body(PreRejection(e.code,e.message))}
  }

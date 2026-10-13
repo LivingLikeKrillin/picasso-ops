@@ -136,7 +136,7 @@ class MissionVersionController(
             when (val found = host.draft(id)) {
                 is HostCall.Silent -> return@editable hostSilent(found.cause)
                 is HostCall.Ok -> if (found.value.path("workMasterId").asText() != wm) {
-                    return@editable reject(HttpStatus.NOT_FOUND, "DRAFT_NOT_FOUND", "해당 미션의 초안이 아닙니다")
+                    return@editable reject(HttpStatus.NOT_FOUND, "DRAFT_NOT_FOUND", "해당 임무의 초안이 아닙니다")
                 }
             }
         }

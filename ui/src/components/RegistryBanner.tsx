@@ -28,7 +28,7 @@ export function RegistryBanner({ view, opsError }: Props) {
     case 'REGISTRY_UNAUTHORIZED':
       return (
         <div role="alert" className="banner unknown">
-          모름: registry 가 운영자 토큰을 거절합니다. 해결 담당 엔지니어, 운영자 토큰 설정 확인. 확인
+          모름: registry 가 운영자 토큰을 거부합니다. 해결 담당 엔지니어, 운영자 토큰 설정 확인. 확인
           시각 {view.checkedAt}
         </div>
       )

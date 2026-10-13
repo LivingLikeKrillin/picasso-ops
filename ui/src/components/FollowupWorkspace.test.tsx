@@ -15,7 +15,7 @@ it('개요는 접수 집계와 호스트 실패를 구분하고 지표를 실제
   return new Response(JSON.stringify(body),{status:url==='/api/executions'||url==='/api/incidents'?503:200})
  }))
  render(<OverviewArea session={operator}/> )
- expect(await screen.findByRole('link',{name:/전체 접수 8/})).toHaveAttribute('href','#requests')
+ expect(await screen.findByRole('link',{name:/총 작업 요청 8/})).toHaveAttribute('href','#requests')
  expect(screen.getByRole('link',{name:/미배정 2/})).toHaveAttribute('href','#requests?state=UNASSIGNED')
  expect(screen.getByRole('link',{name:/제출 확인 필요 2/})).toHaveAttribute('href','#requests?state=NEEDS_CONFIRMATION')
  expect(screen.getByRole('link',{name:/외부 결과 수신 미확인 3/})).toHaveAttribute('href','#requests?result=unacknowledged')
@@ -26,11 +26,11 @@ it('개요 재조회 실패는 직전 집계를 유지하고 오래된 값임을
  let fail=false
  vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(url==='/api/work-requests/summary'?{total:5,states:{},latest:[],unacknowledgedResults:0,observedAt:'t1'}:url==='/api/executions'?{instanceId:'host',executions:[{physicalState:'OPERATOR_HOLD'},{physicalState:'IN_DOUBT'}]}:url==='/api/incidents'?{instanceId:'host',incidents:[]}: {state:'WAITING'}),{status:fail?503:200})))
  render(<OverviewArea session={operator}/> )
- expect(await screen.findByRole('link',{name:/전체 접수 5/})).toBeVisible()
+ expect(await screen.findByRole('link',{name:/총 작업 요청 5/})).toBeVisible()
  expect(screen.getByText('판단·확인 대기').nextElementSibling).toHaveTextContent('2')
  fail=true;await userEvent.click(screen.getByRole('button',{name:'개요 다시 조회'}))
- expect(await screen.findByText(/접수 집계:.*직전 조회 값/)).toBeVisible()
- expect(screen.getByRole('link',{name:/전체 접수 5/})).toHaveTextContent('직전 값')
+ expect(await screen.findByText(/작업 요청 집계:.*직전 조회 값/)).toBeVisible()
+ expect(screen.getByRole('link',{name:/총 작업 요청 5/})).toHaveTextContent('직전 값')
 })
 it('미배정 재평가 응답이 사라져도 보관한 판단 ID와 사유로만 다시 확인한다',async()=>{
  const calls:unknown[]=[];let fail=true
@@ -42,7 +42,7 @@ it('미배정 재평가 응답이 사라져도 보관한 판단 ID와 사유로�
  first.unmount();fail=false
  render(<RequestRecovery receipt={{...row,state:'DISPATCHING'}} session={operator} onChanged={()=>undefined}/> )
  expect(calls).toHaveLength(1)
- await userEvent.click(screen.getByRole('button',{name:'동일 재평가 접수 확인'}))
+ await userEvent.click(screen.getByRole('button',{name:'동일 재평가 요청 확인'}))
  expect(await screen.findByRole('status')).toHaveTextContent('기존 재평가 확인')
  expect(calls[1]).toEqual(calls[0]);expect(calls[0]).toMatchObject({reason:'기체 준비 확인',expectedUpdatedAt:'t2'})
 })

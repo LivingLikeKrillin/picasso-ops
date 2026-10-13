@@ -126,7 +126,7 @@ async function fillTarget(index: number, id: string, location: string) {
 }
 
 async function submit() {
-  await userEvent.click(screen.getByRole('button', { name: '작업 지시 내기' }))
+  await userEvent.click(screen.getByRole('button', { name: '작업 요청 내기' }))
   return screen.findByRole('status', { name: '제출 결과' })
 }
 
@@ -190,7 +190,7 @@ describe('운영 영역', () => {
     fake.eligibility = eligibilityView({ robots: [robotRow('humanoid-01')] })
     open(engineer)
     await fillTarget(1, 'T1', 'bay-7')
-    expect(screen.queryByRole('button', { name: '작업 지시 내기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '작업 요청 내기' })).not.toBeInTheDocument()
     expect(screen.getByText('작업 지시는 운영자 모드에서 냅니다')).toBeInTheDocument()
     expect(await screen.findByRole('table', { name: '기체별 배정 가능' })).toBeInTheDocument()
   })
@@ -200,10 +200,10 @@ describe('운영 영역', () => {
     open()
     await userEvent.type(screen.getByLabelText('대상 1 id'), 'T1')
     expect(screen.getByText('폼을 채우면 기체별 배정 가능을 봅니다')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: '작업 지시 내기' }))
+    await userEvent.click(screen.getByRole('button', { name: '작업 요청 내기' }))
     expect(screen.getByRole('alert')).toHaveTextContent('점검 대상마다 대상 id 와 장소 이름을 넣으십시오')
     await userEvent.click(screen.getByRole('button', { name: '대상 1 빼기' }))
-    await userEvent.click(screen.getByRole('button', { name: '작업 지시 내기' }))
+    await userEvent.click(screen.getByRole('button', { name: '작업 요청 내기' }))
     expect(screen.getByRole('alert')).toHaveTextContent('점검 대상을 하나 이상 넣으십시오')
     expect(fake.calls.filter((call) => call.method === 'POST')).toEqual([])
   })
@@ -267,7 +267,7 @@ describe('운영 영역', () => {
         },
       }),
     }
-    await userEvent.click(screen.getByRole('button', { name: '작업 지시 내기' }))
+    await userEvent.click(screen.getByRole('button', { name: '작업 요청 내기' }))
     await waitFor(() => expect(screen.getByRole('status', { name: '제출 결과' })).toHaveTextContent('미배정'))
     notice = screen.getByRole('status', { name: '제출 결과' })
     expect(
@@ -294,7 +294,7 @@ describe('운영 영역', () => {
     expect(notice).toHaveTextContent('humanoid-01: 연결이 오래됐다(기준 90초, 현장 설정 버전 1) / quadruped-01')
 
     fake.answer = { status: 403, body: { error: 'MODE_NOT_ALLOWED', detail: '운영자 모드만 할 수 있다' } }
-    await userEvent.click(screen.getByRole('button', { name: '작업 지시 내기' }))
+    await userEvent.click(screen.getByRole('button', { name: '작업 요청 내기' }))
     await waitFor(() =>
       expect(screen.getByRole('status', { name: '제출 결과' })).toHaveTextContent('막힘(이 모드에서 할 수 없는 조작)'),
     )
@@ -304,7 +304,7 @@ describe('운영 영역', () => {
 
   it.each([
     ['CONFIRMED_APPLIED' as const, '응답은 없었으나 다시 읽어 보니 실행이 있음'],
-    ['CONFIRMED_NOT_APPLIED' as const, '응답 없음. 현재 실행이 보이지 않습니다. 기존 요청 ID로 접수를 확인하세요'],
+    ['CONFIRMED_NOT_APPLIED' as const, '응답 없음. 현재 실행이 보이지 않습니다. 기존 요청 ID로 작업 요청을 확인하세요'],
     [null, '반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다'],
   ])('호스트 응답 없음은 확인 결과 %s 를 따로 보인다', async (confirmation, text) => {
     const fake = installFakeOps(emptyList)

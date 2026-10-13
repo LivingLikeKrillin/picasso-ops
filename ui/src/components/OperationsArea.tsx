@@ -205,7 +205,7 @@ export function OperationsArea({ session, onChanged }: Props) {
     if(submitting.current || session.mode !== 'operator' || manualStorageError || manualIdentity.current !== `${session.mode}/${session.user}`) return
     try {
       const stored = loadManualRequest(session)
-      if(stored && stored.requestId !== request.requestId) { setProblem('보관된 요청 ID로 접수를 먼저 확인하세요'); return }
+      if(stored && stored.requestId !== request.requestId) { setProblem('보관된 요청 ID로 작업 요청을 먼저 확인하세요'); return }
       saveManualRequest(session, request)
     }
     catch(error) { setManualStorageError(`요청 ID 보관 실패: ${message(error)}. 작업을 제출하지 않았습니다`); return }
@@ -221,7 +221,7 @@ export function OperationsArea({ session, onChanged }: Props) {
           canStartNew: ['WAITING_RESOURCE', 'ACCEPTED', 'REJECTED', 'UNASSIGNED'].includes(accepted.receipt.state) }
         setPendingManual(saved)
         try { saveManualRequest(session, saved) }
-        catch(error) { setManualStorageError(`접수 응답은 받았으나 브라우저 보관 실패: ${message(error)}`) }
+        catch(error) { setManualStorageError(`작업 요청 응답은 받았으나 브라우저 보관 실패: ${message(error)}`) }
         setLast(accepted.receipt.state==='WAITING_RESOURCE'?null:{ what, sent: { kind: 'outcome', outcome: manualJobOutcome(accepted.receipt) } })
       } else setLast({ what, sent })
     }).finally(() => {
@@ -232,7 +232,7 @@ export function OperationsArea({ session, onChanged }: Props) {
   const submit = () => {
     if (built.kind !== 'form') { setProblem(built.problem); return }
     if(pendingManual && JSON.stringify(pendingManual.form) !== JSON.stringify(built.form)) {
-      setProblem('보관된 요청과 입력이 다릅니다. 동일 요청 접수를 확인하거나, 확인된 접수에서 새 작업 작성을 선택하세요'); return
+      setProblem('보관된 요청과 입력이 다릅니다. 동일 작업 요청을 확인하거나, 확인된 작업 요청에서 새 작업 작성을 선택하세요'); return
     }
     sendManual(pendingManual ?? { requestId: crypto.randomUUID(), form: built.form, canStartNew: false })
   }
@@ -278,14 +278,14 @@ export function OperationsArea({ session, onChanged }: Props) {
           <h2>작업 지시</h2>
           {last !== null && <JobOrderNotice what={last.what} sent={last.sent} />}
           {manualStorageError && <p role="alert">{manualStorageError}</p>}
-          {pendingManual && <section className="manual-receipt" aria-label="수동 작업 접수 추적">
-            <h3>수동 작업 접수</h3><p>요청 ID: <code>{pendingManual.requestId}</code></p>
-            {manualReceipt ? <p>{manualReceipt.duplicate ? '기존 접수 확인 · 추가 실행 없음' : '접수 기록 저장됨'} · {manualReceipt.receipt.state}</p> : <p>보관된 요청입니다. 같은 ID와 원본 입력으로 접수를 확인합니다.</p>}
-            {manualReceipt?.receipt.state==='WAITING_RESOURCE'&&<p role="status">접수 완료 · 필수 자원과 설비 준비를 기다립니다. 아직 로봇에 전송하지 않았습니다.</p>}<p>응답 불명·처리 중인 요청은 새 ID로 재제출하지 마세요. 새 작업 작성은 별도 실행을 의미합니다.</p>
+          {pendingManual && <section className="manual-receipt" aria-label="수동 작업 요청 추적">
+            <h3>수동 작업 요청</h3><p>요청 ID: <code>{pendingManual.requestId}</code></p>
+            {manualReceipt ? <p>{manualReceipt.duplicate ? '기존 작업 요청 확인 · 추가 실행 없음' : '작업 요청 기록 저장됨'} · {manualReceipt.receipt.state}</p> : <p>보관된 요청입니다. 같은 ID와 원본 입력으로 작업 요청을 확인합니다.</p>}
+            {manualReceipt?.receipt.state==='WAITING_RESOURCE'&&<p role="status">작업 요청 저장 완료 · 필수 자원과 설비 준비를 기다립니다. 아직 로봇에 전송하지 않았습니다.</p>}<p>응답 불명·처리 중인 요청은 새 ID로 재제출하지 마세요. 새 작업 작성은 별도 실행을 의미합니다.</p>
             <div className="actions">
-              <button type="button" disabled={busy || session.mode !== 'operator' || !!manualStorageError} onClick={() => sendManual(pendingManual)}>동일 요청 접수 확인</button>
+              <button type="button" disabled={busy || session.mode !== 'operator' || !!manualStorageError} onClick={() => sendManual(pendingManual)}>동일 작업 요청 확인</button>
               <button type="button" disabled={busy || !pendingManual.canStartNew || session.mode !== 'operator' || !!manualStorageError} onClick={startNewManual}>새 작업 작성</button>
-              {pendingManual.receiptId && <button type="button" onClick={() => setFocusReceipt(pendingManual.receiptId!)}>접수·실행 결과 보기</button>}
+              {pendingManual.receiptId && <button type="button" onClick={() => setFocusReceipt(pendingManual.receiptId!)}>작업 요청·실행 결과 보기</button>}
             </div><details><summary>보관된 요청 입력</summary><pre>{JSON.stringify(pendingManual.form, null, 2)}</pre></details>
           </section>}
           <MissionResourceNotice session={session} workMasterId={draft.workMasterId} />

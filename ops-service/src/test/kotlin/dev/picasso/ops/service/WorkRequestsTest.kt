@@ -407,12 +407,12 @@ class WorkRequestsTest {
   val row=service.receive("mes",body).receipt;assertEquals("UNASSIGNED",row.state)
   requirementOnClaim(sweep);bench.judge={ids->HostCall.Ok(ids.map(JobOrderBench::pass))}
   val ex=assertFailsWith<RequestRejected>{service.recover(row.receiptId,Actor(Mode.OPERATOR,"kim"),json.readTree("""{"requestId":"${UUID.randomUUID()}","reason":"제출 직전 변경","expectedUpdatedAt":"${row.updatedAt}"}"""))}
-  assertEquals("RESOURCE_REQUIREMENT",ex.code);assertEquals("필수 자원 접수를 거치지 않은 실행입니다",ex.message);assertTrue(bench.submitted.isEmpty())
+  assertEquals("RESOURCE_REQUIREMENT",ex.code);assertEquals("필수 자원 대기열을 거치지 않은 실행입니다.",ex.message);assertTrue(bench.submitted.isEmpty())
   return service.get(row.receiptId)
  }
  @Test fun `제출 직전 자원 요구가 바뀌면 호스트에 보내지 않고 거절로 닫으며 오류를 알린다`() {
   val after=unassignedBeforeRequirement(sweep=false)
-  assertEquals("REJECTED",after.state);assertEquals("자원 요구가 바뀌어 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오: 필수 자원 접수를 거치지 않은 실행입니다",after.detail)
+  assertEquals("REJECTED",after.state);assertEquals("자원 요구가 바뀌어 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오: 필수 자원 대기열을 거치지 않은 실행입니다.",after.detail)
   assertNull(after.submission)
  }
  @Test fun `제출 직전 자원 거절은 이미 다른 판단으로 닫힌 접수를 덮지 않는다`() {
@@ -583,7 +583,7 @@ class WorkRequestsTest {
   PostgresSupport.execute("ALTER TABLE ops.work_request ADD CONSTRAINT deny_normalized CHECK (normalized_order IS NULL) NOT VALID")
   assertFailsWith<org.springframework.dao.DataAccessException>{service.receive("mes",body)}
   val row=service.list("",null,0,20)["requests"].let{it as List<*>}.single() as Receipt
-  assertEquals("REJECTED",row.state);assertEquals("접수 처리 중 내부 오류; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오",row.detail)
+  assertEquals("REJECTED",row.state);assertEquals("작업 요청 처리 중 내부 오류; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오",row.detail)
   val replay=service().receive("mes",body);assertTrue(replay.duplicate);assertEquals("REJECTED",replay.receipt.state);assertTrue(bench.submitted.isEmpty())
  }
  @Test fun `접수 저장 뒤 업무 거절은 자기 사유로 닫고 그대로 알린다`() {
@@ -620,7 +620,7 @@ class WorkRequestsTest {
   val received=raw("RECEIVED",null);val dispatching=raw("DISPATCHING");val waiting=raw("WAITING_RESOURCE");val fresh=raw("RECEIVED");val freshDispatch=raw("DISPATCHING")
   for(id in listOf(received,dispatching,waiting))age(id,600)
   assertEquals(2,service.sweepStale(Duration.ofMinutes(5)))
-  assertEquals("REJECTED",service.get(received).state);assertEquals("접수 처리 중단; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오",service.get(received).detail)
+  assertEquals("REJECTED",service.get(received).state);assertEquals("작업 요청 처리 중단; 호스트에 보내지 않았습니다. 새 요청 ID로 다시 보내십시오",service.get(received).detail)
   assertEquals("IN_DOUBT",service.get(dispatching).state);assertEquals("제출 도중 중단; 실행 관측과 현장 확인이 필요합니다",service.get(dispatching).detail)
   assertEquals("WAITING_RESOURCE",service.get(waiting).state);assertEquals("RECEIVED",service.get(fresh).state);assertEquals("DISPATCHING",service.get(freshDispatch).state)
   assertEquals(0,service.sweepStale(Duration.ofMinutes(5)));assertTrue(bench.submitted.isEmpty())
@@ -628,7 +628,7 @@ class WorkRequestsTest {
  @Test fun `결과 수집 주기는 정리 실패와 무관하게 결과를 모은다`() {
   val row=service.receive("mes",body).receipt;observeResult(row.jobOrderId)
   val stale=raw("RECEIVED");age(stale,600)
-  PostgresSupport.execute("ALTER TABLE ops.work_request ADD CONSTRAINT deny_sweep CHECK (detail IS NULL OR detail NOT LIKE '접수 처리 중단%') NOT VALID")
+  PostgresSupport.execute("ALTER TABLE ops.work_request ADD CONSTRAINT deny_sweep CHECK (detail IS NULL OR detail NOT LIKE '작업 요청 처리 중단%') NOT VALID")
   val collector=WorkResultCollector(service,300);collector.collect()
   assertEquals("OK",collector.status()["state"]);assertEquals(1,service.result(row.receiptId,"mes",1)["version"]);assertEquals("RECEIVED",service.get(stale).state)
   PostgresSupport.execute("ALTER TABLE ops.work_request DROP CONSTRAINT deny_sweep")
