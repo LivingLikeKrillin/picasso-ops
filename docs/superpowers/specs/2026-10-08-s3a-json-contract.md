@@ -178,15 +178,15 @@ InspectAsset 예:
 | `ACCEPTED` | `Submission.Accepted` | 새 실행 | null | `[]` |
 | `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 그 실행이 끝났고 후보가 판정을 통과해야 `assign` 까지 간다) | 기존 실행과 그 기체 | null | `[]` |
 | `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과 등), 실행 일지 차단 | null | 사유(한국어) | `[]` |
-| `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "..."}]`, `assign` 이 기체마다 낸 관문 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
+| `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "...", "alternativeLocations": [...], "sourceMissing": {...}}]`, `assign` 이 기체마다 낸 관문 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
 
 - `excluded`: 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행(2.2). 결과와 무관하게 늘 있다(없으면 `[]`).
 - `remedy`: 미들웨어 `Rejected.remedy`(조치 탐색 응답). null = 탐색 안 함 또는 보류. `{"kind":"FOUND","steps":[{skillType, requires:[{subject, requires}], expectedHold, onFailureHold}]}` 또는 `{"kind":"NONE","cause":"NO_CAPABILITY"|"DEPTH_LIMIT","unmet":[{subject, required, observed, detail}]}`. 파지·조건 값은 계약 enum 이름(`HOLD_KIND_EMPTY`, `PRECONDITION_SUBJECT_HOLD` 등).
 - `remedyWithheld`: 조치 시퀀스를 계산했으나 사람이 먼저 진단하도록 보류. 참이면 `remedy` 는 null(보류한 단계는 싣지 않음). «대안 없음»(`NONE`)과 다르다.
-- `alternativeLocations`: 출발 결품일 때 그 자재를 든 다른 자리. `[]` = 든 자리 없음, null = 셀이 답하지 않았거나 출발 결품 거부가 아님. 둘을 접지 않는다. 두 null 은 `sourceMissing` 으로 가른다.
-- `sourceMissing`: 출발 결품 거부이면 `{material, source, observed}`(`observed` null = 빈 자리, 아니면 거기 있던 다른 식별 정보, `material` 은 단위가 자재를 지정하지 않았으면 null). 이번 제출로 미들웨어 조치 탐색 기록(`remedySearches()`)에 새로 붙은 `SOURCE_MISSING` 줄에서 옮긴다. 아니면 null.
-- 네 칸은 미들웨어가 거부한 REJECTED 일 때만 값이 있다. ACCEPTED·IDEMPOTENT·UNASSIGNED·일지 차단 REJECTED 는 null·false.
-- 지금 실행 호스트의 `assign` 경로에서 출발 결품은 UNASSIGNED 로 오므로 `sourceMissing`·`alternativeLocations` 가 찬 REJECTED 는 HTTP 로 나오지 않는다. 모양은 `SubmitOutcomeTest` 가 picasso 거부 값을 직접 세워 고정한다.
+- `alternativeLocations`: 맨 위 칸은 REJECTED 전용, UNASSIGNED 는 `refusals[]` 기체별 칸에 같은 의미. 출발 결품일 때 그 자재를 든 다른 자리. `[]` = 든 자리 없음, null = 셀이 답하지 않았거나 출발 결품 거부가 아님. 둘을 접지 않는다. 두 null 은 `sourceMissing` 으로 가른다.
+- `sourceMissing`: 출발 결품 거부이면 `{material, source, observed}`(`observed` null = 빈 자리, 아니면 거기 있던 다른 식별 정보, `material` 은 단위가 자재를 지정하지 않았으면 null). REJECTED 의 맨 위 `sourceMissing` 은 이번 제출로 미들웨어 조치 탐색 기록(`remedySearches()`)에 새로 붙은 `SOURCE_MISSING` 줄에서 옮긴다. UNASSIGNED 의 기체별 `sourceMissing` 은 picasso `Unassigned.sourceMissing[robotId]`(관문이 계산한 답)에서 옮기며 조치 탐색 기록에는 적히지 않는다. 아니면 null.
+- 맨 위 네 칸은 미들웨어가 거부한 REJECTED 일 때만 값이 있다. ACCEPTED·IDEMPOTENT·UNASSIGNED·일지 차단 REJECTED 는 null·false. UNASSIGNED 의 출발 결품은 맨 위가 아니라 `refusals[]` 의 기체별 칸에 실린다.
+- 지금 실행 호스트의 `assign` 경로에서 출발 결품은 UNASSIGNED 로 오므로 `sourceMissing`·`alternativeLocations` 가 찬 REJECTED 는 HTTP 로 나오지 않는다. 모양은 `SubmitOutcomeTest` 가 picasso 거부 값을 직접 세워 고정한다. UNASSIGNED 는 HTTP 로 기체별 구조를 싣는다. 호스트 셀 대역은 스냅숏이 있으면 늘 답하므로 HTTP 로는 기체별 `[]`·목록만 나오고, 기체별 null(셀 무응답)은 `SubmitOutcomeTest` 가 picasso 값을 직접 세워 고정한다.
 
 미들웨어가 출발 결품으로 거부한 REJECTED 의 모양(지금 경로에서는 나오지 않는다):
 
@@ -208,6 +208,30 @@ InspectAsset 예:
 ```json
 {"kind": "FOUND", "steps": [{"skillType": "release", "requires": [{"subject": "PRECONDITION_SUBJECT_HOLD", "requires": "HOLD_KIND_HOLDING"}], "expectedHold": "HOLD_KIND_EMPTY", "onFailureHold": "HOLD_KIND_HOLDING"}]}
 {"kind": "NONE", "cause": "DEPTH_LIMIT", "unmet": [{"subject": "PRECONDITION_SUBJECT_HOLD", "required": "HOLD_KIND_EMPTY", "observed": "HOLD_KIND_HOLDING", "detail": "든 채다"}]}
+```
+
+기체별 출발 결품과 대체 자리가 실린 UNASSIGNED 응답 예시:
+
+```json
+{
+  "result": "UNASSIGNED",
+  "executionId": null,
+  "robotId": null,
+  "rejectionReason": null,
+  "refusals": [
+    {
+      "robotId": "humanoid-01",
+      "reason": "출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다 (설비 관측, 보내지 않았다)",
+      "alternativeLocations": ["SEQ-IN-03.BIN-B"],
+      "sourceMissing": {"material": "ENGINE-COVER-A", "source": "SEQ-IN-02.BIN-A", "observed": null}
+    }
+  ],
+  "excluded": [],
+  "remedy": null,
+  "remedyWithheld": false,
+  "alternativeLocations": null,
+  "sourceMissing": null
+}
 ```
 
 - 같은 `jobOrderId` 를 그 실행이 도는 중에 다시 내면, 그 기체가 `runningExecutionId` 로 빠져 UNASSIGNED 다. 그 실행이 부분 완료(`PARTIAL`)여도 같다(리비전도 UNASSIGNED, 부분 완료는 운영자 취소로 닫음). 그 작업 지시에 미해소 잔여 파지 표시가 있어도 그 기체가 `잔여 파지 확인 필요` 로 빠져 UNASSIGNED(이때 `runningExecutionId` 는 null). 근거: `MissionHostTest` 의 `부분 완료 실행의 기체는 도는 실행으로 판정과 제출에서 빠진다`, `ExecutionControlTest` 의 `든 채 실패로 정착한 실행의 표시는 재기동해도 기체를 빼고 해소도 재기동 뒤까지 남으며 표시는 작업 지시마다 하나다`.

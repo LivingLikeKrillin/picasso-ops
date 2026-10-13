@@ -534,6 +534,44 @@ class WorkRequestsTest {
   bench.answer=HostWrite.Answered(200,"""{"result":"UNASSIGNED","executionId":null,"robotId":null,"rejectionReason":null,"refusals":[],"excluded":[]}""")
   assertEquals("호스트 미배정: 기체별 사유 없음",service.receive("mes",order(2)).receipt.detail)
  }
+ @Test fun `호스트 미배정은 기체별 출발 결품의 대체 자리를 제출 기록과 미배정 칸에 보존하고 널과 빈 목록을 접지 않는다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-S$n")
+  val missing=""","sourceMissing":{"material":"ENGINE-COVER-A","source":"SEQ-IN-02.BIN-A","observed":null}"""
+  val reason="출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다 (설비 관측, 보내지 않았다)"
+  bench.answer=HostWrite.Answered(200,"""{"result":"UNASSIGNED","executionId":null,"robotId":null,"rejectionReason":null,"refusals":[
+   {"robotId":"humanoid-01","reason":"$reason","alternativeLocations":["SEQ-IN-03.BIN-B"]$missing},
+   {"robotId":"humanoid-02","reason":"$reason","alternativeLocations":[]$missing},
+   {"robotId":"humanoid-03","reason":"$reason","alternativeLocations":null$missing},
+   {"robotId":"humanoid-04","reason":"자재 선언과 배정이 어긋난다"}],
+   "excluded":[],"remedy":null,"remedyWithheld":false,"alternativeLocations":null,"sourceMissing":null}""")
+  val row=service.receive("mes",order(1)).receipt
+  assertEquals("UNASSIGNED",row.state)
+  // 상세 문장은 그대로 기체별 사유만 잇는다.
+  assertEquals("호스트 미배정: humanoid-01: $reason / humanoid-02: $reason / humanoid-03: $reason / humanoid-04: 자재 선언과 배정이 어긋난다",row.detail)
+  val stored=row.submission!!["outcome"]["refusals"]
+  assertEquals(listOf("SEQ-IN-03.BIN-B"),stored[0]["alternativeLocations"].map{it.asText()},stored.toString())
+  assertTrue(stored[1]["alternativeLocations"].let{it.isArray && it.isEmpty},stored.toString())
+  assertTrue(stored[2].has("alternativeLocations") && stored[2]["alternativeLocations"].isNull,stored.toString())
+  val detail=service.detail(row.receiptId)
+  assertNull(detail["rejection"])
+  val refusals=(detail["unassigned"] as WorkRequestUnassignment).refusals
+  assertEquals(listOf("humanoid-01","humanoid-02","humanoid-03","humanoid-04"),refusals.map{it.robotId})
+  assertEquals(listOf("SEQ-IN-03.BIN-B"),refusals[0].alternativeLocations);assertEquals("SEQ-IN-02.BIN-A",refusals[0].sourceMissing!!.source)
+  assertEquals("ENGINE-COVER-A",refusals[0].sourceMissing!!.material);assertNull(refusals[0].sourceMissing!!.observed)
+  // 빈 목록: 그 자재를 든 다른 자리가 없다. 널: 셀이 답하지 않았다. 둘을 접지 않는다.
+  assertEquals(emptyList(),refusals[1].alternativeLocations);assertNotNull(refusals[1].sourceMissing)
+  assertNull(refusals[2].alternativeLocations);assertNotNull(refusals[2].sourceMissing)
+  // 출발 결품이 아닌 사유와 새 칸이 없던 호스트 본문은 둘 다 널이다.
+  assertNull(refusals[3].alternativeLocations);assertNull(refusals[3].sourceMissing)
+  // 거부·수락·전송 전 미배정에는 미배정 칸이 없다.
+  bench.answer=HostWrite.Answered(200,rejectedBy(reason,""","alternativeLocations":[]$missing"""))
+  val rejected=service.receive("mes",order(2)).receipt;assertEquals("REJECTED",rejected.state);assertNull(service.detail(rejected.receiptId)["unassigned"])
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val accepted=service.receive("mes",order(3)).receipt;assertEquals("ACCEPTED",accepted.state);assertNull(service.detail(accepted.receiptId)["unassigned"])
+  bench.judge={ids->HostCall.Ok(ids.map{JobOrderBench.missing(it,"inspect")})}
+  val early=service.receive("mes",order(4)).receipt;assertEquals("UNASSIGNED",early.state);assertNull(early.submission)
+  assertNull(service.detail(early.receiptId)["unassigned"])
+ }
  @Test fun `호스트가 거부한 스테이션 작업은 실제 거부 사유와 자원 해제를 함께 남긴다`() {
   resource();ready(true)
   bench.answer=HostWrite.Answered(200,rejectedBy("요구 근거 등급 E2 은 InspectAsset 의 최고 등급 E0 를 넘는다"))
@@ -584,6 +622,30 @@ class WorkRequestsTest {
   assertEquals("UNASSIGNED",current.state)
   val ex=assertFailsWith<RequestRejected>{service.recover(a.receiptId,Actor(Mode.OPERATOR,"kim"),json.readTree("""{"requestId":"${UUID.randomUUID()}","reason":"우회 시도","expectedUpdatedAt":"${current.updatedAt}"}"""))}
   assertEquals("RESOURCE_MANAGED",ex.code);assertTrue(bench.submitted.isEmpty())
+ }
+ /** 후보가 전부 빠진 전송 전 미배정은 제한 재평가 때 판정을 다시 한다. 그사이 배정 가능해진 기체가 그 재평가에서 뽑히고, 재평가 상한·간격은 그대로다. */
+ @Test fun `전송 전 미배정의 제한 재평가는 나중에 배정 가능해진 기체를 고르고 재평가 횟수와 간격은 그대로다`() {
+  val late="humanoid-02"
+  resource();ready(true)
+  bench.judge={ids->HostCall.Ok(ids.map{if(it==JobOrderBench.HUMANOID)JobOrderBench.running(it,"exec-9") else JobOrderBench.missing(it,"inspect")})}
+  val a=manual().receipt;val c=coordinator();c.tick()
+  assertEquals("UNASSIGNED",service.get(a.receiptId).state);assertEquals("WAITING_ROBOT",c.get(a.receiptId).state);assertEquals(0,c.get(a.receiptId).attempt)
+  assertTrue(bench.submitted.isEmpty())
+  // 대역 상태에 배정 가능한 기체 B 가 나타난다. 앞의 둘은 여전히 빠진다.
+  bench.robots=dev.picasso.ops.service.registry.RegistryCall.Ok(listOf(JobOrderBench.robot(JobOrderBench.HUMANOID),JobOrderBench.robot(JobOrderBench.QUADRUPED),JobOrderBench.robot(late)))
+  bench.bindings=dev.picasso.ops.service.registry.RegistryCall.Ok(listOf(JobOrderBench.binding(JobOrderBench.HUMANOID),JobOrderBench.binding(JobOrderBench.QUADRUPED),JobOrderBench.binding(late)))
+  val judgeBefore=bench.judge
+  bench.judge={ids->HostCall.Ok(ids.map{if(it==late)JobOrderBench.pass(it) else (judgeBefore(listOf(it)) as HostCall.Ok).value.single()})}
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(late))
+  // 재평가 간격(5초) 안에서는 다시 판정하지 않는다.
+  c.tick();assertEquals("WAITING_ROBOT",c.get(a.receiptId).state);assertEquals(0,c.get(a.receiptId).attempt);assertTrue(bench.submitted.isEmpty())
+  jdbc.sql("UPDATE ops.station_run SET phase_at=phase_at-interval '6 seconds' WHERE run_id=:id").param("id",a.receiptId).update()
+  c.tick()
+  val run=c.get(a.receiptId);assertEquals("RUNNING",run.state,run.reason);assertEquals(1,run.attempt)
+  assertEquals(listOf(late),bench.submitted.single().second)
+  assertEquals(a.jobOrderId,bench.submitted.single().first["jobOrderId"].asText())
+  val receipt=service.get(a.receiptId);assertEquals("ACCEPTED",receipt.state);assertEquals(late,receipt.submission!!["outcome"]["robotId"].asText())
+  assertEquals(a.receiptId,c.stations().single().owner)
  }
  @Test fun `준비 시간 초과와 대기 취소는 같은 영속 접수에 거절 사유를 남긴다`() {
   resource();ready(false);val a=manual().receipt;val b=manual().receipt;val c=coordinator();c.tick()

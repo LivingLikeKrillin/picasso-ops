@@ -471,13 +471,22 @@ export interface EligibilityView {
 
 export type HostSubmitResult = 'ACCEPTED' | 'IDEMPOTENT' | 'REJECTED' | 'UNASSIGNED'
 
-/** 실행 호스트의 제출 결과(S3a JSON 계약 §4). `refusals` 는 미배정일 때 기체별 관문 사유, `excluded` 는 호스트가 판정에서 뺀 기체다. */
+/** 출발 결품의 자리(S3a JSON 계약 §4). `observed` 가 null 이면 빈 자리이고 아니면 거기 있던 다른 식별 정보다. */
+export interface SourceMissing { material: string | null; source: string; observed: string | null }
+
+/** 미배정의 기체별 사유. 뒤 두 칸은 REJECTED 의 같은 이름 칸과 모양이 같고, 그 기체가 출발 결품으로 떨어졌을 때만 값이 있다. */
+export interface UnassignedRefusal { robotId: string; reason: string; alternativeLocations?: string[] | null; sourceMissing?: SourceMissing | null }
+
+/**
+ * 실행 호스트의 제출 결과(S3a JSON 계약 §4). `refusals` 는 미배정일 때 기체별 관문 사유, `excluded` 는 호스트가 판정에서 뺀 기체다.
+ * 기체별 사유의 `alternativeLocations`·`sourceMissing` 은 그 기체가 출발 결품으로 떨어졌을 때만 있다. 빈 목록(든 자리 없음)과 null(답 없음)을 접지 않는다.
+ */
 export interface HostSubmitOutcome {
   result: HostSubmitResult
   executionId: string | null
   robotId: string | null
   rejectionReason: string | null
-  refusals: { robotId: string; reason: string }[]
+  refusals: UnassignedRefusal[]
   excluded: HostEligibility[]
 }
 

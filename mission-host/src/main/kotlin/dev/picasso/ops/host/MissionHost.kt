@@ -81,8 +81,31 @@ data class HostEligibility(
 /** 미들웨어 `Submission` 넷의 이름(S3a 스펙 §7.6). */
 enum class SubmitResult { ACCEPTED, IDEMPOTENT, REJECTED, UNASSIGNED }
 
-/** `assign` 이 기체마다 낸 미배정 사유. */
-data class Refusal(val robotId: String, val reason: String)
+/**
+ * `assign` 이 기체마다 낸 미배정 사유.
+ *
+ * 뒤 두 칸은 출발 결품으로 떨어진 기체에만 값이 있다(picasso `Unassigned.sourceMissing`). 다른 사유로 떨어진 기체는 둘 다 `null` 이다.
+ * 모양은 REJECTED 의 같은 이름 칸([SubmitOutcome.alternativeLocations]·[SubmitOutcome.sourceMissing])과 같다.
+ *
+ * @param alternativeLocations 그 자재를 든 다른 자리. 빈 목록은 «든 자리가 없다» 는 응답이고 `null` 은 셀이 응답하지 않았거나 출발 결품이
+ *   아니다. 둘을 접지 않는다. 어느 `null` 인지는 [sourceMissing] 으로 가른다.
+ * @param sourceMissing 이 기체가 출발 결품으로 떨어졌으면 그 자리와 관측. 아니면 `null` 이다.
+ */
+data class Refusal(
+    val robotId: String,
+    val reason: String,
+    val alternativeLocations: List<String>? = null,
+    val sourceMissing: SourceMissingView? = null,
+) {
+    companion object {
+        /** [missing] 은 이 기체의 출발 결품 답이다. 대체 자리 목록은 그 값을 그대로 쓴다. */
+        fun of(robotId: String, reason: String, missing: RemedyOutcome.SourceMissing?) = Refusal(
+            robotId, reason,
+            alternativeLocations = missing?.alternatives,
+            sourceMissing = missing?.let { SourceMissingView(it.material, it.source, it.observed) },
+        )
+    }
+}
 
 /**
  * 제출의 결과.
@@ -92,7 +115,8 @@ data class Refusal(val robotId: String, val reason: String)
  *
  * @param executionId·robotId ACCEPTED·IDEMPOTENT 일 때만 있다.
  * @param rejectionReason REJECTED 일 때만 있다.
- * @param refusals UNASSIGNED 일 때 `assign` 이 기체마다 낸 사유. 호스트가 먼저 뺀 기체는 여기 없고 [excluded] 에 있다.
+ * @param refusals UNASSIGNED 일 때 `assign` 이 기체마다 낸 사유. 호스트가 먼저 뺀 기체는 여기 없고 [excluded] 에 있다. 출발 결품으로
+ *   떨어진 기체의 대체 자리와 출발 자리는 [Refusal] 의 칸에 있고, UNASSIGNED 의 [alternativeLocations]·[sourceMissing] 은 `null` 이다.
  * @param excluded 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체와 그 판정.
  * @param remedy 깨진 전제를 채우는 조치 탐색의 응답. `FOUND` 는 단계가 있고 `NONE` 은 못 찾은 종류와 못 채운 조건이 있다.
  *   탐색하지 않았으면 `null` 이다. 보류했으면 [remedyWithheld] 가 참이고 이것은 `null` 이다(보류한 단계는 싣지 않는다).
@@ -171,7 +195,8 @@ data class UnmetView(val subject: String, val required: String, val observed: St
 
 /**
  * 출발 결품 거부의 자리(picasso `RemedyOutcome.SourceMissing` 의 앞 세 칸). [observed] 가 `null` 이면 빈 자리이고 아니면 거기 있던
- * 다른 식별 정보다. [material] 은 단위가 자재를 지정하지 않았으면 `null` 이다. 대체 자리는 [SubmitOutcome.alternativeLocations] 에 있다.
+ * 다른 식별 정보다. [material] 은 단위가 자재를 지정하지 않았으면 `null` 이다. 대체 자리는 REJECTED 이면 [SubmitOutcome.alternativeLocations],
+ * UNASSIGNED 이면 기체마다 [Refusal.alternativeLocations] 에 있다.
  */
 data class SourceMissingView(val material: String?, val source: String, val observed: String?)
 
@@ -593,7 +618,7 @@ class MissionHost(
             )
             is Unassigned -> SubmitOutcome(
                 SubmitResult.UNASSIGNED, null, null, null,
-                submission.refusals.map { (robotId, reason) -> Refusal(robotId, reason) }, excluded,
+                submission.refusals.map { (robotId, reason) -> Refusal.of(robotId, reason, submission.sourceMissing[robotId]) }, excluded,
             )
         }
     }

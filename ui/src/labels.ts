@@ -10,6 +10,7 @@ import type {
   MockRunView,
   Owner,
   SkillFit,
+  SourceMissing,
   TestRequestState,
 } from './api'
 
@@ -246,3 +247,17 @@ export const STATION_TEXT={
   idleConfirm:'설비·로봇 상태와 격리 해제 가능 여부를 확인했습니다',
   clearNote:'자원을 해제해도 이전 작업은 멈추지 않으며 해당 스테이션은 격리됩니다.',
 } as const
+
+/** 출발 결품의 답 하나. REJECTED 의 거부와 UNASSIGNED 의 기체별 사유가 같은 모양이다. */
+type SourceAnswer = { alternativeLocations?: string[] | null; sourceMissing?: SourceMissing | null }
+
+/** 대체 위치 한 줄. 출발 결품일 때만 다른 자리를 물으므로 null 목록은 거기서만 «조회 불가» 이고 그 밖에는 말하지 않는다. 빈 목록과 접지 않는다. */
+export function alternativesLabel(answer: SourceAnswer): string | null {
+  const listed = answer.alternativeLocations ?? null
+  if (listed === null) return answer.sourceMissing ? '대체 위치 조회 불가' : null
+  return listed.length === 0 ? '대체 위치 없음' : `대체 위치: ${listed.join(', ')}`
+}
+
+/** 출발 자리 한 줄. `observed` 가 null 이면 빈 자리다. */
+export const sourceMissingLabel = (missing: SourceMissing) =>
+  `출발 자리 ${missing.source} · ${missing.observed === null ? '비어 있음' : `${missing.observed} 있음`}`

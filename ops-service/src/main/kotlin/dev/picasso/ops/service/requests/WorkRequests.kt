@@ -28,6 +28,11 @@ data class ReceiptAccepted(val receipt: Receipt, val duplicate: Boolean)
  */
 data class WorkRequestRejection(val reason:String?, val remedy:JsonNode?, val remedyWithheld:Boolean,
  val alternativeLocations:List<String>?, val sourceMissing:dev.picasso.ops.service.host.HostSourceMissing?)
+/**
+ * The host's UNASSIGNED on a work request: its per-robot refusals as the host sent them. A refusal's [alternativeLocations][dev.picasso.ops.service.host.HostRefusal.alternativeLocations]
+ * and sourceMissing have the [WorkRequestRejection] shape and are null unless that robot's source was missing; null and an empty list stay apart.
+ */
+data class WorkRequestUnassignment(val refusals:List<dev.picasso.ops.service.host.HostRefusal>)
 /** Detail text for a host rejection: the host's own reason, so the stale pre-dispatch line never stands in for it. */
 fun rejectedDetail(outcome:dev.picasso.ops.service.host.HostSubmitOutcome?):String =
  "호스트 제출 거부: ${outcome?.rejectionReason?.takeIf{it.isNotBlank()} ?: "사유 없음"}".take(2000)
@@ -395,7 +400,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   }
   mapOf("resource" to resources.context(id),"receipt" to receipt,"hostRead" to if(body==null) "UNAVAILABLE" else "OK", "instanceId" to body?.get("instanceId"),
    "execution" to execution,"journalBlocked" to blocked,"observedAt" to observedAt.toString(),
-   "latestResult" to storedResult(id,null),"rejection" to rejection(receipt),
+   "latestResult" to storedResult(id,null),"rejection" to rejection(receipt),"unassigned" to unassignment(receipt),
    "deliveries" to jdbc.sql("SELECT version,state,attempts,last_error,next_attempt_at,delivered_at FROM ops.work_result_delivery WHERE receipt_id=:id ORDER BY version DESC")
     .param("id",id).query {rs,_ -> mapOf("version" to rs.getInt(1),"state" to rs.getString(2),"attempts" to rs.getInt(3),"lastError" to rs.getString(4),"nextAttemptAt" to rs.getString(5),"deliveredAt" to rs.getString(6))}.list(),
    "reviews" to jdbc.sql("SELECT request_id,actor,observation,reason,created_at,context FROM ops.work_request_review WHERE receipt_id=:id ORDER BY created_at,request_id")
@@ -410,6 +415,14 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   val host=runCatching{kotlinJson.treeToValue(outcome,dev.picasso.ops.service.host.HostSubmitOutcome::class.java)}.getOrNull()
    ?.takeIf{it.result==dev.picasso.ops.service.host.HostSubmitResult.REJECTED} ?: return null
   return WorkRequestRejection(host.rejectionReason,host.remedy?.takeUnless{it.isNull},host.remedyWithheld,host.alternativeLocations,host.sourceMissing)
+ }
+ /** The host's own UNASSIGNED, typed from the stored submission like [rejection]. A pre-dispatch UNASSIGNED has no host answer and is null. */
+ fun unassignment(receipt:Receipt):WorkRequestUnassignment? {
+  if(receipt.state!="UNASSIGNED")return null
+  val outcome=receipt.submission?.get("outcome")?.takeIf{it.isObject} ?: return null
+  val host=runCatching{kotlinJson.treeToValue(outcome,dev.picasso.ops.service.host.HostSubmitOutcome::class.java)}.getOrNull()
+   ?.takeIf{it.result==dev.picasso.ops.service.host.HostSubmitResult.UNASSIGNED} ?: return null
+  return WorkRequestUnassignment(host.refusals)
  }
  /** Capture host response versions, never infer success from a physical state alone. */
  private fun captureResult(receipt:Receipt, instance:String, execution:JsonNode) {

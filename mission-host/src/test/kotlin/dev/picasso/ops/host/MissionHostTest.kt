@@ -182,11 +182,12 @@ class MissionHostTest {
     }
 
     /**
-     * 지금 버전의 picasso 에서 `assign` 은 관문 거부를 기체별 사유 문자열로 접는다(`Unassigned`). 그래서 출발 결품은 REJECTED 가 아니라
-     * UNASSIGNED 이고 대체 자리는 구조로 오지 않는다. picasso 가 그 구조를 실어 주면 이 시험이 깨져 미배정 사유의 모양을 다시 정하게 한다.
+     * 실행 호스트는 `assign` 으로 배정하므로 출발 결품은 REJECTED 가 아니라 UNASSIGNED 다. picasso `Unassigned.sourceMissing` 이 기체마다
+     * 출발 결품의 답을 실어 주므로 대체 자리와 출발 자리는 사유 문장이 아니라 그 기체의 미배정 사유 칸에 구조로 온다. 맨 위의
+     * `alternativeLocations`·`sourceMissing` 은 REJECTED 의 칸이라 여기서는 칸만 있고 `null` 이다.
      */
     @Test
-    fun `출발 자리가 비면 지금은 UNASSIGNED 이고 대체 자리는 사유 문장에만 있다`() {
+    fun `출발 자리가 비면 UNASSIGNED 이고 기체별 미배정 사유에 대체 자리와 출발 자리가 구조로 실린다`() {
         HostBench().use { bench ->
             bench.cellBody = HostBench.STANDARD_CELL.replace(
                 """{"id":"${HostBench.SOURCE}","occupied":true,"material":"${HostBench.MATERIAL}","observedAt":null}""",
@@ -198,10 +199,55 @@ class MissionHostTest {
             }
             val outcome = bench.post("/host/job-orders", request(rack("JO-1", "RACK-204.S01"), "candidates", HUMANOID)).body!!
             assertEquals("UNASSIGNED", outcome["result"].asText(), outcome.toString())
-            val reason = outcome["refusals"].single()["reason"].asText()
-            assertTrue(reason.startsWith("출발 자리 ${HostBench.SOURCE} 에 ${HostBench.MATERIAL} 이 없다"), reason)
-            assertTrue(outcome["alternativeLocations"].isNull && outcome["sourceMissing"].isNull, outcome.toString())
+            val refusal = outcome["refusals"].single()
+            assertEquals(HUMANOID, refusal["robotId"].asText())
+            assertTrue(refusal["reason"].asText().startsWith("출발 자리 ${HostBench.SOURCE} 에 ${HostBench.MATERIAL} 이 없다"), refusal.toString())
+            assertEquals(listOf("SEQ-IN-03.BIN-B"), refusal["alternativeLocations"].map { it.asText() }, refusal.toString())
+            val missing = refusal["sourceMissing"]
+            assertEquals(HostBench.SOURCE, missing["source"].asText(), refusal.toString())
+            assertEquals(HostBench.MATERIAL, missing["material"].asText())
+            assertTrue(missing.has("observed") && missing["observed"].isNull, missing.toString())
+            // 맨 위 두 칸은 REJECTED 의 것이다. 칸은 늘 있고 UNASSIGNED 에서는 값이 비었다.
+            assertTrue(outcome.has("alternativeLocations") && outcome["alternativeLocations"].isNull, outcome.toString())
+            assertTrue(outcome.has("sourceMissing") && outcome["sourceMissing"].isNull, outcome.toString())
             assertEquals(0, bench.get("/host/executions")["executions"].size())
+        }
+    }
+
+    /**
+     * 빈 목록은 «그 자재를 든 다른 자리가 없다» 는 셀의 답이다. 호스트의 셀 대역은 스냅숏이 있으면 늘 답하므로 HTTP 로는 빈 목록만
+     * 나온다. 셀이 답하지 않은 `null` 이 빈 목록으로 접히지 않는 것은 SubmitOutcomeTest 가 picasso 값을 직접 세워 본다.
+     */
+    @Test
+    fun `든 자리가 없으면 기체별 대체 자리는 null 이 아니라 빈 목록이다`() {
+        HostBench().use { bench ->
+            bench.cellBody = HostBench.STANDARD_CELL.replace(
+                """{"id":"${HostBench.SOURCE}","occupied":true,"material":"${HostBench.MATERIAL}","observedAt":null}""",
+                """{"id":"${HostBench.SOURCE}","occupied":false,"material":null,"observedAt":null}""",
+            )
+            bench.eventually("빈 출발 자리를 읽는다") {
+                bench.get("/host/cell")["cell"]?.get("presentations")?.any { it["id"].asText() == HostBench.SOURCE && !it["occupied"].asBoolean() } == true
+            }
+            val outcome = bench.post("/host/job-orders", request(rack("JO-1", "RACK-204.S01"), "candidates", HUMANOID)).body!!
+            assertEquals("UNASSIGNED", outcome["result"].asText(), outcome.toString())
+            val refusal = outcome["refusals"].single()
+            assertTrue(refusal["alternativeLocations"].let { it.isArray && it.isEmpty }, refusal.toString())
+            assertEquals(HostBench.SOURCE, refusal["sourceMissing"]["source"].asText(), refusal.toString())
+        }
+    }
+
+    /** 출발 결품이 아닌 관문 사유(여기서는 자재 선언과 배정이 어긋난 주문)는 대체 자리도 출발 자리도 싣지 않는다. 빈 목록으로 채우면 «든 자리 없음» 으로 읽힌다. */
+    @Test
+    fun `출발 결품이 아닌 기체별 미배정 사유는 대체 자리와 출발 자리가 둘 다 null 이다`() {
+        HostBench().use { bench ->
+            val mismatched = rack("JO-1", "RACK-204.S01").replace("\"quantity\":1", "\"quantity\":2")
+            val outcome = bench.post("/host/job-orders", request(mismatched, "candidates", HUMANOID)).body!!
+            assertEquals("UNASSIGNED", outcome["result"].asText(), outcome.toString())
+            val refusal = outcome["refusals"].single()
+            assertTrue(refusal["reason"].asText().startsWith("자재 선언과 배정이 어긋난다"), refusal.toString())
+            assertTrue(refusal.has("alternativeLocations") && refusal["alternativeLocations"].isNull, refusal.toString())
+            assertTrue(refusal.has("sourceMissing") && refusal["sourceMissing"].isNull, refusal.toString())
+            assertTrue(outcome["alternativeLocations"].isNull && outcome["sourceMissing"].isNull, outcome.toString())
         }
     }
 

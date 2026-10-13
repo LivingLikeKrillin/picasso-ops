@@ -30,7 +30,7 @@
 - 조작: 외부 주문 A 를 보냅니다.
 - 확인할 곳: 작업 요청 → «통합 작업 요청» 에서 A → «작업 요청 상세» 입니다. 구역 «요청 시 고정된 배포» 가 `receipt.normalizedOrder.deployment` 를 보입니다. «적용 임무 버전» 은 실행의 임무 버전이고 null 이면 «코드 정의» 로 보입니다. API 는 `GET /api/work-requests/{id}` 의 `receipt.normalizedOrder.deployment.deploymentVersion`, `receipt.normalizedOrder.missionVersion`, `receipt.jobOrderId`, `receipt.state` 입니다.
 - 기대하는 결과: 새 외부 주문 응답 202 입니다. 배포 1, 임무 버전 X 입니다. 실행의 임무 버전도 X 입니다.
-- 다르면: 상태가 `REJECTED` 이면 `detail` 을 읽습니다. 실행 호스트가 거부했으면 `detail` 이 «호스트 제출 거부: <사유>» 이고 화면은 detail 문장 대신 구역 «거부 사유» 를 보입니다(API `rejection`). 공개 전 계약이면 «공개된 계약만 호출할 수 있습니다»(409 `INTERFACE_NOT_ENABLED`) 이며 호스트에 보내지 않았습니다.
+- 다르면: 상태가 `REJECTED` 이면 `detail` 을 읽습니다. 실행 호스트가 거부했으면 `detail` 이 «호스트 제출 거부: <사유>» 이고 화면은 detail 문장 대신 구역 «거부 사유» 를 보입니다(API `rejection`). `UNASSIGNED` 이고 출발 결품 기체가 있으면 detail 아래 구역 «기체별 출발 결품» 을 보입니다(API `unassigned.refusals[]`). 공개 전 계약이면 «공개된 계약만 호출할 수 있습니다»(409 `INTERFACE_NOT_ENABLED`) 이며 호스트에 보내지 않았습니다.
 - 근거 시험: `MissionInterfacesTest` 의 `배포 이력은 불변이고 새 배포는 새 요청에만 적용된다`, 통합 시험 `ManufacturingScenarioTest`(작업 요청의 `normalizedOrder.missionVersion`), 실행 호스트 시험 `MissionVersionsTest` 의 `배포 고정은 활성 버전 변경 뒤에도 원래 미션으로 실행하고 글로벌 활성 버전을 바꾸지 않는다`(작업 지시의 `missionVersion` 으로 임무 버전을 고름) 입니다.
 
 ### C1-3 새 배포 v2 = Y 적용
@@ -152,7 +152,7 @@
 ### D1 에서 확인하는 기록
 | 기록 | 화면 | API | 알 수 있는 것 |
 |---|---|---|---|
-| 작업 요청 상태와 상세 | 작업 요청 → «작업 요청 상세», 구역 «거부 사유» | `GET /api/work-requests/{id}` | `receipt.state`·`detail`, `hostRead`, `journalBlocked`, `executionInstanceId`, `reviews`, `recoveries`, `resource`, `rejection`(호스트가 거부한 `REJECTED` 만, 그 밖 null) |
+| 작업 요청 상태와 상세 | 작업 요청 → «작업 요청 상세», 구역 «거부 사유», 구역 «기체별 출발 결품» | `GET /api/work-requests/{id}` | `receipt.state`·`detail`, `hostRead`, `journalBlocked`, `executionInstanceId`, `reviews`, `recoveries`, `resource`, `rejection`(호스트가 거부한 `REJECTED` 만, 그 밖 null), `unassigned`(호스트가 낸 `UNASSIGNED` 만, 그 밖 null) |
 | 실행 목록과 복원 보고 | 운영 → «실행» | `GET /api/executions` | 지금 인스턴스, 다시 지은 실행과 이전 인스턴스, `journalBlockedExecutionIds`, `restore`, `executions[].cancel`(이 인스턴스에서 건 운영자 취소: 승인자, 사유, 건 때 물리 상태, 기록 시각, 없으면 null). 화면은 물리 상태 칸 뒤 «(취소 요청: <승인자>, <사유>)». |
 | 잔여 파지 표시 | 운영 → «배정 가능» 아래 «잔여 파지 확인» | `GET /api/robots/residual-holds` | 미해소 표시(`markerId`, `robotId`, `jobOrderId`, `executionId`, `instanceId`, `unitId`, `objectRef`, `recordedAt`). 해소한 표시는 목록에서 빠지고 해소 기록(승인자·사유·시각)은 호스트 표 `mission.robot_residual_hold_clearing` 과 조작 기록 `CONFIRM_ROBOT_EMPTY` 행에 있음. |
 | 작업 응답 송신 기록 | 운영 → «작업 응답 송신 기록» | `GET /api/job-responses?jobOrderId=` | `SENT` 와 `RESTART_DUPLICATE` 처분 |

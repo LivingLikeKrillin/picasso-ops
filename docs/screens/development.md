@@ -174,7 +174,7 @@ PR #23은 층 이름 통일입니다.
 | OverviewArea | 운영 개요 | 운영 개요 |
 | ProfilesSection | 프로파일 리비전 표와 제출 | 로봇 |
 | RegistryBanner | 전체 상태 띠 | 전역 |
-| RejectionSummary | 호스트 거부 사유·출발 자리·대체 위치·조치 제안 요약 | 작업 요청 |
+| RejectionSummary, UnassignedSourceMissing | 호스트 거부 사유·출발 자리·대체 위치·조치 제안 요약(대체 위치·출발 자리 문구 함수는 labels.ts 로 이동) | 작업 요청 |
 | RequestRecovery | 미배정 재평가 | 작업 요청 |
 | RequestReview | 현장 확인 기록 | 작업 요청 |
 | RobotDetail | 기체 상세 | 로봇 |
