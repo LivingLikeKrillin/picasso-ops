@@ -25,6 +25,7 @@ import type {
   OperationOutcome,
   PreRejection,
   ProfileListView,
+  ResidualHoldsView,
   RestoreRow,
   Revision,
   SiteSettingsView,
@@ -67,6 +68,8 @@ export interface FakeOps {
   earlierDetails: Map<string, IncidentDetail>
   /** 송신 기록(S4b). `jobOrderId` 쿼리가 있으면 실행 호스트처럼 그 작업 지시 행만 돌려준다. */
   jobResponses: JobResponsesView
+  /** 미해소 잔여 파지 표시(P0-b2). 운영 서비스가 호스트 본문을 그대로 넘기는 모양이다. 기본은 비어 있다. */
+  residualHolds: ResidualHoldsView
   /** `POST /api/job-orders/eligibility` 의 답. 폼 거부(400)를 만들려면 [eligibilityStatus] 와 본문을 바꾼다. */
   eligibility: EligibilityView | PreRejection
   eligibilityStatus: number
@@ -84,7 +87,7 @@ export const MISSION_PATH = '/api/missions/PrepareSequencedRack'
 export const TEMPLATES_PATH = '/api/missions/templates/PrepareSequencedRack'
 
 /** 실행 호스트를 거치는 경로. 503 일 때 운영 서비스가 `HOST_SILENT` 를 싣는다(S3a JSON 계약 §9.4, S3b JSON 계약 §10.3). */
-const HOST_PATHS = new Set(['/api/executions', '/api/cell', '/api/incidents', '/api/job-responses', MISSION_PATH, TEMPLATES_PATH])
+const HOST_PATHS = new Set(['/api/executions', '/api/cell', '/api/incidents', '/api/job-responses', '/api/robots/residual-holds', MISSION_PATH, TEMPLATES_PATH])
 const INCIDENT_PREFIX = '/api/incidents/'
 const ELIGIBILITY_PATH = '/api/job-orders/eligibility'
 
@@ -572,6 +575,7 @@ export function installFakeOps(
     incidentDetails: new Map(),
     earlierDetails: new Map(),
     jobResponses: jobResponsesView(),
+    residualHolds: { holds: [] },
     eligibility: eligibilityView(),
     eligibilityStatus: 200,
     failing: new Set(),
@@ -647,7 +651,9 @@ export function installFakeOps(
                           ? fake.templates
                           : url === '/api/incidents'
                             ? fake.incidents
-                            : []
+                            : url === '/api/robots/residual-holds'
+                              ? fake.residualHolds
+                              : []
         return new Response(JSON.stringify(body), { status: 200 })
       }
       if (url === ELIGIBILITY_PATH) {

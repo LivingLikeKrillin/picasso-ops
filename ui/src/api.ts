@@ -532,6 +532,17 @@ export interface Execution {
   units: ExecutionUnit[]
   jobResponse: JobResponse | null
   restoredFrom?: { instanceId: string; executionId: string } | null
+  /** 이 인스턴스에서 그 실행에 건 운영자 취소(P0-b2). 없거나 옛 호스트면 null 이거나 칸이 없다. */
+  cancel?: CancelRecord | null
+}
+
+/** 실행에 건 운영자 취소(P0-b2). `physicalState` 는 취소를 건 때의 물리 상태, `recordedAt` 은 실행 호스트가 적은 시각이다. */
+export interface CancelRecord {
+  approverId: string
+  approverKind: string
+  reason: string
+  physicalState: string
+  recordedAt: string
 }
 
 /** 다시 짓기 결과 셋(S4b 스펙 T3). */
@@ -1089,6 +1100,80 @@ export const resolveHold = (
     `/api/executions/${encodeURIComponent(target.executionId)}/units/${encodeURIComponent(target.unitId)}/resolve`,
     session,
     { decision, instanceId: target.instanceId, reason },
+  )
+
+/** 실행 호스트 취소 결과 이름(P0-b2). */
+export type CancelResult = 'CANCELED' | 'NOT_CANCELABLE' | 'NOT_FOUND' | 'REFUSED'
+
+/** 실행 호스트 취소의 200 본문(P0-b2). */
+export interface CancelAnswer {
+  result: CancelResult
+  executionId: string
+  physicalState: string | null
+  detail: string | null
+  requestId: string | null
+}
+
+/** 운영자 실행 취소의 200 응답(P0-b2). 화면은 `outcome`(실행 호스트 결과 이름 그대로)으로 가른다. */
+export interface ExecutionCancelOutcome {
+  requestId: string
+  executionId: string
+  result: 'SUCCEEDED' | 'REJECTED' | 'NO_RESPONSE'
+  confirmation: 'CONFIRMED_APPLIED' | 'CONFIRMED_NOT_APPLIED' | null
+  outcome: CancelResult | null
+  answer: CancelAnswer | null
+  rejection: HostRejection | null
+}
+
+/**
+ * 승인자는 싣지 않는다. 운영 서비스가 `X-Ops-User` 로 정한다(ADR 43). 인스턴스는 실행 목록의 `instanceId` 이고, 실행 호스트가 그
+ * 사이 재기동했으면 409 `INSTANCE_MISMATCH` 로 막는다.
+ */
+export const cancelExecution = (session: Session, target: { instanceId: string; executionId: string }, reason: string) =>
+  postOps<ExecutionCancelOutcome>(`/api/executions/${encodeURIComponent(target.executionId)}/cancel`, session, {
+    instanceId: target.instanceId,
+    reason,
+  })
+
+/**
+ * 미해소 잔여 파지 표시 하나(P0-b2). 실행이 정착할 때 로봇 단위의 마지막 파지 관측이 «든 채» 였다. 사람이 빈손을 확인할 때까지 그
+ * 기체는 배정에서 빠진다. `objectRef` 는 관측이 이름을 싣지 않았으면 null 이다.
+ */
+export interface ResidualHold {
+  markerId: number
+  robotId: string
+  jobOrderId: string
+  executionId: string
+  instanceId: string
+  unitId: string
+  objectRef: string | null
+  recordedAt: string
+}
+
+/** 운영 서비스의 `GET /api/robots/residual-holds`(실행 호스트 본문 그대로). */
+export interface ResidualHoldsView {
+  holds: ResidualHold[]
+}
+
+export const fetchResidualHolds = (session: Session) => getHostJson<ResidualHoldsView>('/api/robots/residual-holds', session)
+
+/** 기체 빈손 확인의 200 응답(P0-b2). 실행 호스트가 해소하면 `SUCCEEDED`, 없거나 이미 해소한 표시는 `REJECTED` 와 그 거부다. */
+export interface RobotEmptyOutcome {
+  requestId: string
+  robotId: string
+  markerId: number
+  result: 'SUCCEEDED' | 'REJECTED' | 'NO_RESPONSE'
+  confirmation: 'CONFIRMED_APPLIED' | 'CONFIRMED_NOT_APPLIED' | null
+  answer: unknown
+  rejection: HostRejection | null
+}
+
+/** 승인자는 싣지 않는다(ADR 43). 사유는 앞뒤 공백을 뗀 값이다. */
+export const confirmRobotEmpty = (session: Session, hold: { robotId: string; markerId: number }, reason: string) =>
+  postOps<RobotEmptyOutcome>(
+    `/api/robots/${encodeURIComponent(hold.robotId)}/residual-holds/${hold.markerId}/clear`,
+    session,
+    { reason },
   )
 
 /** 송신 기록 행의 처분(S4b 스펙 T6). 재기동 중복은 송신하지 않은 것이다. */

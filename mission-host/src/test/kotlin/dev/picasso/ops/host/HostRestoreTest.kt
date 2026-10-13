@@ -283,7 +283,7 @@ class HostRestoreTest {
         val EXECUTIONS_FIELDS = listOf("instanceId", "pumpedAt", "executions", "restore", "journalBlockedExecutionIds")
 
         val EXECUTION_FIELDS = listOf(
-            "executionId", "jobOrderId", "workMasterId", "missionVersion", "robotId", "physicalState", "units", "jobResponse", "restoredFrom",
+            "executionId", "jobOrderId", "workMasterId", "missionVersion", "robotId", "physicalState", "units", "jobResponse", "restoredFrom", "cancel",
         )
 
         val RESTORE_ROW_FIELDS = listOf("jobOrderId", "robotId", "previousInstanceId", "previousExecutionId", "result", "executionId", "reason")

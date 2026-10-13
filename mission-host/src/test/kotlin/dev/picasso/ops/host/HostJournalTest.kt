@@ -101,8 +101,13 @@ class HostJournalTest {
             val outcome = bench.mimic.server.exclusive { bench.mimic.instance(HUMANOID)!!.tasks.forceFault("SKILL_EXECUTION_FAILED", running) }
             assertTrue(outcome is ForceOutcome.Raised, outcome.toString())
             assertEquals("FAILED", bench.driveUntil("exec-1", settled)["physicalState"].asText())
+            // 든 채 실패라 그 기체에 잔여 파지 표시가 서고(P0-b2) 같은 작업 지시의 리비전도 배정에서 빠진다. 사람이 빈손을 확인한 뒤 낸다.
+            bench.eventually("잔여 파지 표시") { bench.get("/host/robots/residual-holds")["holds"].size() == 1 }
+            val markerId = bench.get("/host/robots/residual-holds")["holds"][0]["markerId"].asLong()
+            val cleared = bench.post("/host/robots/$HUMANOID/residual-holds/$markerId/clear", """{"approverId":"park","reason":"빈손 확인"}""")
+            assertEquals(200, cleared.status, cleared.body.toString())
 
-            val revised = bench.post("/host/job-orders", request(rack("JO-1", S01).replace("\"version\":1", "\"version\":2"), "candidates", HUMANOID))
+            val revised =bench.post("/host/job-orders", request(rack("JO-1", S01).replace("\"version\":1", "\"version\":2"), "candidates", HUMANOID))
             assertEquals(200, revised.status, revised.body.toString())
             assertEquals("ACCEPTED", revised.body!!["result"].asText(), revised.body.toString())
             assertEquals("exec-1", revised.body["executionId"].asText())

@@ -155,6 +155,11 @@ open class OpsApplication {
         stations: dev.picasso.ops.service.stations.StationCoordinator): HoldResolutions =
         HoldResolutions(host, log, clock = clock, rework = dev.picasso.ops.service.stations.StationReworkGuard(requests, stations))
 
+    /** 운영자 실행 취소와 기체 빈손 확인(P0-b2). 재조회 대조의 «요청 직전 실제 시각» 은 운영 서비스 시계에서 읽는다. */
+    @Bean
+    open fun executionControls(host: HostClient, log: OperationLog, clock: Clock): dev.picasso.ops.service.executions.ExecutionControls =
+        dev.picasso.ops.service.executions.ExecutionControls(host, log, clock = clock)
+
     /** [migrated] 는 쓰지 않는다. 받는 것만으로 ops 마이그레이션 뒤에 이 빈이 만들어진다. */
     @Bean
     open fun operationLog(

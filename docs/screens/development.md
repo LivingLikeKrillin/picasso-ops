@@ -126,7 +126,7 @@ PR #23은 층 이름 통일입니다.
 | `src/main.tsx` | React 진입점 |
 | `src/App.tsx` | 껍데기(사이드바·상단 바·영역 제목), 해시 라우팅, 세션(모드·사용자) 상태, 다섯 조회 묶음 읽기, 영역 전환 |
 | `src/areas.ts` | 아홉 영역의 id·글자·순서 |
-| `src/api.ts` | 운영 서비스 호출 전부(1,225행). 요청 헤더 `X-Ops-Mode`·`X-Ops-User`, 결과 분류 `deliver`, 호출 계약 계열 `interfaceRequest` |
+| `src/api.ts` | 운영 서비스 호출 전부(1,311행). 요청 헤더 `X-Ops-Mode`·`X-Ops-User`, 결과 분류 `deliver`, 호출 계약 계열 `interfaceRequest` |
 | `src/labels.ts` | 코드 값 → 화면 글자 표(설계서 §2.7) |
 | `src/poll.ts` | 주기 상수 `POLL_MS`, `ELIGIBILITY_DEBOUNCE_MS`, `SIGNAL_SETTLE_MS` |
 | `src/jobOrderDraft.ts` | 작업 지시 폼의 초안과 보내기 전 검사 |
@@ -138,7 +138,7 @@ PR #23은 층 이름 통일입니다.
 
 ## 3. 컴포넌트
 
-`ui/src/components/`의 시험 아닌 `.tsx` 41개는 다음과 같습니다.
+`ui/src/components/`의 시험 아닌 `.tsx` 42개는 다음과 같습니다.
 
 | 파일 | 하는 일 | 영역 |
 |---|---|---|
@@ -149,7 +149,8 @@ PR #23은 층 이름 통일입니다.
 | CommissioningCards | 바인딩·사이트 명칭·시운전 카드 | 로봇 |
 | DeclareForm | 기체 선언 폼 | 로봇 |
 | EligibilityTable | 기체별 배정 가능 아홉 열 표 | 운영, 임무 |
-| ExecutionList | 실행 목록과 재기동 복원 보고 | 운영 |
+| ExecutionControls | 운영자 실행 취소 폼 `CancelExecutionForm`(실행 목록 아래), 잔여 파지 확인 표와 기체 빈손 확인 폼 `ResidualHolds`(배정 가능 아래) | 운영 |
+| ExecutionList | 실행 목록과 재기동 복원 보고, 물리 상태 칸의 운영자 취소 표시, 취소 폼 자리 | 운영 |
 | FaultPanel | 장애 주입 | 검증 도구 |
 | FindingCard | 막힘·거부 카드 | 로봇, 현장 설정, 임무 |
 | HistoryArea | 조작 기록 | 이력 |
@@ -248,6 +249,7 @@ PR #18에서 다음 컴포넌트가 바뀌었습니다.
 - 실행
 - 셀
 - 인시던트
+- 잔여 파지 표시(`GET /api/robots/residual-holds`, `fetchResidualHolds`)
 - 스테이션과 스테이션 작업
 - 호출 계약
 - 임무 필수 자원
@@ -266,6 +268,8 @@ PR #18에서 다음 컴포넌트가 바뀌었습니다.
 - 신호
 - 장애
 - 판단
+- 실행 취소(`cancelExecution`)
+- 기체 빈손 확인(`confirmRobotEmpty`)
 - 수동 작업 요청 `POST /api/work-requests/manual`
 
 `deliver` 의 결과 분류는 다음과 같습니다.
@@ -297,7 +301,7 @@ PR #18에서 다음 컴포넌트가 바뀌었습니다.
 
 작업 요청을 만드는 조작은 요청 id(UUID)를 sessionStorage 에 먼저 적고 보냅니다. 응답이 불명이면 같은 id 로만 다시 확인합니다. 키는 모드·사용자(일부는 작업 요청 id)로 갈라 둡니다. `manualRequests.ts` 가 수동 작업 요청의 보관을 맡습니다. 시험은 매 시험 뒤 sessionStorage 를 비웁니다(`setupTests.ts`).
 
-작업 지시 폼이 바뀌면 300ms(`ELIGIBILITY_DEBOUNCE_MS`) 더 바뀌지 않을 때 배정 가능을 묻습니다. 신호 조작과 판단 뒤에는 곧바로 한 번, 500ms(`SIGNAL_SETTLE_MS`) 뒤 한 번 더 읽습니다. 실행 호스트의 pump 주기 250ms 보다 길게 잡은 값입니다.
+작업 지시 폼이 바뀌면 300ms(`ELIGIBILITY_DEBOUNCE_MS`) 더 바뀌지 않을 때 배정 가능을 묻습니다. 신호 조작, 판단, 실행 취소, 기체 빈손 확인 뒤(`OperationsArea` 의 `rereadNowAndAfterPump`)에는 곧바로 한 번, 500ms(`SIGNAL_SETTLE_MS`) 뒤 한 번 더 읽습니다. 실행 호스트의 pump 주기 250ms 보다 길게 잡은 값입니다. 잔여 파지 표는 자기 조작 뒤 한 번 더 읽습니다(`own` 카운터).
 
 URL 은 해시만 씁니다. `App.tsx` 가 영역을 읽고 씁니다. `WorkRequests.tsx` 가 다음 작업 요청 쿼리를 읽고 씁니다.
 - `search`
@@ -334,7 +338,7 @@ URL 은 해시만 씁니다. `App.tsx` 가 영역을 읽고 씁니다. `WorkRequ
 
 ### 5.2 Playwright
 
-`ui/e2e/lifecycle.spec.ts` 는 657행이며 시험 하나입니다. 설정은 `ui/playwright.config.ts` 이며 `testMatch` 로 이 파일만 지정합니다. 스택 구성은 다음과 같습니다.
+`ui/e2e/lifecycle.spec.ts` 는 685행이며 시험 하나입니다. 설정은 `ui/playwright.config.ts` 이며 `testMatch` 로 이 파일만 지정합니다. 스택 구성은 다음과 같습니다.
 - Mock MES 콜백(`e2e/mock-mes-callback.mjs`, 8786)
 - Postgres(`e2e/postgres.mjs`)
 - 런처(`run-dist.mjs site`)

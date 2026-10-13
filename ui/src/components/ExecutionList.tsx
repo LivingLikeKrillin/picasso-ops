@@ -1,4 +1,6 @@
-import type { ExecutionsView, JobResponse, RestoreRow } from '../api'
+import type { CancelRecord, ExecutionsView, JobResponse, RestoreRow, Session } from '../api'
+import { EXECUTION_CONTROL_TEXT } from '../labels'
+import { CancelExecutionForm } from './ExecutionControls'
 
 /** 실행 호스트를 거친 읽기 하나. 못 읽으면 직전 값을 지우지 않고 [error] 로 불통을 표시한다. */
 export interface HostRead<T> {
@@ -10,6 +12,10 @@ interface Props {
   read: HostRead<ExecutionsView>
   /** 방금 낸 작업 지시 id. 그 실행 행을 눈에 띄게 한다. */
   highlight: string | null
+  /** 주면 표 아래에 운영자 실행 취소 폼을 보인다(P0-b2). */
+  session?: Session
+  /** 취소 조작이 끝나면 부른다. */
+  onCanceled?: () => void
 }
 
 /**
@@ -18,8 +24,11 @@ interface Props {
  *
  * 재기동 뒤(S4b 스펙 T10, §8)에는 목록 위에 이번 기동의 복원 보고를 보이고, 다시 지은 실행의 실행 id 옆에 바로 앞 인스턴스의
  * 실행 id 를 «이전 exec-k» 로 붙인다. 새 인스턴스의 `exec-N` 은 1부터 다시 세므로 같은 id 가 다른 실행일 수 있다.
+ *
+ * 운영자 실행 취소(P0-b2): 물리 상태 칸에 이 인스턴스에서 건 취소를 붙이고, 표 아래에 취소 폼을 둔다. 부분 완료(PARTIAL) 실행은
+ * 취소해야 그 기체가 풀린다.
  */
-export function ExecutionList({ read, highlight }: Props) {
+export function ExecutionList({ read, highlight, session, onCanceled }: Props) {
   const { value, error } = read
   if (value === null) {
     return <p>모름: 실행 목록을 아직 읽지 못했습니다{error !== null && ` (${error})`}</p>
@@ -72,7 +81,10 @@ export function ExecutionList({ read, highlight }: Props) {
                 <td>{execution.workMasterId}</td>
                 <td>{execution.missionVersion === null ? '코드 정의' : `버전 ${execution.missionVersion}`}</td>
                 <td>{execution.robotId}</td>
-                <td>{execution.physicalState}</td>
+                <td>
+                  {execution.physicalState}
+                  {execution.cancel != null && <CancelCell cancel={execution.cancel} />}
+                </td>
                 <td>
                   <ul>
                     {execution.units.map((unit) => (
@@ -88,7 +100,25 @@ export function ExecutionList({ read, highlight }: Props) {
           </tbody>
         </table></div>
       )}
+      {session !== undefined && (
+        <CancelExecutionForm
+          instanceId={value.instanceId}
+          executions={value.executions}
+          session={session}
+          onCanceled={onCanceled ?? (() => undefined)}
+        />
+      )}
     </>
+  )
+}
+
+/** 이 인스턴스에서 그 실행에 건 운영자 취소(P0-b2). */
+function CancelCell({ cancel }: { cancel: CancelRecord }) {
+  return (
+    <span className="restored" title={`${cancel.recordedAt}, 취소 때 ${cancel.physicalState}`}>
+      {' '}
+      ({EXECUTION_CONTROL_TEXT.canceledBy}: {cancel.approverId}, {cancel.reason})
+    </span>
   )
 }
 

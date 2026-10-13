@@ -2,6 +2,7 @@ import type {
   CommissioningState,
   Connection,
   FaultKind,
+  CancelResult,
   HoldDecision,
   HostSubmitResult,
   JobResponseDisposition,
@@ -94,6 +95,11 @@ export const KIND_LABEL: Record<string, string> = {
   // 재기동 뒤 판단(S4b 계약 H5·H7). 운영 서비스의 송신 기록 사전 거부도 둔다.
   INSTANCE_MISMATCH: '실행 호스트가 재기동해 인스턴스가 다름',
   JOB_RESPONSE_BAD_REQUEST: '송신 기록 요청 오류',
+  // 운영자 실행 취소와 기체 빈손 확인(P0-b2).
+  CANCEL_BAD_REQUEST: '취소 본문 오류',
+  CLEAR_BAD_REQUEST: '빈손 확인 본문 오류',
+  RESIDUAL_HOLD_NOT_FOUND: '없는 잔여 파지 표시',
+  RESIDUAL_HOLD_ALREADY_CLEARED: '이미 해소한 잔여 파지 표시',
 }
 
 /** «시운전» 칸(P2·S1d 스펙 §8.5). 연결 칸과 합치지 않는다. */
@@ -183,6 +189,42 @@ export const DECISION_LABEL: Record<HoldDecision, string> = {
   CONFIRM_DONE: '완료 확인',
   REWORK: '재작업',
 }
+
+/** 실행 호스트 취소 결과(P0-b2). */
+export const CANCEL_RESULT_LABEL: Record<CancelResult, string> = {
+  CANCELED: '취소를 걸었습니다. 실행 호스트의 다음 pump 에서 중단(ABORTED)으로 정착합니다',
+  NOT_CANCELABLE: '취소할 수 없는 실행입니다',
+  NOT_FOUND: '지금 실행 호스트 인스턴스에 없는 실행입니다',
+  REFUSED: '에이전트는 실행을 취소하지 못합니다',
+}
+
+/** 운영자 실행 취소와 잔여 파지 확인 문구(P0-b2). */
+export const EXECUTION_CONTROL_TEXT = {
+  cancelHeading: '실행 취소',
+  cancelTarget: '취소할 실행',
+  cancelChoose: '실행 선택',
+  cancelWarning:
+    '취소하면 남은 단위를 더 돌리지 않고 이 실행을 중단(ABORTED)으로 끝냅니다. 로봇이 든 물체와 설비 상태를 현장에서 확인한 뒤 결정하세요.',
+  partialNote: '부분 완료(PARTIAL) 실행은 취소하기 전까지 기체를 쥐고 있어 그 기체에 새 작업이 배정되지 않습니다.',
+  cancelReason: '취소 사유',
+  cancelConfirm: '기체·설비 상태를 확인했고 이 실행을 끝냅니다',
+  cancelButton: '현장 확인 후 실행 취소',
+  cancelOperatorOnly: '실행 취소는 운영자 모드에서 합니다',
+  canceledBy: '취소 요청',
+  holdsHeading: '잔여 파지 확인',
+  holdsIntro:
+    '실행이 끝날 때 로봇이 물체를 든 채로 관측된 기체입니다. 사람이 현장에서 빈손을 확인하기 전까지 그 기체는 배정에서 빠집니다.',
+  holdsEmpty: '미해소 잔여 파지 표시가 없습니다',
+  holdsUnknown: '모름: 잔여 파지 표시를 아직 읽지 못했습니다',
+  objectUnnamed: '이름 없음',
+  emptyButton: '기체 빈손 확인',
+  emptyWarning:
+    '이 확인은 물리 확인입니다. 로봇 손과 그리퍼에 물체가 남지 않았는지 현장에서 직접 보고 확인하세요. 화면이나 로봇 보고만으로 확인하지 마세요.',
+  emptyReason: '빈손 확인 근거',
+  emptyConfirm: '기체 손에 남은 물체가 없음을 현장에서 직접 확인했습니다',
+  emptyOperatorOnly: '기체 빈손 확인은 운영자 모드에서 합니다',
+  emptyDone: '빈손 확인이 기록되었습니다. 그 기체는 다음 배정 판정부터 다시 판정됩니다',
+} as const
 
 /** 조치 탐색이 대안을 못 찾은 종류(picasso `Remedy.None.Cause`). 「없다」와 「덜 봤다」를 가른다. */
 export const REMEDY_CAUSE_LABEL: Record<string, string> = {

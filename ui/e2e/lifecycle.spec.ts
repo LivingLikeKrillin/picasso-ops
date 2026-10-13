@@ -435,6 +435,33 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(grasp.getByRole('cell').nth(9)).toHaveText('판단 대상 아님')
   await expect(graspRun).toContainText('RACK-204.S01 pick_place: FAILED')
 
+  // 잔여 파지(P0-b2). pick_place 가 든 채로 실패했으므로 실행 호스트가 humanoid-01 에 표시를 세우고 배정에서 뺀다. 운영자가
+  // 현장에서 빈손을 확인해 «기체 빈손 확인» 으로 풀어야 다음 작업 지시(운영자 보류)가 humanoid-01 에 배정된다.
+  const graspJobOrder = (await graspRun.getByRole('cell').nth(1).textContent())!.trim()
+  await page.getByLabel('운영자').check()
+  const residual = page.getByRole('region', { name: '잔여 파지 확인', exact: true })
+  const residualRow = residual.getByRole('table', { name: '미해소 잔여 파지' }).getByRole('row').filter({ hasText: graspJobOrder })
+  await expect(residualRow).toContainText('humanoid-01')
+  await expect(residualRow).toContainText('RACK-204.S01')
+  // 배정 가능은 폼만으로 판정하므로 내지 않고 다음 슬롯을 채워 본다. 보관된 요청(S01)은 아래 운영자 보류 단계가 닫는다.
+  await order.getByLabel('임무').selectOption('PrepareSequencedRack')
+  await order.getByLabel('RACK-204.S02').check()
+  await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
+  const humanoidEligibility = eligibility.getByRole('row', { name: /^humanoid-01 / })
+  await expect(humanoidEligibility.getByRole('cell', { name: '불가', exact: true })).toHaveText('불가')
+  await expect(humanoidEligibility).toContainText(`잔여 파지 확인 필요: ${graspJobOrder} RACK-204.S01`)
+  await residualRow.getByRole('button', { name: '기체 빈손 확인' }).click()
+  const emptyForm = residual.getByRole('form', { name: '기체 빈손 확인' })
+  await emptyForm.getByLabel('빈손 확인 근거').fill('현장에서 그리퍼 빈손 확인')
+  await emptyForm.getByLabel('기체 손에 남은 물체가 없음을 현장에서 직접 확인했습니다').check()
+  await emptyForm.getByRole('button', { name: '기체 빈손 확인' }).click()
+  await expect(residual.getByRole('status', { name: '빈손 확인 결과' })).toHaveText(
+    `humanoid-01 기체 빈손 확인(${graspJobOrder} RACK-204.S01): 빈손 확인이 기록되었습니다. 그 기체는 다음 배정 판정부터 다시 판정됩니다`,
+  )
+  await expect(residual.getByText('미해소 잔여 파지 표시가 없습니다', { exact: true })).toBeVisible()
+  await expect(humanoidEligibility.getByRole('cell', { name: '가능', exact: true })).toHaveText('가능')
+  await page.getByLabel('엔지니어').check()
+
   // 운영자 보류(S4a 스펙 §3). 활성화한 보류 버전은 DB 에 남으므로 맨 끝에 둔다. 런처는 1:1 실시간이고 시계를 밀 수단이 없어
   // 기한 20초를 실제 시간으로 기다린다. 재작업 뒤 대기는 새 기한 20초로 다시 돌므로 다시 돈 것을 본 즉시 신호를 켠다.
   await page.getByRole('button', { name: '임무' }).click()
@@ -637,6 +664,7 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
     ['POST', '/api/profile-revisions'], ['POST', '/api/robots/humanoid-01/binding'],
     ['POST', '/api/robots/humanoid-01/site-names'], ['POST', '/api/job-orders/eligibility'],
     ['POST', '/api/work-requests/manual'], ['POST', '/api/faults'],
+    ['GET', '/api/robots/residual-holds'],
   ]) expect(apiResponses.some(response => response.method === method && response.path === path && response.status === 200)).toBe(true)
   await test.info().attach('api-responses', { body: JSON.stringify(apiResponses, null, 2), contentType: 'application/json' })
 

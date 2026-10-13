@@ -18,6 +18,12 @@ data class HostRejection(val error: String, val detail: String)
  */
 data class ResolveRequest(val decision: OperatorDecision, val approverId: String, val requestId: String?, val instanceId: String)
 
+/** 운영자 실행 취소 요청(P0-b2). [instanceId] 는 운영 서비스가 실행 목록에서 받은 인스턴스다. [requestId] 는 응답에 그대로 돌려줄 뿐이다. */
+data class CancelRequest(val approverId: String, val reason: String, val instanceId: String, val requestId: String?)
+
+/** 잔여 파지 표시 해소 요청(P0-b2). */
+data class ClearRequest(val approverId: String, val reason: String, val requestId: String?)
+
 /** 본문을 못 받는 까닭. [error] 가 응답의 `error` 칸이다. */
 class BadRequest(val error: String, detail: String) : RuntimeException(detail)
 
@@ -86,6 +92,26 @@ object HostRequests {
                 ?: throw BadRequest(BAD_REQUEST, "requestId 가 UUID 문자열이 아니다")
         }
         return ResolveRequest(decision, text(body, "approverId"), requestId, text(body, "instanceId"))
+    }
+
+    /**
+     * 운영자 실행 취소 `{approverId, reason, instanceId, requestId?}` 를 읽는다(P0-b2). 세 문자열 칸은 비어 있지 않아야 하고 requestId
+     * 는 없거나 `null` 이거나 UUID 문자열이다. 사유는 앞뒤 공백을 뗀다.
+     */
+    fun cancel(body: JsonNode?): CancelRequest {
+        if (body == null || !body.isObject) throw BadRequest(BAD_REQUEST, "본문이 JSON 객체가 아니다")
+        return CancelRequest(text(body, "approverId"), text(body, "reason").trim(), text(body, "instanceId"), requestId(body))
+    }
+
+    /** 잔여 파지 표시 해소 `{approverId, reason, requestId?}` 를 읽는다(P0-b2). 규칙은 [cancel] 과 같다. */
+    fun clearing(body: JsonNode?): ClearRequest {
+        if (body == null || !body.isObject) throw BadRequest(BAD_REQUEST, "본문이 JSON 객체가 아니다")
+        return ClearRequest(text(body, "approverId"), text(body, "reason").trim(), requestId(body))
+    }
+
+    private fun requestId(body: JsonNode): String? = body.get("requestId")?.takeUnless { it.isNull }?.let { node ->
+        node.takeIf { it.isTextual }?.asText()?.takeIf { runCatching { UUID.fromString(it) }.isSuccess }
+            ?: throw BadRequest(BAD_REQUEST, "requestId 가 UUID 문자열이 아니다")
     }
 
     /** 비어 있지 않은 문자열 칸. */

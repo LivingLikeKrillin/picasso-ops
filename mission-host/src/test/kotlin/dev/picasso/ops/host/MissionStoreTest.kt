@@ -23,7 +23,7 @@ class MissionStoreTest {
     @BeforeTest
     fun freshSchema() {
         PostgresSupport.execute("DROP SCHEMA IF EXISTS mission CASCADE")
-        assertEquals(4, HostSchema.flyway(dataSource).migrate().migrationsExecuted)
+        assertEquals(5, HostSchema.flyway(dataSource).migrate().migrationsExecuted)
     }
 
     private fun draft(workMaster: String = PSR) = store.saveDraft(workMaster, "{}", "lee", UUID.randomUUID())
@@ -37,8 +37,9 @@ class MissionStoreTest {
         ) { it.getString(1) }
         assertEquals(
             listOf(
-                "draft", "execution_journal", "execution_journal_event", "flyway_schema_history", "incident_copy", "incident_copy_resolution",
-                "job_response_log", "mission_version", "mock_run", "result_outbox", "result_producer",
+                "draft", "execution_cancel", "execution_journal", "execution_journal_event", "flyway_schema_history", "incident_copy",
+                "incident_copy_resolution", "job_response_log", "mission_version", "mock_run", "result_outbox", "result_producer",
+                "robot_residual_hold", "robot_residual_hold_clearing",
             ),
             placed,
         )
@@ -99,6 +100,49 @@ class MissionStoreTest {
         assertFailsWith<SQLException> {
             PostgresSupport.execute("INSERT INTO mission.execution_journal_event (job_order_id, kind, instance_id, detail) VALUES ('JO-1', 'FORGOTTEN', 'mw-1', 'x')")
         }
+    }
+
+    @Test
+    fun `P0-b2 표 셋도 덧붙이기만 하고 승인자는 사람뿐이며 표시는 작업 지시마다 하나고 해소는 표시마다 하나다`() {
+        PostgresSupport.execute(
+            "INSERT INTO mission.execution_journal (job_order_id, robot_id, job_order, work_master_id, instance_id, execution_id) " +
+                "VALUES ('JO-1', 'r', '{}', 'PrepareSequencedRack', 'mw-1', 'exec-1')",
+        )
+        PostgresSupport.execute(
+            "INSERT INTO mission.execution_cancel (instance_id, execution_id, job_order_id, physical_state, approver_id, approver_kind, reason) " +
+                "VALUES ('mw-1', 'exec-1', 'JO-1', 'PARTIAL', 'kim', 'PERSON', '닫기')",
+        )
+        PostgresSupport.execute(
+            "INSERT INTO mission.robot_residual_hold (robot_id, job_order_id, execution_id, instance_id, unit_id, object_ref) " +
+                "VALUES ('r', 'JO-1', 'exec-1', 'mw-1', 'S01', 'C-1')",
+        )
+        PostgresSupport.execute(
+            "INSERT INTO mission.robot_residual_hold_clearing (marker_id, approver_id, approver_kind, reason) " +
+                "SELECT marker_id, 'park', 'PERSON', '빈손 확인' FROM mission.robot_residual_hold",
+        )
+        listOf(
+            "execution_cancel" to "reason = 'x'", "robot_residual_hold" to "unit_id = 'x'", "robot_residual_hold_clearing" to "reason = 'x'",
+        ).forEach { (table, set) ->
+            listOf("UPDATE mission.$table SET $set", "DELETE FROM mission.$table", "TRUNCATE mission.$table CASCADE").forEach { sql ->
+                val e = assertFailsWith<SQLException>(sql) { PostgresSupport.execute(sql) }
+                assertTrue("덧붙이기만 한다" in e.message!!, "$sql: ${e.message}")
+            }
+        }
+        listOf(
+            // 실행 하나에 취소 하나, 에이전트 승인자 없음, 빈 사유 없음
+            "INSERT INTO mission.execution_cancel (instance_id, execution_id, job_order_id, physical_state, approver_id, approver_kind, reason) " +
+                "VALUES ('mw-1', 'exec-1', 'JO-1', 'PARTIAL', 'kim', 'PERSON', '또')",
+            "INSERT INTO mission.execution_cancel (instance_id, execution_id, job_order_id, physical_state, approver_id, approver_kind, reason) " +
+                "VALUES ('mw-1', 'exec-2', 'JO-1', 'PARTIAL', 'bot', 'AGENT', '닫기')",
+            "INSERT INTO mission.execution_cancel (instance_id, execution_id, job_order_id, physical_state, approver_id, approver_kind, reason) " +
+                "VALUES ('mw-1', 'exec-3', 'JO-1', 'PARTIAL', 'kim', 'PERSON', '  ')",
+            // 작업 지시 하나에 표시 하나, 일지에 없는 작업 지시 없음
+            "INSERT INTO mission.robot_residual_hold (robot_id, job_order_id, execution_id, instance_id, unit_id) VALUES ('r', 'JO-1', 'exec-9', 'mw-2', 'S02')",
+            "INSERT INTO mission.robot_residual_hold (robot_id, job_order_id, execution_id, instance_id, unit_id) VALUES ('r', 'JO-X', 'exec-9', 'mw-2', 'S02')",
+            // 표시 하나에 해소 하나
+            "INSERT INTO mission.robot_residual_hold_clearing (marker_id, approver_id, approver_kind, reason) " +
+                "SELECT marker_id, 'lee', 'PERSON', '또' FROM mission.robot_residual_hold",
+        ).forEach { sql -> assertFailsWith<SQLException>(sql) { PostgresSupport.execute(sql) } }
     }
 
     @Test

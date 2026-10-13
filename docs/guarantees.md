@@ -2,7 +2,7 @@
 
 이 문서는 외부 검토 요청에 따라 picasso-ops 가 현재 무엇을 보장하고 무엇을 보장하지 않는지, 그리고 해당 보장이 어떠한 배포 전제에서만 성립하는지를 한곳에 모아 설명합니다. 이 문서의 독자는 시연이나 배포를 준비하는 담당자와 검토자입니다. 본 문서는 기준 커밋 `511d5bc` 를 바탕으로 작성되었으며, 뒤이어 릴리스 조합, 배포 전제, 보장하는 것, 보장하지 않는 것, 더 읽을 곳을 차례로 다룹니다.
 
-이 문서는 기준 커밋 `511d5bc` 로 작성되었고 그 뒤 작업 번호 신호와 스테이션 격리 변경(PR #26)이 있었으며, 공유 스테이션 관련 항목(공유 스테이션 해제 조건, 늦은 완료 신호 차단 항목, 현장 확인 해제 항목, 설비 완료 신호의 인과 항목)과 그 시험 이름은 이 변경을 반영합니다.
+이 문서는 기준 커밋 `511d5bc` 로 작성되었고 그 뒤 작업 번호 신호와 스테이션 격리 변경(PR #26)이 있었으며, 공유 스테이션 관련 항목(공유 스테이션 해제 조건, 늦은 완료 신호 차단 항목, 현장 확인 해제 항목, 설비 완료 신호의 인과 항목)과 그 시험 이름은 이 변경을 반영합니다. 그 뒤 운영자 실행 취소와 잔여 파지 표시 변경(PR #29)이 서브모듈을 `79e074d`로 옮겼고, «부분 완료·잔여 파지 기체의 배정 제외» 항목, «현장 확인 후 해제의 실행 중단 미보장» 항목, «잔여 파지 표시의 범위» 항목과 릴리스 조합의 picasso 행이 이 변경을 반영합니다.
 
 ## 릴리스 조합
 
@@ -11,9 +11,9 @@
 | 저장소 | 커밋 | 이 조합에서의 역할 |
 |---|---|---|
 | picasso-ops | `511d5bc` (main, PR #24 머지, 2026-10-13) | 이 문서가 설명하는 운영 계층 |
-| picasso(서브모듈) | `74e4d3d` (PR #86 머지, 2026-10-09) | 실행 호스트가 쓰는 미들웨어 라이브러리. picasso main 은 `344e22b` 까지 나아갔지만 Ops 는 그 커밋을 전제하지 않고 서브모듈 고정 커밋만 씀 |
+| picasso(서브모듈) | `79e074d` (PR #91 머지, 2026-10-13) | 실행 호스트가 쓰는 미들웨어 라이브러리. 실행 호스트가 #91의 `PhysicalState.occupiesRobot`·`pumps`를 씀 |
 | picasso-narrator | `130fe67` (main) | 설명 계층. PR #1(`ops.station.evidence/1` 읽기, `receiver/station.py`)이 머지되어 있고(머지 커밋 `391af47`) 자체 CI(`.github/workflows/ci.yml`)가 `130fe67` 에서 통과함 |
-| picasso 내보내기 | 버전 6 | picasso 가 narrator 에 넘기는 내보내기 번들의 `manifest.schemaVersion` 은 `"6"` 입니다(`74e4d3d` 와 `344e22b` 의 `handoff/narrator/run-1/manifest.json`). narrator 의 `BOUNDARY.md` 는 `"5"` 와 `"6"` 만 받고 모르는 버전이면 멈춥니다 |
+| picasso 내보내기 | 버전 6 | picasso 가 narrator 에 넘기는 내보내기 번들의 `manifest.schemaVersion` 은 `"6"` 입니다(`74e4d3d`·`79e074d`의 `handoff/narrator/run-1/manifest.json`). narrator 의 `BOUNDARY.md` 는 `"5"` 와 `"6"` 만 받고 모르는 버전이면 멈춥니다 |
 
 시연이나 배포를 할 때는 이 네 값을 함께 밝혀야 합니다. 어느 하나라도 다르면 이 문서의 보장과 시험 기록은 그 조합에 대해 확인된 것이 아닙니다. narrator 의 설명은 Ops 상태를 바꾸지 않고(`explanationMayChangeState: false`), Ops 화면과 자동으로 이어져 있지 않습니다.
 
@@ -85,6 +85,12 @@
 - 코드: `stations/MissionResources.kt` 의 `lockMission`, `create`, `admit`, `requests/WorkRequests.kt` 의 `recover`
 - 시험: `WorkRequestsTest` 의 `재평가 승인과 커밋 사이의 자원 요구 등록은 재평가 커밋을 기다리고 접수를 제출 중에 남기지 않는다`, `자원 요구는 운영자가 바꾸지 못하고 기존 불명 작업 중에는 등록하지 못한다`, `자원 요구 등록은 이 미션에서 아직 진행 중이거나 완료 근거가 없는 접수만 막는다`
 
+### 부분 완료·잔여 파지 기체의 배정 제외
+
+- 동작: 실행 호스트 판정의 도는 실행은 picasso `PhysicalState.occupiesRobot` 이라 부분 완료(`PARTIAL`) 실행의 기체에 새 작업 지시(같은 작업 지시 id 의 리비전 포함)를 배정하지 않습니다. 부분 완료는 운영자 실행 취소로 닫으며, 취소 행을 먼저 적고 미들웨어를 부르고 다음 pump 가 `ABORTED` 로 정착시킵니다. 정착할 때 마지막 로봇 단위(계획 순서)의 파지 관측이 `HOLDING` 이면 같은 트랜잭션에서 잔여 파지 표시를 적고, 사람이 빈손을 확인해 해소할 때까지 그 기체를 뺍니다. 표시는 재기동 뒤에도 DB 에서 다시 읽습니다. 취소와 해소의 승인자는 사람뿐입니다(DB `CHECK`). 이 표시는 실행 호스트의 운영 정책(ADR 41)이고 picasso 보장이 아닙니다(picasso 는 정착한 실행의 파지를 판단이 아니라 정보로 둡니다, §15.146).
+- 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `judge`, `cancel`, `clearResidualHold`, `recordAfterPump`, `residualHoldUnit`, `restore`, `mission-host/src/main/kotlin/dev/picasso/ops/host/store/HostRecords.kt` 의 `cancel`, `markResidualHold`, `openResidualHolds`, `clearResidualHold`, `mission-host/src/main/resources/db/mission/V5__execution_cancel_residual_hold.sql`, `mission-host/src/main/kotlin/dev/picasso/ops/host/web/ExecutionControlController.kt`, 운영 서비스 `executions/ExecutionControls.kt`, `web/ExecutionControlController.kt`
+- 시험: 실행 호스트 시험 `MissionHostTest` 의 `부분 완료 실행의 기체는 도는 실행으로 판정과 제출에서 빠진다`, `ExecutionControlTest` 의 `빈손 부분 완료를 운영자가 취소하면 ABORTED 로 정착해 작업 응답이 나가고 표시 없이 기체가 다시 배정된다`, `든 채 끝난 부분 완료를 취소하면 정착 때 잔여 파지 표시가 서고 사람이 해소해야 기체가 다시 배정된다`, `든 채 실패로 정착한 실행의 표시는 재기동해도 기체를 빼고 해소도 재기동 뒤까지 남으며 표시는 작업 지시마다 하나다`, `잔여 파지 단위는 로봇 단위의 마지막 파지 관측이고 플릿 단위의 HOLDING 은 보지 않는다`, `MissionStoreTest` 의 `P0-b2 표 셋도 덧붙이기만 하고 승인자는 사람뿐이며 표시는 작업 지시마다 하나고 해소는 표시마다 하나다`, 운영 서비스 시험 `ExecutionControlsTest` 의 `취소는 승인자가 행위자이고 CANCELED 는 성공 그 밖의 결과와 호스트 4xx 는 거부로 남는다`, `빈손 확인은 승인자가 행위자이고 해소는 성공 404 409 는 거부이며 응답이 없으면 미해소 목록으로 대조한다`, 통합 시험 `FaultIncidentTest` 의 `단계 1 데이터 정의 버전으로 도는 pick_place 에 스킬 실패를 넣으면 단위가 FAILED 이고 GRASP_FAILED 인시던트가 두 버전과 함께 보인다`, Playwright `ui/e2e/lifecycle.spec.ts`
+
 ## 보장하지 않는 것
 
 picasso-ops 가 보장하지 않는 항목은 다음과 같습니다.
@@ -111,11 +117,19 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 
 ### 현장 확인 후 해제의 실행 중단 미보장
 
-`CONFIRM_CLEAR` 은 Ops 의 스테이션 점유만 풀고 묶인 작업 요청을 닫을 뿐, 실행 호스트의 실행이나 로봇 동작을 멈추지 않습니다. 해제한 작업의 로봇과 설비는 계속 움직이거나 늦게 신호를 쓸 수 있습니다. 그래서 작업 번호 신호 쌍이 없는 스테이션은 격리하고, 운영자가 설비가 비었고 이전 로봇이 멈췄는지 현장에서 확인해야 합니다. 실행을 멈추는 것은 이 판단의 범위가 아닙니다.
+`CONFIRM_CLEAR` 은 Ops 의 스테이션 점유만 풀고 묶인 작업 요청을 닫을 뿐, 실행 호스트의 실행이나 로봇 동작을 멈추지 않고 취소를 부르지도 않습니다. 해제한 작업의 로봇과 설비는 계속 움직이거나 늦게 신호를 쓸 수 있습니다. 그래서 작업 번호 신호 쌍이 없는 스테이션은 격리하고, 운영자가 설비가 비었고 이전 로봇이 멈췄는지 현장에서 확인해야 합니다. 실행을 멈추는 길은 이제 따로 있습니다: 운영 › 실행의 운영자 실행 취소(`CANCEL_EXECUTION`, `POST /api/executions/{id}/cancel`). 두 조작은 묶여 있지 않으므로 해제한 작업의 실행을 멈추려면 사람이 따로 취소해야 합니다. 취소도 다음 pump 가 하류를 읽고 `ABORTED` 로 확정하며 로봇의 물리 정지를 보장하는 안전 기능이 아닙니다.
 
 ### 결과 버전의 DB 불변
 
 `ops.work_result` 의 불변은 코드 관례이고 DB 트리거로 막지 않습니다. DB 를 직접 고치는 경로는 막지 못합니다.
+
+### 잔여 파지 표시의 범위
+
+- 표시는 시각 순서가 아니라 계획 순서에서 파지 관측이 있는 마지막 로봇 단위의 관측으로 정합니다. 플릿 단위는 보지 않습니다. 관측이 «든 채» 가 아니면 실제로 들고 있어도 표시가 서지 않습니다.
+- 부분 완료(`PARTIAL`)는 정착으로 적지 않으므로 그동안은 표시가 아니라 도는 실행으로 뺍니다. 표시는 정착할 때만 섭니다.
+- 운영자 취소를 적은 뒤 다음 pump 가 반영하기 전에 실행 호스트가 재기동하면 다시 지은 실행(새 실행 id)에 취소를 다시 걸지 않습니다. 취소 행은 기록으로만 남습니다.
+- 화면의 현장 확인 체크박스는 서버가 집행하지 않습니다. 빈손 확인은 사람이 현장에서 본 것을 적는 기록이고 로봇 센서로 확인하지 않습니다.
+- 스킬이 취소를 받지 않으면(`CANCEL_UNSUPPORTED`) 미들웨어는 도는 단위를 끝까지 두고 다음 경계에서 멈춥니다. 호스트는 그 거부를 읽지 않아 화면에 보이지 않습니다.
 
 ## 더 읽을 곳
 
@@ -126,4 +140,4 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 - [운영 리허설 절차](runbook.md): 운영 리허설 절차 둘(C1 운영 중 호출 계약 배포 변경과 되돌림, D1 실행 호스트·운영 서비스 재기동과 재개), 단계마다 확인할 곳, 기대하는 결과, 다를 때 할 일, 근거 시험을 설명합니다.
 - [상세 참고 문서: 시험](reference.md#시험): 시험 수와 시험 구성
 - [화면 설계서](screens/screen-design.md): 화면에서 이 상태와 판단이 보이는 자리
-- [picasso 한계 레지스터](https://github.com/LivingLikeKrillin/picasso/blob/74e4d3d/docs/limits.md): 고정 커밋 `74e4d3d` 기준 picasso 의 오픈 항목과 한계
+- [picasso 한계 레지스터](https://github.com/LivingLikeKrillin/picasso/blob/79e074d/docs/limits.md): 고정 커밋 `79e074d` 기준 picasso 의 오픈 항목과 한계

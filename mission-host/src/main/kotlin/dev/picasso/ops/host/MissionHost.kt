@@ -7,9 +7,12 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import dev.picasso.capability.PreconditionViolation
 import dev.picasso.capability.Remedy
 import dev.picasso.capability.RemedyStep
+import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.contracts.v1.TaskState
 import dev.picasso.middleware.ActiveMission
 import dev.picasso.middleware.Approver
+import dev.picasso.middleware.ApproverKind
+import dev.picasso.middleware.ExecutionUnit
 import dev.picasso.middleware.IncidentBundle
 import dev.picasso.middleware.InspectAsset
 import dev.picasso.middleware.JobOrder
@@ -33,6 +36,7 @@ import dev.picasso.ops.host.mission.SiteInputs
 import dev.picasso.ops.host.mission.StoredMissionCatalog
 import dev.picasso.ops.host.web.BadRequest
 import dev.picasso.ops.host.web.HostRequests
+import dev.picasso.ops.host.store.CancelRow
 import dev.picasso.ops.host.store.CopyResolutionRow
 import dev.picasso.ops.host.store.HostRecords
 import dev.picasso.ops.host.store.IncidentCopyRow
@@ -42,6 +46,7 @@ import dev.picasso.ops.host.store.MissionStore
 import dev.picasso.ops.host.store.ResponseContent
 import dev.picasso.ops.host.store.ResponseDisposition
 import dev.picasso.ops.host.store.ResponseLogRow
+import dev.picasso.ops.host.store.ResidualHoldRow
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
@@ -57,8 +62,9 @@ enum class SkillFit { FIT, MISSING, UNKNOWN }
  * 기체 하나의 호스트 판정(T3). 운영 서비스가 시운전·연결 판정과 합쳐 배정 가능을 낸다.
  *
  * @param missingSkills [skillFit] 이 [SkillFit.MISSING] 일 때 모자란 스킬. 그 밖에는 비어 있다.
- * @param runningExecutionId 이 기체에서 물리 상태가 정착하지 않은 실행. 없으면 `null`.
- * @param passed 스킬 적합이고 도는 실행이 없다.
+ * @param runningExecutionId 이 기체를 쥔 실행(picasso `PhysicalState.occupiesRobot`). 정착하지 않은 실행과, 리비전으로 다시 돌 수 있는
+ *   부분 완료(`PARTIAL`) 실행이다. 없으면 `null`.
+ * @param passed 스킬 적합이고 도는 실행이 없으며 판정 이유가 하나도 없다(미해소 잔여 파지 표시 포함, P0-b2).
  * @param reasons 통과하지 못한 이유. 화면에 그대로 보인다.
  */
 data class HostEligibility(
@@ -194,6 +200,7 @@ data class JobResponseView(
  *
  * @param missionVersion 임무 버전. `null` 이면 코드 정의다.
  * @param jobResponse 그 실행의 마지막 작업 응답. 아직 없으면 `null`.
+ * @param cancel 이 인스턴스에서 그 실행에 건 운영자 취소(P0-b2). 없으면 `null`.
  */
 data class ExecutionView(
     val executionId: String,
@@ -205,6 +212,7 @@ data class ExecutionView(
     val units: List<UnitView>,
     val jobResponse: JobResponseView?,
     val restoredFrom: RestoredFromView?,
+    val cancel: CancelRecordView? = null,
 )
 
 /** 다시 지은 실행의 이전 실행(S4b 스펙 §6.3). 바로 앞 인스턴스에서 그 작업 지시를 들었던 실행이다. */
@@ -311,7 +319,8 @@ class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeExc
  * ## 판정(T3)
  *
  * 호스트는 스킬 적합과 도는 실행 없음만 본다. 시운전 완료와 연결 신선은 운영 서비스가 본다. 미들웨어의 배정 관문은 이
- * 넷을 보지 않으므로 제출 때 호스트가 다시 판정해 통과한 기체만 `assign` 에 넘긴다.
+ * 넷을 보지 않으므로 제출 때 호스트가 다시 판정해 통과한 기체만 `assign` 에 넘긴다. 미해소 잔여 파지 표시가 있는 기체도 뺀다
+ * (P0-b2, [cancel]·[clearResidualHold]).
  *
  * ## 작업 응답과 재기동(S4b 스펙)
  *
@@ -383,6 +392,15 @@ class MissionHost(
      */
     private val gaveUp = mutableListOf<JournalRow>()
 
+    /**
+     * 미해소 잔여 파지 표시(P0-b2). 기동 때 DB 에서 다시 읽고, 정착 기록 트랜잭션이 커밋된 뒤와 해소를 적은 뒤에 고친다. 판정이 이것을
+     * 읽어 그 기체를 뺀다. 원본은 DB 이고 이것은 그 사본이다.
+     */
+    private val openHolds = mutableListOf<ResidualHoldRow>()
+
+    /** 이 인스턴스에서 건 운영자 취소. 실행 id 에서. 이전 인스턴스의 취소는 그 인스턴스의 실행 id 라 싣지 않는다. */
+    private val cancels = mutableMapOf<String, CancelRow>()
+
     /** 미룬 행. [order]·[mission] 은 복원 때 한 번 읽은 것이고 다시 시도할 때 그대로 쓴다. */
     private class Deferred(val row: JournalRow, val order: JobOrder, val mission: ActiveMission, val index: Int)
 
@@ -401,13 +419,14 @@ class MissionHost(
 
     /**
      * 기동 복원(S4b 스펙 T3, §6.3). 정착도 포기도 없는 일지 행을 받은 순서대로 다시 짓는다. 결과는 일지 이벤트로 남고 복원 보고에
-     * 실린다. 그 뒤 포기한 행(이전 기동의 것 포함)을 판정 제외 목록으로 읽는다.
+     * 실린다. 그 뒤 포기한 행(이전 기동의 것 포함)을 판정 제외 목록으로, 미해소 잔여 파지 표시를 판정이 읽을 사본으로 읽는다.
      */
     private fun restore() = lock.withLock {
         restoredAt = clock.now()
         records.openJournal().forEach { row -> restoreRow(row) }
         // 이번 기동에서 포기한 행은 attempt 가 이미 넣었고 그 GAVE_UP 이벤트도 일지에 있다. 작업 지시마다 한 번만 든다.
         gaveUp += records.gaveUpJournal().filter { row -> gaveUp.none { it.jobOrderId == row.jobOrderId } }
+        openHolds += records.openResidualHolds()
     }
 
     private fun restoreRow(row: JournalRow) {
@@ -625,6 +644,7 @@ class MissionHost(
                     units = execution.units.map { UnitView(it.unitId, it.skillType, it.state.name, it.reached.name) },
                     jobResponse = responses.lastOrNull { it.executionId == execution.executionId }?.let(::view),
                     restoredFrom = restoredFrom[execution.executionId],
+                    cancel = cancels[execution.executionId]?.let(CancelRecordView::of),
                 )
             },
             restore = restoreView(),
@@ -705,6 +725,9 @@ class MissionHost(
      * 같으면 재기동 중복으로 적고 송신하지 않는다. 그 밖에는 송신으로 적는다. 어느 쪽이든 적은 뒤 `ack` 한다.
      *
      * 정착은 pump 가 더 돌리지 않는 상태다(`PARTIAL` 은 미들웨어가 계속 돌리므로 정착으로 적지 않는다).
+     *
+     * 잔여 파지 표시(P0-b2): 정착 이벤트를 적는 실행 가운데 [residualHoldUnit] 이 단위를 내는 것은 같은 트랜잭션에서 표시를 적는다.
+     * 작업 지시마다 하나라 이미 있으면 적지 않는다. 판정이 읽는 사본은 커밋된 뒤에만 늘린다.
      */
     private fun recordAfterPump() {
         val pending = middleware.pending()
@@ -719,8 +742,10 @@ class MissionHost(
 
         val held = heldIncidents(incidents)
         val copies = fresh.map { it to json.writeValueAsString(IncidentViews.detail(instanceId, it, it.incidentId in held, unitStateOf(it))) }
+        val marked = mutableListOf<ResidualHoldRow>()
         try {
             records.inTransaction {
+                marked.clear()
                 pending.forEach(::logResponse)
                 copies.forEach { (bundle, detail) ->
                     records.copyIncident(instanceId, bundle.incidentId, bundle.executionId, bundle.jobOrderId, bundle.unitId, detail)
@@ -736,6 +761,10 @@ class MissionHost(
                 }
                 settled.forEach {
                     records.event(it.order.jobOrderId, JournalEventKind.SETTLED, instanceId, it.executionId, it.physicalState.name)
+                    residualHoldUnit(it.units)?.let { unit ->
+                        records.markResidualHold(it.robotId, it.order.jobOrderId, it.executionId, instanceId, unit.unitId, unit.hold.objectRef)
+                            ?.let(marked::add)
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -745,6 +774,7 @@ class MissionHost(
         copiedIncidents = incidents.size
         copiedResolutions += resolved.map { it.incidentId }
         settledRecorded += settled.map { it.order.jobOrderId }
+        openHolds += marked
         pending.forEach { middleware.ack(it.jobResponseId) }
     }
 
@@ -787,6 +817,51 @@ class MissionHost(
         }
 
     /**
+     * 운영자 실행 취소(P0-b2). 호스트 잠금 아래에서 판정하고, 취소를 DB 에 적은 뒤 미들웨어 `cancel` 을 부른다. 적지 못하면 예외가
+     * 나가고 취소하지 않는다. 실제 중단은 다음 pump 가 하류를 읽고 확정하며, 그 뒤는 보통의 정착 기록(정착 이벤트, `ABORTED` 작업
+     * 응답, 잔여 파지 표시)이다.
+     *
+     * 받는 실행은 물리 상태가 `pumps` 인 것(정착하지 않았거나 부분 완료 `PARTIAL`)뿐이다. 이미 취소를 건 실행(`CANCELING`, 또는 이
+     * 인스턴스의 취소 행이 있음)과 실행 일지에 없는 실행은 NOT_CANCELABLE 이다. 승인자는 사람이어야 한다(ADR 47 과 같은 규칙).
+     * picasso 의 `cancel` 은 승인자를 받지 않으므로 이 판정은 호스트가 한다.
+     */
+    fun cancel(executionId: String, approver: Approver, reason: String, requestId: String?): CancelView = lock.withLock {
+        if (approver.kind != ApproverKind.PERSON) {
+            return@withLock CancelView(CancelResult.REFUSED, executionId, null, "$AGENT_CANCEL_REFUSED: ${approver.id}", requestId)
+        }
+        val execution = middleware.executions().firstOrNull { it.executionId == executionId }
+            ?: return@withLock CancelView(CancelResult.NOT_FOUND, executionId, null, "그 실행이 지금 인스턴스에 없다", requestId)
+        val state = execution.physicalState
+        val refusal = when {
+            !state.pumps -> "정착한 실행은 취소하지 않는다: ${state.name}"
+            state == PhysicalState.CANCELING || executionId in cancels -> "이미 취소를 건 실행이다"
+            execution.order.jobOrderId !in journaled -> "실행 일지에 없는 실행이다"
+            else -> null
+        }
+        if (refusal != null) return@withLock CancelView(CancelResult.NOT_CANCELABLE, executionId, state.name, refusal, requestId)
+        val row = records.cancel(instanceId, executionId, execution.order.jobOrderId, state.name, approver.id, approver.kind.name, reason)
+        cancels[executionId] = row
+        check(middleware.cancel(executionId)) { "미들웨어가 취소를 받지 않았다: $executionId ${state.name}" }
+        CancelView(CancelResult.CANCELED, executionId, state.name, null, requestId)
+    }
+
+    /** 미해소 잔여 파지 표시(P0-b2). 적은 순서다. */
+    fun residualHolds(): ResidualHoldsView = lock.withLock { ResidualHoldsView(openHolds.map(ResidualHoldView::of)) }
+
+    /**
+     * 잔여 파지 표시 해소(P0-b2). 사람이 그 기체가 빈손임을 현장에서 확인했다는 기록을 적고 판정이 읽는 사본에서 뺀다. 원본은 DB 라
+     * 사본에 없더라도 DB 로 판정한다. 그 기체의 표시가 아니면 NotFound, 이미 해소했으면 AlreadyCleared 다. 승인자는 사람이어야 한다.
+     */
+    fun clearResidualHold(robotId: String, markerId: Long, approver: Approver, reason: String, requestId: String?): ClearOutcome = lock.withLock {
+        if (approver.kind != ApproverKind.PERSON) return@withLock ClearOutcome.Refused("$AGENT_CLEAR_REFUSED: ${approver.id}")
+        val (hold, clearing) = records.residualHold(markerId)?.takeIf { it.first.robotId == robotId } ?: return@withLock ClearOutcome.NotFound
+        if (clearing != null) return@withLock ClearOutcome.AlreadyCleared(ResidualHoldClearingView.of(clearing))
+        val cleared = records.clearResidualHold(markerId, approver.id, approver.kind.name, reason)
+        openHolds.removeAll { it.markerId == markerId }
+        ClearOutcome.Cleared(ResidualHoldClearedView(ResidualHoldView.of(hold), ResidualHoldClearingView.of(cleared), requestId))
+    }
+
+    /**
      * 보류 중인 인시던트. 그 단위가 지금 운영자 보류이고, 그 단위의 인시던트 가운데 `unresolved` 이고 판단이 없는 가장 최근의
      * 것이다. 재작업 뒤 두 번째 보류가 서면 앞 인시던트는 판단이 붙어 빠지므로 한 단위에 많아야 하나다.
      */
@@ -823,7 +898,9 @@ class MissionHost(
 
     /**
      * 스킬 적합은 지금 활성 정의로 작업 지시를 계획해, 경로가 로봇인 단위의 스킬이 기체가 선언한 스킬에 다 있는가다.
-     * 도는 실행은 그 기체의 실행 중 물리 상태가 정착하지 않은 것이다. 운영자 보류에 선 실행도 도는 실행이다(스펙 §12).
+     * 도는 실행은 그 기체를 쥔 실행이다(picasso `PhysicalState.occupiesRobot`). 정착하지 않은 실행과 부분 완료(`PARTIAL`) 실행이고,
+     * 운영자 보류에 선 실행도 도는 실행이다(스펙 §12). 부분 완료는 리비전으로 남은 단위가 다시 돌 수 있어 그 기체가 아직 비지 않았다.
+     * 부분 완료 실행은 운영자 취소([cancel])로 닫는다. 같은 작업 지시 id 의 리비전은 이 판정에 걸려 UNASSIGNED 다.
      */
     private fun journalBlocked(): List<String> = middleware.executions().filter { it.order.jobOrderId !in journaled }.map { it.executionId }
 
@@ -837,7 +914,7 @@ class MissionHost(
             missing.isEmpty() -> SkillFit.FIT
             else -> SkillFit.MISSING
         }
-        val running = middleware.executions().firstOrNull { it.robotId == robotId && !it.physicalState.isSettled }?.executionId
+        val running = middleware.executions().firstOrNull { it.robotId == robotId && it.physicalState.occupiesRobot }?.executionId
 
         val reasons = buildList {
             when (fit) {
@@ -847,6 +924,8 @@ class MissionHost(
             }
             if (running != null) add("도는 실행이 있다: $running")
             unrestoredOn(robotId).takeIf { it.isNotEmpty() }?.let { add("$UNRESTORED_REASON: ${it.joinToString(", ")}") }
+            openHolds.filter { it.robotId == robotId }.takeIf { it.isNotEmpty() }
+                ?.let { holds -> add("$RESIDUAL_HOLD_REASON: ${holds.joinToString(", ") { "${it.jobOrderId} ${it.unitId}" }}") }
             if (!applied) add(UNAPPLIED_REASON)
             if (journalBlocked().isNotEmpty()) add("실행 일지 저장 실패: 호스트 복구 전 배정 차단")
         }
@@ -918,11 +997,31 @@ class MissionHost(
         /** 다시 짓지 못한 실행이 있는 기체에 판정이 더하는 이유의 앞부분(S4b 스펙 T4). 뒤에 작업 지시 id 가 붙는다. */
         const val UNRESTORED_REASON = "복원 못 한 실행이 있다"
 
+        /**
+         * 미해소 잔여 파지 표시가 있는 기체에 판정이 더하는 이유의 앞부분(P0-b2). 뒤에 `작업 지시 id 단위 id` 가 표시마다 `, ` 로 붙는다.
+         * 복원 못 한 실행 다음, 미적용 앞자리다.
+         */
+        const val RESIDUAL_HOLD_REASON = "잔여 파지 확인 필요"
+
+        /** 에이전트 승인자의 취소·해소 거부 사유의 앞부분. 뒤에 승인자 id 가 붙는다. */
+        const val AGENT_CANCEL_REFUSED = "에이전트는 실행을 취소하지 못한다. 실행 중단은 사람의 것이다"
+        const val AGENT_CLEAR_REFUSED = "에이전트는 잔여 파지 표시를 해소하지 못한다. 기체가 빈손인지는 사람이 현장에서 확인한다"
+
         /** 종료 상태(용어집 태스크 수명주기). 사람을 기다리는 RETRIABLE·NEEDS_INTERVENTION 은 종료하지 않은 상태라 기체를 계속 뺀다. */
         private val TERMINAL_TASK_STATES = setOf(
             TaskState.TASK_STATE_SUCCEEDED, TaskState.TASK_STATE_FAILED, TaskState.TASK_STATE_CANCELLED,
             TaskState.TASK_STATE_CANCELLED_RECOVERY_FAILED,
         )
+
+        /**
+         * 정착한 실행의 잔여 파지 단위(P0-b2). 경로가 로봇인 단위 가운데 파지 관측이 있는 마지막 단위(계획 순서)의 관측이 HOLDING 이면
+         * 그 단위다. 플릿 단위의 HOLDING 은 플릿 AMR 이 용기를 든 것이라 보지 않는다. picasso 는 정착한 실행의 파지를 정보로만 두고 관문에
+         * 쓰지 않는다(§15.146). 이 표시는 실행 호스트의 운영 정책이다(ADR 41).
+         */
+        internal fun residualHoldUnit(units: List<ExecutionUnit>): ExecutionUnit? =
+            units.filter { it.route == Route.ROBOT }
+                .lastOrNull { it.hold.kind != HoldKind.HOLD_KIND_UNSPECIFIED }
+                ?.takeIf { it.hold.kind == HoldKind.HOLD_KIND_HOLDING }
 
         /** 운영자 판단의 결과 이름. picasso `ResolveOutcome` 의 이름 그대로다(S4a 스펙 T6). */
         const val RESOLVED = "Resolved"
