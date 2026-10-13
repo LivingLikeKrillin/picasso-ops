@@ -1,31 +1,14 @@
 # picasso-ops 화면 설계서
 
-> 미션 자원 요구 최신: [모든 Ops 호출 경로의 필수 자원·공통 대기열·접수 추적](mission-resource-enforcement-2026-10-12.md).
-
-> 공유 자원 최신: [공유 스테이션의 등록·대기열·운영 판단·완료 근거](shared-station-orchestration-2026-10-12.md). 현재 메뉴는 운영 개요·작업 요청·공유 자원·운영·로봇·임무·현장 설정·이력·검증 도구의 9개 영역이다. 아래 상세는 이전 기준선이며 최신 구현 문서를 우선한다.
-
-> 실행 전 배정 확인: [호출 계약의 실제 입력·고정 배포로 기체 적합성 조회](interface-eligibility-2026-10-11.md).
-
-
-> 제조 시나리오 최신: [이기종 검사·설비 보류·재작업 및 접수 비교](manufacturing-scenario-2026-10-11.md). 검증 도구에 계약·배포·완료 근거 비교 화면을 추가했다.
-
-
-> 최신 구현: [상위 업무 중심 후속 7개 구현 및 검증](upstream-followups-2026-10-11.md). 이 단계에서 상위 업무 흐름과 URL 기반 작업 조회 맥락 보존을 추가했다.
-
-> 2026-10-10 미션 관리 최신: [미션 목록·호출 연결·변환 미리보기](mission-refresh.md).
-
-> 2026-10-10 개편: 현재 메뉴·로봇 도입 여정·입력 보존 범위는 [도입 여정 개편](onboarding-refresh.md), 시각 스타일은 [스타일 적용](style-refresh.md)을 우선합니다. 아래 상세와 img/는 개편 전 기준선입니다.
-
-기준: picasso-ops `main` = `9606364`, 서브모듈 picasso = `74e4d3d`. 스크린숏은 `img/` 에 있고 목록은 `img/INDEX.md` 입니다. 표기 규칙은 `README.md` 의 «읽는 법» 을 따릅니다. 파일 위치는 따로 적지 않으면 `ui/src/components/` 기준입니다.
+문서 기준은 picasso-ops `main` = `bb1d8b5`(PR #23 머지, 2026-10-13), 서브모듈 picasso = `74e4d3d` 입니다. 이 문서는 지금 화면을 기술합니다. 리터치는 끝났고 지금 UI 가 최종입니다. 스크린숏 21장은 `img/` 에 있고, 목록은 `img/INDEX.md` 에 있습니다. 표기에서 «…» 는 화면·코드 글자 그대로이며, `${…}` 는 값이 끼워지는 자리입니다. 파일 위치는 따로 적지 않으면 `ui/src/components/` 기준입니다. `App.tsx`, `api.ts`, `areas.ts`, `labels.ts`, `poll.ts`, `jobOrderDraft.ts`, `manualRequests.ts`, `missionTemplates.ts`, `styles.css` 는 `ui/src/` 바로 아래에 있습니다. 행 번호는 적지 않고 파일 이름까지만 적습니다.
 
 ## 목차
 
 1. 제품과 사용자
 2. 전역 구조
 3. 영역별 화면
-4. 디자이너 리터치 지침
-5. 시험이 기대는 글자
-6. 알려진 어긋남
+4. 화면을 바꿀 때 지킬 것
+5. 그림 목록
 
 ---
 
@@ -33,1267 +16,2003 @@
 
 ### 1.1 무엇인가
 
-picasso-ops 는 picasso 를 라이브러리로 쓰는 담는 측 저장소이며, 로봇, 임무, 엔드포인트의 운영 가능성을 입증하는 PoC 입니다. 실제 하드웨어 현장은 없고 가짜 현장 런처(registry, mimic 기체, 셀 대역)를 띄웁니다. 운영 중 변경은 코드 수정이 아니라 이 관리 화면에서 합니다(저장소 `README.md` 첫 절).
+picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 연결하고, 작업 요청부터 실행·결과 회신까지 운영하는 미들웨어 PoC 입니다(저장소 `README.md` 첫 줄). 스택 구성은 다음과 같습니다.
+- PostgreSQL
+- picasso registry·mimic
+- 셀 대역
+- 실행 호스트
+- 운영 API(ops-service)
+- React UI(`ui/`)
 
-보안과 인증은 생략합니다. 모드와 사용자 이름은 로그인 없이 화면에서 고르고, 요청 헤더로 운영 서비스에 실립니다(§1.3). 운영 서비스도 모드를 집행해 맞지 않는 조작을 403 `MODE_NOT_ALLOWED` 로 막습니다(S1 스펙 §8).
+실제 로봇 하드웨어, PLC, 상용 MES 연계는 검증하지 않았습니다. 상위 연계는 단일 Mock MES 식별자로 검증합니다.
 
-화면은 브라우저 하나에 영역 다섯을 둔 단일 페이지입니다. URL 이 영역을 기억하지 않으므로 새로고침하면 처음 상태(로봇·연결 영역, 엔지니어 모드, 사용자 `local`)로 돌아갑니다(`App.tsx:19-20`).
+이 문서가 다루는 것은 `ui/` 의 관리 화면입니다. 화면은 운영 서비스(`/api/**`)만 부르고, 운영 서비스가 registry 와 실행 호스트를 부릅니다.
+
+보안과 인증에서 모드와 사용자 이름은 로그인 없이 화면에서 고르고, 요청 헤더 `X-Ops-Mode`(`engineer` 또는 `operator`)와 `X-Ops-User` 로 운영 서비스에 실립니다(`api.ts`). 운영 서비스가 모드를 다시 집행해 맞지 않는 조작을 403 `MODE_NOT_ALLOWED` 로 막습니다. 화면 글자로는 «이 모드에서 할 수 없는 조작» 입니다.
+
+외부 주문 API(`/integration/v1/job-orders`)는 화면이 부르지 않습니다. Mock MES 가 부르며 `PICASSO_INTEGRATION_TOKEN` 이 비어 있으면 꺼집니다.
 
 ### 1.2 두 모드
 
-모드는 머리의 라디오 둘(«엔지니어», «운영자», 이 순서)로 고릅니다. 처음 값은 엔지니어입니다.
+모드는 상단 바 오른쪽 `ModeSwitch.tsx` 의 라디오 «엔지니어»·«운영자»(이 순서)로 고릅니다. 처음 값은 엔지니어입니다.
 
 | 모드 | 하는 일 |
 |---|---|
-| 엔지니어 | 기체 선언, 어댑터 제품·빌드 선언과 인스턴스 등록, 프로파일 리비전 제출·시험 요청·활성화, 바인딩, 사이트 명칭 등록 기록, 현장 설정 변경, 장애 주입, 임무 편집(템플릿, 초안 저장, 검증, 모의 실행, 활성화) |
-| 운영자 | 퇴역과 복귀, 작업 지시 내기, 보류 단위의 운영자 판단(완료 확인, 재작업) |
-| 두 모드 공통 | 모든 조회, 셀 대역 신호 켜기·끄기, 송신 기록의 작업 지시 고르기, 작업 지시 폼 입력과 배정 가능 판정 보기 |
+| 엔지니어 | 기체 선언, 어댑터 제품·빌드 선언과 인스턴스 등록, 프로파일 리비전 제출·시험 요청·활성화, 바인딩, 명칭 등록 기록, 현장 설정 변경, 장애 주입, 새 임무 만들기, 임무 정의 편집(초안 저장·검증·모의 실행·활성화), 호출 계약 작성·복제·공개·공개 중지, 실행 배포, 공유 스테이션 등록, 임무 필수 자원 등록 |
+| 운영자 | 퇴역·복귀, 수동 작업 요청 내기(작업 지시 폼), 호출 계약으로 작업 요청, 보관된 수동 작업 요청 재확인·새 작업 작성, 운영자 판단(완료 확인·재작업), 미배정 재평가, 현장 확인 기록, 공유 스테이션 작업 요청, 대기 작업 취소·현장 확인 후 자원 해제·재실행 없이 관측 재개 |
+| 두 모드 공통 | 모든 조회, 배정 가능 확인(작업 지시 폼, 호출 계약 입력), 입력 검증·변환 미리보기, 셀 대역 신호 켜기·끄기, 송신 기록 거르기, 작업 요청 검색, 작업 요청 비교, 이력 |
 
-다른 모드의 폼과 버튼은 감추고, 대개 그 자리에 어느 모드에서 하는지를 적습니다. 전체 목록은 §2.3 에 있습니다.
+### 1.3 모드 가르기의 세 방식
 
-### 1.3 사용자 이름 칸
+코드에는 세 방식이 섞여 있습니다.
 
-| 항목 | 사실 | 근거 |
-|---|---|---|
-| 라벨 | «사용자» | `ModeSwitch.tsx:36-47` |
-| 처음 값 | `local` | `App.tsx:19` |
-| 규칙 | `/^[A-Za-z0-9._-]{1,64}$/` | `api.ts:308` |
-| 어긋날 때 | 칸에 `aria-invalid=true`, 옆에 빨간 글자 «사용자 이름은 영문·숫자·._- 로 1~64자입니다. 요청에는 직전 이름(${session.user})을 씁니다» | `ModeSwitch.tsx:40,48-52` |
-| 쓰임 | 모든 요청 헤더 `X-Ops-User`. 모드는 `X-Ops-Mode` | `api.ts:316` |
-| 바뀌면 | 다섯 조회를 곧바로 다시 읽음 | `App.tsx:62` |
+1. 감추고 모드 문장을 세웁니다. 다른 모드에서 폼·버튼이 사라지고 그 자리에 문장이 섭니다.
+- 기체 선언: «선언은 엔지니어 모드에서 합니다»
+- 어댑터: «어댑터 등록은 엔지니어 모드에서 합니다»
+- 프로파일: «프로파일 관리는 엔지니어 모드에서 합니다» (조작 열도 없어집니다)
+- 퇴역·복귀: «퇴역과 복귀는 운영자 모드에서 합니다»
+- 현장 설정: «현장 설정 변경은 엔지니어 모드에서 합니다»
+- 장애 주입: «장애 주입은 엔지니어 모드에서 합니다»
+- 임무 편집: «임무 편집은 엔지니어 모드에서 합니다» (활성 정의는 보입니다)
+- 작업 지시 폼의 제출 버튼: «작업 지시는 운영자 모드에서 냅니다» (폼과 배정 가능 판정은 두 모드에 보입니다)
+- 운영자 판단: «보류 중입니다. 운영자 판단은 운영자 모드에서 합니다»
+- 현장 확인 기록: «현장 확인 기록은 운영자 모드에서 작성합니다.»
 
-사용자 이름은 이력 영역의 «행위자», 인시던트의 «사람이 판단함», 운영자 판단 폼의 «판단자는 ${user} 입니다» 에 나옵니다.
+2. 감추기만 하고 문장이 없습니다.
+- 바인딩 폼, 버튼 «명칭 등록 기록» (엔지니어만)
+- 버튼 «새 임무 만들기», «템플릿으로 초안 작성» (엔지니어만)
+- 버튼 «호출 계약 만들기», «새 버전으로 복제», 칸 «공개 변경 사유»와 공개 버튼, 실행 배포 칸 (엔지니어만)
+- 접기 «공유 스테이션 등록», «임무 자원 요구 등록» (엔지니어만)
+- 접기 «공유 스테이션 작업 요청», 스테이션 작업의 운영자 판단 폼 (운영자만)
 
-### 1.4 다섯 영역
+3. 보이되 비활성입니다.
+- 버튼 «미배정 재평가» (운영자가 아니면 비활성, 문장 없음)
+- 버튼 «호출 계약으로 작업 요청» (운영자가 아니면 비활성, 문장 «실제 호출은 운영자 모드에서 가능합니다.»)
+- 수동 작업 요청 추적의 버튼 «동일 작업 요청 확인», «새 작업 작성» (운영자가 아니면 비활성)
+- `MissionCreator.tsx` 와 호출 계약 작성 폼의 fieldset (엔지니어가 아니면 비활성)
 
-nav 순서대로입니다(`areas.ts:10-16`). 처음 열리는 영역은 둘째 «로봇·연결» 입니다.
+화면이 감추거나 막아도 최종 집행은 운영 서비스(403 `MODE_NOT_ALLOWED`)가 합니다.
 
-| 순서 | 버튼 글자 | 하는 일 | 그리는 컴포넌트 |
-|---|---|---|---|
-| 1 | «현장·자원» | 현장 설정 버전(연결 기준 시간과 미들웨어 시간값 넷)을 보이고 바꿈. 기체에 장애를 넣음 | `SiteArea`, `FaultPanel` (`App.tsx:97-107`) |
-| 2 | «로봇·연결» | 기체 선언과 원장 상태, 연결, 막힘, 시운전. 어댑터와 프로파일 등록. 바인딩과 명칭 기록. 퇴역과 복귀 | `RobotsArea` (`App.tsx:87-96`) |
-| 3 | «임무·정책» | 임무 `PrepareSequencedRack` 의 정의를 편집해 초안 저장, 검증, 모의 실행, 활성화. 버전 이력과 초안 | `MissionsArea` (`App.tsx:108-110`) |
-| 4 | «운영» | 작업 지시 내기, 기체별 배정 가능, 실행, 인시던트와 운영자 판단, 셀 대역, 작업 응답 송신 기록 | `OperationsArea` (`App.tsx:111-113`) |
-| 5 | «이력» | 조작 기록(행위자, 사유, 결과) | `HistoryArea` (`App.tsx:114`) |
+### 1.4 사용자 이름 칸
 
----
+`ModeSwitch.tsx` 의 fieldset legend «모드» 안 칸 «사용자» 에 사용자 이름을 입력합니다. 처음 값은 `local` 입니다.
+
+규칙은 `USER_PATTERN` = `/^[A-Za-z0-9._-]{1,64}$/` 입니다(`api.ts`). 규칙에 어긋나면 칸에 `aria-invalid` 가 서고 `span.invalid` 에 «사용자 이름은 영문·숫자·._- 로 1~64자입니다. 요청에는 직전 이름(${session.user})을 씁니다» 가 표시됩니다. 어긋난 이름은 요청에 싣지 않습니다.
+
+세션(모드·사용자)은 `App.tsx` 의 `useState` 하나이며 저장하지 않습니다. 새로고침하면 엔지니어·`local` 로 돌아갑니다.
+
+모드나 사용자가 바뀌면 다섯 조회를 곧바로 다시 읽고, 영역별 읽기도 세션을 따라 다시 읽습니다. 공유 자원 영역(`StationWorkspace`)은 `key=${mode}/${user}` 로 다시 마운트됩니다. 운영 영역은 마지막 제출 알림과 보관 요청을 다시 읽습니다.
+
+이력의 행위자 칸은 «엔지니어» 또는 «운영자» 와 사용자 이름을 «/» 로 이어 보입니다(예: 운영자/kim).
+
+### 1.5 아홉 영역
+
+메뉴 순서는 `areas.ts` 의 `AREAS` 를 따릅니다.
+
+| 순서 | 해시 | 메뉴 글자 | 영역 설명(화면 글자) | 그리는 컴포넌트 |
+|---|---|---|---|---|
+| 1 | `#overview` | «운영 개요» | «작업 요청과 로봇 실행의 현재 관측, 확인이 필요한 작업을 살펴봅니다.» | `OverviewArea`, `CollectorStatus` |
+| 2 | `#requests` | «작업 요청» | «외부 주문과 운영자 요청을 검색하고 작업 요청부터 실행 결과까지 추적합니다.» | `WorkRequests`, `RequestRecovery`, `RequestReview`, `StoredResultSummary` |
+| 3 | `#stations` | «공유 자원» | «공유 스테이션의 점유와 준비 조건, 임무 실행·완료 근거를 조정합니다.» | `StationWorkspace`, `MissionResourceSettings` |
+| 4 | `#operations` | «운영» | «작업의 진행과 완료 근거를 확인하고 필요한 판단을 기록합니다.» | `OperationsArea` |
+| 5 | `#robots` | «로봇» | «기체와 어댑터를 연결하고 운영에 필요한 준비 상태를 확인합니다.» | `RobotsArea` |
+| 6 | `#missions` | «임무» | «임무를 검증하고 버전별 변경을 운영에 반영합니다.» | `MissionsArea` |
+| 7 | `#site` | «현장 설정» | «현장 설정의 저장 버전과 실행 호스트의 적용 상태를 확인합니다.» | `SiteArea` |
+| 8 | `#history` | «이력» | «누가 무엇을 변경했는지 조작 기록을 확인합니다.» | `HistoryArea` |
+| 9 | `#validation` | «검증 도구» | «모의 현장에 장애를 주입하고 예외 상황 대응을 검증합니다.» | `ManufacturingValidation`, `FaultPanel` |
+
+영역 설명은 `App.tsx` 의 `AREA_DESCRIPTIONS` 이고, 아이콘 경로는 `AREA_ICONS` 입니다.
+
+`areas.ts` 의 `ready` 는 아홉 모두 `true` 입니다. `ready:false` 일 때의 «다음 단계»·«이 영역은 다음 단계에서 엽니다.» 갈래는 코드에만 남아 있고 화면에 나오지 않습니다.
+
+### 1.6 해시 라우팅과 처음 영역
+
+라우터 라이브러리 없이 `window.location.hash` 를 읽습니다(`App.tsx`). 해시는 `#${areaId}` 이며 `hashchange` 를 듣습니다.
+
+해시가 없거나 모르는 값이면 처음 영역은 메뉴 첫 항목이 아니라 5번 «로봇»(`robots`)입니다. 메뉴를 누르면 `location.assign('#id')` 로 가며 해시 뒤 쿼리가 지워집니다.
+
+작업 요청 영역만 쿼리를 읽고 씁니다: `#requests?search=&state=&result=&offset=&receipt=`. 검색어, 상태 필터, 외부 결과 필터, 쪽 위치, 고른 작업 요청이 URL 에 남아 새로고침해도 남습니다.
+
+새로고침 시 상태 유지는 다음과 같습니다.
+- 새로고침해도 남는 것: 영역, 작업 요청 쿼리, sessionStorage 에 보관한 멱등 요청(§2.6)
+- 처음 값으로 돌아가는 것: 모드·사용자, 로봇 하위 탭(«기체»), 임무 패널(«임무 목록»), 폼 입력
+
+로봇 영역만 늘 마운트하고 `hidden` 으로 감춥니다. 그래서 하위 탭, 고른 기체, 폼 입력이 메뉴 왕복에도 남습니다. 나머지 여덟 영역은 고를 때만 마운트되어 떠나면 상태가 사라집니다.
+
+`App.tsx` 의 영역 대체값은 `AREAS[1]`(작업 요청)인데 처음 영역은 «로봇» 입니다. 대체값은 실제로 쓰이지 않습니다.
 
 ## 2. 전역 구조
 
 ### 2.1 앱 껍데기
 
-| 항목 | 사실 | 근거 |
+문서 설정은 `lang="ko"`, `<title>Picasso Ops · Robot Operations</title>`, 파비콘 `/favicon.svg` 입니다(`App.tsx`, `ui/index.html`, `styles.css`).
+글꼴은 Pretendard Variable 을 저장소가 직접 제공합니다(`ui/public/fonts/PretendardVariable.woff2`, 라이선스 고지 `ui/public/fonts/LICENSE.txt`). JSON 편집기와 `pre` 는 고정폭 글꼴 `ui-monospace, 'Cascadia Code', Consolas` 를 씁니다.
+색과 모서리는 `:root` 토큰을 씁니다.
+- `--primary`: `#2563eb`
+- `--primary-hover`
+- `--primary-soft`
+- `--ink`
+- `--muted`
+- `--border`
+- `--surface`
+- `--danger`: `#b91c1c`
+- `--warning`: `#92400e`
+- `--radius`: `14px`
+
+스타일은 `styles.css` 한 파일(257행)입니다. 다크 모드는 없습니다(`prefers-color-scheme` 규칙 없음).
+
+배치 순서는 위와 왼쪽부터 다음과 같습니다.
+1. 건너뛰기 링크 «본문으로 이동» (누르면 `main#main-content` 로 포커스).
+2. 왼쪽 `aside.sidebar`: 파비콘 이미지와 h1 «Picasso Ops», 부제 «Robot operations», 캡션 «워크스페이스», `nav[aria-label=영역]` 안 메뉴 버튼 아홉(아이콘 SVG + 글자, 고른 버튼에 `aria-current="page"`), 맨 아래 «PoC workspace» 와 «모의 현장 기반 운영 검증».
+3. 오른쪽 `.workspace`: `header.topbar` 에 브레드크럼 «워크스페이스» / 영역 이름과 `ModeSwitch`.
+4. `main#main-content`: 영역 제목 블록(eyebrow «PICASSO OPERATIONS», h2 영역 이름, 영역 설명, 배지 «모의 현장») → 전체 상태 띠(`RegistryBanner`) → `.area-content.area-${id}` 안의 영역 본문.
+
+반응형 규칙은 `styles.css` 의 `@media` 에 따릅니다.
+- 1199px 이하: 사이드바 폭 192px, `.split` 2열 구역이 1열로 바뀝니다.
+- 767px 이하: 사이드바가 위로 올라가고 메뉴가 가로 스크롤되며, 브레드크럼·환경 배지·캡션·사이드바 아래 문구를 숨기고, 폼 칸 폭 100%, `dl` 1열이 됩니다.
+- 그 밖에 900px·760px 규칙이 카드 격자를 1열로 바꿉니다.
+- `prefers-reduced-motion` 에서 전환 효과를 끕니다.
+
+![운영 개요, 390px 폭](img/20-overview-mobile.png)
+
+그림 20은 390px 폭의 운영 개요이며 사이드바가 위로 올라가 메뉴가 가로로 놓입니다.
+
+### 2.2 상단 바와 모드 전환
+
+상단 바 오른쪽 `ModeSwitch.tsx` 에는 fieldset legend «모드», 라디오 «엔지니어»·«운영자», 칸 «사용자» 가 있습니다. 규칙과 효과는 §1.2~§1.4 입니다.
+모드를 바꿔도 화면 이동은 없습니다. 같은 영역에서 폼·버튼이 바뀝니다.
+
+### 2.3 전체 상태 띠
+
+전체 상태 띠(`RegistryBanner.tsx`)는 영역 제목 블록 아래에 서며 아홉 영역 모두에 섭니다.
+
+| 조건 | 요소 | 글자 |
 |---|---|---|
-| 문서 | `<html lang="ko">`, `<title>picasso-ops</title>`, viewport `width=device-width, initial-scale=1.0` | `ui/index.html:2,6,7` |
-| 파비콘 | `/favicon.svg`, 48×46 SVG, 단색 `#863bff` | `ui/index.html:5`, `ui/public/favicon.svg` |
-| 구조 | `<header>`(h1, nav, 모드 전환) → `RegistryBanner` → `<main>`(영역 하나) | `App.tsx:66-116` |
-| 영역 전환 | `useState` 값. 영역을 바꾸면 그 영역 컴포넌트가 내려가 안의 상태(마지막 조작 알림, 폼 입력, 고른 기체, 고른 인시던트)가 사라짐 | `App.tsx:20`, `PW:267` |
-| 백엔드 | 운영 서비스 `/api` 만 부름 | `ui/vite.config.ts:8-14` |
+| 운영 서비스에 닿지 않음(다섯 조회 중 하나라도 실패) | `div.banner.unknown`, `role="alert"` | «모름: 운영 서비스에 닿지 않습니다 (${opsError})» |
+| 첫 읽기 전 | `div.banner` | «확인 중» |
+| registry `OK` | `div.banner.ok` | «registry 응답 확인 ${checkedAt}» |
+| `REGISTRY_SILENT` | `div.banner.unknown`, alert | «모름: registry 가 답하지 않습니다. 해결 담당 엔지니어, registry 상태 확인. 확인 시각 ${checkedAt}» |
+| `REGISTRY_UNAUTHORIZED` | `div.banner.unknown`, alert | «모름: registry 가 운영자 토큰을 거부합니다. 해결 담당 엔지니어, 운영자 토큰 설정 확인. 확인 시각 ${checkedAt}» |
 
-![로봇·연결 영역의 빈 상태](img/01-robots-overview-empty.png)
+띠의 판정 재료(다섯 조회)는 로봇·현장 설정·이력·장애 주입 영역만 씁니다. 운영 개요·작업 요청·공유 자원·운영·임무는 자기 읽기의 실패를 구역마다 따로 보입니다. 그래서 띠가 «registry 응답 확인» 이어도 다른 구역에 «모름» 이 설 수 있습니다.
+모양은 `.banner::before` 의 작은 원 색으로 가릅니다(정상 초록, 모름 주황). 모름은 배경 `#fffbeb` 입니다.
 
-그림 01. 처음 연 화면. 머리(제목, nav, 모드), 전체 상태 띠, 2열 본문. 엔지니어 모드, 실제 스택.
+![registry 불통](img/19-robots-registry-down.png)
 
-### 2.2 머리
+그림 19는 런처(registry)를 끈 뒤의 로봇 영역이며 띠가 모름 상태로 바뀝니다.
 
-머리는 `display: flex; gap: 16px; align-items: center; flex-wrap: wrap` 입니다(`styles.css:2`). 왼쪽부터 다음이 한 줄에 놓입니다.
+### 2.4 읽기 주기와 데이터 출처
 
-| 순서 | 요소 | 사실 | 근거 |
+주기 상수는 `poll.ts` 에 정의되어 있습니다.
+- `POLL_MS` = 5000(5초)
+- `ELIGIBILITY_DEBOUNCE_MS` = 300
+- `SIGNAL_SETTLE_MS` = 500
+
+실패해도 직전 값을 지우지 않고 직전 값임을 표시합니다(§2.5).
+
+| 읽기 | 엔드포인트 | 주기·시점 | 실패 표현 |
 |---|---|---|---|
-| 1 | h1 | «picasso-ops». 로고나 이미지는 없음 | `App.tsx:69` |
-| 2 | nav | `<nav aria-label="영역">` 안에 영역마다 `<button>`. 고른 버튼에 `aria-current="page"`, CSS 는 굵기 700 만 줌 | `App.tsx:70-80`, `styles.css:3` |
-| 3 | 모드 전환 | `<fieldset className="mode">` 와 `<legend>모드</legend>`, 라디오 «엔지니어»·«운영자», 칸 «사용자» | `ModeSwitch.tsx:23-47` |
+| 다섯 조회(`App.tsx`) | GET `/api/robots`, `/api/adapters`, `/api/profiles`, `/api/operations`, `/api/site-settings` 를 `Promise.all` 로 | 5초, 모드·사용자 변경, 조작 직후 | 하나라도 실패하면 다섯 모두 직전 값 + 띠 «모름: 운영 서비스에 닿지 않습니다 (${opsError})» |
+| 운영 개요 | GET `/api/work-requests/summary`, `/api/executions`, `/api/incidents`, `/api/work-requests/collector` | 영역이 열려 있을 때 5초, 넷이 따로 실패 | 구역마다 alert |
+| 작업 요청 | GET `/api/work-requests?search=&state=&offset=&limit=20&result=`, `/api/work-requests/{receiptId}` | 5초, 검색·필터·쪽 변경, 고른 작업 요청 변경 | alert 와 «직전 조회 값입니다.» 꼬리 |
+| 공유 자원 | GET `/api/stations`, `/api/mission-interfaces`, `/api/mission-resources`, `/api/stations/runs/{runId}` | 스테이션·호출 계약은 5초, 자원 요구는 마운트 때와 호출 계약 목록을 다시 받을 때마다 | alert «자원 조회 실패: ${e} · 표는 직전 값입니다. 조작 전 다시 조회하세요.» |
+| 운영 | GET `/api/executions`, `/api/cell`, `/api/incidents`, `/api/job-responses`(거르면 `?jobOrderId=`), `/api/incidents/{id}?instanceId=`, POST `/api/job-orders/eligibility`, 그리고 맨 위 작업 요청 목록 | 5초. 배정 가능은 폼이 바뀌고 300ms 멈춘 뒤, 신호 조작·판단 뒤 곧바로와 500ms 뒤 한 번 더 | 구역마다 «직전 값입니다. 실행 호스트 불통: ${error}» |
+| 임무 | GET `/api/job-contracts`(마운트와 «계약 다시 조회» 때만), `/api/mission-interfaces`(마운트와 «호출 계약 다시 조회» 때), `/api/missions/{workMasterId}`(5초), `/api/missions/templates/{workMasterId}`(읽힐 때까지 5초), `/api/mission-interfaces/{id}/{version}/deployments`, POST `/api/job-orders/preview` | | 구역마다 alert 또는 «모름: …» |
+| 현장 설정·이력 | 다섯 조회의 `/api/site-settings`, `/api/operations` | 5초 | «직전 값입니다» |
+| 검증 도구 | GET `/api/work-requests?search=&offset=0&limit=20`, `/api/work-requests/{receiptId}` 두 번, POST `/api/faults` | 버튼을 누를 때만 | alert |
 
-버튼, 라디오, 입력, fieldset 은 브라우저 기본 모양입니다(그림 01). `.mode` 클래스에는 CSS 규칙이 없습니다.
+실행 호스트를 거치는 읽기(실행, 셀, 인시던트, 배정 가능, 임무 버전)는 다섯 조회에 넣지 않습니다. 실행 호스트가 멈춰도 다섯 조회가 직전 값이 되지 않게 운영·임무 영역이 따로 읽습니다.
+`api.ts` 에 `POST /api/job-orders` 를 부르는 `submitJobOrder` 가 남아 있지만 화면은 부르지 않습니다. 작업 지시 폼은 수동 작업 요청 `POST /api/work-requests/manual` 로 보냅니다.
 
-`areas.ts` 의 `ready: false` 갈래(버튼 뒤 «<small> 다음 단계</small>», 본문 «이 영역은 다음 단계에서 엽니다.»)는 코드에 남아 있지만, 다섯 영역이 모두 `ready: true` 라 지금은 보이지 않습니다(`App.tsx:78,86`).
+### 2.5 값의 상태: 알 수 있음, 없음, 모름, 직전 값
 
-### 2.3 모드가 가르는 조작
+화면은 값을 넷으로 가릅니다.
+- 알 수 있음: 값입니다.
+- 없음: «… 없습니다» 꼴 문장입니다.
+- 모름: 아직 못 읽었거나 읽기에 실패한 상태입니다.
+- 직전 값: 앞서 읽은 값을 그대로 두고 표시를 덧붙입니다.
 
-| 조작 | 하는 모드 | 다른 모드에서 보이는 문장 | 근거 |
-|---|---|---|---|
-| 기체 선언 | 엔지니어 | «선언은 엔지니어 모드에서 합니다» | `RobotsArea.tsx:45-54` |
-| 어댑터 제품·빌드 선언, 인스턴스 등록 | 엔지니어 | «어댑터 등록은 엔지니어 모드에서 합니다» | `AdaptersSection.tsx:32-61` |
-| 리비전 제출, 시험 요청, 활성화 | 엔지니어 | «프로파일 관리는 엔지니어 모드에서 합니다» (표의 «조작» 열도 사라짐) | `ProfilesSection.tsx:56,90-111,119-126` |
-| 바인딩, 명칭 등록 기록 | 엔지니어 | 문장 없이 폼과 버튼만 사라짐 | `CommissioningCards.tsx:49,79-83` |
-| 퇴역, 복귀 | 운영자 | «퇴역과 복귀는 운영자 모드에서 합니다» | `RobotDetail.tsx:82-104` |
-| 현장 설정 변경 | 엔지니어 | «현장 설정 변경은 엔지니어 모드에서 합니다» | `SiteArea.tsx:153-163` |
-| 장애 주입 | 엔지니어 | «장애 주입은 엔지니어 모드에서 합니다» | `FaultPanel.tsx:60-61` |
-| 임무 편집(템플릿, 저장, 검증, 모의 실행, 활성화, 초안 열기) | 엔지니어 | «임무 편집은 엔지니어 모드에서 합니다» | `MissionsArea.tsx:196-255,305,326` |
-| 작업 지시 내기 | 운영자 (폼 입력은 두 모드 다 보임) | «작업 지시는 운영자 모드에서 냅니다» | `JobOrderFormView.tsx:50-56` |
-| 운영자 판단(완료 확인, 재작업) | 운영자 | «보류 중입니다. 운영자 판단은 운영자 모드에서 합니다» | `IncidentSection.tsx:457` |
-| 셀 대역 신호 켜기·끄기 | 두 모드 | 없음 | `CellBand.tsx:15` |
-| 송신 기록의 작업 지시 고르기 | 두 모드 | 없음 | `JobResponseLog.tsx:30` |
+실패해도 직전 값을 지우지 않습니다.
 
-![로봇·연결 영역, 운영자 모드의 빈 상태](img/02-robots-overview-empty-operator.png)
+다섯 조회를 쓰는 영역의 옛 꼴은 그대로 유지합니다.
+해당 영역은 다음과 같습니다.
+- 로봇
+- 현장 설정
+- 이력
+- 장애 주입
 
-그림 02. 운영자 모드. 선언·등록 폼 자리에 모드 문장이 섭니다. 실제 스택.
+못 읽음은 «모름: 기체 목록을 아직 읽지 못했습니다» 처럼 «모름:» 으로 시작합니다.
+직전 값은 `p.stale` 문장 «직전 값입니다 (${asOf} 기준)» 또는 «직전 값입니다» 로 표시합니다.
+`.stale` 은 주황 왼쪽 선과 연한 노랑 배경입니다.
 
-### 2.4 전체 상태 띠
+운영 영역의 실행 호스트 읽기에서 못 읽음은 «모름: 실행 목록을 아직 읽지 못했습니다» 입니다.
+직전 값은 «직전 값입니다. 실행 호스트 불통: ${error}» 입니다.
 
-머리 바로 아래 한 자리입니다(`RegistryBanner.tsx`). 기체 행마다 되풀이하지 않습니다. 모양은 `.banner`(padding 8px, margin 8px 0, 테두리 1px `#999`)이고, 모름이면 테두리만 `#b23a1d` 로 바뀝니다(`styles.css:4-5`). 배경색과 아이콘은 없습니다.
+새 영역에서 생긴 꼴은 다음과 같습니다.
+해당 새 영역은 다음과 같습니다.
+- 운영 개요
+- 작업 요청
+- 공유 자원
+- 임무 관리
+- 검증 도구
 
-| 조건 | 요소 | 글자 | 근거 |
-|---|---|---|---|
-| 운영 서비스 불통 | `div.banner.unknown`, `role="alert"` | «모름: 운영 서비스에 닿지 않습니다 (${opsError})» | `RegistryBanner.tsx:10-15` |
-| 첫 읽기 전 | `div.banner` | «확인 중» | `:17` |
-| `OK` | `div.banner.ok` (`ok` 에는 규칙 없음) | «registry 응답 확인 ${checkedAt}» | `:20` |
-| `REGISTRY_SILENT` | `div.banner.unknown`, `role="alert"` | «모름: registry 가 답하지 않습니다. 해결 담당 엔지니어, registry 상태 확인. 확인 시각 ${checkedAt}» | `:21-27` |
-| `REGISTRY_UNAUTHORIZED` | `div.banner.unknown`, `role="alert"` | «모름: registry 가 운영자 토큰을 거절합니다. 해결 담당 엔지니어, 운영자 토큰 설정 확인. 확인 시각 ${checkedAt}» (옛 이름 «거절», §6) | `:28-34` |
-
-![registry 불통](img/64-robots-overview-registry-down.png)
-
-그림 64. registry 불통. 띠가 빨간 테두리의 모름이 되고, 기체, 어댑터, 프로파일 목록마다 회색 «직전 값입니다 (… 기준)» 이 섭니다. 실제 스택(런처를 끔).
-
-![운영 서비스 불통](img/63-robots-overview-ops-unreachable-mock.png)
-
-그림 63. 운영 서비스 불통. 대역 응답으로 그린 화면(`/api/**` 요청을 끊음).
-
-### 2.5 읽기 주기
-
-| 무엇 | 주기와 시점 | 근거 |
-|---|---|---|
-| 다섯 조회 `GET /api/robots`, `/api/adapters`, `/api/profiles`, `/api/operations`, `/api/site-settings` | `Promise.all` 로 묶어 5초(`POLL_MS`)마다, 모드나 사용자가 바뀔 때, 조작이 끝날 때. 하나라도 실패하면 다섯 다 직전 값을 두고 `opsError` 를 세움 | `App.tsx:30-62`, `poll.ts:2` |
-| 임무 개요 `GET /api/missions/PrepareSequencedRack` | «임무·정책» 영역이 열려 있을 때만 5초마다, 조작 뒤 | `MissionsArea.tsx:59-76,122` |
-| 템플릿 `GET /api/missions/templates/PrepareSequencedRack` | 한 번 읽으면 끝. 못 읽으면 5초마다 다시 | `MissionsArea.tsx:78-93` |
-| 실행, 셀 대역, 인시던트 `GET /api/executions`, `/api/cell`, `/api/incidents` | «운영» 영역이 열려 있을 때만 5초마다. 셋을 묶지 않아 따로 실패함 | `OperationsArea.tsx:75-119` |
-| 송신 기록 `GET /api/job-responses[?jobOrderId=]` | 5초마다, 고른 작업 지시가 바뀔 때 | `OperationsArea.tsx:122-134`, `api.ts:1101-1105` |
-| 배정 가능 `POST /api/job-orders/eligibility` | 폼이 다 찼을 때만. 폼이 300ms(`ELIGIBILITY_DEBOUNCE_MS`) 멈추면 한 번, 그 뒤 5초마다 | `OperationsArea.tsx:146-170`, `poll.ts:5` |
-| 고른 인시던트 상세 `GET /api/incidents/{id}?instanceId=` | 운영 영역의 다시 읽기마다 | `IncidentSection.tsx:66-86`, `api.ts:969-979` |
-| 신호 조작과 운영자 판단 뒤 | 곧바로 한 번, 500ms(`SIGNAL_SETTLE_MS`) 뒤 한 번 더 | `OperationsArea.tsx:195-205`, `poll.ts:11` |
-
-운영 영역이 여는 실행 호스트 읽기는 다섯 조회와 따로 돕니다. 실행 호스트가 멈춰도 기체 목록 같은 다섯 조회는 직전 값이 되지 않습니다(`OperationsArea.tsx:46-57`).
-
-### 2.6 값의 세 상태: 알 수 있음, 없음, 모름
-
-화면은 «읽었고 비었음» 과 «못 읽음» 을 다른 글자로 보입니다. 새 디자인에서도 이 셋은 서로 달라 보여야 합니다.
-
-| 상태 | 글자 꼴 | 예와 근거 |
-|---|---|---|
-| 한 번도 못 읽음 | «모름: …» | «모름: 기체 목록을 아직 읽지 못했습니다» `RobotsArea.tsx:115`. 첫 읽기를 기다리는 동안도 같은 글자(별도 로딩 표시 없음) |
-| 읽었고 비었음 | «… 없습니다» | «선언된 기체가 없습니다» `RobotsArea.tsx:124` |
-| 읽은 적은 있고 지금 못 읽음 | «직전 값입니다 …», 항상 `<p className="stale">`(회색 `#6f6f6f`) | 아래 표 |
-
-직전 값 문장의 꼴은 넷입니다.
-
-| 꼴 | 쓰는 곳 |
+| 상태 | 예 |
 |---|---|
-| «직전 값입니다 (${asOf} 기준)» | 기체 목록 `RobotsArea.tsx:122`, 어댑터 `AdaptersSection.tsx:77`, 프로파일 `ProfilesSection.tsx:37` |
-| «직전 값입니다» | 이력 `HistoryArea.tsx:14`, 현장 설정 `SiteArea.tsx:127` |
-| «직전 값입니다. 실행 호스트 불통: ${error}» | 임무 `MissionsArea.tsx:180`, 실행 `ExecutionList.tsx:29`, 셀 대역 `CellBand.tsx:26`, 인시던트 `IncidentSection.tsx:114,160`, 송신 기록 `JobResponseLog.tsx:54` |
-| «직전 값입니다 (${error})», «폼이 바뀌어 다시 판정하는 중입니다» | 배정 가능 `EligibilityTable.tsx:39-40` |
+| 한 번도 못 읽음(«모름:» 접두 없음) | «작업 요청 목록을 아직 읽지 못했습니다.», «호출 계약 목록을 아직 읽지 못했습니다.», «자원 요구를 아직 읽지 못했습니다.», «배포 이력을 아직 읽지 못했습니다.», «최근 작업 요청 모름», «수집 상태 모름», «실행 상태 모름 · 관측을 기다립니다.», «판단 대기 상태 모름», 지표 카드 값 «모름» |
+| 읽는 중 | «지원 임무 계약을 조회하고 있습니다.», «필수 자원 확인 중», 버튼 글자 «검증 중…», «등록 중…», «비교 조회 중» |
+| 읽었고 비었음 | «저장된 작업 요청이 없습니다.», «조건에 맞는 작업 요청이 없습니다. 이전 직접 제출 API의 작업은 별도 실행 이력에서 확인합니다.», «등록된 공유 스테이션이 없습니다. 엔지니어 모드에서 현장 신호를 연결하세요.», «등록된 임무 자원 요구가 없습니다.», «저장된 호출 계약이 없습니다. 입력 매핑을 검증하고 첫 버전을 만들어 보세요.» |
+| 직전 값(alert 안 꼬리) | « · 직전 조회 값입니다.», « · 상세는 직전 값입니다.», « · 아래는 직전 값입니다.», « · 표는 직전 값입니다. 조작 전 다시 조회하세요.», « · 목록은 직전 검색 값입니다.» |
+| 직전 값(카드·접기) | 지표 카드 작은 글자 «직전 값 · 재확인 필요», 로봇 도입 준비 «직전 관측입니다. 최신 조회 전에는 현재 준비 완료로 판단하지 마세요.», 작업 요청 상세 접기 «마지막으로 확인한 실행 · 직전 관측» |
+| 칸 하나를 모름 | «확인 안 됨»(작업 요청 상세, 비교 표, 저장 결과 요약), «모름 · 호스트 조회 실패», «현재 실행 확인 안 됨», 옛 영역의 칸 값 «모름» |
 
-판정: 기체, 어댑터, 프로파일은 `asOf !== checkedAt` 이거나 `opsError` 가 있으면 직전 값입니다(`RobotsArea.tsx:119`, `AdaptersSection.tsx:68`, `ProfilesSection.tsx:36`). 토큰 거부(`REGISTRY_UNAUTHORIZED`)여도 새로 읽은 기체 목록은 직전 값이 아닙니다(`RobotsArea.test:205-210`).
+지금 화면에는 다음 표현이 함께 쓰입니다.
+- «모름: …»
+- 접두 없는 «… 아직 읽지 못했습니다.»
+- «… 모름»
+- «확인 안 됨»
 
-칸 하나의 값이 «모름» 인 곳: 배정 가능 표의 칸(`EligibilityTable.tsx:63-65,80,86`), 인시던트의 현장 설정 버전과 시간값(`IncidentSection.tsx:35-36`), 스킬 적합 `UNKNOWN`(`labels.ts:135`), 실행 호스트 반영(`SiteArea.tsx:207`).
+직전 값도 회색 `p.stale` 한 꼴이 아니라 alert 꼬리와 카드 글자로 나뉩니다.
 
-![실행 호스트 불통의 운영 영역](img/60-operations-overview-host-down-mock.png)
+### 2.6 결과 알림과 멱등 재확인
 
-그림 60. 실행 호스트 불통. 구역마다 회색 «직전 값입니다. 실행 호스트 불통: …» 이 서고 앞서 읽은 표가 남습니다. 대역 응답으로 그린 화면.
+결과 알림은 대개 `role="status"` 이고 «${what}: ${결과}» 꼴입니다.
+구역마다 마지막 하나만 들고 있습니다.
+결과 알림에는 다음 세 가지가 없습니다.
+- 닫기 버튼
+- 시각
+- 쌓임
 
-![실행 호스트 불통에 임무 영역을 처음 열었을 때](img/61-missions-overview-host-down-mock.png)
+성공과 실패는 색이나 아이콘이 아니라 글자로 가릅니다.
 
-그림 61. 읽은 적이 없으면 직전 값이 아니라 «모름: …» 입니다. 대역 응답으로 그린 화면.
+접근 이름이 있는 결과 알림은 다음과 같습니다.
 
-### 2.7 결과 알림
-
-모든 결과 알림은 `role="status"` 이고 «${what}: ${결과}» 꼴입니다. 각 구역은 마지막 하나만 들고 있고(`last` 상태), 닫기 버튼, 시각, 쌓임은 없습니다. 성공과 실패는 같은 모양의 문단이며 색이나 아이콘의 차이가 없습니다.
-
-| 컴포넌트 | 쓰는 곳 | 접근 이름 | 근거 |
-|---|---|---|---|
-| `OutcomeNotice` | registry 조작(로봇·연결 영역 상세 위), 현장 설정 | 없음 | `OutcomeNotice.tsx` |
-| `JobOrderNotice` | 작업 지시 제출 | «제출 결과» | `JobOrderNotice.tsx:19,29,39,51` |
-| `MissionNotice` | 임무 초안 저장, 검증, 모의 실행, 활성화 | «임무 조작 결과» | `MissionNotice.tsx:30` |
-| `SignalNotice` | 셀 대역 신호 켜기·끄기 | «신호 조작 결과» | `SignalNotice.tsx:16` |
-| `FaultNotice` | 장애 주입 | «장애 주입 결과» | `FaultPanel.tsx:151-157` |
-| `DecisionNotice` | 운영자 판단 | «판단 결과» | `IncidentSection.tsx:494-500` |
-
-`OutcomeNotice` 의 변형(`OutcomeNotice.tsx`):
-
-| 경우 | 글자 | 행 |
+| 컴포넌트 | 쓰는 곳 | 접근 이름 |
 |---|---|---|
-| 운영 서비스 사전 거부(400·403) | «${what}: 보내지 않음. ${detail}» | 16-22 |
-| 운영 서비스 비정상·끊김 | «${what}: 결과 모름(${cause}). 목록을 다시 읽어 확인하십시오» | 23-29 |
-| 성공 | «${what}: 반영됨» | 31 |
-| 토큰 거부 | «${what}: registry 가 운영자 토큰을 거절했습니다. 상단의 전체 상태를 보십시오» (옛 이름) | 32-34 |
-| registry 거부 | «${what}: 거절됨» (옛 이름) + `FindingCard`(바로 가기 포함) | 35-42 |
-| 응답 없음, 다시 읽어 반영 | «${what}: 응답은 없었으나 다시 읽어 보니 반영됨» | 44-45 |
-| 응답 없음, 반영 안 됨 | «${what}: 응답 없음. 다시 읽어 보니 반영 안 됨. 다시 하려면 새로 요청하십시오» | 46-47 |
-| 응답 없음, 다시 읽기도 실패 | «${what}: 반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 목록에서 확인하십시오» | 48-53 |
+| `OutcomeNotice` | 로봇 영역의 registry 조작 전부(도구 줄 아래 한 자리), 현장 설정 | 없음 |
+| `JobOrderNotice` | 운영 › 작업 지시의 수동 작업 요청 | «제출 결과» |
+| `MissionNotice` | 임무 초안 저장, 검증, 모의 실행, 활성화 | «임무 조작 결과» |
+| `SignalNotice` | 셀 대역 신호 켜기·끄기 | «신호 조작 결과» |
+| `FaultPanel.tsx` 의 결과 | 장애 주입 | «장애 주입 결과» |
+| `IncidentSection.tsx` 의 결과 | 운영자 판단 | «판단 결과» |
+| `MissionInterfaces.tsx` | 호출 계약 초안 저장·공개·공개 중지 | «호출 계약 처리 결과» |
+| `MissionInterfaces.tsx` | 호출 계약으로 작업 요청 | «계약 호출 결과» |
 
-`cause` 의 기본값은 «운영 서비스 응답 ${status}» 입니다(`api.ts:367`). 사전 거부 본문에 detail 이 없으면 «운영 서비스가 요청을 거절했습니다(HTTP ${status})» 를 씁니다(`api.ts:364`, 옛 이름). 거부 이름을 풀어 쓰는 공용 함수는 `kindLabel`(모르는 이름은 그대로), `rejectionLabel`(null 이면 «이유 없음»), `rejectionText(who, r)` 입니다. 마지막 것은 «${who}(${풀이})» 에 detail 이 있으면 «. ${detail}» 을 붙입니다(`labels.ts:122-129`).
+이름 없는 status 는 다음과 같습니다.
+- 재평가(`RequestRecovery`)
+- 현장 확인(`RequestReview`)
+- 스테이션 작업 근거(`StationWorkspace`)
+- 비교 결과(`ManufacturingValidation`)
 
-다른 알림 컴포넌트의 변형은 그 구역 절(§3)에 있습니다. 결과 갈래는 컴포넌트마다 같은 틀입니다: 성공, 보내지 않음(사전 거부), 상대가 거부함, 결과 모름, 응답 없음 세 갈래(다시 읽어 반영, 반영 안 됨, 다시 읽지도 못함).
+#### 2.6.1 registry 조작 결과 OutcomeNotice
 
-### 2.8 막힘·거부 카드 `FindingCard`
+`OutcomeNotice` 의 결과 갈래는 다음과 같습니다.
 
-막힘(기체 상세)과 거부(조작 결과)를 같은 카드로 보입니다. `<dl className="finding">` 이고 왼쪽에 3px `#b23a1d` 선이 있으며, dt 는 굵기 700 입니다(`styles.css:9-10`).
+| 경우 | 글자 |
+|---|---|
+| 운영 서비스 사전 거부(400·403) | «${what}: 보내지 않음. ${detail}» |
+| 운영 서비스 비정상·끊김 | «${what}: 결과 모름(${cause}). 목록을 다시 읽어 확인하십시오» |
+| 성공 | «${what}: 반영됨» |
+| registry 토큰 거부 | «${what}: registry 가 운영자 토큰을 거부했습니다. 상단의 전체 상태를 보십시오» |
+| registry 거부 | «${what}: 거부됨» 과 그 아래 `FindingCard`(§2.7) |
+| 응답 없음, 다시 읽어 반영 | «${what}: 응답은 없었으나 다시 읽어 보니 반영됨» |
+| 응답 없음, 반영 안 됨 | «${what}: 응답 없음. 다시 읽어 보니 반영 안 됨. 다시 하려면 새로 요청하십시오» |
+| 응답 없음, 다시 읽기도 실패 | «${what}: 반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 목록에서 확인하십시오» |
 
-| dt | dd | 행 |
-|---|---|---|
-| «종류» | `kindLabel(kind)` | 17-18 |
-| «관측값과 기대값» | «${observed} / 기대: ${expected}» | 19-22 |
-| «마지막 확인» | `checkedAt` 그대로 | 23-24 |
-| «근거 버전» | «현장 설정 버전 ${n}» 또는 «해당 없음» | 25-26 |
-| «해결 담당» | «${담당}(화면 안\|화면 밖): ${action}» | 27-30 |
-| «바로 가기» (대상이 있고 `onSelect` 를 넘겼을 때만) | `button.link` «${target} 상세». 누르면 그 기체 상세를 엶 | 31-40 |
+분류는 `api.ts` 의 `deliver` 가 맡습니다.
+2xx 는 결과입니다.
+400·403 은 사전 거부입니다. 본문에 detail 이 없으면 «운영 서비스가 요청을 거부했습니다(HTTP ${status})» 를 씁니다.
+그 밖은 결과 모름이며 `cause` 기본값은 «운영 서비스 응답 ${status}» 입니다.
 
-담당 이름(`labels.ts:22-27`): SITE «현장», OPERATOR «운영자», ENGINEER «엔지니어», NONE «없음». 기체 상세 안의 막힘 카드는 `onSelect` 를 넘기지 않으므로 «바로 가기» 가 없습니다(`RobotDetail.tsx:71`). 임무 조작의 거부 카드에도 바로 가기가 없습니다(`MissionNotice.tsx:163-171`).
+다른 알림 컴포넌트도 같은 틀입니다.
+해당 틀의 갈래는 다음과 같습니다.
+- 성공
+- 보내지 않음(사전 거부)
+- 상대가 거부함
+- 결과 모름
+- 응답 없음 세 갈래(다시 읽어 반영, 반영 안 됨, 다시 읽지도 못함)
 
-![빌드 선언 거부와 카드](img/09-robots-notice-build-rejected.png)
+#### 2.6.2 호출 계약·공유 자원 쓰기
 
-그림 09. 위는 조작 결과의 거부 카드, 아래는 기체 상세의 막힘 카드. 같은 모양입니다. 실제 스택.
+다음 대상의 쓰기는 `api.ts` 의 `interfaceRequest` 를 씁니다.
+- 호출 계약
+- 공유 스테이션
+- 임무 필수 자원
 
-### 2.9 거부·막힘 이름과 화면 글자
+실패하면 예외(`InterfaceApiError`)를 던집니다.
+메시지는 서버 detail 또는 «호출 계약 요청 실패 (HTTP ${status})» 입니다.
+2xx 인데 본문이 없으면 «응답 내용을 확인할 수 없습니다. 목록과 실행 이력을 다시 조회하세요.» 입니다.
 
-`labels.ts:30-97` 의 `KIND_LABEL` 입니다. 표에 없는 이름은 값 그대로 보입니다.
+화면은 이 메시지를 알림 컴포넌트 없이 `p[role=alert]` 에 그대로 보입니다.
+구역에 따라 «· 응답 불명 시 …» 꼴의 꼬리를 붙입니다.
+
+#### 2.6.3 멱등 재확인과 보관 요청
+
+작업 요청을 만드는 조작은 요청 id(UUID)를 보내기 전에 sessionStorage 에 적습니다.
+응답이 불명이면 새 id 로 다시 보내지 않고 같은 id 로만 다시 확인합니다.
+새로고침해도 보관 요청은 복원됩니다.
+
+조작별 키는 다음과 같습니다.
+
+| 조작 | 키 |
+|---|---|
+| 수동 작업 요청(운영 › 작업 지시) | `picasso.manual-request.v1.${mode}.${user}` (`manualRequests.ts`) |
+| 호출 계약으로 작업 요청 | `picasso.interface-request.v1.${mode}.${user}.${interfaceId}/${version}` |
+| 공유 스테이션 작업 요청 | `picasso.station/${mode}/${user}` |
+| 미배정 재평가 | `picasso.recovery.v1.${user}.${receiptId}` |
+| 현장 확인 기록 | `picasso.review.v1.${user}.${receiptId}` |
+| 새 임무 등록 | `picasso.mission-create.v1.${user}` |
+
+보관값을 못 읽으면 alert 를 세우고 새 전송을 막습니다.
+그 예시는 다음과 같습니다.
+- «보관된 수동 요청을 읽지 못했습니다. 저장소를 지우고 재제출하기 전에 실행 이력을 확인하세요»
+- «보관된 재평가 요청을 읽지 못했습니다. 실행·재평가 이력을 확인하세요.»
+- «보관된 확인 기록을 읽지 못했습니다. 이력을 확인하세요.»
+- «보관된 임무 등록 입력을 읽지 못했습니다. 임무 목록을 확인하세요.»
+
+보관에 실패하면 보내지 않습니다.
+문구는 «요청 보관 실패로 전송하지 않았습니다.» 입니다.
+
+#### 2.6.4 관문: 체크박스와 사유
+
+확인 대화(`confirm`)는 없습니다.
+
+체크박스 관문 셋은 다음과 같습니다.
+- «이 입력으로 실제 작업을 지시합니다»(호출 계약으로 작업 요청)
+- «준비 조건이 충족되면 실제 로봇 작업을 지시합니다»(공유 스테이션 작업 요청)
+- «현장 작업과 자원 해제 가능 여부를 확인했습니다»(현장 확인 후 자원 해제)
+
+사유 입력 관문은 비면 보내지 않거나 버튼을 비활성화합니다.
+해당 관문은 다음과 같습니다.
+- 퇴역
+- 현장 설정 변경
+- 장애 주입
+- 임무 활성화
+- 운영자 판단
+- 호출 계약 공개 변경
+- 실행 배포
+- 임무 필수 자원 등록
+- 미배정 재평가
+- 현장 확인 기록
+- 스테이션 작업의 운영자 판단
+
+### 2.7 거부·막힘 카드와 상태 글자
+
+#### 2.7.1 FindingCard
+
+`FindingCard.tsx` 는 막힘(기체 상세)과 거부(조작 결과)를 같은 카드로 보입니다. `<dl className="finding">` 을 씁니다.
+
+| dt | dd |
+|---|---|
+| «종류» | `kindLabel(kind)`(이름 표를 따르며, 표에 없으면 값 그대로 보입니다) |
+| «관측값과 기대값» | «${observed} / 기대: ${expected}» |
+| «마지막 확인» | `checkedAt` 그대로 |
+| «근거 버전» | «현장 설정 버전 ${n}» 또는 «해당 없음» |
+| «해결 담당» | 담당 이름 뒤 괄호에 «화면 안» 또는 «화면 밖», 그 뒤에 «: ${action}» |
+| «바로 가기»(대상이 있고 상위가 `onSelect` 를 넘길 때만) | 버튼 «${target} 상세». 누르면 로봇 영역의 기체 탭에서 그 기체 상세를 엽니다. |
+
+`labels.ts` 의 `OWNER_LABEL` 에 정의된 담당 이름은 다음과 같습니다.
+- SITE: «현장»
+- OPERATOR: «운영자»
+- ENGINEER: «엔지니어»
+- NONE: «없음»
+
+기체 상세 안의 막힘 카드와 임무 조작의 거부 카드에는 «바로 가기» 가 없습니다.
+
+#### 2.7.2 거부·막힘 이름
+
+`labels.ts` 의 `KIND_LABEL` 에 정의된 이름과 글자 대응은 다음과 같습니다.
 
 | 이름 | 글자 | 이름 | 글자 |
 |---|---|---|---|
-| AWAITING_FIRST_REPORT | 첫 보고 대기 | UNKNOWN_WORK_MASTER | 받지 않는 임무 |
-| REPORT_STALE | 보고 오래됨 | UNIT_ID_CONFLICT | 단위 id 겹침 |
-| REPORTING_AFTER_RETIREMENT | 퇴역 뒤 보고 | NO_ELIGIBLE_ROBOT | 배정 가능한 기체 없음 |
-| UNREGISTERED_ROW | 출처 없는 행 | MODE_NOT_ALLOWED | 이 모드에서 할 수 없는 조작 |
-| BAD_REQUEST | 본문 오류 | ACTOR_REQUIRED | 행위자 없음 |
-| WRONG_DOOR | 이미 다른 문으로 들어온 기체 | UNREADABLE | 읽을 수 없는 정의 |
-| RETIRED_ALREADY | 이미 퇴역한 기체 | DUPLICATE_NODE_ID | 노드 id 겹침 |
-| RETIRE_BAD_REQUEST | 퇴역 요청 오류 | DEADLINE_INVALID | 대기 기한 오류 |
-| UNKNOWN_ROBOT | 모르는 기체 | SIGNAL_NOT_IN_SPEC | 신호 사양에 없는 신호 |
-| ADAPTER_BAD_REQUEST | 제품·빌드 형식 오류 | SIGNAL_VALUE_INVALID | 신호 종류에 맞지 않는 값 |
-| UNKNOWN_ADAPTER | 없는 제품 | FLOOR_UNOWNED | 바닥 소유 없음 |
-| VERSION_CONFLICT | 같은 버전에 다른 계약값 | SKILL_NOT_IN_CONTRACT | 계약에 없는 스킬 |
-| INSTANCE_BAD_REQUEST | 인스턴스 본문 오류 | SKILL_NOT_ON_SITE | 현장에 없는 스킬 |
-| UNBOUND | 바인딩 없음 | SAFETY_SIGNAL_WAIT | 안전 신호 대기 |
-| SITE_NAMES_UNREGISTERED | 명칭 기록 없음 | MISSION_BAD_REQUEST | 임무 요청 오류 |
-| SITE_NAMES_UNANSWERED | 기체가 명칭에 답하지 않음 | REASON_REQUIRED | 사유 없음 |
-| SITE_NAMES_CONTRADICTED | 기체가 아는 명칭 없음 | DRAFT_NOT_FOUND | 없는 초안 |
-| PROFILE_UNREADABLE | 읽을 수 없는 문서 | REQUEST_ID_REUSED | 요청 id 재사용 |
-| REVISION_NOT_MONOTONIC | 리비전 번호가 오르지 않음 | HOST_SILENT | 실행 호스트 불통 |
-| UNKNOWN_REVISION | 없는 리비전 | SIGNAL_BAD_REQUEST | 신호 값 형식 오류 |
-| REVISION_NOT_TESTABLE | 시험할 수 없는 상태 | UNKNOWN_SIGNAL | 모르는 신호 |
-| ACTIVATION_REFUSED | 활성화 조건 미달 | SAFETY_SIGNAL_READ_ONLY | 안전 신호는 쓸 수 없음 |
-| UNKNOWN_BUILD | 없는 빌드 | NO_RUNNING_TASK | 진행 중 태스크 없음 |
-| REVISION_NOT_ACTIVE | 활성 리비전이 아님 | UNSUPPORTED_FAULT | 받지 않는 장애 종류 |
-| ROBOT_RETIRED | 퇴역한 기체 | FAULT_REFUSED | mimic 엔진이 강제를 거부함 |
-| CONTRACT_TOO_OLD | 빌드의 계약이 낮음 | UNSUPPORTED_MEDIA_TYPE | JSON 이 아닌 본문 |
-| NO_ACTIVE_BINDING | 활성 바인딩 없음 | FAULT_BAD_REQUEST | 장애 주입 본문 오류 |
-| NOTHING_TO_REGISTER | 등록할 명칭 없음 | RESOLVE_BAD_REQUEST | 판단 본문 오류 |
-| UNCLASSIFIED | 분류되지 않은 거부 | INSTANCE_MISMATCH | 실행 호스트가 재기동해 인스턴스가 다름 |
-| SETTINGS_VERSION_CONFLICT | 현장 설정 버전 충돌 | JOB_RESPONSE_BAD_REQUEST | 송신 기록 요청 오류 |
-| JOB_ORDER_BAD_REQUEST | 작업 지시 폼 오류 | | |
+| AWAITING_FIRST_REPORT | «첫 보고 대기» | REPORT_STALE | «보고 오래됨» |
+| REPORTING_AFTER_RETIREMENT | «퇴역 뒤 보고» | UNREGISTERED_ROW | «출처 없는 행» |
+| BAD_REQUEST | «본문 오류» | WRONG_DOOR | «이미 다른 문으로 들어온 기체» |
+| RETIRED_ALREADY | «이미 퇴역한 기체» | RETIRE_BAD_REQUEST | «퇴역 요청 오류» |
+| UNKNOWN_ROBOT | «모르는 기체» | ADAPTER_BAD_REQUEST | «제품·빌드 형식 오류» |
+| UNKNOWN_ADAPTER | «없는 제품» | VERSION_CONFLICT | «같은 버전에 다른 계약값» |
+| INSTANCE_BAD_REQUEST | «인스턴스 본문 오류» | UNBOUND | «바인딩 없음» |
+| SITE_NAMES_UNREGISTERED | «명칭 기록 없음» | SITE_NAMES_UNANSWERED | «기체가 명칭에 답하지 않음» |
+| SITE_NAMES_CONTRADICTED | «기체가 아는 명칭 없음» | PROFILE_UNREADABLE | «읽을 수 없는 문서» |
+| REVISION_NOT_MONOTONIC | «리비전 번호가 오르지 않음» | UNKNOWN_REVISION | «없는 리비전» |
+| REVISION_NOT_TESTABLE | «시험할 수 없는 상태» | ACTIVATION_REFUSED | «활성화 조건 미달» |
+| UNKNOWN_BUILD | «없는 빌드» | REVISION_NOT_ACTIVE | «활성 리비전이 아님» |
+| ROBOT_RETIRED | «퇴역한 기체» | CONTRACT_TOO_OLD | «빌드의 계약이 낮음» |
+| NO_ACTIVE_BINDING | «활성 바인딩 없음» | NOTHING_TO_REGISTER | «등록할 명칭 없음» |
+| UNCLASSIFIED | «분류되지 않은 거부» | SETTINGS_VERSION_CONFLICT | «현장 설정 버전 충돌» |
+| JOB_ORDER_BAD_REQUEST | «작업 지시 폼 오류» | UNKNOWN_WORK_MASTER | «받지 않는 임무» |
+| UNIT_ID_CONFLICT | «단위 id 겹침» | NO_ELIGIBLE_ROBOT | «배정 가능한 기체 없음» |
+| MODE_NOT_ALLOWED | «이 모드에서 할 수 없는 조작» | ACTOR_REQUIRED | «행위자 없음» |
+| UNREADABLE | «읽을 수 없는 정의» | DUPLICATE_NODE_ID | «노드 id 겹침» |
+| DEADLINE_INVALID | «대기 기한 오류» | SIGNAL_NOT_IN_SPEC | «신호 사양에 없는 신호» |
+| SIGNAL_VALUE_INVALID | «신호 종류에 맞지 않는 값» | FLOOR_UNOWNED | «바닥 소유 없음» |
+| SKILL_NOT_IN_CONTRACT | «계약에 없는 스킬» | SKILL_NOT_ON_SITE | «현장에 없는 스킬» |
+| SAFETY_SIGNAL_WAIT | «안전 신호 대기» | MISSION_BAD_REQUEST | «임무 요청 오류» |
+| REASON_REQUIRED | «사유 없음» | DRAFT_NOT_FOUND | «없는 초안» |
+| REQUEST_ID_REUSED | «요청 id 재사용» | HOST_SILENT | «실행 호스트 불통» |
+| SIGNAL_BAD_REQUEST | «신호 값 형식 오류» | UNKNOWN_SIGNAL | «모르는 신호» |
+| SAFETY_SIGNAL_READ_ONLY | «안전 신호는 쓸 수 없음» | NO_RUNNING_TASK | «진행 중 태스크 없음» |
+| UNSUPPORTED_FAULT | «받지 않는 장애 종류» | FAULT_REFUSED | «mimic 엔진이 강제를 거부함» |
+| UNSUPPORTED_MEDIA_TYPE | «JSON 이 아닌 본문» | FAULT_BAD_REQUEST | «장애 주입 본문 오류» |
+| RESOLVE_BAD_REQUEST | «판단 본문 오류» | INSTANCE_MISMATCH | «실행 호스트가 재기동해 인스턴스가 다름» |
+| JOB_RESPONSE_BAD_REQUEST | «송신 기록 요청 오류» | | |
 
-그 밖의 열거형 글자(`labels.ts`):
+풀이 함수 동작은 다음과 같습니다.
+- `kindLabel`: 모르는 이름은 그대로 둡니다.
+- `rejectionLabel`: null 이면 «이유 없음» 입니다.
+- `rejectionText(who, r)`: «${who}(${풀이})» 뒤에 detail 이 있으면 «. ${detail}» 을 붙입니다.
 
-| 표 | 값 → 글자 | 행 |
+#### 2.7.3 그 밖의 상태 글자
+
+| 표 | 값 → 글자 | 위치 |
 |---|---|---|
-| `CONNECTION_LABEL` | FRESH «신선», STALE «오래됨», NO_REPORT «보고 없음» | 16-20 |
-| `OWNER_LABEL` | SITE «현장», OPERATOR «운영자», ENGINEER «엔지니어», NONE «없음» | 22-27 |
-| `COMMISSIONING_LABEL` | COMPLETE «완료», INCOMPLETE «미완», RETIRED «퇴역» | 100-104 |
-| `SOFTWARE_LABEL` | MATCH «일치», MISMATCH «불일치», UNREPORTED «보고 없음» | 107-111 |
-| `TEST_REQUEST_LABEL` | NONE «요청 없음», WAITING «대기», RUNNING «실행 중», EXPIRED «만료», DONE «끝남» | 114-120 |
-| `SKILL_FIT_LABEL` | FIT «적합», MISSING «모자람», UNKNOWN «모름» | 132-136 |
-| `SUBMIT_RESULT_LABEL` | ACCEPTED «배정됨», IDEMPOTENT «같은 작업 지시의 기존 실행», REJECTED «거부됨», UNASSIGNED «미배정» | 139-144 |
-| `MOCK_RUN_FAILURE_LABEL` | DEFINITION «정의(같은 신호에 다른 기대 값)», SUBMISSION_REJECTED «표본 작업 지시 거부», NOT_SETTLED «정착하지 않음», WALL_CLOCK_LIMIT «실제 시간 상한 초과», EXECUTION_FAILED «실행 실패» | 147-153 |
-| `mockRunVerdict` | «통과», «실패», «실패(${하위 범주})» | 156-160 |
-| `TEMPLATE_LABEL` | DATA_V1 «데이터 정의 템플릿», ARRIVAL_WAIT «랙 도착 대기 템플릿», ARRIVAL_WAIT_HOLD «운영자 보류 대기 템플릿» | 163-167 |
-| `FAULT_KIND_LABEL` | SKILL_EXECUTION_FAILED «스킬 실패», CONNECTION «연결 상태» | 170-173 |
-| `DISPOSITION_LABEL` | SENT «송신», RESTART_DUPLICATE «재기동 중복(송신 안 함)» | 176-179 |
-| `DECISION_LABEL` | CONFIRM_DONE «완료 확인», REWORK «재작업» (판단 버튼 글자이기도 함) | 182-185 |
+| `CONNECTION_LABEL` | FRESH «신선», STALE «오래됨», NO_REPORT «보고 없음» | `labels.ts` |
+| `COMMISSIONING_LABEL` | COMPLETE «완료», INCOMPLETE «미완», RETIRED «퇴역» | `labels.ts` |
+| `SOFTWARE_LABEL` | MATCH «일치», MISMATCH «불일치», UNREPORTED «보고 없음» | `labels.ts` |
+| `TEST_REQUEST_LABEL` | NONE «요청 없음», WAITING «대기», RUNNING «실행 중», EXPIRED «만료», DONE «끝남» | `labels.ts` |
+| `SKILL_FIT_LABEL` | FIT «적합», MISSING «모자람», UNKNOWN «모름» | `labels.ts` |
+| `SUBMIT_RESULT_LABEL` | ACCEPTED «배정됨», IDEMPOTENT «같은 작업 지시의 기존 실행», REJECTED «거부됨», UNASSIGNED «미배정» | `labels.ts` |
+| `MOCK_RUN_FAILURE_LABEL` | DEFINITION «정의(같은 신호에 다른 기대 값)», SUBMISSION_REJECTED «표본 작업 지시 거부», NOT_SETTLED «정착하지 않음», WALL_CLOCK_LIMIT «실제 시간 상한 초과», EXECUTION_FAILED «실행 실패» | `labels.ts` |
+| `mockRunVerdict` | «통과», «실패», «실패(${하위 범주})» | `labels.ts` |
+| `TEMPLATE_LABEL` | DATA_V1 «데이터 정의 템플릿», ARRIVAL_WAIT «랙 도착 대기 템플릿», ARRIVAL_WAIT_HOLD «운영자 보류 대기 템플릿» | `labels.ts` |
+| `FAULT_KIND_LABEL` | SKILL_EXECUTION_FAILED «스킬 실패», CONNECTION «연결 상태» | `labels.ts` |
+| `DISPOSITION_LABEL` | SENT «송신», RESTART_DUPLICATE «재기동 중복(송신 안 함)» | `labels.ts` |
+| `DECISION_LABEL` | CONFIRM_DONE «완료 확인», REWORK «재작업» | `labels.ts` |
+| `reviewLabels`(현장 관측) | NOT_CONFIRMED «현장 상태 미확인», NOT_STARTED «현장 미착수 확인», IN_PROGRESS «현장 진행 중 확인», COMPLETED «현장 완료 관측» | `labels.ts` |
+| 작업 요청 상태 | WAITING_RESOURCE «필수 자원·설비 대기», RECEIVED «수신됨», DISPATCHING «제출 처리 중·확인 필요», ACCEPTED «호스트 수락», REJECTED «거부», UNASSIGNED «미배정», IN_DOUBT «전송 결과 불명», 필터 전용 NEEDS_CONFIRMATION «제출 확인 필요 · 전체» | `WorkRequests.tsx` |
+| 작업 요청 출처 | `ops:manual` «운영자 수동», `ops:interface` «호출 계약 · 운영자», 그 밖은 출처 식별자 그대로 | `WorkRequests.tsx` |
+| 스테이션 작업 상태 | QUEUED «자원 대기», WAITING_READY «설비 준비 대기», DISPATCHING «제출 중», RUNNING «실행·설비 완료 대기», WAITING_ROBOT «가용 기체 대기», RETRYING «미배정 재평가 중», REWORKING «재작업 전달 중», REVIEW_REQUIRED «현장 확인 필요», COMPLETED «완료», TIMED_OUT «준비 시간 초과», REJECTED «제출 거부», MANUALLY_CLEARED «현장 확인 후 해제», CANCELLED «대기 취소» | `StationWorkspace.tsx` |
+| 호출 계약 상태 | DRAFT «초안», ENABLED «공개», DISABLED «공개 중지» | `MissionInterfaces.tsx` |
+| 결과 수집기 상태 | OK «수집 중», WAITING «첫 수집 대기», 그 밖 «수집 실패 · 확인 필요» | `CollectorStatus.tsx` |
 
-코드 값을 풀지 않고 그대로 보이는 칸도 있습니다. 원장 상태(CLAIMED, CONFIRMED, RETIRED), 적합성(UNTESTED), 리비전 상태(DRAFT, TESTED, ACTIVE 등), 스위트 결과(PASS, FAIL), 명칭 상태, 물리 상태(RUNNING, PHYSICALLY_DONE, PARTIAL 등), 단위 상태, 신호 종류(BOOLEAN, TEXT), 경로(SIGNAL, ROBOT), 실패 종류(GRASP_FAILED, SIGNAL_DEADLINE), 확인 결과(NOT_REQUESTED 등, S4a 스펙 §8.2 가 풀지 말라고 정함), 결함 유지 종류, 이력 결과(SUCCEEDED 등)입니다. 시험이 이 코드 글자에 기댑니다(§5).
+상태 글자 표는 `labels.ts` 밖 세 파일(`WorkRequests.tsx`, `StationWorkspace.tsx`, `MissionInterfaces.tsx`)에도 있습니다.
 
-### 2.10 빈 상태와 읽는 중
+풀지 않고 코드 값 그대로 보이는 칸은 다음과 같습니다.
+- 원장 상태(CLAIMED, CONFIRMED, RETIRED)
+- 적합성(UNTESTED)
+- 리비전 상태(DRAFT, TESTED, ACTIVE 등)
+- 스위트 결과(PASS, FAIL)
+- 명칭 상태
+- 물리 상태(RUNNING, PHYSICALLY_DONE, PARTIAL 등)
+- 단위 상태
+- 신호 종류(BOOLEAN, TEXT)
+- 경로(SIGNAL, ROBOT)
+- 실패 종류(GRASP_FAILED, SIGNAL_DEADLINE)
+- 확인 결과
+- 이력 결과(SUCCEEDED 등)
+- 결과 전달 상태(DELIVERED 등)
+
+운영 개요의 «최근 작업 요청» 표와 검증 도구 비교 카드는 작업 요청 상태와 출처도 코드 값 그대로 보입니다(작업 요청 목록은 글자로 풉니다). 시험이 이 코드 글자에 기댑니다.
+
+### 2.8 빈 상태와 읽는 중
 
 | 관례 | 사실 |
 |---|---|
-| 빈 상태 | 표 대신 문장 하나(«… 없습니다»). 일러스트, 아이콘, 행동 유도 버튼 없음 |
-| 읽는 중 | 따로 없음. «모름: … 아직 읽지 못했습니다» 가 첫 읽기 대기와 실패를 함께 나타냄. 예외 셋: 띠 «확인 중»(`RegistryBanner.tsx:17`), 배정 가능 «판정 중»(`EligibilityTable.tsx:35`), 인시던트 상세 «상세를 읽는 중입니다»(`IncidentSection.tsx:153`) |
-| 조작 중 | 스피너 없음. 조작 버튼이 비활성(`busy`)이 될 뿐 |
-| 확인 대화 | 없음(`confirm` 호출 없음). 퇴역, 활성화, 장애 주입, 운영자 판단은 사유 입력이 유일한 관문 |
-| 입력 오류 | 보내기 전 검사 문장은 `role="alert"`. 현장 설정, 장애 주입, 임무 활성화 사유, 작업 지시, 운영자 판단, 배정 가능 사전 거부(`EligibilityTable.tsx:28`) |
+| 빈 상태 | 표 대신 문장 하나를 씁니다. 일러스트나 아이콘은 없습니다. 새 영역의 빈 문장 일부는 다음 행동을 함께 적습니다(예 «등록된 공유 스테이션이 없습니다. 엔지니어 모드에서 현장 신호를 연결하세요.»). |
+| 읽는 중 | 옛 영역은 따로 없고 «모름: … 아직 읽지 못했습니다» 가 첫 읽기 대기와 실패를 함께 나타냅니다. 예외는 띠 «확인 중», 배정 가능 «판정 중», 인시던트 상세 «상세를 읽는 중입니다» 입니다. 새 영역은 «지원 임무 계약을 조회하고 있습니다.», «필수 자원 확인 중» 처럼 읽는 중 문장이 따로 있는 곳과 «… 아직 읽지 못했습니다.» 로 겸하는 곳이 섞여 있습니다. |
+| 조작 중 | 스피너는 없습니다. 조작 버튼이 비활성(`busy`)이 되거나 버튼 글자가 «검증 중…», «등록 중…», «비교 조회 중» 으로 바뀝니다. |
+| 확인 대화 | 없습니다. 관문은 §2.6.4 의 체크박스 셋과 사유 입력입니다. |
+| 입력 오류 | 보내기 전 검사 문장은 `role="alert"` 입니다. |
 
-### 2.11 접근성 장치
+### 2.9 접근성 장치
 
-시험은 `data-testid` 를 한 곳도 쓰지 않고 역할, 접근 이름, 라벨, 글자, CSS 클래스로 요소를 찾습니다. 그래서 아래 장치는 디자인을 바꿔도 남아야 합니다(§4.2).
+시험은 `data-testid` 를 쓰지 않고 역할, 접근 이름, 라벨, 글자, CSS 클래스로 요소를 찾습니다. 그래서 아래 장치는 모양을 바꿔도 남아야 합니다(§4).
 
 | 장치 | 역할 | 쓰임 |
 |---|---|---|
 | `<section aria-label>` | region | 구역마다 |
+| `div[role=region][aria-label]` | region | «호출 계약 작성», «선택한 호출 계약» |
+| `<article aria-label>` | article | «작업 요청 상세», «스테이션 작업 근거», «작업 요청 A 근거», «작업 요청 B 근거» |
 | `<form aria-label>` | form | 폼마다 |
 | `<table aria-label>`, `<ul aria-label>` | table, list | 표와 목록 |
-| `<dl aria-label>`, `<pre aria-label>` | 라벨로 찾음 | 결함 카드, 활성 버전 정의 |
-| `<fieldset><legend>` | group | 모드, 결과 판정 값, 정체 표시, 점검 대상, 슬롯 |
-| `aria-current="page"` | nav 의 고른 버튼 | `App.tsx:74` |
-| `aria-invalid` | 사용자 칸 | `ModeSwitch.tsx:40` |
-| `role="alert"` | 띠 셋, 폼 입력 오류, 배정 가능 사전 거부 | |
-| `role="status"` | 결과 알림 | |
+| `<dl aria-label>`, `<pre aria-label>`, `<p aria-label>` | 라벨로 찾음 | 결함 카드, 활성 버전 정의, 계약 매핑 미리보기, 호출 전 자원 요구 등 |
+| `<fieldset><legend>` | group | 모드, 결과 판정 값, 정체 표시, 점검 대상, 슬롯, 계약 정의, 로봇 도입 경로(legend «어떤 로봇을 추가하나요?») |
+| `div.table-scroll[role=group][tabindex=0]` | group | 넓은 표를 감싸 가로 스크롤과 키보드 포커스를 줍니다. 접근 이름은 대개 «표 가로 스크롤»(16곳)이고, 표마다 따로 붙인 이름이 일곱 있습니다: «최근 작업 요청 표 스크롤», «작업 요청 표 스크롤», «자원 표 가로 스크롤», «스테이션 작업 표 가로 스크롤», «호출 계약 표 스크롤», «입력 매핑 표 스크롤», «계약 비교 표 스크롤». |
+| `nav[aria-label]` | navigation | «영역»(메뉴), «로봇 관리»(로봇 하위 탭), «임무 관리»(임무 패널) |
+| `aria-current="page"` | 고른 메뉴·탭 버튼 | 사이드바 메뉴, 로봇 하위 탭 |
+| `aria-invalid` | 사용자 칸 | `ModeSwitch.tsx` |
+| `role="alert"` | 띠의 모름, 입력 오류, 읽기 실패 | |
+| `role="status"` | 결과 알림 | §2.6 |
+| 건너뛰기 링크 | 링크 | «본문으로 이동» |
+| `<details><summary>` | 접기 | 원문·근거·고급 입력을 접어 둡니다(예 «원본 요청·변환·제출 기록», «공유 스테이션 등록»). |
 
-모든 입력은 `<label>` 로 감싼 암묵 라벨입니다(`for`/`id` 없음). 키보드 처리, 포커스 관리, `aria-live` 지정은 없습니다.
+같은 글자가 여러 번 나오는 버튼에는 구별용 접근 이름을 붙였습니다.
+- 작업 요청 목록의 «이전»·«다음» 버튼은 «작업 요청 목록 이전 페이지»·«작업 요청 목록 다음 페이지» 입니다.
+- 외부 결과 select 는 «외부 결과 필터» 입니다.
+- 셀 대역 신호 버튼은 «${name} 켜기»·«${name} 끄기» 입니다.
+- 운영 개요 지표 카드 링크는 «${label} ${값} · 직전 값» 꼴입니다.
 
----
+모든 입력은 `<label>` 로 감싼 암묵 라벨입니다(`for`/`id` 없음). `aria-live` 지정은 없습니다.
 
 ## 3. 영역별 화면
 
-### 3.1 현장·자원
+이 장은 메뉴 순서(운영 개요, 작업 요청, 공유 자원, 운영, 로봇, 임무, 현장 설정, 이력, 검증 도구)로 영역마다 목적, 쓰는 모드, 들어오는 길, 컴포넌트, API, 상태, 조작을 적습니다. 대표 그림이 없는 상태는 글로 적으며, 그림은 1440×900 밝은 색과 실제 스택이 기본이고 이름이 `-mock` 으로 끝나면 응답 대역으로 그린 화면입니다.
 
-region «현장 설정»(`SiteArea`) 다음에 region «장애 주입»(`FaultPanel`)을 세로로 쌓습니다. 감싸는 `.split` 은 없습니다(`App.tsx:97-107`).
+### 3.1 운영 개요 (`#overview`)
 
-![현장·자원 영역의 처음 상태](img/03-site-overview-initial.png)
-
-그림 03. 현장 설정 버전 1, 기체 없음. 엔지니어 모드, 실제 스택.
-
-#### 3.1.1 현장 설정 (`SiteArea.tsx`)
-
-목적: 현장 설정 버전(연결 기준 시간과 미들웨어 시간값 넷)과 변경 이력을 보이고, 엔지니어가 새 버전을 올립니다.
-
-| 모드 | 할 수 있는 것 |
+| 항목 | 내용 |
 |---|---|
-| 엔지니어 | 보기, 변경 |
-| 운영자 | 보기. 폼 자리에 «현장 설정 변경은 엔지니어 모드에서 합니다» |
+| 목적 | 작업 요청 집계와 실행 호스트의 현재 관측, 확인이 필요한 작업으로 가는 입구입니다. |
+| 누가 | 두 모드에서 사용합니다. 조작이 없는 읽기 전용입니다. |
+| 진입 | 메뉴 1번입니다. 다른 영역에서 오는 링크는 없습니다. |
+| 컴포넌트 | `OverviewArea.tsx`, `CollectorStatus.tsx` |
+| API | GET `/api/work-requests/summary`(컴포넌트 안에서 직접 `fetch`), `/api/executions`, `/api/incidents`, `/api/work-requests/collector` 를 영역이 열려 있을 때 5초마다 호출합니다. 넷이 따로 실패합니다. |
 
-데이터: `App` 의 `GET /api/site-settings`(5초). 변경은 `PUT /api/site-settings` 에 `{baseVersion, 값 다섯, reason}` 을 보냅니다(`api.ts:376-378`).
+운영 개요의 구역 이름은 `section[aria-label=운영 개요]` 입니다.
 
-배치(위에서 아래, `:120-197`): h2 «현장 설정» → 마지막 조작 알림 → (직전 값 문장) → dl → 실행 호스트 반영 줄 → 묶음 구역 둘 → 변경 폼 또는 모드 문장 → h3 «버전 이력» → 표.
-
-| 요소 | 글자 | 행 |
+| 구역 | 내용과 글자 | 상태 |
 |---|---|---|
-| 못 읽음 | «모름: 현장 설정을 아직 읽지 못했습니다» (폼도 없음) | 124 |
-| dl | «현재 버전» ${n} / «연결 기준 시간» ${n}초 / «허용 범위» ${min}~${max}초 | 128-137 |
-| 실행 호스트 반영 | «실행 호스트 반영: 모름» / «실행 호스트 반영: 미적용» / «실행 호스트 반영: 버전 ${n}» | 206-213 |
-| 덧붙는 줄 | «실행 호스트 읽기 실패: ${readError}», «실행 호스트가 적용하지 않은 버전 ${v}(범위 밖): ${사유를 '; ' 로 연결}» | 214-219 |
-| 묶음 구역 1 | region·h3 «결과 판정 값», 문장 «앞 폭을 늘리면 옛 신호가 완료 근거로 들어옵니다. 뒤 폭이나 inDoubtGrace 를 줄이면 UNVERIFIED 와 운영자 대기가 늘어납니다», dl «근거 윈도우 앞 폭», «근거 윈도우 뒤 폭», «inDoubtGrace» (값 «${n}초») | 74-80, 139-152 |
-| 묶음 구역 2 | region·h3 «정체 표시», 문장 «stallWindow 는 정체를 사람에게 보이는 시점만 바꿉니다. 실패 판정이나 자동 조치는 바뀌지 않습니다», dl «stallWindow» | 81-85 |
-| 이력 표 | table «현장 설정 버전 이력», 열 순서: 버전, 연결 기준 시간, 사용자, 모드, 사유, 기록 시각, 근거 윈도우 앞 폭, 근거 윈도우 뒤 폭, inDoubtGrace, stallWindow. 모드 칸 ENGINEER «엔지니어», OPERATOR «운영자». 행은 받은 순서(최신부터) | 16, 165-194 |
+| 머리 | h2 «외부 주문에서 로봇 실행까지», 설명 «작업 요청과 현재 실행 관측을 구분합니다. 작업 요청 수락은 물리 완료나 품질 승인을 뜻하지 않습니다.», 버튼 «개요 다시 조회» 가 있습니다. | 없음 |
+| 지표 카드 다섯 | `a.overview-card` 링크 다섯 개가 있습니다.<br>«총 작업 요청» → `#requests`<br>«미배정» → `#requests?state=UNASSIGNED`<br>«제출 확인 필요»(RECEIVED, DISPATCHING, IN_DOUBT 의 합) → `#requests?state=NEEDS_CONFIRMATION`<br>«작업 요청 거부» → `#requests?state=REJECTED`<br>«외부 결과 수신 미확인» → `#requests?result=unacknowledged`<br>카드마다 값과 작은 글자 «작업 요청 기록 기준»이 있습니다. 카드 링크의 접근 이름은 «${label} ${값}» 꼴이고 값을 모르면 «모름», 직전 값이면 « · 직전 값» 이 붙습니다. 카드 아래에는 «작업 요청 집계 시각: ${observedAt}»이 표시되며, 아직 못 읽었으면 «아직 조회하지 못함»이 표시됩니다. | 못 읽음: 카드 값 «모름», alert «작업 요청 집계: ${error} · 모름»<br>다시 읽기 실패: alert «작업 요청 집계: ${error} · 직전 조회 값입니다.», 카드에 `.stale` 클래스와 작은 글자 «직전 값 · 재확인 필요» |
+| 호스트 실행 관측 | h3 «호스트 실행 관측»<br>dl «실행 중»(물리 상태 RUNNING 인 실행 수), «판단·확인 대기»(OPERATOR_HOLD 와 IN_DOUBT 수), «일지 저장 차단»(`journalBlockedExecutionIds` 수), «인스턴스», «조회 시각»<br>문장 «호스트가 보유한 실행 기준입니다. 다른 인스턴스의 과거 작업 요청을 포함한 누적 집계가 아닙니다.»<br>링크 «실행·예외 대응 열기»(`#operations`) | 못 읽음: «실행 상태 모름 · 관측을 기다립니다.»<br>실패: alert «호스트: ${error} · 직전 관측입니다.» 또는 «호스트: ${error} · 모름» |
+| 운영자 판단 | h3 «운영자 판단»<br>«미해결 인시던트 ${n}건»<br>«인스턴스 ${id} · 조회 ${at}»<br>링크 «인시던트 확인·판단»(`#operations`) | 못 읽음: «판단 대기 상태 모름»<br>실패: alert «인시던트: ${error} · 직전 관측입니다.» 또는 «인시던트: ${error} · 모름» |
+| 결과 자동 수집(`CollectorStatus`, region «결과 자동 수집») | 작업 응답 수집기 상태입니다.<br>h3 «결과 자동 수집»<br>상태 글자: «수집 중»(OK), «첫 수집 대기»(WAITING), «수집 실패 · 확인 필요»(그 밖)<br>«최근 성공: ${lastSuccessAt} · 최근 관측 요청 ${n}건»(없으면 «없음», 수를 모르면 «모름»)<br>수집기 오류가 있으면 alert «${error} · 마지막 시도 ${lastAttemptAt}»<br>커서 방식이 `DURABLE_OUTBOX` 면 «호스트에 저장된 결과를 마지막 커서부터 순서대로 수집합니다. 단절 중 결과도 연결 복구 후 재수집합니다.» 와 «수집 커서 ${sequence} / 확인한 마지막 번호 ${highWatermark} · 관측 시점 미수집 ${n}건»<br>아니면 «수집 방식 확인 중 · 마지막 성공 시각과 현재 연결 상태를 함께 확인하세요.» | 못 읽음: «수집 상태 모름»<br>조회 실패: alert «수집기 조회 모름: ${error}», 앞서 읽은 값이 있으면 뒤에 « · 아래는 직전 값입니다.» |
+| 최근 작업 요청 | h3 «최근 작업 요청» 과 링크 «전체 작업 요청»(`#requests`)<br>표 `table[aria-label=최근 작업 요청]`(스크롤 감싸개 «최근 작업 요청 표 스크롤»)<br>열: 요청(외부 주문 id 링크 → `#requests?receipt=${receiptId}`, 아래 작은 글자로 작업 지시 id) / 출처(출처 식별자 그대로) / 작업 요청 상태(상태 코드 그대로) / 시각 | 못 읽음: «최근 작업 요청 모름»<br>빈 상태: «저장된 작업 요청이 없습니다.» |
 
-변경 폼(엔지니어, form «현장 설정 변경», `:248-328`):
+이 표는 작업 요청 목록(§3.2)과 달리 출처와 상태를 글자로 풀지 않습니다.
+지표 카드 글자 «총 작업 요청» 은 같은 영역의 링크 «전체 작업 요청» 과 접근 이름이 겹치지 않게 PR #23 에서 바꾼 것입니다.
+390px 폭 화면은 §2.1 의 그림 20 입니다.
 
-| 항목 | 사실 |
+![운영 개요](img/06-overview.png)
+
+그림 06. 운영 개요 전체. 위에서부터 지표 카드, 호스트 실행 관측과 운영자 판단, 결과 자동 수집, 최근 작업 요청.
+
+### 3.2 작업 요청 (`#requests`)
+
+| 항목 | 내용 |
 |---|---|
-| 기준 버전 | «기준 버전 ${n}». 처음 고친 순간(값이든 사유든) 버전과 값 다섯을 고정함 (`:255-264,311`) |
-| 입력 순서 | «연결 기준 시간(초)» 단독 → fieldset·legend «결과 판정 값»(«근거 윈도우 앞 폭(초)», «근거 윈도우 뒤 폭(초)», «inDoubtGrace(초)») → fieldset «정체 표시»(«stallWindow(초)») → «변경 사유» → 버튼 «변경». 숫자 칸은 `type="number"` 이고 옆에 «허용 범위 ${min}~${max}초» (`:297-325`) |
-| 보내기 전 검사 | `role="alert"`. 칸마다 «${주어} ${min}~${max}초의 정수여야 합니다» 를 «; » 로 연결. 주어: «연결 기준 시간은», «근거 윈도우 앞 폭은», «근거 윈도우 뒤 폭은», «inDoubtGrace 는», «stallWindow 는». 사유가 비면 «변경 사유를 넣으십시오» (`:266-288,326`) |
-| 버튼 | `busy` 일 때만 비활성 (`:323`) |
-| 결과 | 바뀐 칸만 «${칸 이름} ${값}초» 를 «, » 로 잇고 «로 변경» 을 붙인 것이 what. 바뀐 칸이 없으면 «현장 설정 같은 값으로 새 버전 기록» (`:92-95`). `OutcomeNotice` 로 보임. 거부는 거부 카드(예 SETTINGS_VERSION_CONFLICT, 근거 버전 «해당 없음») |
-| 보낸 뒤 | 폼을 비우고 다음 변경은 새 기준 버전에서 시작 (`:291-294`) |
+| 목적 | 외부 주문(Mock MES)과 운영자 수동 작업 요청, 호출 계약으로 만든 작업 요청을 한 목록에서 검색하고, 작업 요청부터 실행 결과·외부 결과 수신 확인까지 추적합니다. 작업 요청 수신, 호스트 수락, 물리 완료는 서로 다른 상태로 보입니다. |
+| 누가 | 조회는 두 모드가 합니다. 미배정 재평가와 현장 확인 기록은 운영자가 합니다. |
+| 진입 | 메뉴 2번, 운영 개요의 지표 카드와 최근 작업 요청 링크, 공유 자원의 «작업 요청·실행 결과» 링크, 호출 계약의 «작업 요청·실행 결과 보기», 검증 도구 링크로 진입합니다. 운영 영역 맨 위에도 같은 컴포넌트가 들어갑니다(§3.4.1). |
+| 컴포넌트 | `WorkRequests.tsx`, `RequestRecovery.tsx`, `RequestReview.tsx`, `StoredResultSummary.tsx`, 구역 `section[aria-label=상위 작업 요청]` |
+| API | GET `/api/work-requests?search=&state=&offset=&limit=20&result=`, GET `/api/work-requests/{receiptId}`(5초), POST `/api/work-requests/{receiptId}/recover` `{requestId, reason, expectedUpdatedAt}`, POST `/api/work-requests/{receiptId}/reviews` `{requestId, observation, reason, expectedUpdatedAt}` |
 
-허용 범위(README): 연결 기준 시간 60~3600초, 근거 윈도우 앞 폭 5~120초, 뒤 폭 5~120초, inDoubtGrace 10~600초, stallWindow 30~3600초. 범위의 주인은 picasso 이고, 화면은 운영 서비스가 실어 준 값을 보입니다.
+검색어, 상태, 외부 결과 필터, 쪽 위치, 고른 작업 요청이 `#requests?search=&state=&result=&offset=&receipt=` 에 남습니다. 운영 영역 안에서는 해시가 `#operations` 라 URL 에 남지 않습니다.
 
-![범위 밖 값](img/18-site-settings-out-of-range.png)
+#### 3.2.1 목록
 
-그림 18. 범위 밖 값이라 보내지 않음. 실제 스택.
+머리에는 h2 «통합 작업 요청», 설명 «외부 주문과 운영자 수동 작업을 작업 요청부터 로봇 실행까지 확인합니다. 작업 요청 수신, 호스트 수락, 물리 완료는 서로 다른 상태입니다.», 버튼 «작업 요청 다시 조회»가 있습니다.
 
-![사유 없음](img/19-site-settings-reason-missing.png)
+검색 폼 `form[aria-label=작업 요청 검색]`의 구성 요소는 다음과 같습니다.
+- 칸 «외부 주문·출처·내부 ID 검색»(최대 160자)
+- select «작업 요청 상태»(전체와 상태 여덟)
+- select 외부 결과(접근 이름 «외부 결과 필터», 보기 «전체», «최신 결과 수신 미확인»)
+- 버튼 «작업 요청 검색»
 
-그림 19. 사유가 비어 보내지 않음. 실제 스택.
+상태 글자와 출처 글자는 §2.7.3 표를 따릅니다.
 
-![변경 반영](img/20-site-overview-changed.png)
+표 `table[aria-label=작업 요청 목록]`은 스크롤 감싸개 «작업 요청 표 스크롤» 안에 있습니다.
+표 위에는 «검색 결과 ${total}건 · 현재 ${n}건 표시»가 나타납니다.
+열 순서는 다음과 같습니다.
+1. 출처
+2. 외부 주문(외부 주문 id, 그 아래 작업 지시 id)
+3. 작업 요청 상태
+4. 요청 시각
+5. 상세(버튼 «${externalOrderId} 작업 요청 보기»)
 
-그림 20. stallWindow 변경 반영, 버전 3, 이력 세 줄. 실제 스택.
+표 아래에는 20건씩 이동하는 버튼 «이전»과 버튼 «다음»이 있습니다. 접근 이름은 «작업 요청 목록 이전 페이지»와 «작업 요청 목록 다음 페이지»입니다.
 
-![기준 버전 충돌](img/21-site-settings-version-conflict.png)
+목록의 상태 표시는 다음과 같습니다.
 
-그림 21. 기준 버전이 낡아 거부된 알림과 카드. 알림 글자는 «stallWindow 300초로 변경: 거절됨» (옛 이름). 실제 스택.
-
-![운영자 모드](img/25-site-overview-operator.png)
-
-그림 25. 운영자 모드. 변경 폼과 장애 주입 폼 자리에 모드 문장. 실제 스택.
-
-![실행 호스트 반영 모름](img/62-site-settings-host-down-mock.png)
-
-그림 62. «실행 호스트 반영: 모름». 대역 응답으로 그린 화면(`hostTimings` 를 `null` 로).
-
-연결: 바뀐 연결 기준 시간은 다음 기체 목록 읽기부터 로봇·연결 영역의 «연결» 칸과 막힘에 쓰이고, 기체 상세 «연결 판정 기준» 과 막힘 카드 «근거 버전» 에 버전이 보입니다(§3.2.4). 시간값은 인시던트 상세의 «현장 설정 버전», «시간값» 에 실립니다(§3.4.4).
-
-#### 3.1.2 장애 주입 (`FaultPanel.tsx`)
-
-목적: 기체 하나에 스킬 실패나 연결 상태 장애를 넣습니다. 효과는 다른 영역에서 봅니다.
-
-| 모드 | 할 수 있는 것 |
+| 상태 | 표시 |
 |---|---|
-| 엔지니어 | 장애 주입 |
-| 운영자 | «장애 주입은 엔지니어 모드에서 합니다» (버튼 0개) |
+| 못 읽음 | «작업 요청 목록을 아직 읽지 못했습니다.» |
+| 빈 결과 | «조건에 맞는 작업 요청이 없습니다. 이전 직접 제출 API의 작업은 별도 실행 이력에서 확인합니다.» |
+| 읽기 실패 | alert «작업 요청 조회 실패: HTTP ${n}» |
 
-데이터: 기체 목록은 `App` 의 `/api/robots` 에서 퇴역을 뺀 것이고 순서는 목록 그대로입니다(`:47-50`). 조작은 `POST /api/faults`(`api.ts:1040-1050`)이며, 조작 뒤 다시 읽지 않습니다.
+앞서 읽은 값이 있으면 « · 직전 조회 값입니다.» 가 붙습니다.
 
-배치(`:53-69`): h2 «장애 주입» → 안내 문장 → 마지막 결과 → 폼 또는 상태 문장.
+![작업 요청 목록](img/07-requests-list.png)
 
-- 안내 문장: «기체 하나에 장애를 넣습니다. 받아들임은 현장이 장애를 넣었다는 뜻이고, 그 효과는 운영 영역의 실행 목록과 인시던트, 로봇·연결 영역의 기체 목록에서 확인합니다» (`:55-58`)
-- 상태 문장: 목록 못 읽음 «모름: 기체 목록을 아직 읽지 못했습니다», 기체 없음 «장애를 넣을 기체가 없습니다» (`:60-66`)
+그림 07. 외부 주문과 수동 작업 요청이 섞인 작업 요청 목록.
 
-폼(form «장애 주입 폼», `:100-143`):
+#### 3.2.2 상세
 
-| 순서 | 칸 | 보기 |
+`article[aria-label=작업 요청 상세]` 는 위에서 아래로 다음 요소를 배치합니다.
+
+| 순서 | 요소 | 글자·조건 |
 |---|---|---|
-| 1 | «기체» select | 퇴역 아닌 기체 |
-| 2 | «장애 종류» select | «스킬 실패(진행 중 태스크)», «연결 상태» |
-| 3 | «연결 상태» select (종류가 연결 상태일 때만) | «OFFLINE», «CONNECTION_BROKEN», «ONLINE(복구)» |
-| 4 | div 안 «장애 주입 사유» + 버튼 «장애 넣기» | |
+| 1 | 머리 | h3 «작업 요청 상세», 버튼 «작업 요청 상세 닫기» |
+| 2 | 읽기 실패 | alert «${error}», 앞서 읽은 상세가 있으면 « · 상세는 직전 값입니다.» |
+| 3 | 제목 | h4 «${externalOrderId} · ${상태 글자}» 와 서버 detail 문장 |
+| 4 | 자원 대기(필수 자원이 있을 때, region «작업 요청의 자원 대기») | h4 «필수 자원 ${stationId}», «${state} · ${reason}», «앞선 대기 작업 ${n}건 · 점유 작업 ${owner}»(없으면 «없음»), 링크 «공유 자원에서 점유·복구 확인» |
+| 5 | dl | «출처», «요청자»(payload 의 requestedBy, 없으면 «외부 시스템»), «작업 요청 ID», «내부 작업 ID», «호스트 조회»(«조회됨» 또는 «모름 · 호스트 조회 실패»), «실행 상태»(물리 상태, 없으면 «현재 실행 확인 안 됨»), «기체»(없으면 «확인 안 됨»), «적용 임무 버전»(번호, «코드 정의», «확인 안 됨») |
+| 6 | 일지 차단 | alert «일지 저장 실패로 호스트의 새 명령 진행이 차단되었습니다.» |
+| 7 | 불명 안내(RECEIVED·DISPATCHING·IN_DOUBT) | «작업 요청 처리 또는 전송 결과를 확정할 수 없습니다. 동일한 외부 주문이나 수동 작업은 자동으로 재제출하지 않습니다. 내부 작업 ID로 실행 이력을 확인하세요.» |
+| 8 | 미배정 안내(UNASSIGNED) | «미배정 작업 요청입니다. 전송 전 미배정은 아래에서 운영자 판단으로 재평가할 수 있습니다.» |
+| 9 | 실행 줄 | «실행 ID: ${id} · 호스트 인스턴스: ${id} · 조회 시각: ${at}»(값이 없으면 «확인 안 됨») |
+| 10 | 직전 관측(현재 실행이 없고 마지막으로 본 실행이 있을 때) | `details` summary «마지막으로 확인한 실행 · 직전 관측», 시각·인스턴스·JSON, «현재 호스트 상태를 의미하지 않습니다.» |
+| 11 | 미배정 재평가 | §3.2.3 |
+| 12 | 현장 확인 기록 | §3.2.4 |
+| 13 | 현장 확인 이력(region «현장 확인 이력») | 줄마다 «${createdAt} · ${actor} · ${관측 글자}», 사유, 접기 «확인 당시 관측» |
+| 14 | 재평가 판단 이력(region «재평가 판단 이력») | 줄마다 «${createdAt} · ${actor} · ${reason} · ${requestId}» |
+| 15 | 요청 시 배포(region «요청 시 배포») | h4 «요청 시 고정된 배포», JSON |
+| 16 | 원문 접기 둘 | «원본 요청·변환·제출 기록», «실행과 완료 근거» |
+| 17 | 외부 결과 | §3.2.5 |
 
-사유가 비면 alert «장애 주입 사유를 넣으십시오» 가 섭니다. 보낸 뒤에는 사유만 비웁니다. what 은 «${robotId} 스킬 실패» 또는 «${robotId} 연결 상태 ${state}» 입니다(`:36`).
+![전송 결과 불명 작업 요청](img/09-requests-in-doubt.png)
 
-결과(status «장애 주입 결과», `:159-175`):
+그림 09. 전송 결과가 불명인 작업 요청의 상세. 불명 안내와 현장 확인 기록이 보인다.
+
+![작업 요청 상세, 390px 폭](img/21-requests-detail-mobile.png)
+
+그림 21. 390px 폭의 작업 요청 상세.
+
+#### 3.2.3 미배정 재평가
+
+`RequestRecovery.tsx` 컴포넌트의 화면 갈래는 다음과 같습니다.
+
+| 조건 | 화면 |
+|---|---|
+| 필수 자원이 있는 작업 요청 | «필수 자원 ${id}의 조정기가 미배정을 재평가합니다.» 와 링크 «공유 자원에서 관측·복구» |
+| 안전 조건이 아니고 ACCEPTED | «새 제출은 차단됩니다. 저장 결과와 현재 실행·현장 상태를 먼저 확인하세요.» |
+| 안전 조건이 아니고 그 밖 | «새 제출은 차단됩니다. 전송 결과 불명·호스트 전송 후 미배정은 실행 관측과 현장 확인이 필요합니다.» |
+| 안전(UNASSIGNED, 제출 기록 없음, 실행 없음) 또는 보관 요청 있음 | region «미배정 안전 재평가», h4 «미배정 재평가», 안내 «호스트 전송 전에 후보가 없어 멈춘 요청만 기존 작업 ID로 다시 배정 판단합니다. 입력은 변경하지 않습니다.», 칸 «재평가 판단 사유»(1000자), 버튼 «미배정 재평가»(보관 중이면 «동일 재평가 요청 확인») |
+
+버튼은 운영자가 아니면, 사유가 비면, 보관값 복원에 실패하면 비활성화됩니다.
+
+끝난 뒤 화면은 다음과 같습니다.
+- status «재평가 요청 기록됨 · ${state}» 또는 «기존 재평가 확인 · ${state}»
+- «재평가 ID: ${uuid}»
+- 버튼 «재평가 기록 확인 완료»(보관 해제)
+
+오류 화면은 다음과 같습니다.
+- 오류: alert «${error} · 기존 재평가 ID로 확인하세요.»
+- 보관 실패: «요청 보관 실패로 전송하지 않았습니다.»
+- 복원 실패: «보관된 재평가 요청을 읽지 못했습니다. 실행·재평가 이력을 확인하세요.»
+
+#### 3.2.4 현장 확인 기록
+
+`RequestReview.tsx` 컴포넌트는 region «현장 확인 기록» 에 있습니다.
+h4 «현장 확인과 인계», 안내 «내부 작업 ID로 로봇·현장 담당자에게 착수 여부와 현재 상태를 확인하고 근거를 남기세요. 이 기록은 실행 결과·작업 요청 상태를 변경하거나 재제출을 허가하지 않습니다.» 가 들어갑니다.
+
+모드에 따른 작성 화면은 다음과 같습니다.
+- 엔지니어: «현장 확인 기록은 운영자 모드에서 작성합니다.»
+- 운영자: select «현장 관측»(§2.7.3 의 `reviewLabels` 넷), textarea «확인 근거·담당자·인계 내용»(1000자), 버튼 «현장 확인 기록 저장»
+
+보관 중일 때 화면은 다음과 같습니다.
+- 버튼 «동일 확인 기록 조회»
+- «이력 확인 후 새 기록 작성»
+- «확인 ID: ${uuid}»
+
+결과와 오류 표시는 다음과 같습니다.
+- 결과: status «현장 확인 기록 저장됨» 또는 «기존 현장 확인 기록 확인됨»
+- 오류: alert «${error} · 같은 확인 ID로 다시 확인하세요.»
+- 복원 실패: «보관된 확인 기록을 읽지 못했습니다. 이력을 확인하세요.»
+
+#### 3.2.5 외부 결과 수신 확인
+
+region «외부 결과 수신 확인» 은 `WorkRequests.tsx` 안에 있습니다. 그 안의 저장 결과 요약(region «저장 결과의 완료 근거»)만 `StoredResultSummary.tsx` 가 그립니다.
+h4 «외부 결과 · 수신 확인» 이 있습니다.
+
+결과가 있을 때 dl 은 다음과 같습니다.
+- «저장된 최신 결과»: «v${n}»
+- «결과 저장 시각»
+- «외부 수신 확인»: «로컬 작업 · 외부 수신 확인 대상 아님», «v${n} 수신 확인됨 · ${at}», «v${n} 수신 확인 대기» 중 하나
+
+저장 결과 요약(region «저장 결과의 완료 근거»)은 다음과 같습니다.
+- dl: «결과에 기록된 물리 상태», «요구 근거 / 도달 근거», «결과에 기록된 기체»가 있으며 값이 없으면 «확인 안 됨» 입니다.
+- 끝 문장 «저장된 결과 버전의 관측입니다. 현재 호스트 조회와 품질 승인 여부는 별도로 확인하세요.» 가 붙습니다.
+- 접기 «불변 결과 스냅샷 · v${n}»(SHA-256)이 있습니다.
+
+결과가 없을 때는 «저장된 결과가 없습니다. 물리 상태만으로 결과를 확정하지 않습니다.» 가 나타납니다.
+
+결과 전달 이력(`div[aria-label=결과 전달 이력]`)은 다음과 같습니다.
+- h4 «로컬 Mock MES 결과 전달»
+- 줄마다 «v${n} · ${state} · 시도 ${n}회» 가 나타납니다. 실패면 « · ${lastError} · 다음 시도 ${at}» 가 붙고, 전달되면 « · 전달 ${at}» 가 붙습니다.
+- 문장 «HTTP 전달 성공과 결과 버전 수신 확인은 별도로 확인합니다.» 가 있습니다.
+
+끝 문장은 «수신 확인은 해당 버전의 전달 확인입니다. 품질 승인이나 물리 성공을 의미하지 않습니다. 재작업 중에는 저장된 결과와 현재 실행 상태를 함께 확인하세요.» 입니다.
+
+![외부 결과 수신 확인](img/08-requests-detail-result-ack.png)
+
+그림 08. 외부 주문의 상세. 저장 결과 버전, 수신 확인, 결과 전달 이력이 보인다.
+
+### 3.3 공유 자원 (`#stations`)
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | 공유 스테이션(설비) 하나를 한 번에 한 작업만 점유하게 하고, 설비 준비 신호와 이번 작업의 설비 완료 신호를 확인한 뒤 자원을 해제합니다. 임무마다 필수 스테이션을 등록하면 외부 주문, 운영 화면, 직접 제출이 같은 대기열을 거칩니다. |
+| 누가 | 엔지니어는 공유 스테이션 등록과 임무 필수 자원 등록을 합니다. 운영자는 공유 스테이션 작업 요청, 대기 작업 취소, 현장 확인 후 자원 해제, 재실행 없이 관측 재개를 합니다. 조회는 두 모드에서 합니다. |
+| 진입 | 메뉴 3번, 작업 요청 상세의 «공유 자원에서 점유·복구 확인»과 «공유 자원에서 관측·복구» 링크로 진입합니다. |
+| 컴포넌트 | `StationWorkspace.tsx`(구역 `section[aria-label=공유 스테이션 운영]`), `MissionResourceSettings.tsx`입니다. 모드나 사용자가 바뀌면 `StationWorkspace` 가 다시 마운트됩니다. |
+| API | GET `/api/stations`(스테이션과 최근 작업), GET `/api/mission-interfaces`(5초, 둘을 함께), GET `/api/stations/runs/{runId}`, 링크 `/api/stations/runs/{runId}/evidence`, POST `/api/stations`(등록), POST `/api/stations/runs`(작업 요청), POST `/api/stations/runs/{runId}/decision` `{expectedRevision, decision, reason}`(decision 은 `CANCEL_QUEUED`, `CONFIRM_CLEAR`, `RESUME_OBSERVATION`), GET·POST `/api/mission-resources`입니다. 쓰기는 `interfaceRequest`(§2.6.2)를 사용합니다. |
+
+| 구역 | 내용과 글자 | 상태 |
+|---|---|---|
+| 머리와 흐름 | h2 «공유 자원과 작업 흐름», 설명 «스테이션을 확보하고 설비 준비를 확인한 뒤 임무를 호출합니다. 로봇 완료와 이번 작업의 설비 완료 근거를 확인해야 자원을 해제합니다.». 단계 넷(`ol.validation-journey`): «자원 확보»(«스테이션별 작업 요청 순서로 한 작업만 점유합니다.»), «설비 준비»(«준비 true·완료 false를 확인합니다.»), «임무 수행»(«고정 배포를 호출하고 작업 요청을 추적합니다.»), «완료 확인»(«로봇 물리 완료와 새 설비 완료 신호가 필요합니다.»). 안내 «임무에 필수 자원을 등록하면 외부 주문·운영 화면·직접 제출도 같은 대기열을 거칩니다. 외부 장비의 독립 제어를 잠그는 현장 인터록은 아닙니다. 설비 신호는 일반 공정 신호이며 안전 제어를 대체하지 않습니다.» | 조회 실패 alert «자원 조회 실패: ${error} · 표는 직전 값입니다. 조작 전 다시 조회하세요.», 조작 실패 alert(서버 detail 그대로), 보관 복원 실패 alert |
+| 스테이션 점유 | 버튼 «자원 상태 새로고침». 표 `table[aria-label=스테이션 점유]`(스크롤 감싸개 «자원 표 가로 스크롤»), 열 넷: «스테이션»(이름과 id), «준비 / 완료 신호»(값 «${readySignal} / ${completeSignal}»), «단계 기한»(값 «${n}초»), «점유 작업»(버튼 «점유 작업 보기» 또는 «비어 있음») | 빈 «등록된 공유 스테이션이 없습니다. 엔지니어 모드에서 현장 신호를 연결하세요.» |
+| 공유 스테이션 등록(엔지니어, 접기 «공유 스테이션 등록») | 칸 «스테이션 ID»(64자), «스테이션 이름», «준비 신호 이름»(처음 값 `inspection_ready`), «완료 신호 이름»(처음 값 `inspection_complete`), «단계 기한 초»(5~3600, 처음 값 120). 안내 «현재 선언된 일반 BOOLEAN 신호만 등록됩니다. 등록 후 설정은 고정됩니다.» 버튼 «스테이션 등록»(조회 실패 중 비활성) | - |
+| 공유 스테이션 작업 요청(운영자, 펼친 접기 «공유 스테이션 작업 요청») | select «사용할 스테이션»(첫 보기 «스테이션 선택»), select «대상 호출 계약»(첫 보기 «계약 선택», 공개되고 배포가 있는 호출 계약만 «${name} · v${version}»), 고르면 «고정 배포 v${n} · 임무 ${missionVersion} · 필수 자원 ${stationId}»(필수 자원이 없으면 «미지정»), textarea «스테이션 계약 입력»(계약 샘플로 채움), 체크 «준비 조건이 충족되면 실제 로봇 작업을 지시합니다», 버튼 «스테이션 작업 요청». 버튼은 체크 전, 조회 실패 중, 보관 요청이 있을 때, 그리고 계약의 필수 자원이 고른 스테이션과 다를 때 비활성. 보관 중: status «요청 ${requestId}가 보관되어 있습니다. 응답이 불명확하면 새 ID로 보내지 마세요.» 와 버튼 «동일 스테이션 요청 확인». 보내기 전 오류: «호출 계약·배포와 실제 작업 지시를 확인하세요.», «입력은 JSON 객체입니다.», 응답 확인 오류 «작업 요청 ID가 일치하지 않습니다. 동일 요청으로 재확인하세요.», 보관 복원 실패 «보관 요청을 읽을 수 없습니다. 새 작업 요청을 보내기 전에 기존 스테이션 작업을 확인하세요.» | - |
+| 임무 필수 자원 | §3.3.2 | - |
+| 최근 작업과 대기 사유 | h3 «최근 작업과 대기 사유», «최근 100건입니다. 시작 후 불명확해진 작업은 자동 재할당하지 않습니다. 전송 전 미배정만 5초 간격으로 최대 3회 재평가합니다.» 표 `table[aria-label=스테이션 작업]`(스크롤 감싸개 «스테이션 작업 표 가로 스크롤»), 열: 작업(작업 id 앞 8자 버튼) / 스테이션 / 상태(§2.7.3 의 스테이션 작업 상태 글자) / 이유(서버 문장) / 작업 요청(링크 «작업 요청·실행 결과» → `#requests?receipt=…`, 아직 없으면 «아직 연결되지 않음») | - |
+
+![공유 스테이션 대기열](img/10-stations-queue.png)
+
+그림 10은 두 작업이 한 스테이션을 차례로 쓰는 상태인 스테이션 점유 표와 최근 작업 표입니다.
+
+#### 3.3.1 스테이션 작업 근거와 운영자 판단
+
+점유 작업이나 최근 작업을 누르면 `article[aria-label=스테이션 작업 근거]`가 열립니다.
+
+상단에는 h3 «작업 ${id 앞 8자}»와 안내 «아래는 선택 작업을 조회한 시점의 상태와 근거입니다. 판단 전 선택 작업을 다시 조회하세요.»가 표시됩니다.
+
+status에는 «${상태 글자} · ${reason}»이 표시됩니다.
+
+정보 줄에는 «조회 버전 ${revision} · 재평가 ${attempt}/3 · 호출 ${interfaceId} v${version} · 배포 v${n}»이 표시됩니다. 호출 계약이 없으면 임무 id나 «직접 임무»가 표시되고, 배포가 없으면 «코드 정의»가 표시됩니다.
+
+버튼 «선택 작업 다시 조회»와 링크 «판정 근거 JSON»(새 탭, `/api/stations/runs/{runId}/evidence`)을 제공합니다.
+
+상태 이력 `ol.station-timeline`에는 항목마다 상태 글자, 이유, «${actor} · ${recordedAt}», 접기 «기록된 근거»(JSON)가 포함됩니다.
+
+운영자 판단 폼은 운영자 모드이고 상태가 QUEUED 또는 REVIEW_REQUIRED일 때만 표시됩니다. 칸 «운영자 판단 근거»(1000자)가 비어 있으면 버튼이 비활성화됩니다:
+- QUEUED 상태에서는 버튼 «대기 작업 취소»(`CANCEL_QUEUED`)를 제공합니다.
+- REVIEW_REQUIRED 상태에서는 문장 «해제는 물리 완료 판정이 아닙니다. 로봇 작업·잔류 물체·설비 상태를 현장에서 확인한 뒤 판단하세요.»가 표시됩니다. 또한 체크 «현장 작업과 자원 해제 가능 여부를 확인했습니다»와 버튼 «현장 확인 후 자원 해제»(`CONFIRM_CLEAR`, 체크 전 비활성), «재실행 없이 관측 재개»(`RESUME_OBSERVATION`, 작업 요청이 연결된 작업만)를 제공합니다.
+
+판단은 조회한 버전(`expectedRevision`)을 함께 보냅니다.
+
+![현장 확인 필요](img/11-stations-review-required.png)
+
+그림 11은 현장 확인이 필요한 스테이션 작업의 근거와 운영자 판단 폼(운영자 모드)입니다.
+
+#### 3.3.2 임무 필수 자원
+
+컴포넌트 `MissionResourceSettings.tsx`의 region «임무 필수 자원»에서 확인합니다.
+
+h3 «임무 필수 자원»과 안내 «임무의 모든 호출 계약과 수동·직접 제출에 적용됩니다. 작업 요청에 자원을 고정하고 준비 완료 후 실행합니다. 현재는 임무당 스테이션 하나를 불변으로 등록합니다.»가 표시됩니다.
+
+목록 줄에는 «${workMasterId} → ${stationId} · 요구 v${revision} · ${createdBy}»와 그 아래 사유가 표시됩니다.
+
+엔지니어 모드에서는 접기 «임무 자원 요구 등록»이 제공됩니다:
+- select «자원이 필요한 임무»(첫 보기 «임무 선택», 아직 등록하지 않은 임무만)
+- select «필수 스테이션»(첫 보기 «스테이션 선택»)
+- 칸 «자원 요구 등록 사유»(1000자)
+- 안내 «진행 중·완료 불명 작업 요청이 있으면 등록할 수 없습니다. 등록 후 변경·삭제는 제공하지 않습니다.»
+- 버튼 «필수 자원 등록»(목록을 못 읽었거나 칸이 비면 비활성)
+
+상태는 다음과 같이 표시됩니다:
+- 못 읽음: «자원 요구를 아직 읽지 못했습니다.»
+- 빈 상태: «등록된 임무 자원 요구가 없습니다.»
+- 조회·등록 실패 alert: 조회 실패는 `String(e)` 그대로라 «Error: » 접두가 붙습니다.
+
+운영 › 작업 지시와 호출 계약 작업 요청에는 호출 전 자원 안내(`MissionResourceNotice`, `p[aria-label=호출 전 자원 요구]`)가 같은 데이터를 읽어 보입니다(§3.4.2).
+
+### 3.4 운영 (`#operations`)
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | 운영자가 작업 지시 폼으로 수동 작업 요청을 내고, 실행 호스트의 실행·인시던트·셀 대역·작업 응답 송신 기록을 보고, 보류된 단위를 판단합니다. |
+| 누가 | 조회와 셀 대역 신호 켜기·끄기, 송신 기록 거르기는 두 모드에서 합니다. 작업 요청 내기와 운영자 판단은 운영자가 합니다. |
+| 진입 | 메뉴 4번, 운영 개요의 «실행·예외 대응 열기»·«인시던트 확인·판단», 로봇 도입 준비의 «운영에서 배정 조건 확인», 검증 도구의 «배정·실행 확인»·«보류·인시던트 판단»에서 진입합니다. |
+| 컴포넌트 | `OperationsArea.tsx` |
+| 배치 | 위에서 아래로 작업 요청 목록(region «상위 작업 요청») → `.split`[region «작업 지시» \| region «배정 가능»] → region «실행» → region «인시던트» → region «셀 대역» → region «작업 응답 송신 기록» 순서입니다. 1199px 이하에서 `.split` 은 1열입니다. 탭이나 앵커는 없습니다. |
+
+실행 호스트를 거치는 읽기는 이 영역이 열려 있을 때만 5초마다 합니다. 신호 조작과 판단 뒤에는 곧바로 한 번, 500ms 뒤에 한 번 더 읽습니다. 모드나 사용자가 바뀌면 마지막 제출 알림과 보관 요청을 다시 읽습니다.
+
+#### 3.4.1 맨 위 작업 요청 목록
+
+§3.2 의 `WorkRequests` 컴포넌트를 그대로 넣습니다(region «상위 작업 요청»). 운영 영역이 다시 읽을 때 함께 읽습니다.
+수동 작업 요청 추적의 «작업 요청·실행 결과 보기» 를 누르면 이 목록에서 그 작업 요청 상세가 열립니다.
+해시가 `#operations` 라 검색어와 고른 작업 요청이 URL 에 남지 않습니다.
+
+#### 3.4.2 작업 지시
+
+region «작업 지시»(h2 «작업 지시»)의 구성 요소는 위에서 아래로 다음과 같습니다.
+1. 제출 결과(`JobOrderNotice`)
+2. 보관 오류 alert
+3. 수동 작업 요청 추적
+4. 호출 전 자원 안내
+5. 폼(`JobOrderFormView`)
+
+보내는 곳은 POST `/api/work-requests/manual` `{requestId, form}` 이며 202 `{receipt, duplicate}` 를 받습니다. 화면은 작업 요청의 제출 기록을 작업 지시 결과 꼴로 다시 써서(`api.ts` 의 `manualJobOutcome`) 알림에 보입니다. what 은 «${workMasterId} 작업 지시» 입니다. 작업 요청이 WAITING_RESOURCE(필수 자원 대기)이면 이 알림을 세우지 않습니다.
+운영 서비스는 운영자 모드가 아니면 403 `MODE_NOT_ALLOWED` 로 막습니다.
+
+폼(`JobOrderFormView.tsx`, form «작업 지시 폼»)의 구성은 다음과 같습니다.
+select «임무» 는 InspectAsset, PrepareSequencedRack 둘로 고정됩니다. 영역을 옮기면 처음 값 InspectAsset 으로 돌아옵니다.
+InspectAsset 을 고르면 fieldset «점검 대상» 이 나타납니다. 대상마다 «대상 ${i} id», «대상 ${i} 장소», 버튼 «대상 ${i} 빼기» 가 있습니다. 버튼 «대상 더하기» 가 있습니다. 회색 문장 «장소 이름은 기체가 아는 명칭이어야 합니다. 화면은 검사하지 않습니다» 가 표시됩니다.
+PrepareSequencedRack 을 골랐을 때 셀 대역을 못 읽었으면 «모름: 셀 대역을 읽지 못해 슬롯과 자재를 고를 수 없습니다» 가 표시됩니다. 셀 대역을 읽었으면 fieldset «슬롯»(슬롯마다 체크박스), select «자재»(첫 보기 «고르십시오», 점유된 제시 자리의 자재), «제시 자리 ${id}»(없으면 «-»)가 나타납니다.
+운영자 모드에서는 버튼 «작업 요청 내기» 가 보입니다. 엔지니어 모드에서는 버튼 자리에 «작업 지시는 운영자 모드에서 냅니다» 가 표시됩니다.
+
+보내지 않음 alert(`jobOrderDraft.ts`, `OperationsArea.tsx`) 목록은 다음과 같습니다.
+- «점검 대상을 하나 이상 넣으십시오»
+- «점검 대상마다 대상 id 와 장소 이름을 넣으십시오»
+- «셀 대역을 읽지 못해 슬롯과 자재를 고를 수 없습니다»
+- «슬롯을 하나 이상 고르십시오»
+- «자재를 고르십시오»
+- «${material} 를 든 제시 자리가 셀 대역에 없습니다»
+- «보관된 요청 ID로 작업 요청을 먼저 확인하세요»
+- «보관된 요청과 입력이 다릅니다. 동일 작업 요청을 확인하거나, 확인된 작업 요청에서 새 작업 작성을 선택하세요»
+
+호출 전 자원 안내(`MissionResourceNotice`, `p[aria-label=호출 전 자원 요구]`, 고른 임무 기준)는 네 갈래로 나뉩니다.
+- «필수 자원 확인 중»
+- «필수 자원 ${stationId} · 작업 요청을 받은 뒤 자원과 설비 준비를 기다립니다. 준비 완료 전 로봇을 실행하지 않습니다.»
+- «등록된 필수 자원 없음 · 작업 요청을 받을 때 서버가 최신 요구를 확인합니다.»
+- «필수 자원 조회 실패 · 작업 요청을 받을 때 서버가 요구를 확인합니다.»
+
+수동 작업 요청 추적(region «수동 작업 요청 추적»)은 보관 요청이 있을 때 나타납니다.
+h3 «수동 작업 요청» 과 «요청 ID: ${uuid}» 가 표시됩니다.
+상태 줄에는 «작업 요청 기록 저장됨 · ${state}» 또는 «기존 작업 요청 확인 · 추가 실행 없음 · ${state}» 가 표시됩니다. 새로고침으로 복원한 직후에는 «보관된 요청입니다. 같은 ID와 원본 입력으로 작업 요청을 확인합니다.» 가 표시됩니다.
+작업 요청 상태가 WAITING_RESOURCE 이면 status «작업 요청 저장 완료 · 필수 자원과 설비 준비를 기다립니다. 아직 로봇에 전송하지 않았습니다.» 가 표시됩니다.
+경고로 «응답 불명·처리 중인 요청은 새 ID로 재제출하지 마세요. 새 작업 작성은 별도 실행을 의미합니다.» 가 표시됩니다.
+버튼과 접기 구성은 다음과 같습니다.
+- 버튼 «동일 작업 요청 확인»
+- 버튼 «새 작업 작성»(작업 요청 상태가 WAITING_RESOURCE, ACCEPTED, REJECTED, UNASSIGNED 일 때만 활성)
+- 버튼 «작업 요청·실행 결과 보기»(작업 요청 id 가 있을 때)
+- 접기 «보관된 요청 입력»
+
+앞의 둘은 운영자가 아니면 비활성입니다. 같은 폼으로 다음 작업을 내려면 먼저 «새 작업 작성» 을 눌러 보관 요청을 비웁니다.
+
+보관 오류 alert 목록은 다음과 같습니다.
+- «요청 ID 보관 실패: ${error}. 작업을 제출하지 않았습니다»
+- «작업 요청 응답은 받았으나 브라우저 보관 실패: ${error}»
+- «보관된 수동 요청을 읽지 못했습니다. 저장소를 지우고 재제출하기 전에 실행 이력을 확인하세요»
+
+제출 결과(`JobOrderNotice.tsx`, status «제출 결과») 표는 다음과 같습니다.
 
 | 경우 | 글자 |
 |---|---|
-| 사전 거부 | «보내지 않음(${풀이}). ${detail}» |
-| 비정상 | «결과 모름(${cause}). 실행 목록과 기체 목록에서 확인하십시오» |
-| 스킬 실패 받아들임 | «받아들임(태스크 ${taskId}, ${taskState})», 이미 서 있었으면 뒤에 «. 같은 결함이 이미 서 있었습니다» |
-| 연결 상태 받아들임 | «받아들임(연결 상태 ${state})» / «받아들임(이미 ${state} 상태라 바뀐 것 없음)» |
-| 현장 거부 | «현장이 거부함(${풀이}). ${detail}» |
-| 응답 없음 | «응답 없음. 넣었는지 모릅니다. 실행 목록과 기체 목록에서 확인하십시오» |
+| 사전 거부 | «${what}: 막힘(${풀이})» 과 detail |
+| 비정상 | «${what}: 결과 모름(${cause}). 실행 목록을 다시 읽어 확인하십시오» |
+| 호스트 응답 없음, 다시 읽어 실행이 있음 | «${what}: 응답은 없었으나 다시 읽어 보니 실행이 있음. 실행 목록에서 보십시오» |
+| 호스트 응답 없음, 실행이 보이지 않음 | «${what}: 응답 없음. 현재 실행이 보이지 않습니다. 기존 요청 ID로 작업 요청을 확인하세요» |
+| 호스트 응답 없음, 다시 읽지도 못함 | «${what}: 반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오» |
+| 결과 있음 | «${what}: ${결과}»(결과는 «배정됨», «같은 작업 지시의 기존 실행», «거부됨», «미배정») |
 
-![장애 주입 사유 없음](img/22-site-fault-reason-missing.png)
+호스트 응답 없음 세 갈래에는 dl «작업 지시 id» 가 붙습니다.
+결과 있음에는 dl «작업 지시 id», «실행 id», «배정된 기체», «거부 사유»(있는 것만)와 목록 «기체별 미배정 사유», «실행 호스트가 후보에서 뺀 기체» 가 붙습니다.
+제출한 작업 지시의 실행 행은 실행 목록에서 `tr.selected` 로 강조됩니다.
+작업 지시 구역과 배정 가능 구역에는 대표 그림이 없습니다.
 
-그림 22. 사유가 비어 보내지 않음. 실제 스택.
+#### 3.4.3 배정 가능
 
-![현장 거부](img/23-site-fault-rejected.png)
+region «배정 가능»(h2 «배정 가능», `EligibilityTable.tsx`)에서는 폼이 다 차면 POST `/api/job-orders/eligibility` 로 판정을 묻습니다. 폼이 바뀐 뒤 300ms 더 바뀌지 않을 때 묻고, 그 뒤 5초마다 다시 묻습니다.
 
-그림 23. 진행 중 태스크가 없어 현장이 거부. 실제 스택.
+상태 표는 다음과 같습니다.
 
-![연결 상태 받아들임](img/24-site-fault-connection-accepted.png)
-
-그림 24. 연결 상태 장애 받아들임. «연결 상태» select 가 더 보입니다. 실제 스택.
-
-![스킬 실패 받아들임](img/41-site-fault-skill-accepted.png)
-
-그림 41. 진행 중 태스크에 스킬 실패 받아들임. 실제 스택.
-
-연결: 결과는 운영 영역의 실행 목록과 인시던트(§3.4.3, §3.4.4), 로봇·연결 영역의 기체 목록 «연결» 칸(§3.2.1)에서 봅니다.
-
-### 3.2 로봇·연결 (`RobotsArea.tsx`)
-
-`.split` 2열입니다. 왼쪽에 region «기체 목록» → region «어댑터» → region «프로파일» 을 세로로 쌓고, 오른쪽에 region «상세» 를 둡니다(`:41-102`). 오른쪽 상세는 고정이나 스티키가 아니라 왼쪽과 함께 스크롤됩니다.
-
-조작 결과 알림(`OutcomeNotice`)은 오른쪽 상세 맨 위에 하나뿐이며, 왼쪽 폼의 조작 결과도 여기에 섭니다(`:65`). 조작 중(`busy`)에는 이 영역의 모든 조작 버튼이 비활성이고, 끝나면 다섯 조회를 다시 읽습니다(`:28-36`).
-
-![채운 로봇·연결 영역](img/16-robots-overview-populated.png)
-
-그림 16. 기체 둘, 어댑터, 리비전을 채운 뒤. 엔지니어 모드, 실제 스택. 왼쪽 열 폭이 좁아 프로파일 표의 머리 «시험 요청» 과 «조작» 열 버튼 글자가 한 글자씩 세로로 접힙니다.
-
-![운영자 모드](img/17-robots-overview-populated-operator.png)
-
-그림 17. 채운 상태, 운영자 모드. 등록 폼 대신 모드 문장, 상세 아래 퇴역 폼. 실제 스택.
-
-#### 3.2.1 기체 목록 (region «기체 목록», h2 «기체»)
-
-| 모드 | 할 수 있는 것 |
+| 상태 | 글자 |
 |---|---|
-| 엔지니어 | 선언 폼(form «기체 선언», `DeclareForm.tsx:23-40`) |
-| 운영자 | «선언은 엔지니어 모드에서 합니다» |
+| 폼이 덜 참 | «폼을 채우면 기체별 배정 가능을 봅니다» |
+| 운영 서비스가 폼을 막음(400) | alert «${풀이}: ${detail}»(예 «작업 지시 폼 오류») |
+| 판정 전 | «판정 중» |
+| 못 읽음 | «모름: 배정 가능을 읽지 못했습니다 (${error})» |
+| 직전 값 | `p.stale` «직전 값입니다 (${error})» |
+| 폼이 바뀌어 다시 판정 중 | `p.stale` «폼이 바뀌어 다시 판정하는 중입니다» |
+| 판정 시각 | «판정 시각 ${checkedAt}» |
+| 기체 목록 모름 | «모름: 기체 목록을 아직 읽지 못했습니다» |
+| 기체 없음 | «이 사이트에 기체가 없습니다» |
 
-선언 폼: «robot_id», «일련번호», «표시 이름»(선택) → 버튼 «선언». robot_id 와 일련번호가 둘 다 차야 버튼이 활성입니다. 사이트 칸은 없습니다. API 는 `POST /api/robots`(`api.ts:381-386`), what 은 «${robotId} 선언» 입니다.
+표 `table[aria-label=기체별 배정 가능]` 의 아홉 열 순서는 다음과 같습니다.
+1. 기체
+2. 시운전(«완료»·«미완»·«퇴역», 모르면 «모름»)
+3. 연결(«${연결 글자}(현장 설정 버전 ${n})»)
+4. 도는 실행(실행 id, «없음», «모름»)
+5. 요구 스킬
+6. 기체 제공 스킬(목록, «없음», «모름»)
+7. 스킬 적합(«적합», «모름», 또는 «모자람» 뒤에 콜론과 빠진 스킬 목록)
+8. 배정 가능(«가능», «불가»)
+9. 이유(«; » 로 이음)
 
-표(aria-label 없음, `RobotsArea.tsx:126-151`):
+같은 표가 임무 › 호출 연결의 «실행 전 배정 확인» 에도 쓰입니다(§3.6.4).
+시운전 «완료» 인 기체만 배정 가능합니다.
 
-| 열 | 값 |
+#### 3.4.4 실행
+
+`ExecutionList.tsx` 컴포넌트가 담당하며 region «실행» 과 h2 «실행» 을 씁니다. 운영자 모드와 엔지니어 모드 두 모드 모두 보기만 합니다.
+
+상태와 요소는 다음 표와 같습니다.
+
+| 요소 | 글자 |
 |---|---|
-| «robot_id» | `button.link`. 누르면 오른쪽 상세 |
-| «원장 상태» | 코드 값 그대로(CLAIMED, CONFIRMED, RETIRED 등) |
-| «연결» | `CONNECTION_LABEL` |
-| «시운전» | `COMMISSIONING_LABEL`, 없으면 «-» |
-| «막힘» | 건수 숫자 |
+| 못 읽음 | «모름: 실행 목록을 아직 읽지 못했습니다» (오류가 있으면 뒤에 « (${error})») |
+| 직전 값 | `p.stale` «직전 값입니다. 실행 호스트 불통: ${error}» |
+| dl | «실행 호스트 인스턴스» ${instanceId}, «마지막 pump» ${pumpedAt}(없으면 «아직 없음») |
+| 일지 차단 | alert «실행 일지 저장 실패로 호스트의 명령 진행과 신규 배정이 차단되었습니다: ${executionIds}» |
+| 빈 상태 | «실행이 없습니다» |
 
-고른 행은 `tr.selected`(배경 `#e8ebf3`)입니다. 퇴역 기체도 목록에 남습니다. 상세는 행 전체가 아니라 robot_id 링크 버튼으로만 엽니다.
+재기동 복원 보고는 region «재기동 복원 보고» 와 `.restore` 클래스를 쓰며 표보다 앞에 놓입니다. 재기동 뒤 행이 있을 때만 표시합니다.
+- «재기동: 이전 인스턴스의 실행 ${n}건을 다시 지었습니다» 와 «(복원 시각 ${at})»
+- 목록 «다시 지은 실행»: «${jobOrderId}(${robotId}): 이전 ${prev} → ${exec}»
+- «미룬 실행 ${n}건. 실행 호스트가 다시 시도하며 그동안 그 기체는 배정에서 빠집니다» 와 목록 «미룬 실행»
+- «포기한 실행 ${n}건. 다시 짓지 않습니다. 기체의 남은 태스크를 운영자가 확인하십시오» 와 목록 «포기한 실행»
 
-상태: «모름: 기체 목록을 아직 읽지 못했습니다» / «선언된 기체가 없습니다» / «직전 값입니다 (${asOf} 기준)» (`:115,122,124`).
+표 `table[aria-label=실행 목록]` 은 최신부터 표시하며 여덟 열 순서는 다음과 같습니다.
+1. 실행 id(재기동으로 다시 지었으면 뒤에 회색 « (이전 ${id})»)
+2. 작업 지시 id
+3. 임무
+4. 임무 버전(«코드 정의», «버전 ${n}»)
+5. 기체
+6. 물리 상태(코드 값)
+7. 단위(«${unitId} ${skillType}: ${state}, 근거 ${reached}»)
+8. 작업 응답(«없음» 또는 작업 응답 요약 목록, «운영자 개입 필요» 포함)
 
-표 아래 회색 안내(`.offscreen`): «화면 밖 작업: 로봇 내부 지도와 웨이포인트 티칭, mimic 기동(site/ 런처). 화면은 완료를 대신 체크하지 않습니다» (`:56-58`).
+방금 낸 작업 지시의 행은 `tr.selected` 입니다.
 
-#### 3.2.2 어댑터 (region «어댑터», `AdaptersSection.tsx`, `AdapterForms.tsx`)
+![실행 목록](img/12-operations-executions.png)
 
-데이터는 `GET /api/adapters` 입니다. 못 읽으면 «모름: 어댑터 목록을 아직 읽지 못했습니다» (`AdaptersSection.tsx:30`).
+그림 12. 운영 영역의 실행 구역에서 실행 호스트 인스턴스와 실행 목록 표를 보여 줍니다.
 
-| 순서 | 요소 | 열 또는 칸 | 빈 상태 |
-|---|---|---|---|
-| 1 | h3 «인스턴스», table «인스턴스 목록» | instance_id, 빌드(«${제품} ${버전}»), 계약 semver, 적합성(값 그대로, 지금은 늘 UNTESTED), 플릿 주소(없으면 «직결»), 발견 기체 | «등록된 인스턴스가 없습니다» (`:78-108`) |
-| 2 | h3 «제품·빌드», table «제품·빌드 목록» | 제품(«${vendor}/${name}»), 버전(빌드 없으면 «빌드 없음»), 계약 semver, 적합성. 빌드마다 한 행 | «등록된 제품이 없습니다» (`:109-135`) |
-| 3 | 엔지니어 폼 셋(세로) | 아래 표 | |
+![재기동 복원 보고](img/14-operations-restart-restored-mock.png)
 
-| 폼 | 칸 → 버튼 | what | API |
-|---|---|---|---|
-| form «제품 선언» | «vendor», «name» → «제품 선언» | «${vendor}/${name} 제품 선언» | `POST /api/adapters` (`AdapterForms.tsx:25-38`) |
-| form «빌드 선언» | «제품» select(첫 보기 «고르십시오», 보기 «${vendor}/${name}»), «버전», «계약 semver» → «빌드 선언» | «${vendor}/${name} ${version} 빌드 선언» | `POST /api/adapters/{id}/versions` (`:61-85`) |
-| form «인스턴스 등록» | «instance_id», «빌드» select(«고르십시오», 보기 «${vendor}/${name} ${version}»), «플릿 주소»(선택) → «인스턴스 등록» | «${instanceId} 인스턴스 등록» | `POST /api/adapter-instances` (`:110-136`) |
+그림 14. 실행 호스트 재기동 뒤의 복원 보고 띠와 «(이전 …)» 이 붙은 실행 행을 응답 대역으로 그린 화면을 보여 줍니다.
 
-버튼은 필수 칸이 다 차야 활성입니다. 운영자 모드에는 «어댑터 등록은 엔지니어 모드에서 합니다» 가 섭니다.
+#### 3.4.5 인시던트
 
-![어댑터 구역](img/10-robots-adapters-populated.png)
+`IncidentSection.tsx` 컴포넌트가 담당하며 region «인시던트» 를 씁니다. 운영자는 보기와 보류 단위 판단(완료 확인, 재작업)을 합니다. 엔지니어는 보기만 하며 판단 폼 자리에 «보류 중입니다. 운영자 판단은 운영자 모드에서 합니다» 를 표시합니다.
 
-그림 10. 제품, 빌드, 인스턴스 등록 뒤. 실제 스택.
+화면 배치는 다음 순서로 합니다.
+1. 판단 결과 알림
+2. 직전 값
+3. 머리 줄 «실행 호스트 인스턴스 ${id}, 인시던트 ${total}건 가운데 최신 ${n}건»
+4. 지금 인스턴스 표
+5. region «이전 인스턴스»
+6. region «인시던트 상세»
 
-#### 3.2.3 프로파일 (region «프로파일», `ProfilesSection.tsx`)
+상태 표시는 다음과 같습니다.
+- «모름: 인시던트 목록을 아직 읽지 못했습니다»
+- 직전 값: «직전 값입니다. 실행 호스트 불통: ${error}»
+- 빈 상태: «인시던트가 없습니다»
 
-데이터는 `GET /api/profiles` 입니다. 못 읽으면 «모름: 프로파일 목록을 아직 읽지 못했습니다» (`:33`).
+표 `table[aria-label=인시던트 목록]` 의 열한 열 순서는 다음과 같습니다.
+1. 인시던트(id 버튼, 접근 이름 «${id} 상세 보기»)
+2. 발생 시각
+3. 기체
+4. 실행 id
+5. 단위
+6. 실패 종류(코드 값 또는 «-»)
+7. 경로(코드 값)
+8. 현장 설정 버전(«버전 ${n}», «모름»)
+9. 임무 버전(«버전 ${n}», «코드 정의»)
+10. 판단(«판단됨(설비 근거 없이 완료 확인)», «판단됨», «미해결», «판단 대상 아님»)
+11. 보류(«보류 중» 또는 «-»)
 
-- 카탈로그 한 줄: «스킬 ${n}종, 계약 ${semver}» (`:39-41`). 동기화 버튼은 없습니다.
-- table «리비전 목록» (`:45-115`), 없으면 «제출된 리비전이 없습니다» (`:43`):
+보류 행은 `tr.held` 로 연한 노랑 배경이며, 고른 행은 `tr.selected` 입니다.
 
-| 열 | 값 |
+이전 인스턴스는 실행 호스트가 `earlier` 를 실을 때 섭니다. 지금 실제 스택은 빈 배열이라 «이전 인스턴스의 인시던트가 없습니다» 를 표시합니다. 차 있으면 «재기동 앞 인스턴스의 인시던트 ${total}건 가운데 최신 ${n}건. 읽기 전용이며 여기서 판단하지 않습니다» 와 표 «이전 인스턴스 인시던트 목록» 을 표시합니다. 이 표는 맨 앞에 «인스턴스» 열이 있고 «보류» 열이 없으며, 버튼 접근 이름은 «${instanceId} ${id} 상세 보기» 입니다.
+
+상세는 region «인시던트 상세» 에 위치하며 제목은 h3 «${id} 상세» 입니다. 이전 인스턴스면 «이전 인스턴스의 사본입니다. 읽기 전용이며 판단하지 않습니다» 를 표시합니다. 읽기 상태는 다음과 같습니다.
+- «상세를 읽는 중입니다»
+- «모름: 상세를 읽지 못했습니다 (${error})»
+- «실행 호스트에 이 인시던트가 없습니다. 실행 호스트를 재기동했을 수 있습니다»
+
+사람의 판단은 없으면 «사람의 판단 없음. 아래 값은 모두 관측입니다» 를 표시합니다. 있으면 region «사람의 판단»(`.asserted`, 왼쪽 이중선)에 다음을 표시합니다.
+- «사람이 판단함: ${id}, ${wallClockAt}»
+- «결정 ${완료 확인 또는 재작업}(${코드}), 호스트 시각 ${at}»
+- 해당하면 «설비 근거 없이 완료 확인»
+
+관측은 region «관측»(`.observed`)에 위치하며 h4 «관측(봉인 때 기록)» 을 둡니다. dl 요소의 항목은 다음과 같습니다.
+- 발생 시각
+- 봉인한 실제 시각
+- 기체
+- 실행(«${exec}(작업 지시 ${jo})»)
+- 단위
+- 단위의 지금 상태
+- 실패 종류
+- 경로
+- 현장 설정 버전
+- 시간값
+- 임무 버전
+- 단계 위치
+- 필요 근거 등급
+- 도달 근거 등급
+- 확인 결과(코드 이름)
+- 위반된 사전 조건
+- 파지
+- 효과와 관측의 어긋남
+- 연결
+
+그 아래에는 h4 «결함»(결함 카드 «이 단위의 결함»), h4 «실행을 막던 결함(blockedBy)», h4 «근거 윈도우(앞 ${s}, 뒤 ${s})» 와 표 «근거 윈도우» 가 이어집니다. 표 «근거 윈도우» 의 열은 순번, 시각, 종류, 내용, 출처(«미들웨어 기록», «현장 관측»)입니다. 관측이 비면 «윈도우 안의 관측이 없습니다» 를 표시합니다.
+
+판단 폼은 운영자 모드이고 지금 인스턴스이며 보류 중일 때만 form «운영자 판단» 으로 표시합니다.
+- «${exec}/${unit} 보류 해소 방식(완료 확인 또는 재작업)을 결정합니다. 결정자는 ${user}입니다.»
+- 칸 «판단 사유»
+- 버튼 «완료 확인»
+- 버튼 «재작업»
+
+판단 사유가 비면 alert «판단 사유를 넣으십시오» 를 표시합니다. API POST `/api/executions/{exec}/units/{unit}/resolve` 로 `{decision, instanceId, reason}` 을 보냅니다.
+
+판단 결과(status «판단 결과», what «${exec}/${unit} ${완료 확인 또는 재작업}») 갈래는 다음과 같습니다.
+- «판단이 섰습니다(${incidentId})»
+- «보류 단위가 아닙니다»
+- «에이전트 판단은 거부됩니다»
+- «실행 호스트가 거부함(${풀이})»
+- 응답 없음 세 갈래:
+  - «응답은 없었으나 다시 읽어 보니 판단이 붙음»
+  - «응답 없음. 다시 읽어 보니 판단이 붙지 않음. 늦게 붙을 수 있으니 인시던트 목록에서 확인하십시오»
+  - «응답 없음. 판단이 붙었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 인시던트 목록에서 확인하십시오»
+- 사전 거부: «보내지 않음(${풀이}). ${detail}»
+- 비정상: «결과 모름(${cause}). 인시던트 목록에서 확인하십시오»
+
+관측과 사람의 판단을 다른 region 과 클래스(`.asserted`, `.observed`)로 가르는 것은 설계 요구입니다. 판단 사유는 picasso 인시던트에 실리지 않고 조작 기록(이력)에만 남습니다.
+
+![보류 중 인시던트](img/13-operations-incident-hold.png)
+
+그림 13. 운영자 모드에서 보류 중 인시던트 행과 그 상세, 운영자 판단 폼을 보여 줍니다.
+
+#### 3.4.6 셀 대역
+
+`CellBand.tsx` 와 `SignalNotice.tsx` 가 담당하며 region «셀 대역» 과 h2 «셀 대역» 을 씁니다. 운영자 모드와 엔지니어 모드 두 모드가 보고 안전 신호가 아닌 BOOLEAN 신호를 켜고 끕니다. API POST `/api/cell/signals/{name}` 에 `{value: "true" 또는 "false"}` 를 보내며 what 은 «${name} 켜기» 또는 «${name} 끄기» 입니다.
+
+화면 배치는 다음 순서로 합니다.
+1. 신호 조작 결과
+2. 회색 «셀 대역: 슬롯은 기체가 보고한 배치로 채웁니다. 독립 설비 확인이 아닙니다»
+3. 자리 표
+4. 신호 표
+
+표마다 «표 가로 스크롤» 감싸개를 둡니다.
+
+상태 표시는 다음과 같습니다.
+- «모름: 셀 대역을 아직 읽지 못했습니다»
+- «모름: 실행 호스트가 셀 대역을 읽지 못했습니다»
+- «모름: 신호 값을 읽지 못했습니다»
+- 직전 값: «직전 값입니다. 실행 호스트 불통: ${error}»
+- «모름: 셀 대역이 신호 목록을 싣지 않았습니다»
+- «셀 대역에 신호가 없습니다»
+
+표 «셀 대역 자리» 의 열은 다음과 같습니다.
+- 자리
+- 종류(«제시 자리», «슬롯»)
+- 점유(«점유», «비어 있음»)
+- 자재
+- 관측 시각
+
+표 «셀 대역 신호» 의 열은 다음과 같습니다.
+- 신호
+- 종류
+- 값
+- 관측 시각
+- 조작(안전 신호는 «안전 신호(값만 봅니다)», 안전 아닌 BOOLEAN 은 버튼 «켜기» 와 «끄기» 이며 접근 이름은 «${name} 켜기» 와 «${name} 끄기», 그 밖은 «-»)
+
+결과(status «신호 조작 결과») 갈래는 다음과 같습니다.
+- «반영됨(값 ${v})»
+- «현장이 거부함(${풀이})»
+- «응답은 없었으나 다시 읽어 보니 그 값임»
+- «응답 없음. 다시 읽어 보니 그 값이 아님. 다시 하려면 새로 누르십시오»
+- «반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 셀 대역 신호 표에서 확인하십시오»
+- «보내지 않음(${풀이}). ${detail}»
+- «결과 모름(${cause}). 셀 대역 신호 표에서 확인하십시오»
+
+실제 스택의 신호는 `rack_present`, 공유 자원용 `inspection_ready`, `inspection_complete` 가 있습니다. 슬롯과 자재는 작업 지시 폼의 PrepareSequencedRack 보기가 됩니다.
+
+#### 3.4.7 작업 응답 송신 기록
+
+`JobResponseLog.tsx` 가 담당하며 region «작업 응답 송신 기록» 을 씁니다. 거르개 select «송신 기록의 작업 지시»(«전체» 와 작업 지시 id 들)가 있습니다. 값을 바꾸면 GET `/api/job-responses?jobOrderId=` 로 다시 읽습니다.
+
+상태 표시는 다음과 같습니다.
+- «모름: 송신 기록을 아직 읽지 못했습니다»
+- 직전 값: «직전 값입니다. 실행 호스트 불통: ${error}»
+- 머리 줄: «실행 호스트 인스턴스 ${id}, 송신 기록 ${total}건 가운데 최신 ${n}건, 그 가운데 재기동 중복 ${k}건»
+- 빈 상태: «송신 기록이 없습니다»
+
+표 `table[aria-label=송신 기록 목록]` 의 열한 열 순서는 다음과 같습니다.
+1. 인스턴스
+2. 작업 응답 id
+3. 작업 지시 id
+4. 실행 id
+5. 버전
+6. 물리 상태
+7. 근거(도달/요구)
+8. 단위
+9. 운영자 필요(«필요», «-»)
+10. 처분(«송신», «재기동 중복(송신 안 함)»)
+11. 적은 시각
+
+재기동 중복 행은 `tr.duplicate` 로 회색입니다.
+
+### 3.5 로봇 (`#robots`)
+
+| 항목 | 내용 |
 |---|---|
-| 기종 | «${vendor}/${model}» |
-| 번호 | 리비전 번호 |
-| 상태 | 코드 값 그대로. DRAFT 이면 `<details><summary>저장됨: 검증 실패</summary>` 안에 사유 목록 |
-| CONTRACT, NEGATIVE, DETERMINISM | 각 «${result} (${ranBy})», 없으면 «-». FAIL 이면 `<details><summary>상세</summary>` 안에 «${check}: 기대 ${expected}, 관측 ${observed}» |
-| 시험 요청 | `TEST_REQUEST_LABEL` |
-| 활성화 | «${activatedBy} ${activatedAt}» 또는 빈칸 |
-| 조작 (엔지니어만) | 버튼 «시험 요청», «활성화» |
+| 목적 | 기체 선언과 원장 상태, 어댑터 제품·빌드·인스턴스, 모델 프로파일 리비전, 바인딩과 현장 명칭, 시운전 판정을 다룹니다. 새 기체·모델·제조사를 들이는 도입 여정을 안내합니다. |
+| 누가 | 기체 선언, 어댑터, 프로파일, 바인딩, 명칭 등록 기록은 엔지니어가 다룹니다. 퇴역과 복귀는 운영자가 다룹니다. 조회는 두 모드에서 모두 지원합니다. |
+| 진입 | 메뉴 5번입니다. 해시 없이 처음 열면 이 영역으로 진입합니다. |
+| 컴포넌트 | `RobotsArea.tsx`, `OnboardingGuide.tsx`, `DeclareForm.tsx`, `RobotDetail.tsx`, `CommissioningCards.tsx`, `AdaptersSection.tsx`, `AdapterForms.tsx`, `ProfilesSection.tsx`, `FindingCard.tsx`, `OutcomeNotice.tsx` 입니다. |
+| API | 조회는 `App.tsx` 의 다섯 조회 중 `/api/robots`, `/api/adapters`, `/api/profiles` 이며 5초 주기입니다. 쓰기 요청은 POST `/api/robots`, POST·DELETE `/api/robots/{id}/retirement`, POST `/api/robots/{id}/binding`, POST `/api/robots/{id}/site-names`, POST `/api/adapters`, POST `/api/adapters/{id}/versions`, POST `/api/adapter-instances`, POST `/api/profile-revisions`, POST `/api/profile-revisions/{id}/test-requests`(시험 요청), POST `/api/profile-revisions/{id}/activation`(활성화)입니다. 조작이 끝나면 다섯 조회를 곧바로 다시 읽습니다. 조작 중에는 이 영역의 조작 버튼이 모두 비활성화됩니다. |
+| 배치 | 1200px 이상에서 기체 탭과 도입 준비 탭은 `.split.robots-layout` 2열(기체 목록 \| 상세)입니다. 어댑터 관리와 프로파일 관리는 각자 탭의 전체 폭입니다. 1199px 이하에서는 1열입니다. |
 
-- 엔지니어 제출 폼(form «리비전 제출», `:180-188`): «프로파일 문서» `type="file"`, accept `.json,application/json` → «제출»(파일을 골라야 활성). 파일 글자를 그대로 `POST /api/profile-revisions` 로 보냅니다.
-- what: «${vendor}/${model}#${revision} 시험 요청|활성화|제출». 문서에서 좌표를 못 읽으면 «${파일 이름} 제출» (`:96,105,122,135-145`).
-- 운영자: «프로파일 관리는 엔지니어 모드에서 합니다».
-- 시험 결과는 사람이 적지 않고 런처의 시험 실행기(`site-runner`)가 적습니다(저장소 README).
+이 영역만 늘 마운트하고 `hidden` 으로 감춥니다. 하위 탭, 고른 기체, 폼 입력은 메뉴를 오가도 남습니다. 새로고침하면 하위 탭은 «기체» 로 돌아갑니다(탭은 URL 에 없습니다).
 
-![시험 전 활성화 거부](img/11-robots-overview-activation-rejected.png)
+![로봇 영역](img/01-robots-overview.png)
 
-그림 11. 시험 전 활성화가 거부된 알림과 카드, 리비전 VALIDATED, 시험 요청 «요청 없음». 알림 글자는 «… 활성화: 거절됨» (옛 이름). 실제 스택.
+그림 01. 로봇 영역의 기체 탭에 도구 줄과 기체 목록, 상세 2열이 보입니다.
 
-![프로파일 구역](img/12-robots-profiles-populated.png)
+#### 3.5.1 도구 줄과 조작 결과
 
-그림 12. 리비전 둘 시험 통과와 활성화 뒤. 실제 스택.
+도구 줄 `.robot-toolbar` 의 `nav[aria-label=로봇 관리]` 안에는 다음 버튼이 있습니다.
+- «기체»
+- «도입 준비»
+- «어댑터 관리»
+- «프로파일 관리»
 
-#### 3.2.4 상세 (region «상세», h2 «상세»)
+고른 탭에는 `aria-current="page"` 가 들어갑니다. 오른쪽 `.primary` 버튼은 «로봇 추가» 이며 누르면 도입 준비 탭으로 이동합니다.
 
-| 상태 | 글자 | 근거 |
-|---|---|---|
-| 고르지 않음 | «기체를 고르면 원장 상태와 연결이 여기에 보입니다.» | `RobotsArea.tsx:66-71` |
-| 목록에 없는 id | «목록에 없는 기체입니다: ${id}» | 같은 곳 |
+도구 줄 바로 아래 한 자리에 `OutcomeNotice`(§2.6.1)가 위치합니다. 이 영역의 registry 조작 결과가 모두 여기에 표시됩니다. 거부 카드의 «${target} 상세» 를 누르면 기체 탭으로 이동하여 해당 기체를 선택합니다.
 
-기체 상세(`RobotDetail.tsx`, region «${robotId} 상세», h3 ${robotId}), 위에서 아래:
+what 의 꼴은 다음과 같습니다.
+- «${robotId} 선언»
+- «${robotId} 퇴역»
+- «${robotId} 복귀»
+- «${robotId} 바인딩»
+- «${robotId} 명칭 기록»
+- «${vendor}/${name} 제품 선언»
+- «${vendor}/${name} ${version} 빌드 선언»
+- «${instanceId} 인스턴스 등록»
+- «${vendor}/${model}#${revision} 시험 요청»
+- «${vendor}/${model}#${revision} 활성화»
+- «${vendor}/${model}#${revision} 제출»
 
-| 순서 | 요소 | 내용 | 행 |
-|---|---|---|---|
-| 1 | dl | «원장 상태»(코드 값), «연결»(`CONNECTION_LABEL`), «연결 판정 기준»(«기준 ${seconds}초, 현장 설정 버전 ${version}», 목록이 실을 때만), «마지막 보고»(없으면 «보고 없음»), 퇴역이면 «퇴역» «${retiredAt} (${retiredReason})» | 43-66 |
-| 2 | h4 «막힘» | 없으면 «막힘 없음», 있으면 `FindingCard` 여러 장(바로 가기 없음) | 67-72 |
-| 3 | 카드 셋 | `CommissioningCards`. 운영 서비스가 시운전 칸을 실을 때만 | 73-81 |
-| 4 | 맨 아래 | 엔지니어 «퇴역과 복귀는 운영자 모드에서 합니다» / 운영자·퇴역 기체 버튼 «복귀»(`DELETE /api/robots/{id}/retirement`) / 운영자·현역 form «퇴역»: «퇴역 사유» + «퇴역»(사유가 비면 비활성, `POST …/retirement`) | 82-104 |
+#### 3.5.2 도입 준비
 
-what: «${robotId} 퇴역», «${robotId} 복귀» (`RobotsArea.tsx:84,87`).
+도입 준비 탭의 region «로봇 도입 준비» 는 `OnboardingGuide.tsx` 컴포넌트입니다. 상단에 eyebrow «ROBOT ONBOARDING», h2 «연결 준비부터 첫 작업까지», 안내 문구 «도입 상황을 고르고, 필요한 준비를 진행하세요. 현장 작업이 끝나면 기체를 다시 선택해 이어갈 수 있습니다.» 가 표시됩니다.
 
-카드 셋(`CommissioningCards.tsx`)은 각각 `<section className="card" aria-label>` 입니다. `.card` 에는 CSS 규칙이 없어 구분선이나 배경이 없습니다.
+fieldset legend «어떤 로봇을 추가하나요?» 안에는 다음 세 가지 카드형 라디오가 있습니다.
+- «기존 유형의 기체 추가»(«사용 중인 어댑터와 활성 프로파일을 재사용합니다.»)
+- «새 모델 도입»(«기존 어댑터의 지원 범위를 확인하고 모델 프로파일을 시험합니다.»)
+- «새 제조사 · 통신 방식 도입»(«어댑터 구현·배포 후 제품, 빌드, 인스턴스를 등록합니다.»)
 
-| 카드 | 내용 | 조작(엔지니어) | 행 |
-|---|---|---|---|
-| region «바인딩», h4 «바인딩» | 없으면 «활성 바인딩 없음». 있으면 dl «빌드» «${adapterName} ${adapterVersion}», «리비전» «${vendor}/${model}#${revision}», «바인딩한 이» «${boundBy} ${boundAt}» | 현역이면 form «바인딩»: «빌드» select(«고르십시오» + 빌드), «리비전» select(«고르십시오» + ACTIVE 리비전만) → «바인딩». what «${robotId} 바인딩». `POST /api/robots/{id}/binding` | 29-50, 117-158 |
-| region «사이트 명칭», h4 «사이트 명칭» | 바인딩이 없으면 «바인딩이 없어 요구할 명칭이 없습니다». 있으면 dl «명칭 상태»(코드 값), «요구 키»(없으면 «없음»), «사람이 기록함»(«기록 없음» 또는 «${by} ${at}»), «기체가 답함»(«아직 응답 없음» / «명칭을 지원하지 않음 (${at})» / «아는 명칭 ${n}개 (${at})»). 회색 «명칭 티칭은 화면 밖 현장 작업입니다. 화면은 티칭한 사실을 기록할 뿐 대신 하지 않습니다» | 바인딩이 있으면 버튼 «명칭 등록 기록». what «${robotId} 명칭 기록». `POST /api/robots/{id}/site-names` | 52-84 |
-| region «시운전», h4 «시운전: ${완료\|미완\|퇴역}» | 체크 목록 셋(글자 «[v]»/«[ ]»): «원장 상태 CONFIRMED, 퇴역 아님 (근거 /diag/robots)», «활성 바인딩 (근거 /diag/bindings)», «명칭 상태 CONFIRMED 또는 NOT_REQUIRED (근거 /diag/bindings)». 참고 줄 «참고(막지 않음): 소프트웨어 대조 ${…}, 어댑터 적합성 ${…\|-}» | 없음 | 86-107 |
+준비 카드는 넷으로 구성됩니다.
 
-![선언 직후, 바인딩 없음](img/07-robots-detail-unbound.png)
+첫째는 region «어댑터 준비 안내» 와 h3 «01 · 어댑터 준비» 입니다. 경로에 따라 «엔지니어가 통신·제어 어댑터를 구현하고 배포한 뒤 제품 → 빌드 → 현장 인스턴스 순서로 등록하세요. 등록 폼이 어댑터 코드를 생성하거나 배포하지는 않습니다.» 또는 «기존 어댑터가 해당 모델과 프로토콜을 지원하는지 확인하세요. 등록된 빌드와 현장 인스턴스를 함께 확인합니다.» 를 표시합니다. «등록 제품 ${n}개 · 현장 인스턴스 ${n}개» 와 «등록 여부만으로 통신 정상이나 모델 호환성을 보장하지 않습니다.» 를 안내합니다. 버튼 «어댑터 확인·등록» 을 누르면 어댑터 관리 탭으로 이동합니다. 목록을 못 읽으면 «모름: 어댑터 목록 미확인» 을 표시합니다.
 
-그림 07. 선언 직후 알림, 바인딩 없음 막힘 카드, 시운전 미완. 엔지니어 모드, 실제 스택.
+둘째는 region «프로파일 준비 안내» 와 h3 «02 · 모델 프로파일 검증» 입니다. 경로에 따라 «재사용할 모델의 활성 리비전을 확인하세요.» 또는 «스킬·제약·현장 참조를 정의한 JSON을 등록하고 시험 요청 → 결과 확인 → 활성화 순서로 진행하세요.» 를 표시합니다. «활성 리비전 ${n}개» 와 «활성 리비전 수는 카탈로그 정보입니다. 선택 기체와의 호환성은 별도로 확인하세요.» 를 안내합니다. 버튼 «프로파일 시험·활성화» 를 누르면 프로파일 관리 탭으로 이동합니다. 목록을 못 읽으면 «모름: 프로파일 목록 미확인» 을 표시합니다.
 
-![퇴역 뒤 보고](img/08-robots-detail-retired-blocked.png)
+셋째는 region «기체 준비 현황» 과 h3 «03 · 기체 등록과 현장 준비» 입니다. «관측 기준: ${asOf}»(없으면 «아직 읽지 못함»)를 표시하며, select «준비를 이어갈 기체»(첫 보기 «아래에서 새 기체를 등록하거나 기존 기체를 선택하세요»)를 제공합니다. 기체를 선택하기 전에는 «기체를 선택하면 서버가 확인한 준비 상태와 다음 조치를 표시합니다.» 를 표시합니다. 기체를 선택하면 h4 «${id} 준비 현황»(퇴역이면 « · 퇴역한 기체»)을 표시합니다.
 
-그림 08. 퇴역 뒤 보고 막힘 카드와 복귀 버튼. 운영자 모드, 실제 스택.
+세 단계 `ol.readiness-steps` 는 다음과 같습니다.
+- «기체 확인»(«현장 담당: 로봇·어댑터 기동과 최초 보고를 확인합니다.»)
+- «어댑터 · 프로파일 연결»(«엔지니어: 아래 상세의 바인딩에서 빌드와 활성 리비전을 연결합니다.»)
+- «현장 명칭 준비»(«현장 담당이 지도·웨이포인트를 티칭하고 엔지니어가 사실을 기록합니다. 기체 응답과 사람의 기록은 아래 상세에서 따로 확인합니다.»)
 
-![바인딩 뒤 명칭 기록 없음](img/13-robots-detail-bound-unnamed.png)
+단계마다 다음 상태 중 하나를 표시합니다.
+- «확인됨»
+- «준비 필요»
+- «모름»
+- «직전 값 · 재확인 필요»
 
-그림 13. 바인딩 뒤 명칭 기록 없음 막힘. 실제 스택.
+다음 조치 문장은 상황에 따라 다릅니다.
+- 퇴역: «퇴역 기체입니다. 운영자 모드의 상세에서 복귀 여부를 판단하세요.»
+- 시운전 판정 없음: «시운전 판정을 아직 받지 못했습니다.»
+- 직전 값: «직전 관측입니다. 최신 조회 전에는 현재 준비 완료로 판단하지 마세요.»
+- 완료: «시운전 완료가 확인되었습니다. 운영에서 실제 임무의 배정 가능 여부를 확인하세요.»
+- 미완: «다음 조치: » 뒤에 다음 세 문장 중 하나가 옵니다.
+  - «현장에서 기체·어댑터의 최초 보고를 확인하세요.»
+  - «아래 상세에서 빌드와 활성 프로파일을 바인딩하세요.»
+  - «아래 상세의 명칭 상태와 현장 티칭 결과를 확인하세요.»
 
-![시운전 완료](img/14-robots-detail-commissioned.png)
+링크는 «기체 연결·현장 명칭 설정으로 이동»(`#robot-detail`)을 제공합니다.
 
-그림 14. 시운전 완료, 막힘 없음. 실제 스택.
+넷째는 region «첫 작업 검증 안내» 와 h3 «04 · 임무별 배정 가능 여부 확인» 입니다. «시운전 완료와 임무 배정 가능은 별도 판정입니다. 운영에서 임무를 선택해 스킬·연결·현장 조건과 막힘을 확인한 뒤 작업을 요청하세요.» 를 표시합니다. 버튼 «운영에서 배정 조건 확인» 을 누르면 운영 영역으로 이동합니다.
 
-![기체가 아는 명칭 없음](img/15-robots-detail-names-contradicted.png)
+도입 준비 탭에서도 아래에 기체 목록과 상세 2열이 함께 보입니다. 이때 기체 목록의 h2 는 «기체 등록 · 준비 재개» 로 바뀝니다.
 
-그림 15. 시운전 미완, 기체가 아는 명칭 없음 막힘 카드(해결 담당 «현장(화면 밖)»). 실제 스택.
+#### 3.5.3 기체 목록
 
-연결: 막힘 카드의 «근거 버전» 과 «연결 판정 기준» 은 현장 설정 버전입니다(§3.1.1). 시운전 «완료» 인 기체만 운영 영역에서 배정 가능합니다(§3.4.2).
+기체 탭의 region «기체 목록» 에는 h2 «기체» 가 있습니다. 안내 문구는 «처음 도입하는 유형은 도입 준비에서 어댑터와 프로파일을 먼저 확인하세요. 기존 유형의 기체는 아래에서 바로 등록할 수 있습니다.» 입니다.
 
-### 3.3 임무·정책 (`MissionsArea.tsx`)
+기체 선언 form «기체 선언»(`DeclareForm.tsx`)의 입력 칸은 다음과 같습니다.
+- «robot_id»
+- «일련번호»
+- «표시 이름»(선택)
 
-목적: 편집 대상 임무 하나(`PrepareSequencedRack`, `api.ts:619`)의 활성 버전, 버전 이력, 초안을 보이고, 엔지니어가 정의 JSON 을 편집해 초안 저장 → 검증 → 모의 실행 → 활성화를 합니다. 편집 대상 임무는 하나로 고정이며 h2 는 임무 id 글자 그대로입니다(`:175`).
+버튼 «선언» 은 robot_id 와 일련번호가 차야 활성화됩니다. 운영자 모드에서는 «선언은 엔지니어 모드에서 합니다» 문구를 표시합니다.
 
-| 모드 | 할 수 있는 것 |
+표는 이름이 없으며 «표 가로 스크롤» 감싸개 안에 있습니다. 열 구성은 다음과 같습니다.
+
+| 열 이름 | 설명 |
 |---|---|
-| 엔지니어 | 템플릿 불러오기, 편집, 초안 저장, 검증, 모의 실행, 활성화, 초안 열기 |
-| 운영자 | 보기. 편집 구역에 «임무 편집은 엔지니어 모드에서 합니다» 와 활성 정의만 |
+| «robot_id» | 링크 모양 버튼이며 누르면 상세를 엽니다. |
+| «원장 상태» | 코드 값입니다. |
+| «연결» | «신선», «오래됨», «보고 없음» 중 하나입니다. |
+| «시운전» | «완료», «미완», «퇴역» 중 하나이며 없으면 «-» 입니다. |
+| «막힘» | 건수입니다. |
 
-데이터: `GET /api/missions/PrepareSequencedRack`(이 영역이 열려 있을 때 5초), `GET /api/missions/templates/PrepareSequencedRack`(한 번). 조작은 `POST …/drafts`, `…/drafts/{id}/validate`, `…/mock-run`, `…/activate {reason}` 입니다(`api.ts:805-818`). 4xx 와 503 은 사전 거부로 봅니다(`api.ts:789`).
+고른 행은 `tr.selected` 가 들어갑니다. 퇴역 기체도 목록에 남습니다.
 
-배치(위에서 아래, 구역 넷, `:174-341`). 편집 구역 안만 `.split` 2열(편집기 | 활성 정의)입니다.
+회색 `.offscreen` 문장은 «화면 밖 작업: 로봇 내부 지도와 웨이포인트 티칭, mimic 기동(site/ 런처). 화면은 완료를 대신 체크하지 않습니다» 입니다.
 
-| 구역 | 내용 | 행 |
+목록의 상태 표시는 다음과 같습니다.
+- «모름: 기체 목록을 아직 읽지 못했습니다»
+- «선언된 기체가 없습니다»
+- 직전 값: «직전 값입니다 (${asOf} 기준)»
+
+#### 3.5.4 상세
+
+상세 영역은 region «상세», `#robot-detail`, h2 «상세» 이며 기체 탭과 도입 준비 탭의 오른쪽 열에 있습니다. 기체를 고르지 않았을 때는 «기체를 고르면 원장 상태와 연결이 여기에 보입니다.» 를 표시합니다. 목록에 없는 id 이면 «목록에 없는 기체입니다: ${id}» 를 표시합니다.
+
+`RobotDetail.tsx` 는 region «${robotId} 상세» 이며 위에서 아래로 다음 요소를 배치합니다.
+1. dl «원장 상태»(코드 값), «연결»(연결 글자), «연결 판정 기준»(«기준 ${seconds}초, 현장 설정 버전 ${version}»), «마지막 보고»(없으면 «보고 없음»), 퇴역 기체이면 «퇴역»
+2. h4 «막힘»: 없으면 «막힘 없음» 을 표시하고, 있으면 `FindingCard` 여러 장을 표시하며 바로 가기는 없습니다.
+3. 카드 셋(`CommissioningCards.tsx`, 각각 `section` region)
+4. 맨 아래: 엔지니어 모드이면 «퇴역과 복귀는 운영자 모드에서 합니다» 를 표시합니다. 운영자 모드이고 퇴역 기체이면 버튼 «복귀»(DELETE `/api/robots/{id}/retirement`)를 표시합니다. 운영자 모드이고 현역 기체이면 form «퇴역»(칸 «퇴역 사유», 사유가 비면 비활성화되는 버튼 «퇴역», POST `/api/robots/{id}/retirement`)을 표시합니다.
+
+카드 셋(`CommissioningCards.tsx`)의 구성은 다음 표와 같습니다.
+
+| 카드 | 내용 | 조작(엔지니어) |
 |---|---|---|
-| region «임무 PrepareSequencedRack» (h2 = 임무 id) | 못 읽음 «모름: 임무 버전을 아직 읽지 못했습니다» 뒤에 오류가 있으면 « (${error})». dl «활성 버전»(«코드 정의» / «버전 ${n}»), «활성화»(«${by} ${at}: ${reason}», 데이터 버전일 때만) | 174-195 |
-| region «임무 편집» (엔지니어, h2 «편집») | 마지막 결과(`MissionNotice`) → 템플릿 목록 → `.split`[라벨 «임무 정의 JSON» textarea(rows 24, spellCheck off) \| 활성 정의] → 대상 줄 → `.actions`[«초안 저장», «검증», «모의 실행», «활성화 사유» 입력, «활성화»] → alert | 196-249 |
-| region «임무 편집» (운영자) | «임무 편집은 엔지니어 모드에서 합니다» + 활성 정의만 | 250-255 |
-| region «버전 이력» (h2) | table «임무 버전 이력»: 버전(«버전 ${n}», 활성이면 « (활성)», 그 행 `selected`), 초안(«초안 ${id}»), 활성화한 사람, 사유, 활성화 시각. 없으면 «활성화한 버전이 없습니다. 코드 정의로 돕니다» | 258-292 |
-| region «초안» (h2) | table «임무 초안 목록»: 초안(«초안 ${id}»), 저장한 사람, 저장 시각, 마지막 모의 실행(«없음» 또는 `<details><summary>${판정} ${finishedAt}</summary>` + 모의 실행 보고), 엔지니어면 «조작»(버튼 «초안 ${id} 열기»). 대상 초안 행 `selected`. 없으면 «저장한 초안이 없습니다» | 293-338 |
+| region «바인딩» | 없으면 «활성 바인딩 없음» 을 표시합니다. 있으면 dl «빌드», «리비전», «바인딩한 이» 를 표시합니다. | 현역이면 form «바인딩»(select «빌드»(첫 보기 «고르십시오»), select «리비전»(«고르십시오» 와 ACTIVE 리비전만), 버튼 «바인딩»)을 표시하고 POST `/api/robots/{id}/binding` 으로 요청합니다. |
+| region «사이트 명칭» | 바인딩이 없으면 «바인딩이 없어 요구할 명칭이 없습니다» 를 표시합니다. 있으면 dl «명칭 상태»(코드 값), «요구 키»(없으면 «없음»), «사람이 기록함»(«기록 없음» 또는 기록한 사람과 시각), «기체가 답함»(«아직 응답 없음», «명칭을 지원하지 않음 (${at})», «아는 명칭 ${n}개 (${at})»), 회색 «명칭 티칭은 화면 밖 현장 작업입니다. 화면은 티칭한 사실을 기록할 뿐 대신 하지 않습니다» 를 표시합니다. | 바인딩이 있으면 버튼 «명칭 등록 기록» 을 표시하고 POST `/api/robots/{id}/site-names` 로 요청합니다. |
+| region «시운전» | h4 «시운전: ${완료 또는 미완 또는 퇴역}», 체크 목록 셋(글자 «[v]» 또는 «[ ]»): «원장 상태 CONFIRMED, 퇴역 아님 (근거 /diag/robots)», «활성 바인딩 (근거 /diag/bindings)», «명칭 상태 CONFIRMED 또는 NOT_REQUIRED (근거 /diag/bindings)». 참고 줄 «참고(막지 않음): 소프트웨어 대조 ${…}, 어댑터 적합성 ${…}» | 없음 |
 
-편집 구역의 세부:
+막힘 카드의 «근거 버전» 과 «연결 판정 기준» 은 현장 설정 버전입니다(§3.7). 시운전 «완료» 인 기체만 운영에서 배정 가능합니다(§3.4.3).
 
-| 요소 | 사실 | 행 |
-|---|---|---|
-| 템플릿 | `<ul aria-label="템플릿">`, 항목마다 버튼 «${TEMPLATE_LABEL} 불러오기» 뒤에 호스트가 준 제목. 못 읽음 «모름: 템플릿을 아직 읽지 못했습니다» (+ 오류). 불러오면 편집기만 바뀌고 저장하지 않음 | 346-372 |
-| 활성 정의 | «활성: 코드 정의» / «활성: 버전 ${n}» 뒤에 «, 편집기와 같음» / «, 편집기와 다름». 코드 정의면 «코드 정의는 정의 JSON 이 없습니다», 아니면 `<pre aria-label="활성 버전 정의">`. 못 읽음 «모름: 활성 버전을 아직 읽지 못했습니다» | 378-401 |
-| 편집기 처음 내용 | 활성 정의, 없으면 첫 템플릿 | 100-102 |
-| 대상 줄 | «저장한 초안이 없습니다. 초안을 저장하면 검증·모의 실행·활성화할 수 있습니다» / «대상: 초안 ${id}, 마지막 모의 실행 ${판정\|없음}» / «편집기 내용이 초안 ${id} 의 내용과 다릅니다. 검증하려면 초안을 다시 저장하십시오» | 221-229 |
-| 버튼 활성 조건 | «초안 저장» 은 임무 개요를 읽은 뒤. «검증», «모의 실행», «활성화» 는 편집기 글자가 저장한 초안과 같을 때 | 103, 231-246 |
-| 활성화 사유 | 비면 alert «활성화 사유를 넣으십시오». 사유는 `ACTIVATED` 일 때만 지움 | 116-118, 150-154 |
-| what | «초안 저장», «초안 ${id} 검증», «초안 ${id} 모의 실행», «초안 ${id} 활성화» | 127-162 |
+![시운전 완료 기체 상세](img/02-robots-detail-commissioned.png)
 
-편집기는 `<textarea>` 입니다. 문법 강조, 자동 들여쓰기, JSON 검사가 없으며, 옳고 그름은 실행 호스트의 검증이 판정합니다(`:210-218`).
+그림 02. 시운전 완료 기체의 상세 화면이며 막힘 없음과 바인딩, 사이트 명칭, 시운전 카드가 보입니다.
 
-결과(`MissionNotice.tsx`, status «임무 조작 결과», `<div>` 안 여러 `<p>`):
+#### 3.5.5 어댑터 관리
 
-| 경우 | 글자 | 행 |
-|---|---|---|
-| 시운전 완료 기체 모름(503 `COMMISSIONED_ROBOTS_UNKNOWN`) | «${what}: 모름. ${detail}. 판정하지 않았습니다» | 96-101 |
-| 그 밖 사전 거부 | «${what}: 막힘(${풀이})» + «${detail}» | 103-110 |
-| 비정상 | «${what}: 결과 모름(${cause}). 초안·버전 목록을 다시 읽어 확인하십시오» | 112-118 |
-| 응답 없음 세 갈래 | «${what}: 응답은 없었으나 다시 읽어 보니 반영됨. 초안·버전 목록에서 보십시오» / «…응답 없음. 다시 읽어 보니 반영 안 됨. 다시 하려면 새로 요청하십시오» / «…반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 초안·버전 목록에서 확인하십시오» | 178-186 |
-| 호스트 거부 | «${what}: 실행 호스트가 거부함(${풀이})» + «${detail}» | 135-144 |
-| 본문 없음 | «${what}: 결과 모름. 초안·버전 목록을 다시 읽어 확인하십시오» | 150-152 |
-| INPUT_UNKNOWN | «${what}: 모름. ${detail 또는 '판정 입력을 읽지 못했습니다'}. 판정하지 않았습니다» | 157-162 |
-| REFUSED | «${what}: 거부됨» + `FindingCard` 여러 장(바로 가기 없음) | 163-171 |
-| 저장 성공 | «${what}: 초안 ${id} 저장됨» | 41-46 |
-| 검증 통과 | «${what}: 통과» | 50 |
-| 모의 실행 | «${what}: ${판정}» + 모의 실행 보고 | 57-64 |
-| MOCK_RUN_REQUIRED | «${what}: 막힘. 이 초안에 통과한 모의 실행이 없습니다. 모의 실행을 먼저 하십시오» + «마지막 모의 실행: ${판정}» | 72-78 |
-| 활성화 성공 | «${what}: 버전 ${n} 활성화됨. 다음 작업 지시부터 이 버전을 씁니다» | 80-84 |
+어댑터 관리는 탭 «어댑터 관리», region «어댑터», h2 «어댑터» 이며 `AdaptersSection.tsx` 와 `AdapterForms.tsx` 로 구성되고 탭 전체 폭을 씁니다. 목록을 아직 읽지 못했을 때는 «모름: 어댑터 목록을 아직 읽지 못했습니다» 를 표시합니다. 직전 값을 표시할 때는 «직전 값입니다 (${asOf} 기준)» 을 표시합니다.
 
-모의 실행 보고(`MockRunReport.tsx:12-53`): 첫 줄 «모의 실행 ${id}: ${판정}» (detail 이 있으면 «. ${detail}») → dl «표본 작업 지시»(«없음» 또는 «${jobOrderId}, 슬롯 ${…}, 자재 ${…}, 요구 근거 ${…}»), «물리 상태»(없으면 «실행이 서지 않음»), «가상 경과» ${n}초 → 단위가 있으면 table «모의 실행 ${id} 단위»: 단위, 경로(SIGNAL «설비 대기», 그 밖 «기체»), 스킬, 상태, 근거, 실패 분류(없으면 «-»).
+h3 «인스턴스» 아래에는 표 «인스턴스 목록» 이 있습니다. 열은 다음 항목으로 구성합니다.
+- instance_id
+- 빌드
+- 계약 semver
+- 적합성(값 그대로 표시하며 지금은 늘 UNTESTED)
+- 플릿 주소(없으면 «직결»)
+- 발견 기체
 
-![임무·정책 처음 상태](img/04-missions-overview-initial.png)
+등록된 인스턴스가 없으면 «등록된 인스턴스가 없습니다» 를 표시합니다.
 
-그림 04. 코드 정의, 버전과 초안 없음. 엔지니어 모드, 실제 스택.
+h3 «제품·빌드» 아래에는 표 «제품·빌드 목록» 이 있습니다. 열은 다음 항목으로 구성합니다.
+- 제품(«${vendor}/${name}»)
+- 버전(빌드 없으면 «빌드 없음»)
+- 계약 semver
+- 적합성
 
-![검증 거부](img/33-missions-validate-refused.png)
+등록된 제품이 없으면 «등록된 제품이 없습니다» 를 표시합니다.
 
-그림 33. 현장에 없는 스킬로 고친 정의의 검증 거부와 카드. 실제 스택.
+엔지니어 모드에서는 다음 세 폼을 제공합니다.
+- form «제품 선언»: 칸 «vendor», «name», 버튼 «제품 선언»(POST `/api/adapters`)
+- form «빌드 선언»: select «제품», 칸 «버전», «계약 semver», 버튼 «빌드 선언»(POST `/api/adapters/{id}/versions`)
+- form «인스턴스 등록»: 칸 «instance_id», select «빌드», 칸 «플릿 주소»(선택), 버튼 «인스턴스 등록»(POST `/api/adapter-instances`)
 
-![모의 실행 없이 활성화](img/34-missions-activate-mock-run-required.png)
+버튼은 필수 칸이 차야 활성화됩니다. 운영자 모드에서는 «어댑터 등록은 엔지니어 모드에서 합니다» 를 표시합니다. 등록 폼은 어댑터 코드를 만들거나 배포하지 않습니다.
 
-그림 34. 모의 실행 없이 활성화해 막힘. 실제 스택(파일 이름의 `mock-run` 은 기능 이름).
+#### 3.5.6 프로파일 관리
 
-![모의 실행 통과](img/35-missions-mock-run-passed.png)
+프로파일 관리는 탭 «프로파일 관리», region «프로파일», h2 «프로파일» 이며 `ProfilesSection.tsx` 로 구성되고 탭 전체 폭을 씁니다. 목록을 아직 읽지 못했을 때는 «모름: 프로파일 목록을 아직 읽지 못했습니다» 를 표시합니다. 카탈로그 줄에는 «스킬 ${n}종, 계약 ${semver}» 를 표시합니다.
 
-그림 35. 모의 실행 통과 보고(표본 작업 지시, 단위 표). 실제 스택.
+표 «리비전 목록» 의 열은 다음 항목으로 구성합니다.
+- 기종(«${vendor}/${model}»)
+- 번호
+- 상태(코드 값, DRAFT 이면 접기 «저장됨: 검증 실패» 안에 사유)
+- CONTRACT(각 결과와 실행 주체, 없으면 «-», FAIL 이면 접기 «상세»)
+- NEGATIVE(각 결과와 실행 주체, 없으면 «-», FAIL 이면 접기 «상세»)
+- DETERMINISM(각 결과와 실행 주체, 없으면 «-», FAIL 이면 접기 «상세»)
+- 시험 요청(«요청 없음», «대기», «실행 중», «만료», «끝남»)
+- 활성화(누가·언제)
+- 조작(엔지니어만 표시하며 버튼 «시험 요청», «활성화»)
 
-![활성화 사유 없음](img/36-missions-activate-reason-missing.png)
+제출된 리비전이 없으면 «제출된 리비전이 없습니다» 를 표시합니다. 엔지니어 모드에서는 form «리비전 제출»(파일 칸 «프로파일 문서»(`.json`), 파일을 골라야 활성화되는 버튼 «제출»)을 제공합니다. 파일 글자를 그대로 POST `/api/profile-revisions` 로 보냅니다. 운영자 모드에서는 «프로파일 관리는 엔지니어 모드에서 합니다» 를 표시하고 «조작» 열은 없습니다. 시험 결과는 사람이 적지 않고 런처의 시험 실행기(`site-runner`)가 적습니다.
 
-그림 36. 사유가 비어 보내지 않음. 실제 스택.
+### 3.6 임무 (`#missions`)
 
-![활성화 뒤](img/37-missions-overview-active.png)
-
-그림 37. 활성화 뒤. 버전 1 활성, 초안 둘, 편집기 | 활성 정의 2열. 실제 스택.
-
-![초안 목록](img/38-missions-drafts-mock-run-detail.png)
-
-그림 38. 초안 목록, 마지막 모의 실행을 펼침. 실제 스택.
-
-![운영자 모드](img/39-missions-overview-operator.png)
-
-그림 39. 운영자 모드. 편집기 없이 활성 정의만. 실제 스택.
-
-연결: 활성화한 버전은 다음 작업 지시부터 쓰이고, 운영 영역 실행 목록의 «임무 버전» 칸과 인시던트의 «임무 버전» 에 보입니다(§3.4.3, §3.4.4). 검증은 셀 대역의 신호 사양을 씁니다(저장소 README).
-
-### 3.4 운영 (`OperationsArea.tsx`)
-
-배치(위에서 아래, `:220-258`): `.split`[region «작업 지시» | region «배정 가능»] → region «실행» → region «인시던트» → region «셀 대역» → region «작업 응답 송신 기록». 여섯 구역이 한 페이지에 이어지며 탭, 접기, 앵커는 없습니다.
-
-실행 호스트를 거치는 읽기는 이 영역을 열었을 때만 합니다. 호스트가 멈춰도 다섯 조회는 직전 값이 되지 않습니다(`:46-57`).
-
-![운영 영역 빈 상태](img/05-operations-overview-empty.png)
-
-그림 05. 실행, 인시던트, 송신 기록이 없는 상태. 운영자 모드, 실제 스택.
-
-![운영 영역 전체, 운영자](img/52-operations-overview-operator.png)
-
-그림 52. 흐름을 돈 뒤 운영 영역 전체. 운영자 모드, 실제 스택.
-
-![운영 영역 전체, 엔지니어](img/53-operations-overview-engineer.png)
-
-그림 53. 같은 상태, 엔지니어 모드. 제출 버튼 자리에 모드 문장. 실제 스택.
-
-![재기동 뒤 운영 영역 전체](img/59-operations-overview-restarted-mock.png)
-
-그림 59. 실행 호스트 재기동 뒤. 대역 응답으로 그린 화면.
-
-#### 3.4.1 작업 지시 (region «작업 지시», h2 «작업 지시»)
-
-| 모드 | 할 수 있는 것 |
+| 항목 | 내용 |
 |---|---|
-| 운영자 | 폼 입력, 버튼 «작업 지시 내기» |
-| 엔지니어 | 폼 입력(배정 가능 판정은 보임). 버튼 자리에 «작업 지시는 운영자 모드에서 냅니다» (`JobOrderFormView.tsx:50-56`) |
+| 목적 | 지원 임무와 입력 계약을 보고, 새 임무를 템플릿으로 등록하고, 임무 정의(실행 정의)를 초안 저장·검증·모의 실행·활성화하고, 호출 계약(외부 입력 → 임무 입력 매핑)을 버전별로 저장·공개하고 실행 배포를 고정합니다. |
+| 누가 | 엔지니어는 임무 편집, 새 임무 등록, 호출 계약 작성·복제·공개·공개 중지, 실행 배포를 합니다. 운영자는 호출 계약으로 작업 요청을 합니다. 배정 가능 확인, 입력 검증·변환 미리보기, 조회는 두 모드에서 합니다. |
+| 진입 | 메뉴 6번이나 검증 도구의 «임무·호출 계약» 링크로 진입합니다. 패널은 URL에 없고 처음은 «임무 목록» 입니다. |
+| 컴포넌트 | `MissionsArea.tsx`, `MissionCreator.tsx`, `MissionInterfaces.tsx`, `InterfaceDeployment.tsx`, `MissionDefinitionEditor.tsx`, `MissionNotice.tsx`, `MockRunReport.tsx`, `missionTemplates.ts` |
+| API | GET `/api/job-contracts`(마운트와 «계약 다시 조회» 때만), POST `/api/mission-profiles`(새 임무 등록), GET·POST `/api/mission-interfaces`, POST `/api/mission-interfaces/preview`, POST `/api/mission-interfaces/{id}/{version}/state`(공개·공개 중지), POST `/api/mission-interfaces/{id}/{version}/deploy`, GET `/api/mission-interfaces/{id}/{version}/deployments`, POST `/api/mission-interfaces/{id}/{version}/eligibility`, POST `/api/mission-interfaces/{id}/{version}/invoke`, POST `/api/job-orders/preview`, 임무 정의 쪽(§3.6.5) `/api/missions/{workMasterId}` 와 그 아래 drafts·validate·mock-run·activate, `/api/missions/templates/{workMasterId}` |
 
-배치: 결과 알림 `JobOrderNotice` → 폼 `JobOrderFormView` (`OperationsArea.tsx:223-235`).
+#### 3.6.1 머리와 패널
 
-폼(form «작업 지시 폼», `JobOrderFormView.tsx`):
+머리 영역은 region «임무 관리 개요» 입니다.
+eyebrow는 «MISSION MANAGEMENT» 입니다.
+h2는 «작업 요청을 로봇의 실행으로 연결하세요» 입니다.
+설명은 «지원 임무의 입력 계약을 확인하고 실행 정의를 검증합니다. 호출 계약 연결에서 입력이 작업 지시로 변환되는 과정을 확인할 수 있습니다.» 입니다.
+`nav[aria-label=임무 관리]` 에 네 개의 버튼이 있으며, 고른 버튼에는 `aria-current="page"` 가 적용됩니다.
+패널 버튼은 다음과 같습니다.
+- «임무 목록»
+- «실행 정의»
+- «호출 연결»
+- «버전·배포»
 
-| 임무 | 칸 |
-|---|---|
-| «임무» select | «InspectAsset», «PrepareSequencedRack» (`:17,32-44`). 영역을 옮기면 처음 값 InspectAsset 으로 돌아옴(`PW:267`) |
-| InspectAsset | fieldset «점검 대상». 대상마다 «대상 ${i} id», «대상 ${i} 장소», 버튼 «대상 ${i} 빼기». 버튼 «대상 더하기». 회색 «장소 이름은 기체가 아는 명칭이어야 합니다. 화면은 검사하지 않습니다» (`:68-104`). 처음 대상 하나(`jobOrderDraft.ts:14-19`) |
-| PrepareSequencedRack | 셀 대역 못 읽음이면 «모름: 셀 대역을 읽지 못해 슬롯과 자재를 고를 수 없습니다». 아니면 fieldset «슬롯»(슬롯 id 마다 체크박스, 라벨 = 슬롯 id), «자재» select(«고르십시오» + 점유된 제시 자리의 자재), «제시 자리 ${id\|-}» (`:107-139`) |
+계약 목록 조회에 실패하면 alert «계약 목록을 읽지 못했습니다: ${error}» 와 버튼 «계약 다시 조회» 가 표시됩니다.
 
-덜 채운 폼(`jobOrderDraft.ts:56-67`, alert): «점검 대상을 하나 이상 넣으십시오», «점검 대상마다 대상 id 와 장소 이름을 넣으십시오», «셀 대역을 읽지 못해 슬롯과 자재를 고를 수 없습니다», «슬롯을 하나 이상 고르십시오», «자재를 고르십시오», «${material} 를 든 제시 자리가 셀 대역에 없습니다».
+#### 3.6.2 새 임무 생성
 
-API 는 `POST /api/job-orders` (`api.ts:615`), what 은 «${workMasterId} 작업 지시» 입니다(`OperationsArea.tsx:182`).
+`MissionCreator.tsx` 컴포넌트이며, region «새 임무 생성» 에 해당합니다.
+임무 목록의 «새 임무 만들기» 를 누르면 머리 아래에 열립니다.
+h2는 «템플릿으로 새 임무 생성» 입니다.
+설명은 «입력 계약과 변환 규칙을 등록한 뒤 실행 정의를 검증·모의 실행하고 버전을 확정합니다. 등록만으로 로봇이 실행되거나 API가 공개되지는 않습니다.» 입니다.
+화면에 버튼 «생성 화면 닫기» 가 있습니다.
+fieldset은 엔지니어가 아니면 비활성화됩니다.
+fieldset의 항목은 다음과 같습니다.
+- «새 임무 ID» (처음 값 `ManufacturingInspection`)
+- «새 임무 이름» (처음 값 «공정 자산 점검»)
+- «임무 설명»
+- select «시작 템플릿» («대상 점검 · E0», «지정 위치 이동 · E0»)
 
-결과(`JobOrderNotice.tsx`, status «제출 결과»):
+접기 «입력 스키마·단계 연결·샘플 편집» 안에는 다음 항목이 있습니다.
+- 안내 «입력 스키마와 orderMapping은 등록 후 불변입니다. 변경하려면 새 임무 ID를 사용합니다. …»
+- textarea «임무 등록 JSON»
+- 버튼 «템플릿 입력으로 되돌리기»
 
-| 경우 | 글자 | 행 |
-|---|---|---|
-| 사전 거부 | «${what}: 막힘(${풀이})» + «${detail}» | 17-25 |
-| 비정상 | «${what}: 결과 모름(${cause}). 실행 목록을 다시 읽어 확인하십시오» | 27-34 |
-| 호스트 응답 없음 | «${what}: 응답은 없었으나 다시 읽어 보니 실행이 있음. 실행 목록에서 보십시오» / «…응답 없음. 다시 읽어 보니 실행이 없음. 다시 하려면 새로 내십시오» / «…반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오» + dl «작업 지시 id» | 37-48, 106-115 |
-| 결과 있음 | «${what}: ${SUBMIT_RESULT_LABEL}» + dl «작업 지시 id», «실행 id», «배정된 기체», «거부 사유»(있는 것만) + list «기체별 미배정 사유» + list «실행 호스트가 후보에서 뺀 기체» | 50-102 |
+하단에 버튼 «임무 등록 후 실행 정의 열기» 가 있으며, 진행 중에는 «등록 중…» 으로 표시됩니다.
+성공하면 그 임무를 골라 «실행 정의» 패널로 갑니다.
+오류가 발생하면 alert «${error} · 응답이 불명인 경우 같은 임무 ID·정의로 확인하세요. 새로운 ID로 반복 생성하지 마세요.» 가 표시됩니다.
+복원에 실패하면 «보관된 임무 등록 입력을 읽지 못했습니다. 임무 목록을 확인하세요.» 가 표시됩니다.
 
-제출한 작업 지시의 실행 행은 실행 목록에서 `selected` 로 강조됩니다(`OperationsArea.tsx:218,243`, `ExecutionList.tsx:59`).
+#### 3.6.3 패널 «임무 목록»
 
-![덜 채운 폼](img/26-operations-order-incomplete.png)
+region «지원 임무 목록» 에 해당합니다.
+h2는 «지원 임무» 입니다.
+설명은 «현재 런타임이 지원하는 임무입니다. 편집 가능 범위와 호출 계약을 함께 확인하세요.» 입니다.
+엔지니어에게는 버튼 «새 임무 만들기» 와 버튼 «템플릿으로 초안 작성» 이 제공됩니다.
+버튼 «템플릿으로 초안 작성» 을 누르면 PrepareSequencedRack 의 실행 정의 패널로 이동합니다.
+조회 중에는 «지원 임무 계약을 조회하고 있습니다.» 가 표시됩니다.
+각 임무 카드 `article.mission-card` 마다 다음 항목이 포함됩니다.
+- eyebrow: «실행 정의 편집 지원» 또는 «코드 정의 · 읽기 전용»
+- h3 이름
+- 임무 id
+- 설명
+- dl «요구 근거»
+- «호출 경로»: «버전별 호출 계약 API» 또는 «Ops 수동 작업 요청 API»
+- «활성 정의»: «조회 전 · 호스트 상태 확인 필요», «활성 버전 없음», «코드 정의», «버전 ${n}» 중 하나이며 지금 고른 임무만 개요를 압니다
+- 버튼: «실행 정의 보기», «호출 연결 보기»
 
-그림 26. 덜 채운 폼이라 보내지 않고 배정 가능도 묻지 않음. 실제 스택.
+![임무 목록](img/03-missions-overview.png)
 
-![엔지니어 모드의 작업 지시](img/28-operations-order-engineer.png)
+그림 03. 임무 영역의 처음 패널로 머리, 패널 버튼 넷, 지원 임무 카드가 보입니다.
 
-그림 28. 엔지니어 모드. 입력과 판정은 보이고 제출 버튼은 없음. 실제 스택.
+#### 3.6.4 패널 «호출 연결»
 
-![배정됨](img/29-operations-order-assigned.png)
+이 패널에는 위에 버전별 호출 계약(`MissionInterfaces.tsx`), 아래에 기본 임무 계약의 변환 미리보기(region «호출 계약 연결»)가 있습니다.
+호출 계약을 고르면 그 아래에 선택한 호출 계약, 실행 배포, 호출 계약으로 작업 요청이 이어집니다.
 
-그림 29. 제출 결과 배정됨. 실제 스택.
+##### 버전별 호출 계약
 
-![배정 못 함](img/31-operations-order-unassigned.png)
+region «버전별 호출 계약» 에 해당합니다.
+h2는 «버전별 호출 계약» 입니다.
+설명은 «외부 필드를 임무 입력에 연결하고 저장·공개합니다. 현재 호출 경로는 로컬 Ops PoC용입니다.» 입니다.
+버튼 «호출 계약 다시 조회» 가 있습니다.
+엔지니어에게는 버튼 «호출 계약 만들기» 가 제공되며 열린 동안에는 «작성 폼 접기» 로 바뀝니다.
+처리 결과 status «호출 계약 처리 결과» 에는 «${interfaceId} v${version}: 초안 저장됨», 또는 공개 상태 글자를 붙인 «${interfaceId} v${version}: 공개», «…: 공개 중지» 가 표시됩니다.
+오류는 alert «${error} · 응답 불명 시 상태를 다시 조회하세요.» 로 표시됩니다.
+스크롤 감싸개 «호출 계약 표 스크롤» 안에 표 `table[aria-label=저장된 호출 계약]` 이 있습니다.
+표의 열 여섯은 다음과 같습니다.
+- 임무(계약 이름)
+- 식별자·버전(`${interfaceId}/v${version}`)
+- 대상 임무
+- 상태(«초안», «공개», «공개 중지»)
+- 등록자
+- 선택(버튼 «${interfaceId} v${version} 보기»)
 
-그림 31. 배정 가능한 기체가 없어 막힘. 실제 스택.
+목록 상태는 다음 중 하나가 표시됩니다.
+- «호출 계약 목록을 아직 읽지 못했습니다.»
+- «저장된 호출 계약이 없습니다. 입력 매핑을 검증하고 첫 버전을 만들어 보세요.»
 
-#### 3.4.2 배정 가능 (region «배정 가능», h2 «배정 가능», `EligibilityTable.tsx`)
+##### 호출 계약 작성
 
-두 모드 모두 봅니다. 판정은 폼이 다 찼을 때만 묻습니다(§2.5).
+엔지니어가 사용하는 `div[role=region][aria-label=호출 계약 작성]` 입니다.
+h3은 «입력 매핑과 새 계약 버전» 입니다.
+안내는 «JSON Pointer로 원본 입력 위치를 지정합니다. 예: /order/material. 배열은 전체 목록을 연결합니다. 저장 시 샘플을 실제 임무 검증기로 검사합니다.» 입니다.
+fieldset legend «계약 정의» 는 엔지니어가 아니면 비활성화됩니다.
+fieldset 항목은 다음과 같습니다.
+- «호출 식별자»
+- «계약 버전»
+- «계약 이름»
+- select «대상 임무» («서열 랙 준비», «자산 점검», 그리고 등록한 임무들)
+- 대상 필드마다 «${target} 원본 경로»
+- textarea «호출 계약 샘플»
 
-| 상태 | 글자 | 행 |
-|---|---|---|
-| 폼 덜 참 | «폼을 채우면 기체별 배정 가능을 봅니다» | 25 |
-| 사전 거부 | `<p role="alert">` «${풀이}: ${detail}» | 26-32 |
-| 판정 전 | «판정 중» | 35 |
-| 못 읽음 | «모름: 배정 가능을 읽지 못했습니다 (${error})» | 35 |
-| 직전 값 | «직전 값입니다 (${error})», «폼이 바뀌어 다시 판정하는 중입니다» | 39-40 |
-| 판정 시각 | «판정 시각 ${checkedAt}» | 41 |
-| 기체 목록 모름, 없음 | «모름: 기체 목록을 아직 읽지 못했습니다», «이 사이트에 기체가 없습니다» | 43, 45 |
+버튼은 «매핑 검증·미리보기»(POST `/api/mission-interfaces/preview`)와 «계약 초안 저장» 이 있습니다.
+결과는 `pre[aria-label=계약 매핑 미리보기]` 에 표시됩니다.
+상태 문장은 다음과 같습니다.
+- «입력이 변경되었습니다. 매핑을 다시 검증하세요.»
+- «이 정의는 저장되었습니다. 변경하려면 새 버전 번호를 입력하세요.»
+- alert «버전은 양의 정수여야 합니다.»
 
-table «기체별 배정 가능»(`:47-73,79-89`), 열 순서:
+##### 선택한 호출 계약
 
-| 순서 | 열 | 값 |
-|---|---|---|
-| 1 | 기체 | id |
-| 2 | 시운전 | `COMMISSIONING_LABEL` 또는 «모름» |
-| 3 | 연결 | «${라벨}(현장 설정 버전 ${n})» 또는 «모름» |
-| 4 | 도는 실행 | 실행 id, «없음», «모름» |
-| 5 | 스킬 적합 | «적합», «모자람: ${스킬들}», «모름» |
-| 6 | 배정 가능 | «가능», «불가» |
-| 7 | 이유 | «; » 로 연결 |
+`div[role=region][aria-label=선택한 호출 계약]` 입니다.
+h3은 «${name} · v${version}» 입니다.
+화면에 «대상 임무: ${workMasterId}» 가 표시됩니다.
+엔지니어에게는 버튼 «새 버전으로 복제» 가 제공됩니다.
+문장은 «매핑 정의는 버전별로 고정됩니다. 변경은 새 버전으로 저장하세요. 실행 정의는 ${배포 상태}에 고정됩니다.» 입니다.
+여기서 배포 상태는 다음 중 하나입니다.
+- «배포 v${n} · 임무 ${missionVersion}»
+- «배포 전 · 숫자 임무 버전을 연결하세요»
+- «배포 정보 다시 조회 필요»
 
-![배정 가능 표](img/27-operations-eligibility-table.png)
+매핑 정의는 `pre[aria-label=저장된 매핑]` 에 표시됩니다.
+엔지니어에게는 칸 «공개 변경 사유»(비면 버튼 비활성)와 버튼 «호출 계약 공개» 또는 «공개 중지» 가 제공됩니다.
 
-그림 27. 가능 하나, 불가 하나. 실제 스택.
+##### 실행 배포
 
-![도는 실행이 있어 모두 불가](img/30-operations-eligibility-busy.png)
+`InterfaceDeployment.tsx` 컴포넌트이며, region «실행 배포» 입니다.
+h4는 «실행 배포 · v${n}» 이며 배포 전이면 «실행 배포 · 배포 전» 으로 표시됩니다.
+화면에 «계약 v${n} · 매핑 v${n} · 임무 ${코드 정의 또는 v${n}}» 이 표시됩니다.
+«임무 필수 자원: ${stationId} · 공유 자원 메뉴에서 임무 단위로 등록합니다.» 가 표시되며 없으면 «미지정» 으로 표시됩니다.
+적용 범위 문장은 «새 배포는 이후 작업 요청부터 적용됩니다. 기존 작업 요청과 재평가는 기존 배포를 유지합니다. 이전 임무 버전으로 새 배포를 만들면 이후 작업 요청은 예전 임무 버전으로 실행됩니다.» 입니다.
+엔지니어에게는 다음 입력 요소가 제공됩니다.
+- select «배포할 임무 버전» («코드 정의 고정», 또는 «검증된 임무 버전 선택» 과 «임무 v${n}»)
+- 칸 «배포 판단 사유»
+- 버튼 «새 실행 배포 적용»
 
-그림 30. 실제 스택.
+오류는 alert «${error} · 응답 불명 시 계약을 다시 조회하고 배포 이력을 확인하세요.» 와 «호스트 임무 버전을 읽지 못했습니다. 배포 전에 다시 조회하세요.» 로 표시됩니다.
+접기 «불변 배포 이력» 에는 줄마다 배포 버전·임무 버전·배포한 이·사유·시각이 표시됩니다.
+읽지 못했을 때는 «배포 이력을 아직 읽지 못했습니다.» 가 표시됩니다.
 
-![복원 못 한 실행이 있는 기체](img/58-operations-eligibility-restore-blocked-mock.png)
+![배포된 호출 계약](img/05-missions-interface-deployed.png)
 
-그림 58. 복원 못 한 실행이 있는 기체를 배정에서 뺌. 대역 응답으로 그린 화면.
+그림 05. 호출 연결 패널에서 공개되고 배포된 호출 계약을 고른 상태로 저장된 호출 계약 표, 선택한 호출 계약, 실행 배포가 보입니다.
 
-![registry 불통 중 배정 가능](img/65-operations-eligibility-registry-down.png)
+##### 호출 계약으로 작업 요청
 
-그림 65. registry 불통 중의 판정. 실제 스택(런처를 끔).
+`MissionInterfaces.tsx` 의 `InterfaceCaller` 컴포넌트입니다. 선택한 호출 계약 아래의 접기 «공개된 계약으로 작업 요청» 에 위치합니다.
 
-#### 3.4.3 실행 (region «실행», h2 «실행», `ExecutionList.tsx`)
+경로 표시 «POST /api/mission-interfaces/${interfaceId}/${version}/invoke» 가 나타납니다. 안내 «운영자 호출도 작업 요청으로 영속 기록합니다. 같은 요청 ID는 기존 작업 요청을 반환하며 추가 실행하지 않습니다. 브라우저 보관은 같은 탭의 새로고침까지 유지됩니다.» 가 표시됩니다.
 
-두 모드 모두 보기만 합니다.
+호출 전 자원 안내(`MissionResourceNotice`, §3.4.2 와 같은 네 갈래)와 textarea «계약 호출 입력» 이 있습니다.
 
-| 요소 | 사실 | 행 |
-|---|---|---|
-| 못 읽음 | «모름: 실행 목록을 아직 읽지 못했습니다» (+ « (${error})») | 25 |
-| 직전 값 | «직전 값입니다. 실행 호스트 불통: ${error}» | 29 |
-| dl | «실행 호스트 인스턴스» ${instanceId}, «마지막 pump» ${pumpedAt\|아직 없음} | 30-35 |
-| 복원 보고 띠 | 아래 | 99-140 |
-| 표 | table «실행 목록», 최신부터 | 42-88 |
-| 빈 상태 | «실행이 없습니다» | |
+실행 전 배정 확인은 region «계약 입력의 배정 가능 미리보기» 안의 h4 «실행 전 배정 확인» 에 위치합니다. 안내 문구로 «실제 입력과 서버에 고정된 배포로 판정합니다. 기체를 예약하지 않으며 제출 시 현재 조건을 다시 평가합니다. 스킬 적합은 스킬 이름 기준이며 전체 실행·안전·품질 검증을 대신하지 않습니다.» 가 표시됩니다. 버튼 «이 입력으로 배정 가능 확인»(POST `…/eligibility`)을 누르면 판정을 요청합니다. 계약이 공개 상태가 아니거나 보관 요청이 있으면 버튼이 비활성화됩니다. 판정 뒤에는 «판정한 임무 ${workMasterId} · 임무 버전 ${missionVersion} · 배포 v${n} · 요구 근거 ${evidence}» 가 표시됩니다. 운영 영역과 같은 아홉 열 표 «기체별 배정 가능»(§3.4.3)이 나타납니다. status 는 다음 셋 중 하나입니다:
+- «현재 배정 가능한 기체가 있습니다. 이 입력으로 작업을 요청할 수 있습니다.»
+- «검증된 입력을 작업 요청으로 자원 대기열에 넣을 수 있습니다. 기체 배정은 자원과 설비 준비 후 다시 확인합니다.»(필수 자원이 있는 계약)
+- «배정 가능한 기체를 확인하지 못했습니다. 불가·모름 사유를 확인한 뒤 다시 판정하세요.»
 
-재기동 복원 보고 띠는 재기동 뒤 행이 있을 때만 섭니다(region «재기동 복원 보고», `.restore`: 왼쪽 4px `#b26b1d` 선). 표 «실행 목록» 보다 앞에 옵니다.
+접기 «판정한 정규화 작업»(`pre[aria-label=계약 배정 정규화 작업]`)을 제공합니다. 입력이나 배포 상태가 변경되면 status «입력 또는 배포 상태가 변경되었습니다. 배정 가능 여부를 다시 확인하세요.» 가 표시됩니다. 판정에 실패하면 alert «배정 판정 실패: ${error} · 새 작업 전 다시 확인하세요.» 가 나타납니다.
 
-| 순서 | 글자 |
-|---|---|
-| 1 | 굵게 «재기동: 이전 인스턴스의 실행 ${n}건을 다시 지었습니다» + «(복원 시각 ${at})» |
-| 2 | list «다시 지은 실행»: «${jobOrderId}(${robotId}): 이전 ${prev} → ${exec}» |
-| 3 | «미룬 실행 ${n}건. 실행 호스트가 다시 시도하며 그동안 그 기체는 배정에서 빠집니다» + list «미룬 실행» |
-| 4 | «포기한 실행 ${n}건. 다시 짓지 않습니다. 기체의 남은 태스크를 운영자가 확인하십시오» + list «포기한 실행» |
-| 항목 꼴 | «${jobOrderId}(${robotId}, 이전 ${prev}): ${reason\|사유 없음}» |
+체크 «이 입력으로 실제 작업을 지시합니다» 와 버튼 «호출 계약으로 작업 요청» 이 있습니다. 버튼 «호출 계약으로 작업 요청» 은 다음 조건에서 비활성화됩니다:
+- 운영자가 아님
+- 체크 전임
+- 계약이 공개 상태가 아님
+- 보관 요청이 있음
+- 현재 입력으로 배정 확인을 하지 않음
+- 배정 가능한 기체가 없고 필수 자원도 없는 계약임
 
-table «실행 목록» 열 순서(`:42-88,143-159`):
+필수 자원이 있는 계약은 기체가 없어도 자원 대기열로 보낼 수 있습니다. 운영자가 아니면 «실제 호출은 운영자 모드에서 가능합니다.» 가 표시됩니다. 계약이 공개 중이 아니면 «이 계약은 현재 공개되지 않았습니다. 기존 작업 요청 확인은 가능합니다.» 가 표시됩니다.
 
-| 순서 | 열 | 값 |
-|---|---|---|
-| 1 | 실행 id | 재기동으로 다시 지었으면 뒤에 `span.restored`(회색) « (이전 ${id})», title «이전 인스턴스 ${instanceId}» |
-| 2 | 작업 지시 id | |
-| 3 | 임무 | |
-| 4 | 임무 버전 | «코드 정의», «버전 ${n}» |
-| 5 | 기체 | |
-| 6 | 물리 상태 | 코드 값 |
-| 7 | 단위 | `<ul>` 항목 «${unitId} ${skillType}: ${state}, 근거 ${reached}» |
-| 8 | 작업 응답 | «없음» 또는 `<ul>`: «${id}: ${physicalState}, 근거 ${reached}(요구 ${required})», «미확인 단위 …», «미완 단위 ${id}(${사유})…», «불확실 단위 …», «운영자 개입 필요» |
+보관 중일 때 region «계약 작업 요청 추적» 에는 다음 항목이 표시됩니다:
+- h4 «계약 작업 요청»
+- «요청 ID: ${uuid}»
+- «처리 중·응답 불명인 요청은 새 ID로 재제출하지 마세요.»
+- 버튼 «동일 계약 작업 요청 확인»
+- 버튼 «새 계약 요청 작성»
+- 링크 «작업 요청·실행 결과 보기»(`#requests?receipt=…`)
+- 접기 «보관된 계약 요청 입력»
 
-![코드 정의 실행 중](img/32-operations-executions-running.png)
+결과는 status «계약 호출 결과» 에 표시되며 다음 중 하나로 나타납니다:
+- «작업 지시 ${jobOrderId}: ${state} · 작업 요청 저장됨»
+- «작업 지시 ${jobOrderId}: ${state} · 기존 작업 요청 확인 · 추가 실행 없음»
 
-그림 32. 코드 정의 임무 실행 중. 실제 스택.
+서버 detail 과 `pre[aria-label=계약 호출 응답 JSON]` 이 함께 표시됩니다.
 
-![단위 실패](img/43-operations-executions-failed.png)
+오류 문장은 다음과 같습니다:
+- «호출 입력은 올바른 JSON이어야 합니다.»
+- «호출 입력은 JSON 객체여야 합니다.»
+- «현재 입력의 배정 가능 여부를 확인한 뒤 새 작업을 요청하세요.»
+- «기존 요청과 입력이 다릅니다. 기존 작업 요청을 확인한 뒤 새 요청을 작성하세요.»
+- «${error} · 기존 요청 ID로 작업 요청을 확인하세요. 새 ID로 반복 제출하지 마세요.»
+- 보관 복원 실패: «보관된 요청을 읽을 수 없습니다. 재제출 전에 통합 작업 요청에서 기존 실행을 확인하세요.»
 
-그림 43. 데이터 정의 버전 1 실행의 단위 실패. 실제 스택.
+버튼 글자는 «호출 계약으로 작업 요청» 이지만 서버가 생성하는 것은 작업 요청입니다. 결과 줄은 해당 작업 요청의 작업 지시 id 로 시작합니다.
 
-![운영자 보류에 선 실행](img/45-operations-executions-held.png)
+##### 호출 계약 연결: 입력 검증·변환 미리보기
 
-그림 45. 설비 대기 기한이 지나 운영자 보류에 선 실행. 실제 스택.
+`MissionsArea.tsx` 의 `ContractPreview` 컴포넌트이며, region «호출 계약 연결» 에 위치합니다.
 
-![재기동 복원 보고](img/55-operations-executions-restored-mock.png)
+h2 «호출 계약 연결», 설명 «버전별 입력 매핑을 저장·공개하고 기존 작업 지시 흐름으로 연결합니다. 아래 기본 임무 계약은 원래 Ops API의 입력 규격입니다.», select «연결할 임무»(지원 임무 이름)가 표시됩니다.
 
-그림 55. 복원 보고 띠(다시 지음 1, 미룸 1, 포기 1)와 «exec-1 (이전 exec-3)» 행. 대역 응답으로 그린 화면.
+경로 띠 «POST» `/api/job-orders` «운영자 모드에서 제출» 이 나타납니다. 문장 «임무 선택: ${workMasterId} · …» 에는 «등록된 입력 스키마와 변환 규칙을 사용합니다.» 또는 «기본 임무 필드 연결은 코드로 관리합니다.» 가 결합됩니다. 여기에 «미리보기는 요청을 저장하거나 로봇을 실행하지 않습니다.» 가 함께 표시됩니다. 경로 띠의 `/api/job-orders` 는 기존 Ops API 의 입력 규격을 가리킵니다. 화면의 작업 지시 폼은 이 경로가 아니라 `/api/work-requests/manual` 로 전송합니다(§2.4).
 
-#### 3.4.4 인시던트 (region «인시던트», h2 «인시던트», `IncidentSection.tsx`)
+스크롤 감싸개 «입력 매핑 표 스크롤» 안에 표 `table[aria-label=입력 필드 매핑]` 이 있습니다. 표의 열 구성은 다음과 같습니다:
+- 요청 필드
+- 자료형·제약
+- 내부 작업 지시
 
-| 모드 | 할 수 있는 것 |
-|---|---|
-| 운영자 | 보기, 보류 단위 판단(완료 확인, 재작업) |
-| 엔지니어 | 보기. 판단 폼 자리에 «보류 중입니다. 운영자 판단은 운영자 모드에서 합니다» |
+textarea «샘플 요청 JSON» 과 버튼 «입력 검증·변환 미리보기»(진행 중 «검증 중…», POST `/api/job-orders/preview`)가 있습니다. 보내기 전 오류 alert 는 다음과 같습니다:
+- «샘플 요청이 올바른 JSON이 아닙니다.»
+- «샘플의 workMasterId가 선택한 임무와 일치해야 합니다.»
 
-배치(`:107-175`): 판단 결과 알림 → (직전 값) → 머리 줄 → 지금 인스턴스 표 → region «이전 인스턴스» → region «인시던트 상세».
+출력 영역에는 h3 «변환된 작업 지시» 가 있습니다. 처음에는 «샘플 입력을 검증하면 실제 서버의 변환 결과가 여기에 표시됩니다.» 가 표시됩니다. 검증을 통과하면 «입력 검증 통과 · 배정·실행·완료를 의미하지 않습니다.» 와 `pre[aria-label=변환된 작업 지시 JSON]` 이 나타납니다. 입력이 변경되면 status «입력이 변경되었습니다. 다시 검증해 주세요.» 가 표시됩니다.
 
-| 요소 | 사실 | 행 |
-|---|---|---|
-| 머리 줄 | «실행 호스트 인스턴스 ${id}, 인시던트 ${total}건 가운데 최신 ${n}건» | 115-117 |
-| 빈 상태 | «인시던트가 없습니다» | |
-| 못 읽음 | «모름: 인시던트 목록을 아직 읽지 못했습니다» (+ « (${error})») | |
-| 직전 값 | «직전 값입니다. 실행 호스트 불통: ${error}» | 114 |
+접기 «결과 계약과 외부 공개 범위» 가 있습니다.
 
-table «인시던트 목록»(`:190-253`), 열 순서:
+#### 3.6.5 패널 «실행 정의»
 
-| 순서 | 열 | 값 |
-|---|---|---|
-| 1 | 인시던트 | `button.link`, 글자는 id, 접근 이름 «${id} 상세 보기» |
-| 2 | 발생 시각 | |
-| 3 | 기체 | |
-| 4 | 실행 id | |
-| 5 | 단위 | |
-| 6 | 실패 종류 | 코드 값, 없으면 «-» |
-| 7 | 경로 | 코드 값 |
-| 8 | 현장 설정 버전 | «버전 ${n}», «모름» |
-| 9 | 임무 버전 | «버전 ${n}», «코드 정의» |
-| 10 | 판단 | «판단됨(설비 근거 없이 완료 확인)», «판단됨», «미해결», «판단 대상 아님» (`:42-47`) |
-| 11 | 보류 | «보류 중» (`<strong>`, 빨강) 또는 «-» |
+InspectAsset 을 고르면 h2 «자산 점검» 과 «InspectAsset은 현재 코드 정의입니다. 이 화면에서는 실행 정의를 편집할 수 없습니다.» 가 표시됩니다. 버튼 «입력 계약 확인» 을 누르면 호출 연결 패널로 이동합니다.
 
-보류 행은 `tr.held`(배경 `#fbeee6`, 굵은 글자 `#b23a1d`), 고른 행은 `tr.selected` 입니다.
+그 밖의 임무는 `MissionDefinitionEditor.tsx` 컴포넌트로 처리하며, 임무를 변경하면 다시 마운트합니다.
 
-이전 인스턴스(region «이전 인스턴스», h3 «이전 인스턴스», `:128-143`)는 실행 호스트가 `earlier` 배열을 실으면 섭니다. 지금 실제 스택은 빈 배열을 실으므로 재기동 전에도 «이전 인스턴스의 인시던트가 없습니다» 가 보입니다(그림 05, 52). 배열이 차 있으면 «재기동 앞 인스턴스의 인시던트 ${total}건 가운데 최신 ${n}건. 읽기 전용이며 여기서 판단하지 않습니다» 와 table «이전 인스턴스 인시던트 목록» 을 보입니다. 이 표는 맨 앞에 «인스턴스» 열이 더 있고 «보류» 열이 없으며, 버튼 접근 이름은 «${instanceId} ${id} 상세 보기» 입니다.
+region «임무 ${workMasterId}» 에는 h2 임무 id 가 표시됩니다. dl 항목으로 «활성 버전»(«코드 정의» 또는 «버전 ${n}»)과 «활성화»(데이터 버전일 때 누가·언제·사유)가 나타납니다. 한 번도 읽지 못했으면 «모름: 임무 버전을 아직 읽지 못했습니다» 를 보이고, 읽은 뒤 다시 읽기에 실패하면 앞서 읽은 값을 그대로 두고 직전 값임을 표시합니다. GET `/api/missions/{workMasterId}` 를 5초마다 읽습니다.
 
-상세(region «인시던트 상세», `:146-173`). h3 «${id} 상세», 이전 인스턴스면 뒤에 «(이전 인스턴스 ${id})». 위에서 아래:
+엔지니어 모드의 region «임무 편집» 에는 h2 «편집» 이 있습니다. 결과 status «임무 조작 결과»(`MissionNotice`)가 표시됩니다. 템플릿 목록 `ul[aria-label=템플릿]` 에는 버튼 «${템플릿 이름} 불러오기» 가 제공됩니다. 템플릿 이름은 다음과 같습니다:
+- «데이터 정의 템플릿»
+- «랙 도착 대기 템플릿»
+- «운영자 보류 대기 템플릿»
 
-| 순서 | 요소 | 사실 | 행 |
-|---|---|---|---|
-| 1 | 이전 인스턴스 표시 | «이전 인스턴스의 사본입니다. 읽기 전용이며 판단하지 않습니다» | |
-| 2 | 읽기 상태 | «상세를 읽는 중입니다» / «모름: 상세를 읽지 못했습니다 (${error})» / «실행 호스트에 이 인시던트가 없습니다. 실행 호스트를 재기동했을 수 있습니다» | 153 등 |
-| 3 | 사람의 판단 | 없으면 «사람의 판단 없음. 아래 값은 모두 관측입니다». 있으면 region «사람의 판단» `.asserted`(왼쪽 4px 이중선 `#2b3f6b`): «사람이 판단함: ${id}, ${wallClockAt}», «결정 ${완료 확인\|재작업}(${코드}), 호스트 시각 ${at}», 해당하면 굵게 «설비 근거 없이 완료 확인» | 393-411 |
-| 4 | 관측 | region «관측» `.observed`, h4 «관측(봉인 때 기록)», dl 순서: 발생 시각(호스트 시계), 봉인한 실제 시각, 기체, 실행(«${exec}(작업 지시 ${jo})»), 단위, 단위의 지금 상태(없으면 «모름(실행 없음)»), 실패 종류, 경로, 현장 설정 버전, 시간값(«근거 윈도우 앞 폭 ${s}, 뒤 폭 ${s}, inDoubtGrace ${s}, stallWindow ${s}»), 임무 버전(«${wm} ${버전}»), 단계 위치(«${at}/${n}. 계획 ${a → b}. 끝난 단위 ${…\|없음}», 0 이면 «계획에 없음(계획 ${n}개)»), 필요 근거 등급, 도달 근거 등급, 확인 결과(코드 이름), [위반된 사전 조건], 파지(기대/관측), [효과와 관측의 어긋남], [연결 «연결이 끊긴 채 돌던 중»] | 276-338 |
-| 5 | h4 «결함» | «없음(결함 없이 실패를 알림)» 또는 결함 카드 «이 단위의 결함» | 339-344 |
-| 6 | h4 «실행을 막던 결함(blockedBy)» | «없음» 또는 «실행을 막던 결함 ${i}» 카드들 | 345-352 |
-| 7 | h4 «근거 윈도우(앞 ${s}, 뒤 ${s})» | [«윈도우 밖이라 버린 관측이 있습니다»] → 없으면 «윈도우 안의 관측이 없습니다», 있으면 table «근거 윈도우»: 순번, 시각, 종류, 내용, 출처(«미들웨어 기록», «현장 관측») | 353-382 |
-| 8 | 판단 폼 | 지금 인스턴스이고 보류 중일 때만. 아래 | 384, 454-488 |
+화면은 `.split` 구획으로 textarea «임무 정의 JSON» 과 활성 정의 영역으로 분할됩니다. 활성 정의 영역의 문구는 다음과 같습니다:
+- «활성 버전 없음 · 검증 후 활성화하세요»
+- «활성: 코드 정의»
+- «활성: 버전 ${n}»(뒤에 «, 편집기와 같음» 또는 «, 편집기와 다름» 결합)
+- «등록된 템플릿으로 첫 초안을 작성하세요.»
+- «코드 정의는 정의 JSON 이 없습니다»
+- `pre[aria-label=활성 버전 정의]`
+- 읽지 못했을 때 «모름: 활성 버전을 아직 읽지 못했습니다»
 
-결함 카드(`<dl aria-label>`, `:413-441`): 분류(«${failureClass}(${errorType})»), 조치 힌트(빈 값 «없음»), [벤더 원문], 참조(«k=v, …» 또는 «없음»), 지금 태스크 계속(«가능», «불가»), 새 태스크 받기, 유지(`activeUntilKind` + 시각).
+대상 줄 문구는 다음과 같습니다:
+- «저장한 초안이 없습니다. 초안을 저장하면 검증·모의 실행·활성화할 수 있습니다»
+- «대상: 초안 ${id}, 마지막 모의 실행 ${판정}»
+- «편집기 내용이 초안 ${draftId} 의 내용과 다릅니다. 검증하려면 초안을 다시 저장하십시오»
 
-판단 폼(운영자, form «운영자 판단»): «${exec}/${unit} 보류를 판단합니다. 판단자는 ${user} 입니다», «판단 사유» 입력, `.actions` 안 버튼 «완료 확인», «재작업». 사유가 비면 alert «판단 사유를 넣으십시오» 가 섭니다. 확인 대화 없이 바로 보냅니다. API 는 `POST /api/executions/{exec}/units/{unit}/resolve` `{decision, instanceId, reason}` 입니다(`api.ts:1057-1066`). 판단 사유는 picasso 인시던트에 실리지 않고 조작 기록(이력 영역)에만 남습니다(저장소 README).
+버튼 «초안 저장», «검증», «모의 실행», 입력 칸 «활성화 사유», 버튼 «활성화» 가 있습니다. «검증», «모의 실행», «활성화» 버튼은 편집기 글자가 저장한 초안과 같을 때만 활성화됩니다. 활성화 사유가 비어 있으면 alert «활성화 사유를 넣으십시오» 가 나타납니다. 호출하는 API 는 다음과 같습니다:
+- POST `/api/missions/{wm}/drafts`
+- POST `…/drafts/{id}/validate`
+- POST `…/mock-run`
+- POST `…/activate`
 
-판단 결과(status «판단 결과», what «${exec}/${unit} ${완료 확인\|재작업}», `:502-523`):
+조작 대상 what 의 값은 다음과 같습니다:
+- «초안 저장»
+- «초안 ${draftId} 검증»
+- «초안 ${draftId} 모의 실행»
+- «초안 ${draftId} 활성화»
+
+운영자 모드의 region «임무 편집» 에는 «임무 편집은 엔지니어 모드에서 합니다» 와 활성 정의만 표시됩니다.
+
+편집기는 `<textarea>` 로 구성되어 문법 강조나 JSON 검사가 없습니다. 옳고 그름은 실행 호스트의 검증이 판정합니다.
+
+결과 갈래(`MissionNotice.tsx`, status «임무 조작 결과»)는 다음 표와 같습니다.
 
 | 경우 | 글자 |
 |---|---|
-| 섰음 | «판단이 섰습니다(${incidentId})» |
-| 보류 아님 | «보류 단위가 아닙니다» |
-| 에이전트 | «에이전트 판단은 거부됩니다» (+ «. ${detail}») |
-| 호스트 거부 | «실행 호스트가 거부함(${풀이})» (+ «. ${detail}») |
-| 응답 없음 세 갈래 | «응답은 없었으나 다시 읽어 보니 판단이 붙음» / «응답 없음. 다시 읽어 보니 판단이 붙지 않음. 늦게 붙을 수 있으니 인시던트 목록에서 확인하십시오» / «응답 없음. 판단이 붙었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 인시던트 목록에서 확인하십시오» |
-| 사전 거부 | «보내지 않음(${풀이}). ${detail}» |
-| 비정상 | «결과 모름(${cause}). 인시던트 목록에서 확인하십시오» |
+| 시운전 완료 기체 모름 | «${what}: 모름. ${detail}. 판정하지 않았습니다» |
+| 사전 거부 | «${what}: 막힘(${풀이})» 과 detail |
+| 비정상 | «${what}: 결과 모름(${cause}). 초안·버전 목록을 다시 읽어 확인하십시오» |
+| 응답 없음 셋 | «${what}: 응답은 없었으나 다시 읽어 보니 반영됨. 초안·버전 목록에서 보십시오», «${what}: 응답 없음. 다시 읽어 보니 반영 안 됨. 다시 하려면 새로 요청하십시오», «${what}: 반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 초안·버전 목록에서 확인하십시오» |
+| 호스트 거부 | «${what}: 실행 호스트가 거부함(${풀이})» 과 detail |
+| 거부(REFUSED) | «${what}: 거부됨» 과 `FindingCard` 여러 장(바로 가기 없음) |
+| 저장 | «${what}: 초안 ${id} 저장됨» |
+| 검증 통과 | «${what}: 통과» |
+| 모의 실행 | «${what}: ${판정}» 과 모의 실행 보고 |
+| 모의 실행 없이 활성화 | «${what}: 막힘. 이 초안에 통과한 모의 실행이 없습니다. 모의 실행을 먼저 하십시오» |
+| 활성화 | «${what}: 버전 ${n} 활성화됨. 다음 작업 지시부터 이 버전을 씁니다» |
 
-관측과 사람의 판단을 다르게 보이는 것은 설계 요구입니다. S4a 스펙 §2.2·§8.2 가 운영 관리 화면 설계 제안 §9 를 따라 «판단된 인시던트는 사람이 판단함: <판단자>, <시각> 과 결정을 함께 보여 관측과 다르게 표시합니다» 라고 정했습니다. 지금은 `.asserted`(이중선)와 `.observed`(h4 아래 여백만) 클래스, 그리고 «사람의 판단» / «관측» 두 region 으로 가릅니다(§4.2).
+모의 실행 보고(`MockRunReport.tsx`)의 첫 줄은 «모의 실행 ${id}: ${판정}» 입니다. dl 에는 다음 항목이 표시됩니다:
+- «표본 작업 지시»(없으면 «없음», 설비를 쓰는 표본이면 설비 사용과 id 가 함께 보임)
+- «물리 상태»(없으면 «실행이 서지 않음»)
+- «가상 경과»(초)
 
-![실패 인시던트와 상세](img/42-operations-incidents-failed.png)
+단위 표 «모의 실행 ${id} 단위» 가 제공되며 열은 다음과 같습니다:
+- 단위
+- 경로(«설비 대기» 또는 «기체»)
+- 스킬
+- 상태
+- 근거
+- 실패 분류
 
-그림 42. 실패 인시던트(판단 대상 아님)와 상세(관측, 결함, 근거 윈도우). 실제 스택.
+![모의 실행 통과](img/04-missions-mock-run-passed.png)
 
-![보류 중 인시던트](img/44-operations-incidents-held.png)
+그림 04. 실행 정의 패널에서 초안의 모의 실행이 통과한 결과 알림과 모의 실행 보고(표본 작업 지시, 단위 표)가 표시됩니다.
 
-그림 44. 보류 중 인시던트(미해결) 행 강조. 실제 스택.
+#### 3.6.6 패널 «버전·배포»
 
-![보류 상세와 판단 폼](img/46-operations-incident-detail-held.png)
+region «공개와 배포 상태» 에는 h2 «버전과 적용 범위» 가 있습니다. 안내 문구로 «아래 이력은 선택한 임무의 실행 정의 활성화 이력입니다. 활성화한 정의는 다음 작업 지시부터 사용하며, 실행 중인 작업은 원래 버전을 유지합니다.» 가 표시됩니다. 이어서 «호출 연결에서 검증된 임무 버전을 배포하고 계약을 공개합니다. 활성화와 외부 API 공개는 별도 절차입니다.» 가 표시됩니다.
 
-그림 46. 보류 중 상세와 운영자 판단 폼. 운영자 모드, 실제 스택.
+그 아래에 region «임무 ${workMasterId}» 가 있습니다. region «버전 이력» 에는 표 «임무 버전 이력» 이 있습니다. 표 «임무 버전 이력» 의 열 구성은 다음과 같습니다:
+- 버전(활성이면 « (활성)» 표시)
+- 초안
+- 활성화한 사람
+- 사유
+- 활성화 시각
 
-![엔지니어 모드의 보류 상세](img/47-operations-incident-detail-held-engineer.png)
+활성화 이력이 비어 있으면 «활성화한 버전이 없습니다. 코드 정의로 돕니다» 가 표시됩니다.
 
-그림 47. 엔지니어 모드라 판단 폼 없음. 실제 스택.
+region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «임무 초안 목록» 의 열 구성은 다음과 같습니다:
+- 초안
+- 저장한 사람
+- 저장 시각
+- 마지막 모의 실행
+- 조작(엔지니어 모드일 때 버튼 «초안 ${id} 열기» 제공)
 
-![판단 사유 없음](img/48-operations-incident-decision-reason-missing.png)
+저장한 초안이 없으면 «저장한 초안이 없습니다» 가 표시됩니다.
 
-그림 48. 사유가 비어 보내지 않음. 실제 스택.
+버튼 «초안 ${id} 열기» 를 누르면 실행 정의 패널로 이동합니다. 이 패널에서는 편집 구역을 감춥니다.
 
-![판단 뒤](img/49-operations-incident-decided.png)
+실행 정의를 활성화하는 것과 호출 계약을 공개·배포하는 것은 별도 절차입니다. 활성화한 버전은 다음 작업 지시부터 사용되며, 실행 목록과 인시던트의 «임무 버전» 칸에 표시됩니다.
 
-그림 49. 판단 결과 알림, 판단 칸 «판단됨», 사람의 판단 구역(이중선). 실제 스택.
+### 3.7 현장 설정 (`#site`)
 
-![이전 인스턴스와 사본 상세](img/56-operations-incidents-earlier-mock.png)
-
-그림 56. 재기동 뒤 새 인스턴스의 보류, 이전 인스턴스 표, 이전 인스턴스 사본 상세(판단 폼 없음). 대역 응답으로 그린 화면.
-
-연결: 장애 주입(§3.1.2)이 인시던트를 만듭니다. 판단 뒤 실행 목록과 인시던트는 바로 바뀌지만, 작업 응답은 바로 갱신되지 않습니다(저장소 README). 판단 기록은 이력 영역에 남습니다(§3.5).
-
-#### 3.4.5 셀 대역 (region «셀 대역», h2 «셀 대역», `CellBand.tsx`)
-
-두 모드 모두 보고, 안전 신호가 아닌 BOOLEAN 신호를 켜고 끕니다.
-
-배치: 신호 조작 결과(`SignalNotice`) → 회색 «셀 대역: 슬롯은 기체가 보고한 배치로 채웁니다. 독립 설비 확인이 아닙니다» (`:21`) → 자리 표 → 신호 표 (`OperationsArea.tsx:246-250`).
-
-| 상태 | 글자 | 행 |
-|---|---|---|
-| 못 읽음 | «모름: 셀 대역을 아직 읽지 못했습니다» (+ « (${error})») | 23 |
-| 호스트가 셀을 못 읽음 | «모름: 실행 호스트가 셀 대역을 읽지 못했습니다» + «모름: 신호 값을 읽지 못했습니다» | 29-30 |
-| 직전 값 | «직전 값입니다. 실행 호스트 불통: ${error}» | 26 |
-| 신호 목록 없음, 빈 목록 | «모름: 셀 대역이 신호 목록을 싣지 않았습니다», «셀 대역에 신호가 없습니다» | 68-69 |
-
-| 표 | 열 순서 | 값 |
-|---|---|---|
-| table «셀 대역 자리» (`:34-52,121-131`) | 자리, 종류, 점유, 자재, 관측 시각 | 종류 «제시 자리»/«슬롯», 점유 «점유»/«비어 있음», 자재와 시각 없으면 «-». 제시 자리 먼저, 슬롯 다음 |
-| table «셀 대역 신호» (`:71-117`) | 신호, 종류, 값, 관측 시각, 조작 | 관측 시각 없으면 «-». 조작: 안전 신호 «안전 신호(값만 봅니다)», 안전 아닌 BOOLEAN 은 버튼 «켜기»(접근 이름 «${name} 켜기»)와 «끄기»(«${name} 끄기»), 그 밖 «-» |
-
-API 는 `POST /api/cell/signals/{name}` `{value: "true"|"false"}` (`api.ts:820-821`), what 은 «${name} 켜기|끄기» 입니다(`OperationsArea.tsx:208`).
-
-결과(`SignalNotice.tsx:22-37`, status «신호 조작 결과»): «반영됨(값 ${v})», «현장이 거부함(${풀이})» (+ «. ${detail}»), «응답은 없었으나 다시 읽어 보니 그 값임», «응답 없음. 다시 읽어 보니 그 값이 아님. 다시 하려면 새로 누르십시오», «반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 셀 대역 신호 표에서 확인하십시오», «보내지 않음(${풀이}). ${detail}», «결과 모름(${cause}). 셀 대역 신호 표에서 확인하십시오».
-
-![신호 켜기](img/40-operations-cell-signal-on.png)
-
-그림 40. 신호 켜기 반영 알림. 실제 스택.
-
-연결: 슬롯과 자재는 작업 지시 폼의 PrepareSequencedRack 보기가 됩니다(§3.4.1). `rack_present` 는 대기 템플릿의 설비 대기를 끝냅니다(저장소 README).
-
-#### 3.4.6 작업 응답 송신 기록 (region «작업 응답 송신 기록», h2 같은 글자, `JobResponseLog.tsx`)
-
-두 모드 모두 보고, 거르개 하나를 씁니다.
-
-| 요소 | 사실 | 행 |
-|---|---|---|
-| 거르개 | «송신 기록의 작업 지시» select: «전체» + 고른 것 + 실행 목록의 작업 지시(최신부터) + 읽은 행의 작업 지시(중복 제거). 바꾸면 행을 비우고 다시 읽음 | 34, 39-49, `OperationsArea.tsx:141-144` |
-| 못 읽음 | «모름: 송신 기록을 아직 읽지 못했습니다» (+ « (${error})») | |
-| 직전 값 | «직전 값입니다. 실행 호스트 불통: ${error}» | 54 |
-| 머리 줄 | «실행 호스트 인스턴스 ${id}, 송신 기록 ${total}건 가운데 최신 ${n}건, 그 가운데 재기동 중복 ${k}건» | 55-58 |
-| 빈 상태 | «송신 기록이 없습니다» | |
-
-table «송신 기록 목록»(최근부터, `:62-100,15-25`), 열 순서:
-
-| 순서 | 열 | 값 |
-|---|---|---|
-| 1 | 인스턴스 | |
-| 2 | 작업 응답 id | |
-| 3 | 작업 지시 id | |
-| 4 | 실행 id | |
-| 5 | 버전 | |
-| 6 | 물리 상태 | 코드 값 |
-| 7 | 근거(도달/요구) | «${r}/${q}» |
-| 8 | 단위 | «완료 …; 미확인 …; 미완 …; 불확실 …; 막은 결함 …», 다 비면 «-» |
-| 9 | 운영자 필요 | «필요», «-» |
-| 10 | 처분 | `DISPOSITION_LABEL` |
-| 11 | 적은 시각 | |
-
-재기동 중복 행은 `tr.duplicate`(회색)입니다.
-
-![작업 지시 하나로 고름](img/50-operations-job-responses-filtered.png)
-
-그림 50. 보류 작업 지시 하나로 고름. 실제 스택.
-
-![전체](img/51-operations-job-responses-all.png)
-
-그림 51. 전체 작업 지시. 실제 스택.
-
-![재기동 중복](img/57-operations-job-responses-duplicate-mock.png)
-
-그림 57. 새 인스턴스의 첫 보류 응답이 재기동 중복(회색 행). 대역 응답으로 그린 화면.
-
-### 3.5 이력 (`HistoryArea.tsx`)
-
-목적: 조작 기록(행위자, 사유, 결과)을 봅니다. 두 모드 모두 보기만 합니다. 데이터는 `App` 의 `GET /api/operations`(5초)입니다.
-
-감싸는 section 과 h2 가 없고 표에도 aria-label 이 없습니다. 정렬, 필터, 쪽 나눔, 조작도 없습니다.
-
-| 상태 | 글자 | 행 |
-|---|---|---|
-| 못 읽음 | «모름: 조작 기록을 아직 읽지 못했습니다» | 11 |
-| 직전 값 | «직전 값입니다» | 14 |
-| 빈 상태 | «조작 기록이 없습니다» | 16 |
-
-표 열(`:18-41`): 시각, 행위자(«엔지니어|운영자/${user}»), 대상(코드 꼴 그대로, 예 `robot humanoid-01`), 사유(없으면 빈칸), 결과(코드 값 SUCCEEDED 등).
-
-![이력 빈 상태](img/06-history-overview-empty.png)
-
-그림 06. 빈 상태. 실제 스택.
-
-![이력 채운 상태](img/54-history-overview-populated.png)
-
-그림 54. 흐름을 돈 뒤의 조작 기록. 실제 스택.
-
----
-
-## 4. 디자이너 리터치 지침
-
-### 4.1 마음대로 바꿔도 되는 것
-
-시험은 색, 크기, 여백, 글꼴, 테두리를 보지 않습니다. 아래는 시험을 고치지 않고 바꿀 수 있습니다.
-
-| 항목 | 범위 |
+| 항목 | 내용 |
 |---|---|
-| 색 | 글자, 배경, 테두리, 강조색 전부. 단 §4.2 의 의미 구분(모름, 직전 값, 보류, 사람의 판단, 복원, 재기동 중복)은 새 색에서도 서로 달라 보여야 함 |
-| 글꼴 | 글꼴 가족, 크기, 굵기, 행간. 편집기와 `pre` 의 고정폭 성격은 유지 권장(JSON 편집) |
-| 간격 | margin, padding, gap |
-| 테두리와 모서리 | 표의 선과 줄무늬, 카드의 테두리와 배경, 둥근 모서리 |
-| 아이콘 | 새로 들여도 됨. 단 아이콘이 글자를 대신하면 안 됨(시험이 글자로 찾음). 장식으로 곁들이거나, 대신할 때는 같은 글자를 접근 이름으로 남겨야 하고 그 경우 §4.2 의 시험 영향을 확인 |
-| 구역 안 배치 | 한 구역 안 요소의 가로·세로 놓임, 폼 칸의 줄 바꿈, 폭. 단 §4.2 의 순서 제약(표 열 순서, 복원 띠가 실행 표 앞, dt 바로 뒤 dd)은 지킴 |
-| 머리 브랜드 자리 | h1 «picasso-ops» 옆이나 대신 로고를 둘 자리. 시험은 h1 을 보지 않음. 문서 제목 `<title>` 과 파비콘도 시험 밖 |
-| 버튼, 입력, select 모양 | 지금은 브라우저 기본. 새 모양으로 바꿔도 됨. 역할(button, textbox, combobox, checkbox, radio)과 라벨은 유지 |
+| 목적 | 현장 설정 버전(연결 기준 시간과 미들웨어 시간값 넷)과 변경 이력을 보이고 엔지니어가 새 버전을 기록합니다. 실행 호스트가 그 버전을 적용했는지 보입니다. |
+| 누가 | 변경은 엔지니어 모드에서 하고 조회는 두 모드에서 합니다. |
+| 진입 | 메뉴 7번입니다. |
+| 컴포넌트 | `SiteArea.tsx` |
+| API | GET `/api/site-settings`, PUT `/api/site-settings` |
 
-### 4.2 지키거나 시험과 함께 바꿀 것
+`SiteArea.tsx` 컴포넌트에는 region «현장 설정» 하나가 있습니다. 운영자 모드에는 폼 자리에 «현장 설정 변경은 엔지니어 모드에서 합니다» 문장을 표시합니다. 데이터는 5초 주기의 다섯 조회 GET `/api/site-settings` 로 읽습니다. 변경은 기준 버전, 값 다섯, 사유를 실어 PUT `/api/site-settings` 로 보냅니다.
 
-| 항목 | 지킬 것 | 근거 |
+화면 배치는 위에서 아래로 다음 순서를 따릅니다:
+1. 마지막 조작 알림(`OutcomeNotice`)
+2. 직전 값 문장
+3. dl «현재 버전», «연결 기준 시간»(«${n}초»), «허용 범위»(«${min}~${max}초»)
+4. 실행 호스트 반영 줄
+5. 묶음 구역 둘
+6. 변경 폼 또는 모드 문장
+7. h3 «버전 이력»
+8. 표
+
+실행 호스트 반영 줄에는 다음 문구 중 하나를 표시합니다:
+- «실행 호스트 반영: 모름»
+- «실행 호스트 반영: 미적용»
+- «실행 호스트 반영: 버전 ${n}»
+
+실행 호스트 상태에 따라 다음 줄이 덧붙습니다:
+- «실행 호스트 읽기 실패: ${readError}»
+- «실행 호스트가 적용하지 않은 버전 ${v}(범위 밖): ${사유}»
+
+묶음 구역 둘의 구성은 다음과 같습니다:
+- region «결과 판정 값»: «앞 폭을 늘리면 옛 신호가 완료 근거로 들어옵니다. 뒤 폭이나 inDoubtGrace 를 줄이면 UNVERIFIED 와 운영자 대기가 늘어납니다» 문장과 dl «근거 윈도우 앞 폭», «근거 윈도우 뒤 폭», «inDoubtGrace» 를 표시합니다.
+- region «정체 표시»: «stallWindow 는 정체를 사람에게 보이는 시점만 바꿉니다. 실패 판정이나 자동 조치는 바뀌지 않습니다» 문장과 dl «stallWindow» 를 표시합니다.
+
+엔지니어 모드의 form «현장 설정 변경» 은 다음 항목으로 구성합니다:
+- «기준 버전 ${n}»
+- 칸 «연결 기준 시간(초)»
+- fieldset «결과 판정 값»(«근거 윈도우 앞 폭(초)», «근거 윈도우 뒤 폭(초)», «inDoubtGrace(초)»)
+- fieldset «정체 표시»(«stallWindow(초)»)
+- 칸마다 «허용 범위 ${min}~${max}초»
+- 칸 «변경 사유»
+- 버튼 «변경»
+
+보내기 전 검사 alert 는 다음과 같습니다:
+- 칸마다 «${주어} ${min}~${max}초의 정수여야 합니다»
+- 사유가 비면 «변경 사유를 넣으십시오»
+
+바뀐 칸이 없으면 what 은 «현장 설정 같은 값으로 새 버전 기록» 이 됩니다. 기준 버전이 낡으면 종류 «현장 설정 버전 충돌» 거부 카드가 나타납니다.
+
+범위의 주인은 picasso 이고 화면은 운영 서비스가 실어 준 값을 보입니다. 저장소 `README.md` 에 따른 허용 범위는 다음과 같습니다:
+
+| 항목 | 허용 범위 |
+|---|---|
+| 연결 기준 시간 | 60~3600초 |
+| 근거 윈도우 앞 폭 | 5~120초 |
+| 근거 윈도우 뒤 폭 | 5~120초 |
+| inDoubtGrace | 10~600초 |
+| stallWindow | 30~3600초 |
+
+표 «현장 설정 버전 이력» 은 «표 가로 스크롤» 감싸개 안에 있습니다. 최신 버전부터 표시하며 열 열 개는 다음과 같습니다:
+- 버전
+- 연결 기준 시간
+- 사용자
+- 모드(«엔지니어»·«운영자»)
+- 사유
+- 기록 시각
+- 근거 윈도우 앞 폭
+- 근거 윈도우 뒤 폭
+- inDoubtGrace
+- stallWindow
+
+현장 설정을 아직 읽지 못했을 때는 «모름: 현장 설정을 아직 읽지 못했습니다» 를 표시하고 폼도 나타나지 않습니다. 직전 값을 표시할 때는 «직전 값입니다» 문장을 씁니다.
+
+바뀐 연결 기준 시간은 다음 기체 목록 읽기부터 로봇 영역의 «연결» 칸과 막힘에 쓰입니다. 기체 상세의 «연결 판정 기준» 과 막힘 카드 «근거 버전» 에 버전이 보입니다. 시간값은 인시던트 상세의 «현장 설정 버전», «시간값» 에 실립니다. 장애 주입은 이 영역에 없고 검증 도구에 있습니다.
+
+![현장 설정](img/15-site-settings.png)
+
+그림 15. 현장 설정 영역의 현재 버전, 실행 호스트 반영, 변경 폼, 버전 이력 표를 보입니다.
+
+### 3.8 이력 (`#history`)
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | 화면과 운영 서비스를 거친 조작 기록(행위자, 대상, 사유, 결과)을 봅니다. |
+| 누가 | 두 모드에서 조회하며 읽기 전용입니다. |
+| 진입 | 메뉴 8번입니다. |
+| 컴포넌트 | `HistoryArea.tsx` |
+| API | GET `/api/operations` |
+
+`HistoryArea.tsx` 컴포넌트는 `section[aria-label=조작 이력]` 과 h2 «조작 기록» 을 포함합니다. 화면과 운영 서비스를 거친 조작 기록의 행위자, 대상, 사유, 결과를 봅니다. 두 모드 모두 읽기 전용이며 정렬, 필터, 쪽 나눔은 없습니다. 데이터는 5초 주기의 다섯 조회 GET `/api/operations` 로 가져옵니다.
+
+표는 이름이 없으며 «표 가로 스크롤» 감싸개 안에 있습니다. 열 구성은 다음과 같습니다:
+- 시각
+- 행위자: «엔지니어» 또는 «운영자» 와 사용자 이름을 «/» 로 잇습니다(예: 운영자/kim).
+- 대상: 서버의 대상 문자열을 코드 꼴 그대로 표시합니다.
+- 사유
+- 결과: 코드 값(예: SUCCEEDED)으로 표시합니다.
+
+대상 칸에는 기체·어댑터·프로파일·현장 설정·임무 조작뿐 아니라 작업 요청, 호출 계약, 실행 배포, 스테이션, 임무 자원, 현장 확인 같은 새 조작도 서버가 적은 대상 문자열로 쌓입니다.
+
+상태 문구는 다음과 같습니다:
+- «모름: 조작 기록을 아직 읽지 못했습니다»
+- «직전 값입니다»
+- «조작 기록이 없습니다»
+
+![이력](img/16-history.png)
+
+그림 16. 흐름을 돈 뒤 쌓인 조작 기록 표를 보입니다.
+
+### 3.9 검증 도구 (`#validation`)
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | 모의 현장 시나리오에서 두 작업 요청의 계약·배포·완료 근거를 비교하고 기체에 장애를 넣어 예외 대응을 확인합니다. |
+| 누가 | 비교는 두 모드(GET 만 쓰는 읽기 전용)에서 하고 장애 주입은 엔지니어 모드에서 합니다. |
+| 진입 | 메뉴 9번입니다. |
+| 컴포넌트 | `ManufacturingValidation.tsx`, `FaultPanel.tsx` |
+| API | GET `/api/work-requests`, GET `/api/work-requests/{receiptId}`, POST `/api/faults` |
+
+화면 위에는 region «제조 시나리오 검증» 을 배치하고 아래에는 region «장애 주입» 을 배치합니다.
+
+#### 3.9.1 제조 시나리오 검증
+
+`ManufacturingValidation.tsx` 의 region «제조 시나리오 검증» 구역입니다. h2 «호출 계약과 실행 근거 비교» 와 설명 «같은 임무가 다른 로봇에 배정되었는지, 완료 근거가 어떻게 달라졌는지 작업 요청 기록으로 확인합니다.» 가 있습니다.
+
+단계 넷(`ol.validation-journey`)과 각 링크는 다음과 같습니다:
+1. «공통 임무»: «두 기종이 지원하는 스테이션 검사 계약을 고정합니다.» 문장과 링크 «임무·호출 계약»(`#missions`)이 있습니다.
+2. «케이퍼빌리티 기반 배정»: «두 검사를 연속 호출해 가용 기체에 배정합니다. 집기 미지원 기체의 배제 사유도 확인합니다.» 문장과 링크 «배정·실행 확인»(`#operations`)이 있습니다.
+3. «예외와 재작업»: «모의 랙 도착 신호가 누락되면 보류 사유를 확인하고 운영자가 근거를 남겨 재작업합니다.» 문장과 링크 «보류·인시던트 판단»(`#operations`)이 있습니다.
+4. «상위 결과»: «원래 작업 요청과 작업 ID를 유지하며 저장 결과를 확인합니다.» 문장과 링크 «작업 요청·결과 추적»(`#requests`)이 있습니다.
+
+구역에 «참조 시뮬레이터 시나리오입니다. E0 검사와 설비 관측 E2 공급은 요구 근거가 다른 임무이며, 기종 자체가 근거 등급을 결정하지 않습니다.» 안내 문구가 있습니다.
+
+검색 form «비교할 작업 요청 검색» 의 구성은 다음과 같습니다:
+- 칸 «비교할 외부 주문 검색»
+- 버튼 «비교 작업 요청 검색»
+- 링크 «전체 작업 요청에서 ID 확인»
+- 안내 «검색 결과의 최근 20건에서 선택하거나 전체 작업 요청의 ID를 입력하세요.»
+
+검색 시 GET `/api/work-requests?search=&offset=0&limit=20` 을 호출합니다. 실패 alert 뒤에는 « · 목록은 직전 검색 값입니다.» 가 붙습니다.
+
+비교 form «두 작업 요청 비교» 의 구성은 다음과 같습니다:
+- 칸 «작업 요청 A ID»
+- 칸 «작업 요청 B ID»(검색 결과 datalist «${외부 주문} · ${state}»)
+- 버튼 «두 작업 요청 비교하기»(진행 중 «비교 조회 중»)
+
+비교 시 GET `/api/work-requests/{receiptId}` 를 두 번 호출합니다. 오류 발생 시 alert 로 «${error} · 비교 판정을 표시하지 않습니다.» 를 표시합니다(예: «서로 다른 두 작업 요청을 선택하세요.», «작업 요청 상세 식별자가 일치하지 않습니다.»).
+
+비교 결과(`div[aria-label=작업 요청 비교 결과]`)는 다음과 같이 표시합니다:
+- status: 다음 세 문구 중 하나 뒤에 « 완료 여부는 각 저장 결과에서 확인하세요.» 가 붙습니다.
+  - «동일 계약·동일 실행 배포입니다.»
+  - «계약 또는 실행 배포가 다릅니다.»
+  - «계약·실행 배포 정보를 모두 확인할 수 없습니다.»
+- 표 «계약·배포 비교»(«계약 비교 표 스크롤» 감싸개): 열은 비교 항목, 작업 요청 A, 작업 요청 B 이고 행은 호출 계약, 계약 버전, 임무, 고정 임무 버전, 실행 배포 버전 입니다. 값이 없으면 «확인 안 됨» 으로 표시합니다.
+
+근거 카드 둘 `article`(접근 이름 «작업 요청 A 근거», «작업 요청 B 근거»)의 구성은 다음과 같습니다:
+- h3 «A · ${외부 주문}»
+- «작업 요청 상태 ${state}»(상태 코드 그대로)
+- «현재 호스트 조회 조회됨» 또는 «현재 호스트 조회 모름»
+- 저장 결과가 있는 경우: «저장 결과 v${n} · ${at}», 저장 결과 요약(`StoredResultSummary`, §3.2.5), 접기 «저장 결과 원문»
+- 저장 결과가 없는 경우: «저장 결과가 아직 없습니다. 호스트 수락을 완료로 판정하지 않습니다.»
+- 링크 «이 작업 요청의 결과·확인 이력»
+
+결과 영역 끝에는 «비교 버튼을 누른 시점의 조회입니다. 현장 상태가 달라지면 다시 조회하세요.» 문장이 있습니다.
+
+![작업 요청 비교](img/18-validation-comparison.png)
+
+그림 18. 두 작업 요청을 비교한 결과와 비교 판정, 계약·배포 비교 표, A·B 근거 카드를 보입니다.
+
+#### 3.9.2 장애 주입
+
+`FaultPanel.tsx` 의 region «장애 주입» 구역입니다. 안내 문구로 «기체 하나에 장애를 넣습니다. 받아들임은 현장이 장애를 넣었다는 뜻이고, 그 효과는 운영 영역의 실행 목록과 인시던트, 로봇 영역의 기체 목록에서 확인합니다» 를 표시합니다.
+
+운영자 모드에서는 «장애 주입은 엔지니어 모드에서 합니다» 문구가 표시되고 버튼이 없습니다. 기체 목록을 읽지 못하면 «모름: 기체 목록을 아직 읽지 못했습니다» 를 표시합니다. 퇴역 아닌 기체가 없으면 «장애를 넣을 기체가 없습니다» 를 표시합니다.
+
+엔지니어 모드의 form «장애 주입 폼» 구성은 다음과 같습니다:
+- select «기체»(퇴역 아닌 기체)
+- select «장애 종류»(«스킬 실패(진행 중 태스크)», «연결 상태»)
+- 장애 종류가 연결 상태면 select «연결 상태»(«OFFLINE», «CONNECTION_BROKEN», «ONLINE(복구)»)
+- 칸 «장애 주입 사유»
+- 버튼 «장애 넣기»
+
+사유가 비어 있으면 alert «장애 주입 사유를 넣으십시오» 가 나타납니다. POST `/api/faults` 로 요청을 보내며 조작 뒤 다시 읽지 않습니다.
+
+결과(status «장애 주입 결과»)는 다음 중 하나를 표시합니다:
+- «보내지 않음(${풀이}). ${detail}»
+- «결과 모름(${cause}). 실행 목록과 기체 목록에서 확인하십시오»
+- «받아들임(태스크 ${taskId}, ${taskState})»(이미 서 있었으면 «. 같은 결함이 이미 서 있었습니다» 가 붙습니다)
+- «받아들임(연결 상태 ${state})»
+- «받아들임(이미 ${state} 상태라 바뀐 것 없음)»
+- «현장이 거부함(${풀이}). ${detail}»
+- «응답 없음. 넣었는지 모릅니다. 실행 목록과 기체 목록에서 확인하십시오»
+
+장애 주입 효과는 운영 영역의 실행 목록과 인시던트(§3.4.4, §3.4.5), 로봇 영역의 기체 목록 «연결» 칸(§3.5.3)에서 봅니다.
+
+![장애 주입](img/17-validation-fault.png)
+
+그림 17. 검증 도구의 장애 주입 구역과 엔지니어 모드의 결과 알림을 보입니다.
+
+## 4. 화면을 바꿀 때 지킬 것
+
+리터치는 끝났고 지금 UI 가 최종입니다. 이 장은 옛 설계서의 4장(디자이너 리터치 지침)을 대신해 화면을 고칠 때 무엇은 자유롭고 무엇은 시험과 함께 바꿔야 하는지 적습니다.
+
+시험 구성은 다음과 같습니다.
+- vitest 23개 파일(`ui/src/**/*.test.tsx`)
+- Playwright `ui/e2e/lifecycle.spec.ts`(설정 `playwright.config.ts`)
+- Playwright `ui/e2e/station.spec.ts`(설정 `playwright.station.config.ts`)
+
+시험은 `data-testid` 를 쓰지 않습니다. 요소를 찾을 때 다음 기준을 씁니다.
+- 역할
+- 접근 이름
+- 라벨
+- 글자
+- CSS 클래스
+
+### 4.1 시험과 상관없이 바꿀 수 있는 것
+
+다음 시각 요소는 `styles.css` 의 `:root` 토큰과 규칙으로 바꿀 수 있습니다. 시험은 보지 않습니다.
+- 색
+- 글꼴
+- 크기
+- 여백
+- 테두리
+- 모서리
+- 그림자
+
+단 다음 상태는 서로 달라 보여야 합니다.
+- 모름
+- 직전 값
+- 보류
+- 사람의 판단
+- 재기동 복원
+- 재기동 중복
+
+다음 항목도 바꿀 수 있습니다.
+- 아이콘(`App.tsx` 의 `AREA_ICONS`)
+- 파비콘
+- 브랜드 자리
+- `<title>`
+
+구역 안 요소의 배치와 폭, 반응형 기준(`@media`)을 바꿀 수 있습니다. 단 4.2 의 순서 제약은 지킵니다.
+
+장식 글자를 더할 수 있습니다. 단 메뉴 버튼이나 이름으로 찾는 요소 안에 글자를 더하면 접근 이름이 바뀝니다.
+
+### 4.2 시험과 함께 바꿔야 하는 것
+
+| 항목 | 지킬 것 | 근거 시험 |
 |---|---|---|
-| 역할과 접근 이름 | `section aria-label`(region), `form aria-label`, `table aria-label`, `ul aria-label`, `dl aria-label`, `pre aria-label`, fieldset legend(group), `nav aria-label="영역"`, 버튼의 접근 이름(예 «${id} 상세 보기», «rack_present 켜기»). 구역 이름을 바꾸면 Playwright 와 vitest 가 깨짐 | §2.11, §5 |
-| 라벨 | 모든 입력의 `<label>` 글자(«robot_id», «일련번호», «연결 기준 시간(초)», «판단 사유» 등) | §5 |
-| 글자 | §5 표의 글자는 정확히 같아야 함. nav 버튼 글자 배열은 정확히 [«현장·자원», «로봇·연결», «임무·정책», «운영», «이력»] 이고 버튼 안에 글자를 더하면 깨짐(`App.test:49-56`) | §5 |
-| 표 열 순서 | 시험이 `cell.nth(i)` 나 행 글자 전체, 행 이름 정규식으로 보는 표: 기체 목록, 인스턴스 목록, 제품·빌드 목록, 리비전 목록(기종 → 번호), 현장 설정 버전 이력, 기체별 배정 가능(6번째가 «배정 가능»), 실행 목록(2번째가 작업 지시 id), 임무 버전 이력, 임무 초안 목록, 모의 실행 단위, 인시던트 목록(8~11번째), 이전 인스턴스 인시던트 목록(머리 11개), 근거 윈도우, 셀 대역 자리, 셀 대역 신호(신호 → 종류 → 값), 송신 기록 목록(10번째가 처분) | §5 |
-| dt → dd 구조 | 시험 도우미 `field(region, 이름)` 이 `dt` 글자로 찾고 바로 다음 형제 `dd` 를 봄. dl 을 표나 카드 격자로 바꾸려면 dt/dd 형제 짝을 남기거나 도우미를 고쳐야 함 | `RobotsArea.test:40-41` 등 여섯 파일, `PW:182-184` |
-| 시험이 쓰는 CSS 클래스 | `held`(보류 행), `selected`(고른 행, 실행 목록 강조), `duplicate`(재기동 중복 행), `asserted`(사람의 판단 region) | `IncidentSection.test`, `OperationsArea.test`, `JobResponseLog.test` |
-| 순서 제약 | region «재기동 복원 보고» 는 표 «실행 목록» 앞 | `ExecutionRestore.test:66-113` |
-| 모드 가르기 | 다른 모드에서는 폼과 버튼을 감추고 모드 문장을 보임. 비활성으로 남기는 것이 아님(시험이 버튼 0개를 셈, 예 운영자 모드의 장애 주입, 엔지니어 모드의 «재작업») | §2.3, `PW:283-284`, `FaultPanel.test` |
-| 직전 값과 모름 | «모름: …», «… 없습니다», «직전 값입니다 …» 세 상태는 다르게 보여야 하고 글자도 유지. 직전 값은 앞서 읽은 표를 그대로 둔 채 문장을 덧붙이는 방식 | §2.6 |
-| 관측과 사람의 판단 | «사람의 판단» region 과 «관측» region 은 서로 달라 보여야 함(S4a 스펙 §2.2·§8.2, 제안 §9). 판단자와 시각을 함께 보여야 함. «사람의 판단 없음. 아래 값은 모두 관측입니다» 문장 유지 | §3.4.4 |
-| 이전 인스턴스와 복원 | 이전 인스턴스 표와 사본 상세는 읽기 전용(판단 폼 없음)이고 그 사실을 문장으로 적음. 복원 보고 띠와 «이전 exec-k» 는 지금 실행과 구분되어 보여야 함 | §3.4.3, §3.4.4 |
-| 화면 밖 안내 | 회색 `.offscreen` 문장 넷(화면 밖 작업, 명칭 티칭, 장소 이름, 셀 대역)은 화면이 대신하지 않는 일을 알리는 문장이라 남김. 시험이 일부를 정규식으로 봄 | `RobotsArea.test:77`, `CommissioningCards.test` |
-| 코드 값 칸 | §2.9 끝의 코드 값 칸은 풀지 않고 그대로. 확인 결과는 스펙이 풀지 말라고 정함 | S4a 스펙 §8.2 |
-| 알림 역할 | 결과 알림 `role="status"`, 입력 오류와 띠 모름 `role="alert"` | §2.7, §2.11 |
+| 메뉴 | `nav[aria-label=영역]` 버튼 글자 배열이 정확히 [«운영 개요», «작업 요청», «공유 자원», «운영», «로봇», «임무», «현장 설정», «이력», «검증 도구»] 여야 합니다. 버튼 안에 글자를 더하면 깨집니다. | `App.test.tsx` |
+| 구역과 역할 이름 | region, table, form, article, status, list, group, navigation 의 접근 이름(4.3)을 지켜야 합니다. | 영역별 vitest, `lifecycle.spec.ts`, `station.spec.ts` |
+| 라벨 | 모든 입력의 `<label>` 글자(4.3)를 지켜야 합니다. | 영역별 vitest, `lifecycle.spec.ts`, `station.spec.ts` |
+| 표 열 순서 | 시험이 칸 순서나 행 전체 글자로 보는 표입니다. 다음 표들의 열 순서를 지켜야 합니다.<br>- 기체별 배정 가능(아홉 열, 8번째 «배정 가능»)<br>- 실행 목록(2번째 작업 지시 id)<br>- 인시던트 목록(8~11번째)<br>- 송신 기록 목록(10번째 처분)<br>- 셀 대역 신호<br>- 현장 설정 버전 이력<br>- 리비전 목록<br>- 임무 버전 이력<br>- 모의 실행 단위 표 | `OperationsArea.test.tsx`, `IncidentSection.test.tsx`, `JobResponseLog.test.tsx`, `lifecycle.spec.ts` |
+| dt 와 dd | 시험 도우미가 `dt` 글자로 찾고 바로 다음 형제 `dd` 를 봅니다. dl 을 다른 꼴로 바꾸면 도우미도 고쳐야 합니다. | `RobotsArea.test.tsx`, `SiteArea.test.tsx`, `CommissioningCards.test.tsx`, `IncidentSection.test.tsx`, `MissionsArea.test.tsx`, `OperationsArea.test.tsx`, `FollowupWorkspace.test.tsx`, `lifecycle.spec.ts` |
+| CSS 클래스 | `held`(보류 행), `selected`(고른 행), `duplicate`(재기동 중복 행), `asserted`(사람의 판단) 클래스를 지켜야 합니다. | `IncidentSection.test.tsx`, `OperationsArea.test.tsx`, `JobResponseLog.test.tsx` |
+| 순서 | region «재기동 복원 보고» 는 표 «실행 목록» 앞에 둡니다. | `ExecutionRestore.test.tsx` |
+| 모드 가르기 | §1.3 의 세 방식은 시험이 각각 다르게 확인합니다. 감추는 곳은 버튼이 없음을, 비활성인 곳은 `toBeDisabled` 를 봅니다. 방식을 바꾸면 시험도 바꿉니다. | `FaultPanel.test.tsx`, `MissionInterfaces.test.tsx`, `ManualJobOrder.test.tsx`, `FollowupWorkspace.test.tsx`, `lifecycle.spec.ts` |
+| 상태 문장 | «모름: …», «직전 값입니다 …», «… 없습니다» 와 새 영역의 상태 문장은 글자가 시험 대상입니다. | 영역별 vitest |
+| 코드 값 칸 | §2.7.3 끝의 코드 값 칸은 풀지 않습니다. 시험이 그 코드 글자에 기댑니다. | 영역별 vitest, `lifecycle.spec.ts` |
+| 화면 밖 안내 | 회색 `.offscreen` 문장(화면 밖 작업, 명칭 티칭, 장소 이름, 셀 대역)은 화면이 대신하지 않는 일을 알립니다. 시험이 일부를 정규식으로 봅니다. | `RobotsArea.test.tsx`, `CommissioningCards.test.tsx` |
+| 알림 역할 | 결과 알림은 `role="status"`, 입력 오류와 띠 모름은 `role="alert"` 를 씁니다. | 영역별 vitest |
+| 스크린숏 촬영 | `ui/screens/capture.spec.ts` 와 `lifecycle.spec.ts`·`station.spec.ts` 의 부수 촬영도 같은 이름으로 요소를 찾습니다. | `ui/screens/capture.spec.ts`, `lifecycle.spec.ts`, `station.spec.ts` |
 
-### 4.3 지금 시각 기준
+### 4.3 시험이 기대는 이름과 글자
 
-`styles.css` 24행 전부입니다.
+대괄호 안은 시험 파일 이름에서 `.test.tsx`, `.spec.ts` 를 뺀 것입니다.
 
-```css
-body { font-family: system-ui, sans-serif; margin: 0 16px; }
-header { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-nav button[aria-current='page'] { font-weight: 700; }
-.banner { padding: 8px; margin: 8px 0; border: 1px solid #999; }
-.banner.unknown { border-color: #b23a1d; }
-.split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.stale { color: #6f6f6f; }
-.invalid { color: #b23a1d; }
-.finding { border-left: 3px solid #b23a1d; padding-left: 8px; }
-.finding dt { font-weight: 700; }
-.link { background: none; border: none; color: #2b3f6b; text-decoration: underline; cursor: pointer; padding: 0; }
-.offscreen { color: #6f6f6f; }
-tr.selected { background: #e8ebf3; }
-.editor { display: flex; flex-direction: column; }
-.editor textarea, pre { font-family: ui-monospace, monospace; font-size: 13px; }
-pre { white-space: pre-wrap; border: 1px solid #ccc; padding: 8px; margin: 0; }
-.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-tr.held { background: #fbeee6; }
-tr.held strong { color: #b23a1d; }
-.asserted { border-left: 4px double #2b3f6b; padding-left: 8px; }
-.observed h4 { margin-bottom: 4px; }
-.restore { border-left: 4px solid #b26b1d; padding-left: 8px; margin: 8px 0; }
-.restored { color: #6f6f6f; }
-tr.duplicate { color: #6f6f6f; }
-```
+다음은 region 과 navigation 역할에 기대는 이름입니다.
 
-색:
-
-| 값 | 쓰임 |
-|---|---|
-| `#999` | 띠 테두리 |
-| `#b23a1d` (빨강) | 모름 띠 테두리, 입력 오류 글자, 거부 카드 선, 보류 글자 |
-| `#6f6f6f` (회색) | 직전 값, 화면 밖 안내, 이전 실행 id, 재기동 중복 행 |
-| `#2b3f6b` (남색) | 링크 버튼, 사람의 판단 이중선 |
-| `#e8ebf3` | 고른 행 배경 |
-| `#ccc` | `pre` 테두리 |
-| `#fbeee6` | 보류 행 배경 |
-| `#b26b1d` (갈색) | 복원 보고 띠 선 |
-| `#863bff` | 파비콘(`ui/public/favicon.svg`, CSS 밖) |
-
-간격: 16px(body 좌우, header gap, `.split` gap), 8px(띠 padding·margin, 카드 padding-left, `.actions` gap, `pre` padding, 복원 띠 margin), 4px(`.observed h4` 아래).
-
-글꼴: 본문은 `system-ui, sans-serif`, 편집기와 `pre` 는 `ui-monospace, monospace` 13px 입니다. 굵기 700 은 고른 nav 버튼과 카드 dt 두 곳에 씁니다. `<strong>` 은 세 곳(보류 중, 설비 근거 없이 완료 확인, 복원 띠 첫 문장)에 있습니다.
-
-없는 것:
-
-| 없는 것 | 사실 |
-|---|---|
-| CSS 변수 | custom property 가 없어 색과 간격이 규칙마다 직접 적혀 있음 |
-| 반응형 | `@media` 없음. `.split` 은 폭과 상관없이 늘 2열 `1fr 1fr`. `header` 와 `.actions` 만 줄 바꿈. 넓은 표(인시던트 11열, 송신 기록 11열, 리비전 9열, 실행 8열)에 가로 스크롤 처리 없음 |
-| 다크 모드 | `prefers-color-scheme` 없음 |
-| 아이콘과 이미지 | 없음. 체크 표시도 글자 «[v]»/«[ ]» (`CommissioningCards.tsx:107`) |
-| 전환 효과 | 없음 |
-| 규칙 없는 클래스 | `.mode`, `.banner.ok` 의 `ok`, `.card`, `.observed` 자체(h4 만 규칙) |
-| 컴포넌트별 스타일 | 버튼, 입력, select, 표, fieldset 은 브라우저 기본 |
-
-접기(`<details>`)는 세 곳(리비전 DRAFT 사유, 스위트 FAIL 상세, 초안의 마지막 모의 실행)에 있습니다. 시각은 서버 글자 그대로이며 지역 시각 변환이나 상대 시각은 없습니다.
-
-스크린숏에서 보이는 배치 사실:
-
-| 사실 | 그림 |
-|---|---|
-| 1440 폭에서도 로봇·연결 왼쪽 열이 좁아 프로파일 표 머리와 버튼 글자가 세로로 한 글자씩 접힘 | 16, 17, 64 |
-| 로봇·연결 왼쪽에 세 구역과 폼 다섯이 세로로 이어지고 오른쪽 상세가 함께 스크롤됨 | 16 |
-| 운영 영역은 1440×3280 까지 길어짐 | 53 |
-| 현장·자원은 현장 설정과 장애 주입이 한 열로 이어짐 | 20 |
-| 이력은 제목 없이 표만 | 54 |
-
-### 4.4 제안
-
-아래는 사실에 기댄 제안이며 결정이 아닙니다.
-
-| 제안 | 까닭 |
-|---|---|
-| 제안: 색, 간격, 글꼴을 `:root` 의 CSS 변수로 모으기 | 지금 같은 색이 규칙마다 따로 적혀 있음(`#b23a1d` 네 곳, `#6f6f6f` 네 곳). 테마와 다크 모드의 출발점이 됨. 시험 영향 없음 |
-| 제안: 의미별 토큰 이름 두기(모름, 직전 값, 보류, 사람의 판단, 복원, 고른 행) | §4.2 의 의미 구분을 색 하나가 아니라 토큰으로 지키게 됨 |
-| 제안: 좁은 폭에서 `.split` 을 1열로 | 지금은 늘 2열이라 왼쪽 표가 접힘(그림 16). 시험은 배치 열 수를 보지 않음 |
-| 제안: 넓은 표에 가로 스크롤 감싸개 | 11열 표가 줄 바꿈으로 높아짐(그림 52). 감싸개 div 는 표의 역할과 이름을 바꾸지 않음 |
-| 제안: `.card`, `.banner.ok` 에 규칙 주기 | 클래스는 이미 있으나 규칙이 없음 |
-| 제안: 성공과 실패 알림에 시각 구분 더하기 | 지금은 같은 문단 모양. 글자와 `role="status"` 는 유지 |
-
----
-## 5. 시험이 기대는 글자
-
-이 절의 글자, 역할, 이름, 클래스, 열 순서를 바꾸면 시험을 함께 고쳐야 합니다. «열 순서» 표기는 시험이 `cell.nth(i)` 나 행 글자 전체(textContent 이어붙임), 행 이름 정규식으로 보는 곳입니다. 시험 개수는 Playwright 1건(`PW:28`)과 vitest `it`·`it.each` 블록 134개(grep 기준: App 10, Adapters 7, Commissioning 8, ExecutionRestore 3, FaultPanel 7, Incident 20, JobResponseLog 5, Missions 14, Operations 22, Profiles 9, Robots 14, Site 15)입니다. `data-testid` 는 쓰지 않습니다.
-
-### 5.1 Playwright (`ui/e2e/lifecycle.spec.ts`)
-
-| 줄 | 선택·단언 | 글자 | 그리는 곳 |
-|---|---|---|---|
-| 30, 116, 132 | region | «${robotId} 상세» | `RobotDetail.tsx:41` |
-| 33, 90 | form | «기체 선언» | `DeclareForm.tsx:23` |
-| 34-36, 91-93 | label·button | «robot_id», «일련번호», «선언» | `DeclareForm.tsx:25,29,37` |
-| 37, 94 | 글자 exact | «humanoid-01 선언: 반영됨» 꼴 | `OutcomeNotice.tsx:31` + `RobotsArea.tsx:49` |
-| 40, 115, 126, 131, 152, 318 | button exact | 기체 id «humanoid-01» 등 | `RobotsArea.tsx:140` |
-| 41, 48, 56 | 글자 exact | «CONFIRMED», «RETIRED» (원장 상태 코드 그대로) | `RobotDetail.tsx:45` |
-| 42, 57 | 글자 exact | «바인딩 없음» | `labels.ts:44` via `FindingCard.tsx:18` |
-| 45, 67, 148, 150, 170, 193, 211, 230, 263, 282, 285 | label check | «운영자», «엔지니어» | `ModeSwitch.tsx:11-12` |
-| 46-47 | label·button | «퇴역 사유», «퇴역» | `RobotDetail.tsx:97,101` |
-| 51 | 글자 exact | «퇴역 뒤 보고» | `labels.ts:33` |
-| 52 | 글자 | «운영자(화면 안): 현장에서 기체를 내리거나 복귀» | `FindingCard.tsx:29` (action 은 서버 글자) |
-| 55 | button | «복귀» | `RobotDetail.tsx:86` |
-| 60, 66, 139, 151, 159, 171, 194, 212, 231, 240, 252, 264, 316 | nav button | «이력», «로봇·연결», «현장·자원», «운영»(exact), «임무·정책» | `areas.ts:11-15` |
-| 61-63 | cell | «운영자/local», «엔지니어/local», «정비» | `HistoryArea.tsx:33,36` |
-| 68-72 | form·label·button·글자 | «제품 선언», «vendor», «name», «acme/fleet 제품 선언: 반영됨» | `AdapterForms.tsx:25-36`, `AdaptersSection.tsx:37` |
-| 74-79 | form·label·option·글자 | «빌드 선언», «제품», 보기 «acme/fleet», «버전», «계약 semver», «acme/fleet 1.0.0 빌드 선언: 반영됨» | `AdapterForms.tsx:61-83`, `AdaptersSection.tsx:44` |
-| 81-85 | form·label·option·글자 | «인스턴스 등록», «instance_id», «빌드», 보기 «acme/fleet 1.0.0», «fleet-gw-01 인스턴스 등록: 반영됨» | `AdapterForms.tsx:110-133`, `AdaptersSection.tsx:53` |
-| 86-87 | table·row | «인스턴스 목록», «UNTESTED» | `AdaptersSection.tsx:82,101` |
-| 96-97, 324 | region·table | «프로파일», «리비전 목록» | `ProfilesSection.tsx:30,45` |
-| 99-101 | form·label·button | «리비전 제출», «프로파일 문서», «제출» | `ProfilesSection.tsx:180-187` |
-| 102, 105, 109 | 글자 exact | «picasso-ref/${model}#${rev} 제출\|시험 요청\|활성화: 반영됨» | `ProfilesSection.tsx:96,105,122` |
-| 103 | row 이름 정규식 | «picasso-ref/${model} ${rev}». 열 순서 기종 → 번호 | `ProfilesSection.tsx:62-65` |
-| 104, 108 | button | «시험 요청», «활성화» | `ProfilesSection.tsx:99,108` |
-| 106-107, 110 | row 글자 | «TESTED», «PASS (site-runner)», «ACTIVE» | `ProfilesSection.tsx:67,153` |
-| 117-120 | form·label·option·button | «바인딩», «빌드», «리비전», 보기 «acme/fleet 1.0.0», «picasso-ref/${model}#${rev}» | `CommissioningCards.tsx:129-156` |
-| 121, 124 | 글자 exact | «${robotId} 바인딩: 반영됨», «${robotId} 명칭 기록: 반영됨» | `RobotsArea.tsx:92,97` |
-| 122 | 글자 exact | «명칭 기록 없음» | `labels.ts:45` |
-| 123 | button | «명칭 등록 기록» | `CommissioningCards.tsx:81` |
-| 127, 133 | heading | «시운전: 완료», «시운전: 미완» | `CommissioningCards.tsx:87` |
-| 128 | 글자 exact | «막힘 없음» | `RobotDetail.tsx:69` |
-| 134-135 | 글자 | «기체가 아는 명칭 없음», /현장\(화면 밖\): 현장에서 명칭 티칭을 다시/ | `labels.ts:47`, `FindingCard.tsx:29` |
-| 140-141 | region·form | «현장 설정», «현장 설정 변경» | `SiteArea.tsx:120,310` |
-| 142-144, 161-163 | label·button | «연결 기준 시간(초)», «stallWindow(초)», «변경 사유», «변경» | `SiteArea.tsx:300,320,324` |
-| 145, 164 | 글자 exact | «연결 기준 시간 120초로 변경: 반영됨», «stallWindow 600초로 변경: 반영됨» | `SiteArea.tsx:92-95` |
-| 146-147, 165-166 | table·row 정규식 | «현장 설정 버전 이력», /^2 120초 local 엔지니어 연결 기준 늘림/, /^3 … 30초 15초 60초 600초$/. 열 순서 전체 | `SiteArea.tsx:165-191` |
-| 149 | 글자 exact | «현장 설정 변경은 엔지니어 모드에서 합니다» | `SiteArea.tsx:162` |
-| 153 | 글자 exact | «기준 120초, 현장 설정 버전 2» | `RobotDetail.tsx:52` |
-| 160, 167 | 글자 exact | «실행 호스트 반영: 버전 ${n}» | `SiteArea.tsx:213` |
-| 172-175, 222-224, 268-270 | form·label | «작업 지시 폼», «임무», 보기 «InspectAsset»·«PrepareSequencedRack», «대상 1 id», «대상 1 장소», 체크박스 «RACK-204.S01»·«RACK-204.S02», «자재» | `JobOrderFormView.tsx:26-135` |
-| 176-180 | table·cell nth(5) | «기체별 배정 가능», 6번째 열 «가능»/«불가», 행 이름 /^humanoid-01 / (첫 열 기체) | `EligibilityTable.tsx:47-69` |
-| 181, 225, 271 | button | «작업 지시 내기» | `JobOrderFormView.tsx:52` |
-| 182-184 | status·dt→dd | «제출 결과», «InspectAsset 작업 지시: 배정됨», `dt` «배정된 기체» 바로 뒤 `dd` | `JobOrderNotice.tsx:51-67`. dt/dd 형제 구조에 기댐 |
-| 185-189, 226-229, 272-273, 290, 293 | table·row 글자 | «실행 목록», «코드 정의», «PHYSICALLY_DONE», «RACK-204.S01 pick_place: RUNNING», «rack-arrival equipment_wait: RUNNING» | `ExecutionList.tsx:42,72,79` |
-| 304 | cell nth(1) | 실행 목록 2번째 열 = 작업 지시 id | `ExecutionList.tsx:70` |
-| 195-196 | region·status | «임무 편집», «임무 조작 결과» | `MissionsArea.tsx:197`, `MissionNotice.tsx:30` |
-| 197, 253 | button | «데이터 정의 템플릿 불러오기», «운영자 보류 대기 템플릿 불러오기» | `MissionsArea.tsx:365`, `labels.ts:164,166` |
-| 198, 200, 202, 205, 254, 256, 259 | button(일부 exact) | «초안 저장», «검증», «모의 실행», «활성화» | `MissionsArea.tsx:231-246` |
-| 199, 255 | status 전체 글자 | «초안 저장: 초안 ${n} 저장됨» | `MissionNotice.tsx:42-44` |
-| 201 | status 전체 글자 | «초안 1 검증: 통과» | `MissionNotice.tsx:50` |
-| 203, 257 | status 포함 | «초안 ${n} 모의 실행: 통과» | `MissionNotice.tsx:59-61` |
-| 204, 258 | label | «활성화 사유» | `MissionsArea.tsx:241` |
-| 206, 260 | status 전체 글자 | «초안 ${n} 활성화: 버전 ${v} 활성화됨. 다음 작업 지시부터 이 버전을 씁니다» | `MissionNotice.tsx:80-83` |
-| 207-208 | table·row 정규식 | «임무 버전 이력», /^버전 1 \(활성\) 초안 1 local 데이터 정의로 옮김 /. 열 순서 | `MissionsArea.tsx:263-287` |
-| 213-217, 265-266, 291 | table·row·button | «셀 대역 신호», /^rack_present BOOLEAN (true\|false) /. 열 순서 신호·종류·값, «rack_present 켜기»/«끄기»(aria-label) | `CellBand.tsx:71-108` |
-| 216, 292 | status 전체 글자 | «신호 조작 결과», «rack_present 켜기: 반영됨(값 true)» | `SignalNotice.tsx:16-26` |
-| 232-236 | form·label·option·button | «장애 주입 폼», «기체», «장애 종류»(값 SKILL_EXECUTION_FAILED), «장애 주입 사유», «장애 넣기» | `FaultPanel.tsx:100-140` |
-| 237-238 | status 정규식 | «장애 주입 결과», /^humanoid-01 스킬 실패: 받아들임\(태스크 .+#RACK-204\.S01, RETRIABLE\)$/ | `FaultPanel.tsx:36,153-166` |
-| 241-247, 274-277, 297-300 | table·cell nth(7..10) | «인시던트 목록», 8번째 열 현장 설정 버전 «버전 3», 9번째 임무 버전 «버전 1»/«버전 2», 10번째 판단 «판단 대상 아님»/«미해결»/«판단됨», 11번째 보류 «-», 행 글자 «보류 중», «GRASP_FAILED», «SIGNAL_DEADLINE» | `IncidentSection.tsx:205-247` |
-| 278 | button 정규식 | /상세 보기$/ (접근 이름) | `IncidentSection.tsx:232` |
-| 279-280 | region·글자 | «인시던트 상세», «사람의 판단 없음. 아래 값은 모두 관측입니다» | `IncidentSection.tsx:147,394` |
-| 283-284 | 글자 exact·button 없음 | «보류 중입니다. 운영자 판단은 운영자 모드에서 합니다», «재작업» 0개 | `IncidentSection.tsx:457` |
-| 286-288 | form·label·button | «운영자 판단», «판단 사유», «재작업» | `IncidentSection.tsx:470-482` |
-| 289 | status 정규식 | «판단 결과», /\/rack-arrival 재작업: 판단이 섰습니다\(incident-\d+\)$/ | `IncidentSection.tsx:89,496-508` |
-| 294-296 | region·포함 | «사람의 판단», «사람이 판단함: local, », «결정 재작업(REWORK)» | `IncidentSection.tsx:396-401` |
-| 305-311 | region·label·table·cell nth(9) | «작업 응답 송신 기록», «송신 기록의 작업 지시», «송신 기록 목록», 10번째 열 처분 «송신», «재기동 중복» 0행, «그 가운데 재기동 중복 0건» | `JobResponseLog.tsx:37-95` |
-| 317 | alert 포함 | «모름: registry 가 답하지 않습니다» | `RegistryBanner.tsx:24` |
-| 320-324 | region·글자 | «기체 목록», «어댑터», /직전 값입니다/, row /fleet-gw-01/ | `RobotsArea.tsx:43,122`, `AdaptersSection.tsx:25,77`, `ProfilesSection.tsx:37` |
-
-### 5.2 vitest
-
-`field(region, 이름)` 도우미는 `dt` 글자로 찾고 바로 다음 형제(`dd`)의 글자를 봅니다(`RobotsArea.test:40-41`, `CommissioningCards.test:60-61`, `SiteArea.test:45-46`, `MissionsArea.test:81-82`, `OperationsArea.test:111-112`, `IncidentSection.test:82-83`). 그래서 아래 dt 글자와 dt→dd 짝 구조가 모두 시험에 걸립니다. `cells(row)` 는 행의 셀 글자 배열을 통째로 비교하므로 열 순서와 칸 글자 전부가 대상입니다. 시험 위치의 `X.test` 는 `ui/src/components/X.test.tsx` 이고, `App.test` 만 `ui/src/App.test.tsx` 입니다.
-
-| 그리는 곳 | 시험이 쓰는 글자·역할 | 시험 위치 |
+| 구분 | 글자 | 시험 파일 |
 |---|---|---|
-| `App.tsx` nav | navigation «영역», 버튼 글자 배열 정확히 [«현장·자원», «로봇·연결», «임무·정책», «운영», «이력»](`small` 이 붙으면 깨짐) | `App.test:49-56` |
-| `App.tsx` | button «임무·정책», «이력», «운영», «로봇·연결», «현장·자원» | `App.test:64,163`, `OperationsArea.test:681,686`, `IncidentSection.test:435`, `JobResponseLog.test:147`, `SiteArea.test:334,336`, `FaultPanel.test:195` |
-| `RegistryBanner` | alert 하나뿐, «모름: registry 가 답하지 않습니다», «운영자 토큰 설정 확인», «모름: 운영 서비스에 닿지 않습니다», /registry 응답 확인/ | `App.test:89,97-98,130`, `RobotsArea.test:208`, `ProfilesSection.test:144`, `OperationsArea.test:689` |
-| `ModeSwitch` | label «운영자», «엔지니어», «사용자», /사용자 이름은 영문/ | `App.test:106,139,142`, 모든 영역 시험 |
-| `RobotsArea` 목록 | «선언된 기체가 없습니다», «모름: 기체 목록을 아직 읽지 못했습니다», «직전 값입니다 (t1 기준)», region «기체 목록», 행 글자 «humanoid-01CONFIRMED신선완료0»(열 순서) | `App.test:62,76,91,132`, `CommissioningCards.test:77-79`, `SiteArea.test:337` |
-| `RobotsArea` | /화면 밖 작업: 로봇 내부 지도와 웨이포인트 티칭, mimic 기동/, «선언은 엔지니어 모드에서 합니다» | `RobotsArea.test:77,94` |
-| `DeclareForm` | form «기체 선언», label «robot_id», «일련번호», button «선언» | `RobotsArea.test:51-54,93` |
-| `RobotDetail` | region «${id} 상세», dt «원장 상태», «연결», «연결 판정 기준»(«기준 60초, 현장 설정 버전 2»), form «퇴역», label «퇴역 사유», button «퇴역»(비활성 여부), «복귀», «퇴역과 복귀는 운영자 모드에서 합니다» | `RobotsArea.test:63-65,100-122`, `SiteArea.test:362-366` |
-| `FindingCard` | dt «종류», «관측값과 기대값», «마지막 확인», «근거 버전», «해결 담당»; 글자 «보고 0회 / 기대: 생존 보고 1회 이상», «현장(화면 밖): …», «운영자(화면 안): 복귀», «해당 없음», «현장 설정 버전 2», button «humanoid-01 상세»(바로 가기), «바로 가기» 없음 | `RobotsArea.test:66-71,139-152`, `AdaptersSection.test:155-158`, `CommissioningCards.test:101-102`, `SiteArea.test:318-321,366`, `MissionsArea.test:201-206` |
-| `OutcomeNotice` | «${what}: 반영됨», «: 거절됨», «: 보내지 않음. …», «: 결과 모름(운영 서비스 응답 502)», «응답 없음. 다시 읽어 보니 반영 안 됨», «반영되었을 수 있음. 다시 읽지도 못해 확인하지 못했습니다», «보내지 않음. 운영 서비스가 요청을 거절했습니다(HTTP 400)», `closest('[role="status"]')` | `RobotsArea.test:90,131,139,163,172,181,189,201`, `AdaptersSection.test:111,128,143,154`, `ProfilesSection.test:101,110,126,135`, `CommissioningCards.test:153,164`, `SiteArea.test:149,248,252,316-317` |
-| `AdaptersSection`·`AdapterForms` | region «어댑터», table «인스턴스 목록» 행 글자 «fleet-gw-01acme/fleet 1.0.00.9.0UNTESTED직결0», table «제품·빌드 목록» «acme/fleet1.0.00.9.0UNTESTED», «모름: 어댑터 목록을 아직 읽지 못했습니다», «등록된 제품이 없습니다», «등록된 인스턴스가 없습니다», «어댑터 등록은 엔지니어 모드에서 합니다», form «제품 선언»·«빌드 선언»·«인스턴스 등록», label «vendor», «name», «제품», «버전», «계약 semver», «instance_id», «빌드», 보기 «acme/fleet», «acme/fleet 1.0.0», 버튼 비활성 | `AdaptersSection.test:57-158` |
-| `ProfilesSection` | region «프로파일», «스킬 2종, 계약 0.9.0», table «리비전 목록», 행 이름 /humanoid-a 2 TESTED/, 행 글자 «PASS (site-runner)PASS (site-runner)PASS (site-runner)끝남», «실행 중», summary «상세», «저장됨: 검증 실패», «CANCEL_UNSUPPORTED: 기대 거절, 관측 수락», «모름: 프로파일 목록을 아직 읽지 못했습니다», button «시험 요청», «활성화», form «리비전 제출», label «프로파일 문서», button «제출», «프로파일 관리는 엔지니어 모드에서 합니다», «직전 값입니다 (t1 기준)» | `ProfilesSection.test:59-154` |
-| `CommissioningCards` | region «바인딩», «사이트 명칭», «시운전»; dt «빌드», «리비전», «사람이 기록함», «기체가 답함»; 글자 «기록 없음», «아직 응답 없음», «명칭을 지원하지 않음 (t1)», «아는 명칭 2개 (t1)», /명칭 티칭은 화면 밖 현장 작업입니다/, heading «시운전: 완료», /\[v\] 활성 바인딩 \(근거 \/diag\/bindings\)/, /\[ \] 명칭 상태 CONFIRMED 또는 NOT_REQUIRED/, /소프트웨어 대조 보고 없음, 어댑터 적합성 UNTESTED/, /소프트웨어 대조 불일치/; form «바인딩» 보기 배열 [«고르십시오», «picasso-ref/humanoid-a#2»]; button «명칭 등록 기록» | `CommissioningCards.test:85-171` |
-| `SiteArea` | region «현장 설정», «결과 판정 값», «정체 표시»; group 같은 두 이름; dt «현재 버전»(«2»), «연결 기준 시간»(«60초»), «허용 범위»(«60~3600초»), «stallWindow»(«600초»); 묶음 문장 둘 전문; table «현장 설정 버전 이력» 행 글자 «260초kim엔지니어연결 기준 줄임t245초20초90초600초»(열 순서); form «현장 설정 변경»; label 다섯 «…(초)»·«변경 사유»; «허용 범위 5~120초» 등; «기준 버전 1»; button «변경»; alert 범위 문장 다섯·«변경 사유를 넣으십시오»; «실행 호스트 반영: 버전 1/2»·«미적용»·«모름»; «실행 호스트 읽기 실패: …»; «실행 호스트가 적용하지 않은 버전 2(범위 밖): …»; «현장 설정 변경은 엔지니어 모드에서 합니다»; 운영자 모드에 spinbutton 없음; «모름: 현장 설정을 아직 읽지 못했습니다» | `SiteArea.test:51-337` |
-| `FaultPanel` | region «장애 주입», form «장애 주입 폼», label «기체», «장애 종류», «연결 상태», «장애 주입 사유», button «장애 넣기»; 보기 배열 [«스킬 실패(진행 중 태스크)», «연결 상태»], [«OFFLINE», «CONNECTION_BROKEN», «ONLINE(복구)»]; status «장애 주입 결과» 글자 받아들임 셋·거부 넷·응답 없음·사전 거부; alert «장애 주입 사유를 넣으십시오»; «장애 주입은 엔지니어 모드에서 합니다»(운영자 모드에 button 0개) | `FaultPanel.test:29-204` |
-| `MissionsArea` | region «임무 PrepareSequencedRack»; dt «활성 버전»(«버전 2»·«코드 정의»), «활성화»(«lee t1: 랙 도착 대기 도입»); textbox «임무 정의 JSON»; label «활성 버전 정의», «활성화 사유»; button «초안 저장», «검증», «모의 실행», «활성화», «초안 7 열기», 템플릿 «… 불러오기» 셋(비활성 여부 포함); «임무 편집은 엔지니어 모드에서 합니다»; «코드 정의는 정의 JSON 이 없습니다»; «활성화한 버전이 없습니다. 코드 정의로 돕니다»; 대상 줄 셋 전문; «활성: 버전 1, 편집기와 같음/다름»; table «임무 버전 이력» cells [«버전 2 (활성)», «초안 7», «lee», «랙 도착 대기 도입», «t1»]; table «임무 초안 목록» cells [«초안 7», «local», «t1»], summary «통과 t3»·«실패(정착하지 않음) t3»; alert «활성화 사유를 넣으십시오»; /^모름: 임무 버전을 아직 읽지 못했습니다 \(/; «직전 값입니다. 실행 호스트 불통: …» | `MissionsArea.test:89-476` |
-| `MissionNotice`·`MockRunReport` | status «임무 조작 결과»; «초안 저장: 초안 7 저장됨», «초안 7 검증: 거부됨», «초안 7 모의 실행: 통과», «초안 7 활성화: 버전 3 활성화됨. 다음 작업 지시부터 이 버전을 씁니다», «초안 7 활성화: 막힘», «… 막힘. 이 초안에 통과한 모의 실행이 없습니다. 모의 실행을 먼저 하십시오», «마지막 모의 실행: 실패(정착하지 않음)», «… 모름. … 판정하지 않았습니다», «실행 호스트가 거부함(없는 초안)초안이 없다: 7», «결과 모름(운영 서비스 응답 500)», 응답 없음 셋; table «모의 실행 5 단위» cells [«rack-arrival», «설비 대기», «equipment_wait», «DONE», «E2», «-»]; dt «표본 작업 지시» «MOCK-7, 슬롯 …, 자재 …, 요구 근거 E2»; «모의 실행 6: 실패(정착하지 않음). …» | `MissionsArea.test:188-444` |
-| `JobOrderFormView`·`jobOrderDraft` | form «작업 지시 폼», label «임무», «대상 ${i} id», «대상 ${i} 장소», «RACK-204.S01/S03», «자재»; button «대상 더하기», «대상 ${i} 빼기», «작업 지시 내기»; «제시 자리 SEQ-IN-02.BIN-A»; «작업 지시는 운영자 모드에서 냅니다»; alert «점검 대상마다 대상 id 와 장소 이름을 넣으십시오», «점검 대상을 하나 이상 넣으십시오»; «모름: 셀 대역을 읽지 못해 슬롯과 자재를 고를 수 없습니다» | `OperationsArea.test:123-206,458-459` |
-| `JobOrderNotice` | status «제출 결과»; «InspectAsset 작업 지시: 배정됨|거부됨|미배정|막힘(배정 가능한 기체 없음)|막힘(이 모드에서 할 수 없는 조작)|결과 모름(운영 서비스 응답 500)»; dt «작업 지시 id», «실행 id», «배정된 기체», «거부 사유»; list «기체별 미배정 사유», «실행 호스트가 후보에서 뺀 기체»; 응답 없음 셋 | `OperationsArea.test:130,217-325` |
-| `EligibilityTable` | table «기체별 배정 가능» cells 7열 전체(«모름», «신선(현장 설정 버전 1)», «모자람: pick_place», «가능»/«불가» 등); «폼을 채우면 기체별 배정 가능을 봅니다»; alert «작업 지시 폼 오류: …» | `OperationsArea.test:194,201,407-440` |
-| `ExecutionList` | region «실행», table «실행 목록», dt «실행 호스트 인스턴스», 행 cells 8열 전체(단위 칸 «RACK-204.S01 pick_place: RUNNING, 근거 E0», 작업 응답 칸 «resp-1: PHYSICALLY_DONE, 근거 E0(요구 E0)»), 강조 행 클래스 `selected`, «직전 값입니다. 실행 호스트 불통: …», «모름: 실행 목록을 아직 읽지 못했습니다 (…)» | `OperationsArea.test:221-222,346-370,602-610,683` |
-| `ExecutionList` 복원 | region «재기동 복원 보고»(표 «실행 목록» 앞에 와야 함), 첫 줄·미룬·포기 문장 전문, list «다시 지은 실행», «미룬 실행», «포기한 실행»; 첫 칸 «exec-1 (이전 exec-3)», title «이전 인스턴스 mw-0» | `ExecutionRestore.test:66-113` |
-| `IncidentSection` | region «인시던트», «인시던트 상세», «관측», «사람의 판단»(클래스 `asserted`), «이전 인스턴스»; table «인시던트 목록» cells 11열 전체, «이전 인스턴스 인시던트 목록» columnheader 11개 배열; 행 클래스 `held`, `selected`; button «${id} 상세 보기», «mw-0 incident-1 상세 보기»; heading «incident-1 상세», level 3 «incident-1 상세(이전 인스턴스 mw-0)»; 머리 «실행 호스트 인스턴스 mw-1, 인시던트 7건 가운데 최신 3건»; dt «현장 설정 버전», «시간값», «임무 버전», «단계 위치», «필요 근거 등급», «도달 근거 등급», «확인 결과(코드 이름)», «단위의 지금 상태», «단위», «분류», «참조», «조치 힌트», «유지», «새 태스크 받기»; label «이 단위의 결함», «실행을 막던 결함 1», «판단 사유»; table «근거 윈도우» cells 5열; «근거 윈도우(앞 30초, 뒤 15초)», «윈도우 밖이라 버린 관측이 있습니다», «없음(결함 없이 실패를 알림)», «사람의 판단 없음. 아래 값은 모두 관측입니다», «사람이 판단함: kim, w20», «결정 재작업(REWORK), 호스트 시각 h20», «결정 완료 확인(CONFIRM_DONE)», «설비 근거 없이 완료 확인», 판단 칸 넷; form «운영자 판단» 버튼 배열 [«완료 확인», «재작업»], «exec-1/rack-arrival 보류를 판단합니다. 판단자는 kim 입니다», alert «판단 사유를 넣으십시오», «보류 중입니다. 운영자 판단은 운영자 모드에서 합니다»; «이전 인스턴스의 사본입니다. 읽기 전용이며 판단하지 않습니다», «이전 인스턴스의 인시던트가 없습니다», «재기동 앞 인스턴스의 인시던트 4건 가운데 최신 2건. 읽기 전용이며 여기서 판단하지 않습니다», «실행 호스트에 이 인시던트가 없습니다. …», «인시던트가 없습니다», «모름: 인시던트 목록을 아직 읽지 못했습니다 (…)»; 확인 결과 칸에 «확인 안 함» 이 없어야 함 | `IncidentSection.test:91-597` |
-| `DecisionNotice` | status «판단 결과»; «${exec}/${unit} 재작업: 판단이 섰습니다(incident-1)», «보류 단위가 아닙니다», «에이전트 판단은 거부됩니다. …», 응답 없음 셋, «실행 호스트가 거부함(이유 없음)», «실행 호스트가 거부함(실행 호스트가 재기동해 인스턴스가 다름). …», «보내지 않음(이 모드에서 할 수 없는 조작). …» | `IncidentSection.test:331-400,597-599` |
-| `CellBand` | region «셀 대역», table «셀 대역 자리» cells [«SEQ-IN-02.BIN-A», «제시 자리», «점유», «ENGINE-COVER-A», «-»], [«RACK-204.S01», «슬롯», «비어 있음», «-», «-»]; table «셀 대역 신호» cells [«rack_present», «BOOLEAN», «true», «t2», «켜기끄기»], [«guard_closed», …, «안전 신호(값만 봅니다)»], [«lot_code», «TEXT», «LOT-0001», «-», «-»]; 구역 안 버튼 aria-label 배열 정확히 [«rack_present 켜기», «rack_present 끄기»]; «모름: 실행 호스트가 셀 대역을 읽지 못했습니다», «모름: 신호 값을 읽지 못했습니다», «모름: 셀 대역이 신호 목록을 싣지 않았습니다», «셀 대역에 신호가 없습니다», /직전 값입니다. 실행 호스트 불통/ | `OperationsArea.test:446-595,612` |
-| `SignalNotice` | status «신호 조작 결과»(셀 대역 region 안); «rack_present 켜기: 반영됨(값 true)», «rack_present 끄기: 반영됨(값 false)», «현장이 거부함(신호 종류에 맞지 않는 값). …», 응답 없음 셋 | `OperationsArea.test:487-561` |
-| `JobResponseLog` | region «작업 응답 송신 기록», table «송신 기록 목록» cells 11열 전체(«E0/E2», «미완 rack-arrival», «완료 RACK-204.S01, rack-arrival», «필요», «재기동 중복(송신 안 함)», «송신»), 행 클래스 `duplicate`; label «송신 기록의 작업 지시» 보기 배열 [«전체», «JO-NEW», «JO-20261009-aaaaaaaa», «JO-B»]; 머리 «실행 호스트 인스턴스 mw-1, 송신 기록 7건 가운데 최신 3건, 그 가운데 재기동 중복 1건»; «송신 기록이 없습니다»; «모름: 송신 기록을 아직 읽지 못했습니다 (…)»; «직전 값입니다. 실행 호스트 불통: …» | `JobResponseLog.test:65-148` |
-| `HistoryArea` | «운영자/kim», «정비» | `App.test:164-165` |
+| region | «운영 개요» | `lifecycle.spec.ts` |
+| region | «결과 자동 수집» | `FollowupWorkspace.test.tsx`, `lifecycle.spec.ts` |
+| region | «상위 작업 요청» | `lifecycle.spec.ts` |
+| region | «외부 결과 수신 확인» | `lifecycle.spec.ts` |
+| region | «저장 결과의 완료 근거» | `WorkRequests.test.tsx`, `lifecycle.spec.ts` |
+| region | «현장 확인 기록»·«현장 확인 이력» | `lifecycle.spec.ts` |
+| region | «공유 스테이션 운영»·«임무 필수 자원» | `station.spec.ts` |
+| region | «작업 지시»·«수동 작업 요청 추적» | `lifecycle.spec.ts` |
+| region | «실행» | `ExecutionRestore.test.tsx`, `OperationsArea.test.tsx` |
+| region | «재기동 복원 보고» | `ExecutionRestore.test.tsx` |
+| region | «인시던트»·«이전 인스턴스»·«관측» | `IncidentSection.test.tsx` |
+| region | «인시던트 상세»·«사람의 판단» | `IncidentSection.test.tsx`, `lifecycle.spec.ts` |
+| region | «셀 대역» | `OperationsArea.test.tsx` |
+| region | «작업 응답 송신 기록» | `JobResponseLog.test.tsx`, `lifecycle.spec.ts` |
+| region | «기체 목록» | `CommissioningCards.test.tsx`, `lifecycle.spec.ts` |
+| region | «로봇 도입 준비» | `OnboardingGuide.test.tsx`, `lifecycle.spec.ts` |
+| region | «어댑터»·«프로파일» | `OnboardingGuide.test.tsx` 등, `lifecycle.spec.ts` |
+| region | «바인딩»·«사이트 명칭»·«시운전» | `CommissioningCards.test.tsx` |
+| region | «${robotId} 상세» | `RobotsArea.test.tsx`, `SiteArea.test.tsx`, `CommissioningCards.test.tsx`, `lifecycle.spec.ts` |
+| region | «임무 PrepareSequencedRack» | `App.test.tsx`, `MissionsArea.test.tsx` |
+| region | «임무 편집»·«새 임무 생성»·«버전별 호출 계약»·«호출 계약 작성»·«계약 입력의 배정 가능 미리보기» | `lifecycle.spec.ts` |
+| region | «선택한 호출 계약» | `MissionInterfaces.test.tsx`, `lifecycle.spec.ts` |
+| region | «실행 배포» | `FollowupWorkspace.test.tsx`, `lifecycle.spec.ts` |
+| region | «공개와 배포 상태» | `MissionWorkspace.test.tsx` |
+| region | «현장 설정» | `FaultPanel.test.tsx`, `SiteArea.test.tsx`, `lifecycle.spec.ts` |
+| region | «결과 판정 값»·«정체 표시» | `SiteArea.test.tsx` |
+| region | «장애 주입» | `FaultPanel.test.tsx` |
+| region | «제조 시나리오 검증» | `lifecycle.spec.ts` |
+| navigation | «영역» | `App.test.tsx`, `OnboardingGuide.test.tsx`, `lifecycle.spec.ts`, `station.spec.ts` |
+| navigation | «임무 관리» | `MissionWorkspace.test.tsx`, `lifecycle.spec.ts` |
 
-화면 글자는 아니지만 시험이 보는 헤더와 본문도 있습니다: `X-Ops-Mode`, `X-Ops-User`, `Content-Type: application/json` (`App.test:105-146`, `MissionsArea.test:192-194`, `OperationsArea.test:161-163,492-510`, `FaultPanel.test:59-61`, `IncidentSection.test:336-337`).
+다음은 table, article, list 역할에 기대는 이름입니다.
 
----
+| 구분 | 글자 | 시험 파일 |
+|---|---|---|
+| table | «기체별 배정 가능» | `MissionInterfaces.test.tsx`, `OperationsArea.test.tsx`, `lifecycle.spec.ts` |
+| table | «실행 목록» | `ExecutionRestore.test.tsx`, `OperationsArea.test.tsx`, `lifecycle.spec.ts` |
+| table | «인시던트 목록»·«이전 인스턴스 인시던트 목록»·«근거 윈도우» | `IncidentSection.test.tsx` |
+| table | «셀 대역 신호»·«셀 대역 자리» | `OperationsArea.test.tsx` |
+| table | «송신 기록 목록» | `JobResponseLog.test.tsx`, `lifecycle.spec.ts` |
+| table | «스테이션 점유»·«스테이션 작업» | `station.spec.ts` |
+| table | «인스턴스 목록»·«제품·빌드 목록» | `AdaptersSection.test.tsx` |
+| table | «리비전 목록» | `ProfilesSection.test.tsx`, `lifecycle.spec.ts` |
+| table | «임무 버전 이력»·«임무 초안 목록» | `MissionsArea.test.tsx` |
+| table | «입력 필드 매핑» | `MissionWorkspace.test.tsx` |
+| table | «현장 설정 버전 이력» | `SiteArea.test.tsx`, `lifecycle.spec.ts` |
+| article | «작업 요청 상세» | `ManualJobOrder.test.tsx`, `WorkRequests.test.tsx`, `lifecycle.spec.ts` |
+| article | «스테이션 작업 근거» | `StationWorkspace.test.tsx`, `station.spec.ts` |
+| article | «작업 요청 A 근거»·«작업 요청 B 근거» | `ManufacturingValidation.test.tsx`, `lifecycle.spec.ts` |
+| list | «기체별 미배정 사유», «실행 호스트가 후보에서 뺀 기체» | `OperationsArea.test.tsx` |
+| list | «다시 지은 실행», «미룬 실행», «포기한 실행» | `ExecutionRestore.test.tsx` |
 
-## 6. 알려진 어긋남
+다음은 form 과 status 역할에 기대는 이름입니다.
 
-화면, 코드, 스펙, 용어집 사이에서 이 버전 기준으로 서로 맞지 않는 곳입니다. 고치지 않고 적어 둡니다. 화면 글자를 고치려면 §5 의 시험을 함께 고쳐야 합니다.
+| 구분 | 글자 | 시험 파일 |
+|---|---|---|
+| form | «기체 선언», «리비전 제출», «바인딩», «빌드 선언», «제품 선언», «인스턴스 등록», «운영자 판단», «작업 지시 폼», «장애 주입 폼», «퇴역», «현장 설정 변경» | 영역별 vitest |
+| status | «제출 결과», «판단 결과», «신호 조작 결과», «임무 조작 결과», «장애 주입 결과», «계약 호출 결과», «호출 계약 처리 결과» | 영역별 vitest |
 
-| 번호 | 어긋남 | 사실 | 근거 |
-|---|---|---|---|
-| 6.1 | 화면 글자에 «거절» 과 «거부» 가 섞임 | 용어집의 새 이름은 «거부» 입니다. 옛 이름 «거절» 이 남은 화면 글자: registry 조작 결과 «${what}: 거절됨», 토큰 거부 결과 «registry 가 운영자 토큰을 거절했습니다», 띠 «registry 가 운영자 토큰을 거절합니다», 사전 거부 기본 문장 «운영 서비스가 요청을 거절했습니다(HTTP ${status})». 새 이름을 쓰는 곳: 임무 «거부됨», «실행 호스트가 거부함», 작업 지시 «거부됨», 장애 주입·신호 «현장이 거부함». Playwright 와 vitest 가 양쪽 글자에 다 기댑니다. 촬영 스크립트의 상태 설명(`img/INDEX.md` 09, 11, 21 행의 «거절»)도 옛 이름입니다 | `OutcomeNotice.tsx:33,38`, `RegistryBanner.tsx:31`, `api.ts:364` / `MissionNotice.tsx:139,166`, `labels.ts:142`, `FaultPanel.tsx:172` |
-| 6.2 | 코드 주석의 옛 이름 | 화면에는 보이지 않으나 주석에 «개정판»(새 이름 «리비전»)과 «거절» 이 남아 있습니다 | `CommissioningCards.tsx:116`, `ProfilesSection.tsx:20`, `testing/fakeOps.ts:223`, `labels.ts:29`, `OutcomeNotice.tsx:12` |
-| 6.3 | 헤더 이름 | `ModeSwitch.tsx:16` 주석과 S1 스펙 §8 은 모드가 `X-Actor` 에 실린다고만 적습니다. 브라우저는 `X-Ops-Mode`, `X-Ops-User` 를 보내고(`api.ts:316`), `X-Actor: <모드>/<사용자>` 는 운영 서비스가 registry 로 갈 때 짓는 헤더입니다 | `ops-service/.../actor/Actor.kt:26`, `ops-service/.../registry/RegistryClient.kt:300` |
-| 6.4 | 시험 요청 시각을 보이지 않음 | P2·S1d 스펙 §10 은 «화면은 요청 시각과 집힌 시각을 그대로 보입니다» 라고 적었으나, 리비전 표의 «시험 요청» 칸은 상태 라벨 하나(«요청 없음», «대기», «실행 중», «만료», «끝남»)만 보입니다 | `docs/superpowers/specs/2026-10-08-p2-s1d-runner-binding-commissioning-design.md:379`, `ProfilesSection.tsx:84` |
-| 6.5 | «설비 근거 없이 완료 확인» 의 판정 주체 | S4a 스펙 §8.2 는 판단이 CONFIRM_DONE 이고 봉인 때 확인 결과가 MATCHED 가 아니면 «화면이 이 둘로 판정합니다» 라고 적었으나, 코드는 실행 호스트가 준 `confirmedWithoutEvidence` 를 그대로 씁니다. 시험 이름도 «화면이 다시 계산하지 않는다» 입니다 | `docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design.md:172`, `IncidentSection.tsx:44,273`, `IncidentSection.test:217` |
-| 6.6 | «모름» 이 읽는 중을 겸함 | 첫 읽기를 기다리는 동안과 읽기에 실패한 뒤가 같은 글자 «모름: … 아직 읽지 못했습니다» 입니다. 따로 읽는 중을 보이는 곳은 셋뿐입니다(«확인 중», «판정 중», «상세를 읽는 중입니다») | §2.6, §2.10 |
-| 6.7 | 시험 요청 상태 «끝남» | `TEST_REQUEST_LABEL` 의 DONE 은 «끝남» 입니다. 용어집 새 이름 목록에 «종료» 가 있으나 이 칸이 그 대상인지는 이 문서에서 확인하지 못했습니다. 확인 필요로 둡니다 | `labels.ts:119`, `ProfilesSection.test`(«끝남» 을 행 글자로 봄) |
-| 6.8 | 쓰이지 않는 갈래 | `ready: false` 갈래(«다음 단계», «이 영역은 다음 단계에서 엽니다.»)는 다섯 영역이 모두 열려 쓰이지 않습니다. 영역을 찾지 못했을 때 기본값은 `AREAS[1]`(로봇·연결)입니다 | `App.tsx:64,78,86` |
-| 6.9 | 이력 영역의 구조 | 다른 영역과 달리 감싸는 region 과 h2 가 없고 표에도 이름이 없습니다. 시험은 셀 글자로만 봅니다 | `HistoryArea.tsx`, `App.test:164-165`, `PW:61-63` |
-| 6.10 | 문구가 한곳에 모이지 않음 | 화면 글자가 컴포넌트 안과 `labels.ts` 에 흩어져 있습니다. 문구를 바꾸려면 컴포넌트와 `labels.ts` 를 모두 찾아야 합니다 | `labels.ts`, 각 컴포넌트 |
+다음은 버튼과 링크에 기대는 글자입니다. 버튼 이름은 98가지가 시험에 나옵니다.
+
+| 구분 | 글자 | 시험 파일 |
+|---|---|---|
+| 버튼 | «작업 요청 내기» | `ManualJobOrder.test.tsx`, `OperationsArea.test.tsx`, `lifecycle.spec.ts` |
+| 버튼 | «동일 작업 요청 확인», «새 작업 작성», «작업 요청·실행 결과 보기» | `ManualJobOrder.test.tsx`, `lifecycle.spec.ts` |
+| 버튼 | «호출 계약으로 작업 요청»·«이 입력으로 배정 가능 확인»·«동일 계약 작업 요청 확인» | `MissionInterfaces.test.tsx`, `lifecycle.spec.ts` |
+| 버튼 | «미배정 재평가» | `FollowupWorkspace.test.tsx`, `MissionResourceSettings.test.tsx` |
+| 버튼 | «현장 확인 기록 저장» | `RequestReview.test.tsx`, `lifecycle.spec.ts` |
+| 버튼 | «스테이션 등록»·«스테이션 작업 요청» | `StationWorkspace.test.tsx`, `station.spec.ts` |
+| 버튼 | «현장 확인 후 자원 해제»·«점유 작업 보기» | `StationWorkspace.test.tsx` |
+| 버튼 | «필수 자원 등록» | `MissionResourceSettings.test.tsx`, `station.spec.ts` |
+| 버튼 | «로봇 추가»·«운영에서 배정 조건 확인» | `OnboardingGuide.test.tsx`, `lifecycle.spec.ts` |
+| 버튼 | «작업 요청 다시 조회» | `WorkRequests.test.tsx`, `lifecycle.spec.ts` |
+| 버튼 | «개요 다시 조회» | `FollowupWorkspace.test.tsx` |
+| 버튼 | «rack_present 켜기»·«rack_present 끄기» | `OperationsArea.test.tsx`, `lifecycle.spec.ts` |
+| 버튼 | «${id} 상세 보기» | `IncidentSection.test.tsx` |
+| 버튼 | «${externalOrderId} 작업 요청 보기» | `WorkRequests.test.tsx`, `lifecycle.spec.ts` |
+| 버튼 | 하위 탭과 패널 버튼 «기체»·«도입 준비»·«어댑터 관리»·«프로파일 관리»·«실행 정의»·«호출 연결»·«버전·배포» | `lifecycle.spec.ts` 등 |
+| 링크 | 지표 카드 «총 작업 요청»·«작업 요청 거부» | `lifecycle.spec.ts` |
+| 링크 | «총 작업 요청 5»·«미배정 2»·«제출 확인 필요 2»·«외부 결과 수신 미확인 3» 꼴 정규식 | `FollowupWorkspace.test.tsx` |
+| 링크 | «판정 근거 JSON» | `StationWorkspace.test.tsx` |
+| 링크 | «공유 자원에서 관측·복구» | `MissionResourceSettings.test.tsx` |
+
+다음은 입력 라벨에 기대는 글자입니다. 라벨은 70가지가 시험에 나옵니다.
+
+| 구분 | 글자 | 시험 파일 |
+|---|---|---|
+| 라벨 | «외부 주문·출처·내부 ID 검색», «작업 요청 상태» | `WorkRequests.test.tsx` |
+| 라벨 | «현장 관측»·«확인 근거·담당자·인계 내용» | `RequestReview.test.tsx`, `lifecycle.spec.ts` |
+| 라벨 | «재평가 판단 사유» | `FollowupWorkspace.test.tsx` |
+| 라벨 | «대상 호출 계약»·«사용할 스테이션»·«스테이션 ID»·«스테이션 이름» | `StationWorkspace.test.tsx`, `station.spec.ts` |
+| 라벨 | «준비 조건이 충족되면 실제 로봇 작업을 지시합니다» | `StationWorkspace.test.tsx`, `station.spec.ts` |
+| 라벨 | «현장 작업과 자원 해제 가능 여부를 확인했습니다»·«운영자 판단 근거» | `StationWorkspace.test.tsx` |
+| 라벨 | «이 입력으로 실제 작업을 지시합니다» | `MissionInterfaces.test.tsx`, `lifecycle.spec.ts` |
+| 라벨 | «작업 요청 A ID»·«작업 요청 B ID» | `ManufacturingValidation.test.tsx`, `lifecycle.spec.ts` |
+| 라벨 | «연결 기준 시간(초)»·«stallWindow(초)»·«변경 사유» | `SiteArea.test.tsx`, `lifecycle.spec.ts` |
+| 라벨 | «판단 사유» | `IncidentSection.test.tsx`, `lifecycle.spec.ts` |
+| 라벨 | «사용자» | `App.test.tsx` |
+
+다음은 같은 글자가 여러 번 나와 시험이 하나를 고를 수 없던 자리에 붙인 구별용 접근 이름입니다.
+
+| 구분 | 글자 | 시험 파일 |
+|---|---|---|
+| 구별용 접근 이름 | «작업 요청 목록 이전 페이지»·«작업 요청 목록 다음 페이지»(버튼 글자 «이전»·«다음») | `WorkRequests.test.tsx` |
+| 구별용 접근 이름 | «외부 결과 필터»(select) | 시험 없음 |
+| 구별용 접근 이름 | 표 스크롤 감싸개의 이름들(§2.9) | 시험 없음 |
+| 구별용 접근 이름 | 지표 카드 «총 작업 요청»(같은 영역의 링크 «전체 작업 요청» 과 겹치지 않게 PR #23 에서 바꿈) | `lifecycle.spec.ts` |
+
+### 4.4 해시 경로
+
+영역 해시는 다음과 같습니다.
+- `#overview`
+- `#requests`
+- `#stations`
+- `#operations`
+- `#robots`
+- `#missions`
+- `#site`
+- `#history`
+- `#validation`
+
+지표 카드와 링크는 다음 경로를 씁니다.
+- `#requests?state=UNASSIGNED`
+- `#requests?state=NEEDS_CONFIRMATION`
+- `#requests?state=REJECTED`
+- `#requests?result=unacknowledged`
+- `#requests?receipt=${receiptId}`
+
+기체 상세 앵커는 `#robot-detail` 입니다.
+
+`lifecycle.spec.ts` 가 `#requests?…receipt=` 꼴 URL 을 확인하고, 시험과 촬영 도우미가 사이드바 메뉴 이름으로 영역을 옮깁니다. 해시나 쿼리 이름을 바꾸면 이 링크들과 시험을 함께 바꿉니다.
+
+## 5. 그림 목록
+
+대표 스크린숏 21장은 `img/` 에 있습니다. 파일마다 영역, 구역, 모드, 상태, 만든 방법은 `img/INDEX.md` 에 있습니다.
