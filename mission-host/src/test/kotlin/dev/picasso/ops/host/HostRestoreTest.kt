@@ -131,6 +131,14 @@ class HostRestoreTest {
             val view = bench.get("/host/job-responses?jobOrderId=JO-1")["responses"]
             assertEquals(listOf("SENT", "RESTART_DUPLICATE", "RESTART_DUPLICATE", "SENT"), view.map { it["disposition"].asText() }.reversed())
             assertEquals(listOf(first, second, third, third), view.map { it["instanceId"].asText() }.reversed())
+
+            // 재기동 중복은 결과 피드에 들어가지 않는다. 피드의 JO-1 이벤트는 송신 행과 하나씩 맞는다.
+            val sent = PostgresSupport.queryAll(
+                "SELECT instance_id, job_response_id FROM mission.job_response_log WHERE job_order_id = 'JO-1' AND disposition = 'SENT' ORDER BY log_id",
+            ) { it.getString(1) to it.getString(2) }
+            val feed = bench.get("/host/result-events")["events"].filter { it["snapshot"]["jobOrderId"].asText() == "JO-1" }
+            assertEquals(2, sent.size)
+            assertEquals(sent, feed.map { it["snapshot"]["instanceId"].asText() to it["snapshot"]["jobResponse"]["jobResponseId"].asText() })
         }
     }
 

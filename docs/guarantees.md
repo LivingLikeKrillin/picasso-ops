@@ -53,7 +53,7 @@
 
 - 동작: 변환한 작업 지시에 받은 시점의 배포 버전과 임무 버전을 넣어 저장합니다. 대기열에서 나와 제출할 때는 저장본을 그대로 쓰고, 미배정 재평가는 다시 변환한 결과가 저장본과 다르면 409 `RECOVERY_INPUT_CHANGED` 로 막습니다. 실행 호스트는 작업 지시의 `missionVersion` 으로 임무 버전을 고릅니다.
 - 코드: `joborders/JobOrderForm.kt` 의 `jobOrder`, `requests/WorkRequests.kt` 의 `dispatchQueued`, `recover`, `mission-host/src/main/kotlin/dev/picasso/ops/host/web/HostController.kt`
-- 시험: `WorkRequestsTest` 의 `자원 준비 후 원래 접수와 고정 변환으로 한 번만 실행한다`, `StationCoordinatorTest` 의 `같은 요청 재접수는 현재 계약이 바뀌어도 원래 작업을 반환한다`, 통합 시험 `ManufacturingScenarioTest`
+- 시험: `MissionInterfacesTest` 의 `배포 이력은 불변이고 새 배포는 새 요청에만 적용된다`, 통합 시험 `ManufacturingScenarioTest`, `WorkRequestsTest` 의 `자원 준비 후 원래 접수와 고정 변환으로 한 번만 실행한다`, 실행 호스트 시험(`mission-host/src/test/kotlin/dev/picasso/ops/host/`) `MissionVersionsTest` 의 `배포 고정은 활성 버전 변경 뒤에도 원래 미션으로 실행하고 글로벌 활성 버전을 바꾸지 않는다`, `WorkRequestsTest` 의 `배포가 바뀐 뒤 미배정 재평가는 원래 배포로 제출하고 변환이 달라지면 RECOVERY_INPUT_CHANGED 로 막는다`
 
 ### 결과 버전 관리와 수신 확인
 
@@ -123,6 +123,7 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 - [상세 참고 문서: 공유 스테이션 조정](reference.md#공유-스테이션-조정): 스테이션 작업 상태, 운영자 판단, 재작업 관문, 기준선
 - [공유 스테이션 설비 연동 요구 사양](station-equipment-requirements.md): 설비가 내야 하는 준비·완료 신호, 작업 번호 신호 쌍 절차, 격리, 표준 근거를 설명합니다.
 - [상세 참고 문서: 데이터와 재기동](reference.md#데이터와-재기동): 실행 호스트 복원과 재기동 중복
+- [운영 리허설 절차](runbook.md): 운영 리허설 절차 둘(C1 운영 중 호출 계약 배포 변경과 되돌림, D1 실행 호스트·운영 서비스 재기동과 재개), 단계마다 확인할 곳, 기대하는 결과, 다를 때 할 일, 근거 시험을 설명합니다.
 - [상세 참고 문서: 시험](reference.md#시험): 시험 수와 시험 구성
 - [화면 설계서](screens/screen-design.md): 화면에서 이 상태와 판단이 보이는 자리
 - [picasso 한계 레지스터](https://github.com/LivingLikeKrillin/picasso/blob/74e4d3d/docs/limits.md): 고정 커밋 `74e4d3d` 기준 picasso 의 오픈 항목과 한계
