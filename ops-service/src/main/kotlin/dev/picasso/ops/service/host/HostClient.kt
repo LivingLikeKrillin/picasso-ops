@@ -79,6 +79,11 @@ data class HostRefusal(val robotId: String, val reason: String)
  * @param rejectionReason REJECTED 일 때만 있다
  * @param refusals UNASSIGNED 일 때 `assign` 이 기체마다 낸 사유
  * @param excluded 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행
+ * @param remedy 미들웨어 거부의 조치 탐색 응답(`kind` 가 `FOUND`·`NONE`). 운영 서비스는 해석하지 않고 그대로 옮긴다. 없으면 `null`
+ * @param remedyWithheld 조치 시퀀스를 계산했으나 사람이 먼저 진단하도록 보류했다
+ * @param alternativeLocations 출발 결품일 때 그 자재를 든 다른 자리. 빈 목록(든 자리 없음)과 `null`(답 없음 또는 출발 결품 아님)을
+ *   접지 않는다. 이 칸이 없던 호스트의 본문은 `null` 이다
+ * @param sourceMissing 출발 결품 거부이면 그 자리와 관측. 아니면 `null`
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class HostSubmitOutcome(
@@ -88,7 +93,15 @@ data class HostSubmitOutcome(
     val rejectionReason: String? = null,
     val refusals: List<HostRefusal> = emptyList(),
     val excluded: List<HostEligibility> = emptyList(),
+    val remedy: JsonNode? = null,
+    val remedyWithheld: Boolean = false,
+    val alternativeLocations: List<String>? = null,
+    val sourceMissing: HostSourceMissing? = null,
 )
+
+/** 출발 결품 거부의 자리. [observed] 가 `null` 이면 빈 자리이고 아니면 거기 있던 다른 식별 정보다. */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class HostSourceMissing(val material: String? = null, val source: String, val observed: String? = null)
 
 /** `GET /host/executions` 의 실행 한 줄 중 재조회가 쓰는 칸. 나머지는 버린다. */
 @JsonIgnoreProperties(ignoreUnknown = true)

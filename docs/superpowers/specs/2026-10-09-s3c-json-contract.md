@@ -415,7 +415,7 @@ S2 그대로다. 아직 없는 버전을 기준으로 보내도(`baseVersion` �
   ```
 
   (상수 `MissionHost.UNAPPLIED_REASON`.)
-- `POST /host/job-orders`: 판정을 통과한 기체가 없어 `assign` 에 기체가 하나도 넘어가지 않으므로 늘 `{"result":"UNASSIGNED","executionId":null,"robotId":null,"rejectionReason":null,"refusals":[],"excluded":[<판정 행>...]}` 이다. 미들웨어는 기체마다 관문을 걸므로 요구 근거 등급을 넘는 작업 지시도 REJECTED 가 아니라 UNASSIGNED 다. 새 결과 값은 없다.
+- `POST /host/job-orders`: 판정을 통과한 기체가 없어 `assign` 에 기체가 하나도 넘어가지 않으므로 늘 `{"result":"UNASSIGNED","executionId":null,"robotId":null,"rejectionReason":null,"refusals":[],"excluded":[<판정 행>...],"remedy":null,"remedyWithheld":false,"alternativeLocations":null,"sourceMissing":null}` 이다. 미들웨어는 기체마다 관문을 걸므로 요구 근거 등급을 넘는 작업 지시도 REJECTED 가 아니라 UNASSIGNED 다. 새 결과 값은 없다.
 - 운영 서비스의 배정 가능 판정과 작업 지시 제출은 이 판정 행을 S3a 그대로 합치므로 화면에는 기체마다 위 문장이 이유로 보인다.
 - 임무 초안·검증·모의 실행·활성화·요청 조회, 셀 신호 조작과 조회, 실행 목록, `/host/site-timings`, `/host/incidents` 는 미적용과 관계없이 동작한다.
 

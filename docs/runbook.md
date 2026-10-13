@@ -30,7 +30,7 @@
 - 조작: 외부 주문 A 를 보냅니다.
 - 확인할 곳: 작업 요청 → «통합 작업 요청» 에서 A → «작업 요청 상세» 입니다. 구역 «요청 시 고정된 배포» 가 `receipt.normalizedOrder.deployment` 를 보입니다. «적용 임무 버전» 은 실행의 임무 버전이고 null 이면 «코드 정의» 로 보입니다. API 는 `GET /api/work-requests/{id}` 의 `receipt.normalizedOrder.deployment.deploymentVersion`, `receipt.normalizedOrder.missionVersion`, `receipt.jobOrderId`, `receipt.state` 입니다.
 - 기대하는 결과: 새 외부 주문 응답 202 입니다. 배포 1, 임무 버전 X 입니다. 실행의 임무 버전도 X 입니다.
-- 다르면: 상태가 `REJECTED` 이면 `detail` 을 읽습니다. 공개 전 계약이면 «공개된 계약만 호출할 수 있습니다»(409 `INTERFACE_NOT_ENABLED`) 이며 호스트에 보내지 않았습니다.
+- 다르면: 상태가 `REJECTED` 이면 `detail` 을 읽습니다. 실행 호스트가 거부했으면 `detail` 이 «호스트 제출 거부: <사유>» 이고 화면은 detail 문장 대신 구역 «거부 사유» 를 보입니다(API `rejection`). 공개 전 계약이면 «공개된 계약만 호출할 수 있습니다»(409 `INTERFACE_NOT_ENABLED`) 이며 호스트에 보내지 않았습니다.
 - 근거 시험: `MissionInterfacesTest` 의 `배포 이력은 불변이고 새 배포는 새 요청에만 적용된다`, 통합 시험 `ManufacturingScenarioTest`(작업 요청의 `normalizedOrder.missionVersion`), 실행 호스트 시험 `MissionVersionsTest` 의 `배포 고정은 활성 버전 변경 뒤에도 원래 미션으로 실행하고 글로벌 활성 버전을 바꾸지 않는다`(작업 지시의 `missionVersion` 으로 임무 버전을 고름) 입니다.
 
 ### C1-3 새 배포 v2 = Y 적용
@@ -68,7 +68,7 @@
   - 기대하는 결과: 스테이션이 준비되면 저장한 작업 지시(`normalizedOrder`)를 그대로 제출합니다. 배포가 바뀌거나 계약이 공개 중단되어도 받은 때 조합입니다. 계약을 공개 중단해도 `WAITING_RESOURCE` 작업 요청은 이렇게 제출되지만, 같은 상황에서 `UNASSIGNED` 미배정 재평가는 409 `INTERFACE_NOT_ENABLED` 로 거부됩니다(경로 3). 두 경로가 다르게 동작합니다.
   - 근거 시험: `WorkRequestsTest` 의 `자원 준비 후 원래 접수와 고정 변환으로 한 번만 실행한다`(대기 중 공개 중단과 새 배포 뒤에도 제출본 = 저장본, 배포 1 유지) 입니다.
 - 경로 2 공유 자원 «공유 스테이션 작업 요청» 으로 넣은 스테이션 작업(본문에 `expectedDeploymentVersion`, 제출 전에는 작업 요청이 없음):
-  - 기대하는 결과: 넣을 때 배포를 확인하고(다르면 400 `STATION_INPUT`, «조회한 계약 배포가 변경되었습니다»), 제출 때 `expectedDeploymentVersion` 을 실어 호출 계약을 부릅니다. 그사이 배포가 바뀌면 작업 요청은 `REJECTED`(«배포가 변경되었습니다. 배정 가능 여부를 다시 확인하세요»), 스테이션 작업은 새 배포로 옮기지 않고 `REJECTED`(«계약 제출 거부; 자원 해제»)로 닫히고 점유가 풀리며, 로봇에 보내지 않았으므로 격리되지 않습니다.
+  - 기대하는 결과: 넣을 때 배포를 확인하고(다르면 400 `STATION_INPUT`, «조회한 계약 배포가 변경되었습니다»), 제출 때 `expectedDeploymentVersion` 을 실어 호출 계약을 부릅니다. 그사이 배포가 바뀌면 작업 요청은 `REJECTED`(«배포가 변경되었습니다. 배정 가능 여부를 다시 확인하세요»), 스테이션 작업은 새 배포로 옮기지 않고 `REJECTED`(«계약 제출 거부: 배포가 변경되었습니다. 배정 가능 여부를 다시 확인하세요; 자원 해제»)로 닫히고 점유가 풀리며, 로봇에 보내지 않았으므로 격리되지 않습니다.
   - 다르면: 운영자는 현재 배포를 다시 조회해 새 요청 id 로 다시 넣습니다.
   - 근거 시험: `WorkRequestsTest` 의 `배포가 바뀌면 대기 중인 스테이션 작업은 새 배포로 옮기지 않고 거부로 닫고 점유를 푼다`(실제 `OpsStationPort` 로 작업 요청·스테이션 작업 `REJECTED`, 점유 해제, 격리 없음, 제출 없음) 입니다.
 - 경로 3 미배정 `UNASSIGNED`(제출 기록과 실행 관측 없음) 재평가:
@@ -133,7 +133,7 @@
 ### D1-4 실행하지 않음과 결과 불명 가르기
 - 조작: 재기동 뒤 확인 필요 작업 요청마다 아래 기준으로 가릅니다.
 - 확인할 곳: «작업 요청 상세» 의 상태와 `detail`, «호스트 조회»(«조회됨» 또는 «모름 · 호스트 조회 실패», 곧 `hostRead` `UNAVAILABLE` 은 못 읽음이지 없음이 아님), «마지막으로 확인한 실행 · 직전 관측», «현장 확인 이력», «재평가 판단 이력», «원본 요청·변환·제출 기록»(`submission`), 운영 → «실행» 과 «작업 응답 송신 기록», 이력 → «조작 기록» 의 같은 요청 id 행, 공유 자원의 «기록된 근거», API `GET /api/stations/runs/{id}/evidence` 입니다.
-- 기대하는 결과: 실행하지 않았다고 확정되는 경우는 `REJECTED` 이면서 `detail` 에 «호스트에 보내지 않았습니다» 가 든 것, 호출 계약 변환에서 거부된 `REJECTED`(예: «배포가 변경되었습니다. 배정 가능 여부를 다시 확인하세요»), `submission` 과 실행 관측이 없는 `UNASSIGNED`, 스테이션 현장 확인 해제가 «이 작업 요청은 실행하지 않습니다» 로 닫은 것입니다. 이때만 새 요청 id 로 다시 보낼 수 있습니다. 결과 불명은 `IN_DOUBT`, `DISPATCHING`, 스테이션 사유 «호출 결과 불명; 새 요청을 보내지 않고 점유 유지» 입니다. 실행 목록에 없다는 것은 증거가 아닙니다. 응답 없음 뒤 재조회한 조작 기록 행이 `CONFIRMED_NOT_APPLIED` 여도 한 번의 조회 결과일 뿐이고 작업 요청은 `IN_DOUBT` 로 남습니다.
+- 기대하는 결과: 실행하지 않았다고 확정되는 경우는 실행 호스트가 거부한 `REJECTED`(`detail` 에 «호스트 제출 거부: …» 가 든 것), `REJECTED` 이면서 `detail` 에 «호스트에 보내지 않았습니다» 가 든 것, 호출 계약 변환에서 거부된 `REJECTED`(예: «배포가 변경되었습니다. 배정 가능 여부를 다시 확인하세요»), `submission` 과 실행 관측이 없는 `UNASSIGNED`, 스테이션 현장 확인 해제가 «이 작업 요청은 실행하지 않습니다» 로 닫은 것입니다. 이때만 새 요청 id 로 다시 보낼 수 있습니다. 결과 불명은 `IN_DOUBT`, `DISPATCHING`, 스테이션 사유 «호출 결과 불명; 새 요청을 보내지 않고 점유 유지» 입니다. 실행 목록에 없다는 것은 증거가 아닙니다. 응답 없음 뒤 재조회한 조작 기록 행이 `CONFIRMED_NOT_APPLIED` 여도 한 번의 조회 결과일 뿐이고 작업 요청은 `IN_DOUBT` 로 남습니다.
 - 다르면: 결과 불명이면 «현장 확인과 인계» 에서 «현장 관측»(«현장 상태 미확인», «현장 미착수 확인», «현장 진행 중 확인», «현장 완료 관측»)과 근거를 남깁니다(API `POST /api/work-requests/{id}/reviews`, `observation` 은 `NOT_CONFIRMED`·`NOT_STARTED`·`IN_PROGRESS`·`COMPLETED`). 이 기록은 상태를 바꾸지 않고 제출하지 않습니다. 새로 보낼지는 현장 확인 뒤 사람이 정합니다.
 - 근거 시험: `WorkRequestsTest` 의 `호스트 조회 실패를 실행 없음과 구분하며 검색과 페이지 범위를 제한한다`, `접수 저장 뒤 예기치 않은 오류는 미전송 거절로 닫고 오류를 그대로 알린다`, `operator review is immutable idempotent fenced and never submits or completes work`, `StationCoordinatorTest` 의 `현장 확인 해제는 묶인 접수를 미전송 거절 또는 결과 불명으로 닫는다` 입니다. `WorkRequestsTest` 의 `결과 불명 작업 요청은 재기동한 호스트에서 다시 지은 실행이 보일 때만 수락이 되고 일지 없는 실행은 사라져도 결과 불명으로 남는다`(조작 기록 `CONFIRMED_NOT_APPLIED` 뒤에도 `IN_DOUBT`, 재평가 409 `RECOVERY_NOT_SAFE`, 현장 확인 `NOT_STARTED` 기록 뒤에도 `IN_DOUBT`) 입니다.
 
@@ -150,7 +150,7 @@
 ### D1 에서 확인하는 기록
 | 기록 | 화면 | API | 알 수 있는 것 |
 |---|---|---|---|
-| 작업 요청 상태와 상세 | 작업 요청 → «작업 요청 상세» | `GET /api/work-requests/{id}` | `receipt.state`·`detail`, `hostRead`, `journalBlocked`, `executionInstanceId`, `reviews`, `recoveries`, `resource` |
+| 작업 요청 상태와 상세 | 작업 요청 → «작업 요청 상세», 구역 «거부 사유» | `GET /api/work-requests/{id}` | `receipt.state`·`detail`, `hostRead`, `journalBlocked`, `executionInstanceId`, `reviews`, `recoveries`, `resource`, `rejection`(호스트가 거부한 `REJECTED` 만, 그 밖 null) |
 | 실행 목록과 복원 보고 | 운영 → «실행» | `GET /api/executions` | 지금 인스턴스, 다시 지은 실행과 이전 인스턴스, `journalBlockedExecutionIds`, `restore` |
 | 작업 응답 송신 기록 | 운영 → «작업 응답 송신 기록» | `GET /api/job-responses?jobOrderId=` | `SENT` 와 `RESTART_DUPLICATE` 처분 |
 | 결과 버전과 전달 | «외부 결과 · 수신 확인», «로컬 Mock MES 결과 전달» | `GET /api/work-requests/{id}` 의 `latestResult`·`deliveries`, `GET /integration/v1/job-orders/{id}/results/{version}` | 결과 버전, `resultHash`, 전달 상태, 수신 확인 |
