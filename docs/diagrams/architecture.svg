@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="840" height="588" viewBox="0 0 840 588">
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="700" viewBox="0 0 840 700">
   <defs>
     <marker id="data" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
       <path d="M1,1 L8,5 L1,9" fill="none" stroke="#262626" stroke-width="1.2"/>
@@ -13,116 +13,125 @@
       <path d="M1,1 L8,5 L1,9" fill="none" stroke="#2b3f6b" stroke-width="1.2"/>
     </marker>
   </defs>
-
   <g font-family="'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', sans-serif" fill="#262626">
 
     <!-- title block -->
     <text x="20" y="36" font-size="17" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">picasso-ops</text>
-    <text x="20" y="56" font-size="12" fill="#6f6f6f">3개 프로세스와 Postgres, picasso 연결</text>
+    <text x="20" y="56" font-size="12" fill="#6f6f6f">picasso-ops 프로세스 구성과 연계 구조</text>
 
-    <!-- ui -->
+    <!-- row A: external caller, screen, external reader -->
+    <rect x="48" y="84" width="200" height="52" fill="#ffffff" stroke="#bdbdbd"/>
+    <text x="60" y="107" font-size="12" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">Mock MES</text>
+    <text x="60" y="123" font-size="11" fill="#6f6f6f">외부 주문 전송과 결과 수신 확인</text>
     <rect x="320" y="84" width="200" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
     <text x="332" y="107" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ui :5173</text>
-    <text x="332" y="123" font-size="11" fill="#6f6f6f">React 화면, 5개 영역</text>
+    <text x="332" y="123" font-size="11" fill="#6f6f6f">9개 메뉴 운영 화면과 API 프록시</text>
+    <rect x="616" y="84" width="184" height="52" fill="#ffffff" stroke="#bdbdbd"/>
+    <text x="628" y="107" font-size="12" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">picasso-narrator</text>
+    <text x="628" y="123" font-size="11" fill="#6f6f6f">근거 응답 파일 읽기와 설명 생성</text>
 
-    <!-- row 2: ops-service, Postgres, mission-host -->
-    <rect x="48" y="204" width="220" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
-    <text x="60" y="227" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops-service :8782</text>
-    <text x="60" y="243" font-size="11" fill="#6f6f6f">화면의 유일한 백엔드</text>
+    <!-- row B: ops-service -->
+    <rect x="48" y="196" width="472" height="96" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="60" y="219" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops-service :8782</text>
+    <text x="60" y="235" font-size="11" fill="#6f6f6f">화면의 유일한 백엔드이자 /api 와 /integration/v1 제공</text>
+    <text x="60" y="251" font-size="11" fill="#6f6f6f">작업 요청 커밋, outbox 결과 수집 커서, callback 전달</text>
+    <text x="60" y="267" font-size="11" fill="#6f6f6f">공유 자원 점유와 대기열 조정, picasso 비의존</text>
 
-    <rect x="336" y="204" width="168" height="52" fill="#ffffff" stroke="#bdbdbd"/>
-    <text x="348" y="227" font-size="12" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">Postgres :55432</text>
-    <text x="348" y="243" font-size="11" fill="#6f6f6f">스키마 3개, 프로세스 공용</text>
+    <!-- row C: Postgres, mission-host -->
+    <rect x="320" y="332" width="184" height="52" fill="#ffffff" stroke="#bdbdbd"/>
+    <text x="332" y="355" font-size="12" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">Postgres :55432</text>
+    <text x="332" y="371" font-size="11" fill="#6f6f6f">3개 스키마 데이터 저장소</text>
+    <rect x="616" y="332" width="184" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+    <text x="628" y="355" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mission-host :8785</text>
+    <text x="628" y="371" font-size="11" fill="#6f6f6f">작업 지시 실행과 outbox 관리</text>
 
-    <rect x="572" y="204" width="220" height="52" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
-    <text x="584" y="227" font-size="12.5" font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mission-host :8785</text>
-    <text x="584" y="243" font-size="11" fill="#6f6f6f">미들웨어로 작업 지시 실행</text>
+    <!-- zone: site launcher, one JVM -->
+    <rect x="32" y="420" width="784" height="128" fill="none" stroke="#bdbdbd"/>
+    <text x="196" y="438" font-size="11" fill="#6f6f6f">site 런처 단일 JVM 대역 현장</text>
+    <rect x="48" y="476" width="168" height="52" fill="#ffffff" stroke="#bdbdbd"/>
+    <text x="60" y="499" font-size="12" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">registry :8781</text>
+    <text x="60" y="515" font-size="11" fill="#6f6f6f">기체 원장과 바인딩 관리</text>
+    <rect x="328" y="476" width="168" height="52" fill="#ffffff" stroke="#bdbdbd"/>
+    <text x="340" y="499" font-size="12" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mimic :8783</text>
+    <text x="340" y="515" font-size="11" fill="#6f6f6f">가상 기체 2대 gRPC 모의</text>
+    <rect x="616" y="476" width="184" height="52" fill="#ffffff" stroke="#bdbdbd"/>
+    <text x="628" y="499" font-size="12" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace"><tspan font-family="'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', sans-serif">셀 대역</tspan> :8784</text>
+    <text x="628" y="515" font-size="11" fill="#6f6f6f">셀 신호 제공과 장애 주입</text>
 
-    <!-- zone: site launcher -->
-    <rect x="32" y="300" width="776" height="124" fill="none" stroke="#bdbdbd"/>
-    <text x="44" y="316" font-size="11" fill="#6f6f6f">site 런처, 대역 현장</text>
-    <g font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="12">
-      <rect x="48" y="340" width="200" height="52" fill="#ffffff" stroke="#bdbdbd"/>
-      <text x="60" y="363">registry :8781</text>
-      <rect x="336" y="340" width="168" height="52" fill="#ffffff" stroke="#bdbdbd"/>
-      <text x="348" y="363">mimic :8783</text>
-      <rect x="572" y="340" width="220" height="52" fill="#ffffff" stroke="#bdbdbd"/>
-      <text x="584" y="363"><tspan font-family="'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', sans-serif">셀 대역</tspan> :8784</text>
-    </g>
-    <g font-size="11" fill="#6f6f6f">
-      <text x="60" y="379">기체 원장, 리비전, 바인딩</text>
-      <text x="348" y="379">가상 기체 2대, gRPC</text>
-      <text x="584" y="379">셀 신호, 슬롯, 장애 주입</text>
-    </g>
-
-    <!-- picasso: core, inverted -->
-    <rect x="320" y="448" width="200" height="52" fill="#2b3f6b" stroke="#2b3f6b" stroke-width="1.5"/>
-    <rect x="324" y="452" width="192" height="44" fill="none" stroke="#fff" stroke-width="0.75" stroke-opacity="0.6"/>
-    <text x="336" y="471" font-size="12.5" font-weight="700" fill="#fff" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">picasso</text>
-    <text x="336" y="487" font-size="11" fill="#cfd6e6">git 서브모듈, 읽기 전용</text>
+    <!-- picasso: core library, inverted -->
+    <rect x="320" y="576" width="200" height="52" fill="#2b3f6b" stroke="#2b3f6b" stroke-width="1.5"/>
+    <rect x="324" y="580" width="192" height="44" fill="none" stroke="#fff" stroke-width="0.75" stroke-opacity="0.6"/>
+    <text x="336" y="599" font-size="12.5" font-weight="700" fill="#fff" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">picasso</text>
+    <text x="336" y="615" font-size="11" fill="#cfd6e6">읽기 전용 git 핵심 서브모듈</text>
 
     <!-- edges: data -->
     <g fill="none" stroke="#262626" stroke-width="1.2">
-      <path d="M336,380 H250" marker-end="url(#data)"/>
-      <path d="M320,110 H138 V202" marker-end="url(#data)"/>
-      <path d="M208,204 V184 H632 V202" marker-end="url(#data)"/>
-      <path d="M232,256 V338" marker-end="url(#data)"/>
-      <path d="M268,222 H334" marker-end="url(#data)"/>
-      <path d="M572,222 H506" marker-end="url(#data)"/>
-      <path d="M248,352 H300 V248 H334" marker-end="url(#data)"/>
+      <path d="M180,136 V194" marker-end="url(#data)"/>
+      <path d="M220,196 V138" marker-end="url(#data)"/>
+      <path d="M420,136 V194" marker-end="url(#data)"/>
+      <path d="M520,240 H760 V330" marker-end="url(#data)"/>
+      <path d="M412,292 V330" marker-end="url(#data)"/>
+      <path d="M616,358 H506" marker-end="url(#data)"/>
+      <path d="M180,476 V358 H318" marker-end="url(#data)"/>
+      <path d="M96,292 V474" marker-end="url(#data)"/>
+      <path d="M328,502 H218" marker-end="url(#data)"/>
     </g>
     <g font-size="10.5" fill="#262626">
-      <text x="292" y="373" text-anchor="middle">생존 보고</text>
-      <text x="229" y="103" text-anchor="middle">/api 조작·조회</text>
-      <text x="420" y="177" text-anchor="middle">지시·판단 보냄</text>
-      <text x="224" y="290" text-anchor="end">기체 선언 보냄</text>
-      <text x="301" y="215" text-anchor="middle">기록 쓰기</text>
-      <text x="539" y="215" text-anchor="middle">일지 쓰기</text>
-      <text x="308" y="290">원장 저장</text>
+      <text x="172" y="170" text-anchor="end">외부 주문 보냄</text>
+      <text x="228" y="170">결과 callback 전달함</text>
+      <text x="428" y="170">/api 와 /integration 프록시함</text>
+      <text x="532" y="233">작업 지시와 운영자 판단 보냄</text>
+      <text x="420" y="316">ops 스키마에 쓰기</text>
+      <text x="561" y="351" text-anchor="middle">실행 일지 쓰기</text>
+      <text x="249" y="351" text-anchor="middle">기체 원장 쓰기</text>
+      <text x="104" y="322">기체 선언, 바인딩, 어댑터 등록함</text>
+      <text x="273" y="495" text-anchor="middle">생존 보고 보냄</text>
     </g>
 
-    <!-- edges: command -->
+    <!-- edges: command (moves the robot) -->
     <g fill="none" stroke="#b23a1d" stroke-width="2">
-      <path d="M600,256 V280 H460 V338" marker-end="url(#cmd)"/>
+      <path d="M660,384 V404 H440 V474" marker-end="url(#cmd)"/>
     </g>
-    <g font-size="10.5" fill="#b23a1d">
-      <text x="530" y="273" text-anchor="middle">gRPC로 명령·관측</text>
-    </g>
+    <text x="448" y="452" font-size="10.5" fill="#b23a1d">gRPC StartTask 보냄</text>
 
     <!-- edges: observation -->
     <g fill="none" stroke="#6f6f6f" stroke-width="1.2" stroke-dasharray="5 3">
-      <path d="M700,256 V338" marker-end="url(#obs)"/>
+      <path d="M640,136 V212 H522" marker-end="url(#obs)"/>
+      <path d="M520,268 H680 V330" marker-end="url(#obs)"/>
+      <path d="M760,384 V474" marker-end="url(#obs)"/>
     </g>
     <g font-size="10.5" fill="#6f6f6f">
-      <text x="708" y="290">250ms마다 셀 읽기</text>
+      <text x="648" y="170">근거 응답 파일 읽기</text>
+      <text x="532" y="261">outbox 결과 커서로 읽기</text>
+      <text x="752" y="452" text-anchor="end">GET /cell 읽기</text>
     </g>
 
     <!-- edges: control (library inclusion) -->
     <g fill="none" stroke="#2b3f6b" stroke-width="1.2" stroke-dasharray="1.5 2.5">
-      <path d="M420,448 V426" marker-end="url(#gov)"/>
-      <path d="M520,474 H824 V230 H794" marker-end="url(#gov)"/>
+      <path d="M420,576 V550" marker-end="url(#gov)"/>
+      <path d="M520,602 H824 V358 H802" marker-end="url(#gov)"/>
     </g>
     <g font-size="10.5" fill="#2b3f6b">
-      <text x="428" y="440">3개 모듈 사용</text>
-      <text x="672" y="467" text-anchor="middle">미들웨어 포함</text>
+      <text x="428" y="567">라이브러리 모듈 포함함</text>
+      <text x="672" y="595" text-anchor="middle">picasso 미들웨어 포함함</text>
     </g>
 
     <!-- key -->
     <g font-size="10.5" fill="#6f6f6f">
-      <path d="M20,560 H44" fill="none" stroke="#262626" stroke-width="1.2"/>
-      <text x="50" y="564">데이터</text>
-      <path d="M92,560 H116" fill="none" stroke="#6f6f6f" stroke-width="1.2" stroke-dasharray="5 3"/>
-      <text x="122" y="564">관측</text>
-      <path d="M156,560 H180" fill="none" stroke="#b23a1d" stroke-width="2"/>
-      <text x="186" y="564">제어 명령</text>
-      <path d="M248,560 H272" fill="none" stroke="#2b3f6b" stroke-width="1.2" stroke-dasharray="1.5 2.5"/>
-      <text x="278" y="564">라이브러리 포함</text>
-      <rect x="368" y="554" width="14" height="10" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
-      <text x="388" y="564">본 저장소</text>
-      <rect x="448" y="554" width="14" height="10" fill="#2b3f6b" stroke="#2b3f6b"/>
-      <text x="468" y="564">라이브러리</text>
-      <rect x="532" y="554" width="14" height="10" fill="none" stroke="#bdbdbd"/>
-      <text x="552" y="564">대역·외부</text>
+      <path d="M20,668 H44" fill="none" stroke="#262626" stroke-width="1.2"/>
+      <text x="50" y="672">데이터 흐름</text>
+      <path d="M126,668 H150" fill="none" stroke="#6f6f6f" stroke-width="1.2" stroke-dasharray="5 3"/>
+      <text x="156" y="672">관측·읽기</text>
+      <path d="M225,668 H249" fill="none" stroke="#b23a1d" stroke-width="2"/>
+      <text x="255" y="672">제어 명령</text>
+      <path d="M320,668 H344" fill="none" stroke="#2b3f6b" stroke-width="1.2" stroke-dasharray="1.5 2.5"/>
+      <text x="350" y="672">라이브러리 포함</text>
+      <rect x="447" y="662" width="14" height="10" fill="#e8ebf3" stroke="#2b3f6b" stroke-width="1.5"/>
+      <text x="467" y="672">저장소 내부</text>
+      <rect x="543" y="662" width="14" height="10" fill="#2b3f6b" stroke="#2b3f6b"/>
+      <text x="563" y="672">핵심 모듈</text>
+      <rect x="628" y="662" width="14" height="10" fill="none" stroke="#bdbdbd"/>
+      <text x="648" y="672">대역·외부</text>
     </g>
   </g>
 </svg>

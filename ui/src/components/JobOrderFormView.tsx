@@ -52,7 +52,7 @@ export function JobOrderFormView({ draft, cell, mode, busy, problem, onChange, o
           작업 요청 내기
         </button>
       ) : (
-        <p>작업 지시는 운영자 모드에서 냅니다</p>
+        <p>작업 요청은 운영자 모드에서 합니다.</p>
       )}
       {problem !== null && <p role="alert">{problem}</p>}
     </form>

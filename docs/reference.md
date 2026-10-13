@@ -2,13 +2,11 @@
 
 ## 단계 이력
 
-현재 단계는 S4a 위에 위치한 S4b 단계입니다. 실행 호스트 재기동 뒤 실행 복원과 중복 명령 및 중복 작업 응답 방지를 포함합니다.
+현재 picasso-ops main 은 PR #24 가 머지된 `511d5bc`(2026-10-13 11:50 KST) 기준이며, 서브모듈 picasso 는 `74e4d3d` 에 고정되어 있습니다. S4b 와 화면 문서(#15) 뒤에 picasso-ops PR 아홉 개(#16~#24)가 추가 머지되었으며, 기능 변경인 #18 과 그 뒤 수정(#20·#21·#22), 문서(#16·#17·#19·#24), 화면과 응답 문구의 용어 정비(#23)를 포함합니다. 이 기간에 picasso 쪽 PR 은 없고 서브모듈 고정 커밋도 바뀌지 않았습니다.
 
-두 저장소의 머지 시각 기준 진행 순서는 다음과 같습니다.
+P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → P4 → S3a → S3b → P5 → S3c → S4a → P6 → S4b → 화면 문서 → #16 → #17 → #18 → #20 → #21 → #19 → #22 → #23 → #24 (2026-10-07 13:47 ~ 2026-10-13 11:50 KST)
 
-P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → P4 → S3a → S3b → P5 → S3c → S4a → P6 → S4b → 화면 문서(2026-10-07 13:47 ~ 10-10 00:44 KST)
-
-표는 머지 순서이며 P4(10/8 19:00)가 S3a(10/8 21:54)보다 먼저입니다. P는 picasso PR, S는 picasso-ops PR입니다. 용어 풀이는 [용어 풀이](#용어-풀이)를 참고합니다.
+표는 머지 순서이며 P4(10/8 19:00)가 S3a(10/8 21:54)보다 먼저이고, #20(10/12 15:47:50), #21(15:48:08), #19(15:48:12)는 번호 순서가 아니라 이 순서로 머지되었습니다. P 는 picasso PR, S 는 picasso-ops PR 이며, #16 이후 행은 picasso-ops PR 번호로 적습니다. 용어 풀이는 [용어 풀이](#용어-풀이)를 참고합니다.
 
 | 단계 | 더한 것 | PR(머지 커밋) |
 |---|---|---|
@@ -32,6 +30,15 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | P6 | 재기동 복원 입구 `Middleware.resume` | picasso #86 (`74e4d3d`) |
 | S4b | 재기동 복원 보고, 이전 인스턴스 인시던트, 작업 응답 송신 기록 | picasso-ops #14 (`9606364`) |
 | 화면 문서 | 스크린숏 65장, 화면 설계서·개발 내역, 촬영 설정 | picasso-ops #15 (`443a14c`) |
+| 문서 | README 전면 재구성과 참고 문서(이 문서) 분리 | picasso-ops #16 (`2a8c94e`) |
+| 문서 | 다이어그램 다크 버전(`.dark.svg`)과 테마별 전환 | picasso-ops #17 (`71345ac`) |
+| 운영 확장 | 호출 계약과 배포, 외부 주문 API, 작업 요청 영속 저장, 결과 버전·수신 확인·콜백 전달, 호스트 결과 outbox, 공유 스테이션 조정과 임무 필수 자원, 화면 재구성 | picasso-ops #18 (`3bbcb9c`) |
+| 수정 | 멈춘 작업 요청 정리(stale sweep), 자원 요구 등록 기준 조정, 현장 확인 해제와 작업 요청 종료 연동 | picasso-ops #20 (`efc578f`) |
+| 수정 | 스테이션의 확인 필요 물리 상태 목록 정정, 재작업 관문과 `REWORKING`, 결과 버전 기준선(V16) | picasso-ops #21 (`3325a54`) |
+| 문서 | README 의 첫 화면과 Mock MES 실행 절차 정정 | picasso-ops #19 (`88501ac`) |
+| 수정 | 미배정 재평가와 자원 요구 등록의 경합을 임무 잠금으로 직렬화, 제출 직전 권한 거부의 `REJECTED` 종료 | picasso-ops #22 (`2ca84aa`) |
+| 용어 | 층별 표준 이름(외부 주문, 호출 계약, 작업 요청, 임무, 작업 지시)으로 화면과 응답 문구 정비 | picasso-ops #23 (`bb1d8b5`) |
+| 화면 문서 | 화면 설계서·개발 내역 개편, 대표 스크린숏 21장으로 교체, 촬영 스크립트 재작성 | picasso-ops #24 (`511d5bc`) |
 
 단계별 결함 주입과 바이트 대조 수는 [초기 개발 이력](readme-history.md#개발-방식)에 있습니다.
 
@@ -41,36 +48,65 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 | 구성 요소 | 역할 | 포트·바인딩 | 저장 |
 |---|---|---|---|
-| `ui/` | React·Vite·TypeScript 관리 화면, 운영 서비스만 호출 | dev 5173, Playwright preview 4173 | 없음 |
-| `ops-service/` | 화면의 유일한 백엔드, registry·실행 호스트 REST 호출, 조작 기록·현장 설정 저장, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백 | 스키마 `ops`: `operation_log`, `site_settings`, 뷰 `site_timings_current` |
-| `mission-host/` | picasso 미들웨어로 작업 지시 실행, 임무 정의 검증·모의 실행·활성화, 250ms 마다 셀 대역 읽기·pump, 호출자는 운영 서비스뿐 | `HOST_PORT=8785`, 루프백 | 스키마 `mission`: 임무 버전 표 3(`draft`, `mock_run`, `mission_version`) + S4b 표 5(`execution_journal`, `execution_journal_event`, `job_response_log`, `incident_copy`, `incident_copy_resolution`) |
+| `ui/` | React·Vite·TypeScript 관리 화면, 운영 서비스만 호출, 메뉴 아홉(운영 개요, 작업 요청, 공유 자원, 운영, 로봇, 임무, 현장 설정, 이력, 검증 도구) | dev 5173, Playwright preview 4173 | 없음 |
+| `ops-service/` | 화면의 유일한 백엔드, 외부 주문 API(`/integration/v1/...`), 작업 요청 영속 저장·결과 버전·수신 확인·콜백 전달, 공유 스테이션 조정, registry·실행 호스트 REST 호출, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백(`server.address=127.0.0.1`) | 스키마 `ops`, 마이그레이션 V1~V16, 표 15개와 뷰 1개 |
+| `mission-host/` | picasso 미들웨어로 작업 지시 실행, 임무 정의 검증·모의 실행·활성화, 250ms 마다 셀 대역 읽기·pump, 내보낸 작업 응답을 결과 outbox 에 기록하고 `GET /host/result-events` 로 내줌, 호출자는 운영 서비스뿐 | `HOST_PORT=8785`, 루프백 | 스키마 `mission`, 마이그레이션 V1~V4, 표 10개 |
 | `site/` | registry·mimic·`site-runner`·셀 대역을 한 프로세스에서 구동 | 아래 세부 구성 요소 참조 | registry 마이그레이션을 런처가 실행 |
 | `registry` | 기체 원장, 어댑터·리비전·바인딩·명칭·생존 보고 | `REGISTRY_PORT=8781`, 루프백 | Postgres public |
 | `mimic` | `humanoid-01`·`quadruped-01` 가상 기체, 가상 시계, seed 0 | `MIMIC_GRPC_PORT=8783`, 모든 인터페이스 | 메모리 |
 | `site-runner` | 1초마다 리비전 시험 요청을 집어 별도 mimic 으로 시험, registry 에 결과 기록 | 없음 | registry |
-| 셀 대역 | 셀 신호·자리·슬롯 관측, 신호 쓰기·장애 주입 입구 | `SITE_CELL_PORT=8784`, 루프백 | 메모리 |
+| 셀 대역 | 셀 신호·자리·슬롯 관측, 신호 쓰기·장애 주입 입구, 신호 다섯(`inspection_ready`, `inspection_complete`, `rack_present`, 안전 신호 `guard_closed`, 텍스트 `lot_code`) | `SITE_CELL_PORT=8784`, 루프백 | 메모리 |
 | Postgres | registry public, 운영 서비스 `ops`, 실행 호스트 `mission` | `127.0.0.1:55432` | `postgres:16-alpine`, DB `picasso`, `site/compose.yaml` |
-| `picasso/` | 고정 커밋 읽기 전용 서브모듈, Gradle `includeBuild` | 없음 | 없음 |
+| `picasso/` | 고정 커밋 `74e4d3d` 의 읽기 전용 서브모듈, Gradle `includeBuild` | 없음 | 없음 |
 | `e2e/` | 한 JVM 에 Postgres·registry·mimic·실행 호스트·운영 서비스를 띄우는 통합 시험 | 시험 스택 | Testcontainers |
+| `scripts/mock-mes.mjs` | Mock MES 역할로 외부 주문 API 를 부르는 로컬 도구 | 없음 | 없음 |
+
+`ops` 스키마의 표는 다음과 같습니다.
+
+- V1~V4: `operation_log`(조작 기록, 덧붙이기 전용), `site_settings`(현장 설정 버전, 덧붙이기 전용), 뷰 `site_timings_current`
+- V5: `mission_interface`(호출 계약, 정의 칸은 변경 금지이고 상태만 바뀜)
+- V6~V9: `work_request`(작업 요청), `work_result`(결과 버전), `work_request_recovery`(미배정 재평가 기록), `work_result_delivery`(콜백 전달 상태)
+- V10~V13: `interface_deployment`(호출 계약 배포, 변경·삭제 금지), `mission_profile`(데이터 임무 입력 프로파일, 변경·삭제 금지), `result_cursor`(호스트 결과 피드 커서, 한 행), `work_request_review`(현장 확인 기록, 변경·삭제 금지)
+- V14~V16: `rf_station`(공유 스테이션, 점유 작업 칸 `owner`), `station_run`(스테이션 작업), `station_event`(스테이션 작업 상태 이력, 변경·삭제·통째 비우기 금지), `mission_resource_requirement`(임무 필수 자원, 변경·삭제·통째 비우기 금지), V15 가 `work_request.required_station_id` 와 상태 `WAITING_RESOURCE` 를, V16 이 `station_run.result_baseline`·`baseline_review_only` 를 더함
+
+`mission` 스키마의 표는 다음과 같습니다.
+
+- V1: `draft`, `mock_run`, `mission_version`(임무 버전)
+- V2: `execution_journal`, `execution_journal_event`, `job_response_log`, `incident_copy`, `incident_copy_resolution`(S4b)
+- V3: `draft.sample_order` 칸 추가
+- V4: `result_producer`(생산자 id 와 마지막 순번을 든 한 행), `result_outbox`(순번이 붙은 결과 이벤트, 변경·삭제·통째 비우기 금지)
+
+마이그레이션 수와 표 수는 `ops-service/src/main/resources/db/ops/` 와 `mission-host/src/main/resources/db/mission/` 의 SQL 파일을 세고 `CREATE TABLE`·`CREATE VIEW` 를 세어 얻은 값입니다.
 
 ### 핵심 경로
 
-핵심 동작의 호출 경로는 다음과 같습니다.
+핵심 경로는 다음과 같습니다.
 
 - 장애 주입: 화면 `/api/faults` → 운영 서비스 `/host/faults` → 실행 호스트 → 현장 루프백 `/faults` → 잠금 아래 mimic 엔진 직접 호출
 - 신호 쓰기: 화면 `/api/cell/signals/{name}` → 운영 서비스 `/host/cell/signals/{name}` → 실행 호스트 → 현장 `/cell/signals/{name}`
-- 작업 지시: 운영 서비스가 배정 가능 기체만 후보로 선정 → 실행 호스트의 picasso 미들웨어가 하나 선택 → mimic 기체에서 실행
+- 외부 주문: Mock MES `POST /integration/v1/job-orders`(Bearer 토큰) → 운영 서비스가 `work_request` 를 먼저 커밋 → 입력 변환·배포 고정 → 임무에 필수 자원이 있으면 스테이션 대기열, 없으면 실행 호스트 `POST /host/job-orders`
+- 화면 작업 요청: 운영 화면 `POST /api/work-requests/manual`, 호출 계약 `POST /api/mission-interfaces/{id}/{version}/invoke`, 기존 경로 `POST /api/job-orders` 가 모두 같은 작업 요청 경로를 지남
+- 작업 지시 배정: 운영 서비스가 배정 가능 기체만 후보로 선정 → 실행 호스트의 picasso 미들웨어가 하나 선택 → mimic 기체에서 실행
+- 결과 회신: 실행 호스트가 작업 응답을 `mission.result_outbox` 에 순번과 함께 기록 → 운영 서비스가 5초마다 `GET /host/result-events` 를 커서로 읽어 `ops.work_result` 버전으로 저장 → 콜백 설정이 있으면 2초마다 루프백 Mock MES 로 전달 → Mock MES 가 `POST /integration/v1/job-orders/{id}/results/{version}/ack` 로 수신 확인
+- 공유 스테이션: 운영 서비스 스테이션 워커가 2초마다 `tick` → 대기열 맨 앞 작업이 스테이션을 점유 → 셀 대역의 준비·완료 신호를 실행 호스트 `GET /host/cell` 로 읽음 → 조건이 맞으면 작업 요청 제출
 
 ### 기타 구성 및 설정
 
-- 모의 실행: 실행 호스트 내부의 별도 mimic과 가상 시계로 표본 작업 지시 하나를 실행합니다. 현장 기체, 셀 대역, registry에는 접근하지 않으며, 프로파일로 `mission-host/mock-run/humanoid-a.json`을 사용합니다.
-- 서브모듈: `picasso 74e4d3d` 커밋으로 고정된 읽기 전용 서브모듈입니다. 버전 카탈로그 `picasso/gradle/libs.versions.toml`을 공유하며, picasso 라이브러리 측 수정은 picasso 저장소 PR로 반영합니다.
-- 환경 변수: `.env`에 정의된 변수 이름은 `SITE_ID`, `PICASSO_DB_URL`, `PICASSO_DB_USER`, `PICASSO_DB_PASSWORD`, `REGISTRY_PORT`, `OPS_PORT`, `MIMIC_GRPC_PORT`, `SITE_CELL_PORT`, `HOST_PORT`, `PICASSO_OPERATOR_TOKEN`, `PICASSO_INGEST_TOKEN`이며, 실제 값은 커밋된 `.env`를 따릅니다.
-- 기체 명부: `site/robots.json`에 `humanoid-01`(HA-0001, `humanoid-a.json`)과 `quadruped-01`(QB-0001, `quadruped-b.json`)이 정의되어 있습니다.
+- 모의 실행: 실행 호스트 내부의 별도 mimic과 가상 시계로 표본 작업 지시 하나를 실행합니다. 현장 기체, 셀 대역, registry 에는 접근하지 않으며 프로파일로 `mission-host/mock-run/humanoid-a.json` 을 사용합니다.
+- 서브모듈: `picasso 74e4d3d` 커밋으로 고정된 읽기 전용 서브모듈입니다. 버전 카탈로그 `picasso/gradle/libs.versions.toml` 을 공유하며 picasso 라이브러리 측 수정은 picasso 저장소 PR 로 반영합니다. picasso main 은 `344e22b` 까지 나아갔지만 Ops 는 이를 전제하지 않습니다.
+- 환경 변수(`.env`): `SITE_ID`, `PICASSO_DB_URL`, `PICASSO_DB_USER`, `PICASSO_DB_PASSWORD`, `REGISTRY_PORT`, `OPS_PORT`, `MIMIC_GRPC_PORT`, `SITE_CELL_PORT`, `HOST_PORT`, `PICASSO_OPERATOR_TOKEN`, `PICASSO_INGEST_TOKEN`. 실제 값은 커밋된 `.env` 를 따릅니다.
+- `.env` 밖의 선택 환경 변수(운영 서비스): `PICASSO_INTEGRATION_TOKEN`(비면 외부 주문 API 꺼짐), `PICASSO_INTEGRATION_SOURCE`(기본 `mock-mes`), `PICASSO_LOCAL_CALLBACK_URL`(루프백 IP 리터럴 http 주소만, 비면 콜백 전달 꺼짐), `PICASSO_LOCAL_CALLBACK_TOKEN`
+- 운영 서비스 주기 속성(`ops-service.properties`): `ops.results.poll-ms=5000`(결과 수집과 멈춘 작업 요청 정리), `ops.requests.stale-seconds=300`, `ops.results.delivery-ms=2000`, 스테이션 워커 `ops.stations.poll-ms` 는 속성 파일에 없고 코드 기본값 2000
+- 기체 명부: `site/robots.json` 에 `humanoid-01`(HA-0001, `humanoid-a.json`)과 `quadruped-01`(QB-0001, `quadruped-b.json`)이 정의되어 있습니다.
 
 ## 운영 흐름 상세
 
-운영 흐름의 전문은 [README 의 운영 흐름](../README.md#운영-흐름)에 기술되어 있습니다.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/operations-flow.dark.svg">
+  <img alt="운영 흐름 다이어그램" src="diagrams/operations-flow.svg">
+</picture>
+
+운영 흐름의 전문은 [README 의 운영 흐름](../README.md#운영-흐름)에 기술되어 있습니다. 그림은 기체 도입(Day-1)과 운영(Day-2)의 화면 절차입니다. 외부 주문과 공유 스테이션을 포함한 작업 요청의 흐름은 이 문서의 [작업 요청과 결과 회신](#작업-요청과-결과-회신), [공유 스테이션 조정](#공유-스테이션-조정) 절에 있습니다.
 
 설계 제안 §8.1에 따라 초안은 언제나 작성할 수 있으며, 활성화 단계에서만 강한 관문 검증을 적용합니다.
 
@@ -84,9 +120,9 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 </picture>
 
 - 배정 가능 판정 분담: 운영 서비스는 시운전과 연결 상태를 판정하고, 실행 호스트는 실행 중인 작업과 스킬 적합성을 판정합니다. 운영 서비스는 배정 가능한 기체만을 후보로 전달합니다.
-- 기록 시점: 실행 호스트는 새 실행 정보를 응답하기 전에 실행 일지에 먼저 기록합니다. 운영 서비스는 응답을 받은 뒤 조작 기록에 남깁니다.
-- 작업 응답 처리: 접수(`ACCEPTED`) 시점에는 작업 응답을 생성하지 않습니다. pump가 mimic에서 태스크를 시작하며, 실행이 정착하거나 보류될 때 작업 응답을 송신 기록에 남깁니다.
-- 재조회 동작: 응답이 없으면 운영 서비스가 1초 뒤 실행 목록을 한 번 재조회합니다.
+- 기록 시점: 화면의 작업 지시 폼은 `POST /api/work-requests/manual` 로 작업 요청을 만듭니다. 운영 서비스는 실행 호스트를 부르기 전에 `ops.work_request` 행을 `RECEIVED` 로 따로 커밋하고, 입력을 작업 지시로 변환해 저장한 뒤 `DISPATCHING` 으로 바꾸고 나서 `POST /host/job-orders` 를 부릅니다. 작업 지시 id 는 `JO-<작업 요청 id>` 로 작업 요청마다 고정됩니다. 실행 호스트는 새 실행 정보를 응답하기 전에 실행 일지에 먼저 기록합니다. 운영 서비스는 응답을 받은 뒤 조작 기록에 남기고 작업 요청 상태를 `ACCEPTED`, `UNASSIGNED`, `REJECTED`, `IN_DOUBT` 가운데 하나로 정합니다.
+- 작업 응답 처리: 실행 호스트가 작업 지시를 받은 시점(`ACCEPTED`)에는 작업 응답을 만들지 않습니다. pump 가 mimic 에서 태스크를 시작하고, 실행이 정착하거나 보류될 때 작업 응답을 송신 기록(`job_response_log`)에 남깁니다. 처분이 송신인 작업 응답은 같은 트랜잭션에서 결과 outbox(`result_outbox`)에도 순번과 함께 기록됩니다.
+- 재조회 동작: 응답이 없으면 운영 서비스가 1초 뒤 실행 목록을 한 번 재조회합니다. 목록에 그 작업 지시가 보이면 `ACCEPTED` 이고, 보이지 않아도 보내지 않았다는 증거로 보지 않아 `IN_DOUBT` 로 둡니다.
 
 ### 보류와 운영자 판단
 
@@ -102,12 +138,103 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - 사유 기록 위치: 입력된 사유는 실행 호스트로 전달되지 않으며, 조작 기록에만 남깁니다.
 - 판단 기록 반영: 판단 행은 다음 pump 뒤 인시던트 사본에 반영됩니다. 그전에 재기동하면 판단은 조작 기록에만 남습니다.
 - 장애 주입 처리: 진행 중 `pick_place` 스킬 실패와 같은 장애 주입은 대개 `GRASP_FAILED` 인시던트로 이어지며, 이는 운영자 판단 대상이 아닙니다.
+- 재작업 관문: 재작업(`REWORK`) 판단만 관문을 지나고 완료 확인(`CONFIRM_DONE`)은 그대로 전달됩니다. 운영 서비스는 실행 호스트의 실행 목록에서 그 실행의 작업 지시를 찾아 작업 요청과 잇고, 그 작업 요청에 임무 필수 자원(`required_station_id`)이 있으면 공유 스테이션 조정을 거쳐서만 재작업을 전달합니다. 자세한 조건은 [재작업 관문](#재작업-관문) 링크로 안내합니다.
+
+## 작업 요청과 결과 회신
+
+이 절은 작업 요청의 상태 전이, 중복 방지와 배포 고정, 멈춘 작업 요청 정리, 그리고 실행 호스트의 결과 수집과 회신 메커니즘을 다룹니다. 관련 코드는 `ops-service/src/main/kotlin/dev/picasso/ops/service/requests/WorkRequests.kt` 에 있습니다.
+
+### 작업 요청 상태
+
+| 상태 | 뜻 | 다음 상태 |
+|---|---|---|
+| `RECEIVED` | 행을 막 커밋한 상태입니다. 호스트 호출 전에 반드시 `DISPATCHING` 을 먼저 기록하므로 `RECEIVED` 는 호스트에 보내지 않은 것이 확실합니다. | 입력 검증 거부나 내부 오류면 `REJECTED`(내부 오류 상세: 호스트에 보내지 않았으니 새 요청 ID 로 다시 보내라는 안내), 임무에 필수 자원이 있으면 `WAITING_RESOURCE`, 아니면 `DISPATCHING` 입니다. |
+| `WAITING_RESOURCE` | 임무 필수 자원의 스테이션 대기열에 들어간 상태입니다. 스테이션 작업(`station_run`, 상태 `QUEUED`)과 같은 트랜잭션에서 기록합니다. | 스테이션이 준비되면 `DISPATCHING`, 스테이션 작업이 `TIMED_OUT`·`CANCELLED`·`REJECTED` 가 되거나 운영자가 현장 확인 후 해제(`CONFIRM_CLEAR`)하면 `REJECTED` 입니다. |
+| `DISPATCHING` | 실행 호스트에 제출하는 중입니다. 이 뒤의 중단은 보냈는지 알 수 없습니다. | 제출 결과에 따라 `ACCEPTED`·`UNASSIGNED`·`REJECTED`·`IN_DOUBT` 입니다. 제출 직전 자원 권한 확인이 거부되면 `REJECTED`(호스트 호출 전이라 보내지 않은 것이 확실)입니다. 현장 확인 후 해제되면 `IN_DOUBT` 입니다. 오래 멈추면 정리가 `IN_DOUBT` 로 닫습니다. |
+| `ACCEPTED` | 실행 호스트가 작업 지시를 받은 상태입니다(제출 응답이나 관측으로 확인). | 종료 상태입니다. 결과는 결과 버전으로 따로 쌓입니다. |
+| `REJECTED` | 보내지 않았거나 실행 호스트가 거부한 상태입니다. | 종료 상태입니다. |
+| `UNASSIGNED` | 배정 가능 기체가 없어 제출하지 못한 상태입니다. | 제출 기록과 실행 관측이 없는 `UNASSIGNED` 만 운영자 미배정 재평가(`POST /api/work-requests/{id}/recover`)로 `DISPATCHING` 이 됩니다. 필수 자원이 있는 작업 요청은 이 API 가 409 `RESOURCE_MANAGED` 로 막고 공유 스테이션 조정만 재평가합니다. |
+| `IN_DOUBT` | 제출 결과를 확정할 수 없는 상태입니다(응답 없음, 재조회에도 안 보임, 예외, 제출 중 중단). | 자동 재제출은 없습니다. 결과 피드 이벤트나 상세 조회에서 호스트 실행 목록에 그 작업 지시가 보이면 `ACCEPTED` 로 올라갑니다. 미배정 재평가는 409 `RECOVERY_NOT_SAFE` 입니다. |
+
+운영자는 `POST /api/work-requests/{id}/reviews` 로 현장 확인을 기록할 수 있습니다. 관측 값은 `NOT_CONFIRMED`·`NOT_STARTED`·`IN_PROGRESS`·`COMPLETED` 넷이고 사유와 조회한 `updatedAt` 이 필요합니다(바뀌었으면 409 `STALE_REVIEW`). 기록은 `work_request_review` 에 남고 변경·삭제가 금지되며, 작업 요청 상태를 바꾸거나 제출하거나 완료로 만들지 않습니다.
+
+### 중복 방지와 배포 고정
+
+- `work_request` 는 `(source_system_id, external_order_id)` 가 유일합니다. 출처는 외부 주문이면 설정 식별자(기본 `mock-mes`), 운영 화면 수동 요청이면 `ops:manual`, 호출 계약 호출이면 `ops:interface` 이고, 키는 외부 주문이면 `externalOrderId`, 화면이면 요청 본문의 `requestId`(정규 UUID)입니다.
+- 본문은 키 순서를 정렬한 JSON 의 SHA-256(`payload_hash`)으로 비교합니다. 같은 키에 같은 본문이면 기존 작업 요청을 돌려주고(외부 주문 API 는 새 요청 202, 재전송 200), 다른 본문이면 409 `ORDER_CONFLICT` 입니다. 화면 요청은 본문에 요청자(`requestedBy`)가 들어가므로 같은 요청 ID 를 다른 사용자가 보내도 409 입니다.
+- 재전송은 상태와 상관없이 다시 제출하지 않습니다. `IN_DOUBT` 도 마찬가지입니다.
+- 기존 경로 `POST /api/job-orders` 는 호출마다 새 `requestId` 를 만들어 같은 작업 요청 경로를 지나므로, 호출자 쪽 재전송의 중복 방지는 제공하지 않습니다.
+- 변환한 작업 지시(`normalized_order`)에는 작업 요청을 받은 시점의 배포(`deploymentVersion`, `missionVersion`)가 들어갑니다. 대기열에서 나와 제출할 때는 저장한 작업 지시를 그대로 쓰고, 미배정 재평가는 원래 입력을 다시 변환해 저장본과 다르면 409 `RECOVERY_INPUT_CHANGED` 로 막습니다. 호출 계약 호출에 `expectedDeploymentVersion` 을 주면 현재 배포와 다를 때 409 `STALE_DEPLOYMENT` 입니다.
+
+### 멈춘 작업 요청 정리
+
+- 결과 수집 워커(`WorkResultCollector`)가 `ops.results.poll-ms`(5000ms)마다 결과를 모으기 전에 `sweepStale` 을 먼저 돌립니다.
+- `updated_at` 이 `ops.requests.stale-seconds`(기본 300초)보다 오래된 `RECEIVED` 는 `REJECTED`(상세: 처리 중단, 호스트에 보내지 않았으니 새 요청 ID 로 다시 보내라)로, `DISPATCHING` 은 `IN_DOUBT`(상세: 제출 도중 중단, 실행 관측과 현장 확인 필요)로 닫습니다. `WAITING_RESOURCE` 는 스테이션 조정의 몫이라 건드리지 않습니다.
+- 정리를 먼저 돌리는 까닭은 멈춘 제출이 `IN_DOUBT` 가 된 뒤에 관측이 `ACCEPTED` 로 올릴 수 있게 하기 위해서입니다(코드 주석). 정리가 실패해도 결과 수집은 계속합니다.
+- 작업 요청 경로의 상태 전이는 «현재 상태가 `RECEIVED` 일 때만» 같은 조건부 갱신이라, 정리가 먼저 닫은 행을 덮어쓰지 않습니다.
+
+### 결과 버전과 회신
+
+- 실행 호스트는 처분이 송신인 작업 응답을 `mission.result_outbox` 에 기록합니다. 순번은 `mission.result_producer` 한 행을 잠그고 같은 트랜잭션에서 하나씩 올리므로 커밋 순서와 같고 빈 번호가 없습니다. 재기동 중복으로 판정한 응답은 기록하지 않습니다. `GET /host/result-events?after=&limit=`(limit 1~200)이 생산자 id(`producerId`), 마지막 순번(`highWatermark`), 이벤트 목록을 줍니다.
+- 운영 서비스 수집은 `ops.result_cursor` 의 순번 다음부터 100건씩 읽습니다. 순번이 이어지지 않거나 이벤트 하나라도 형식이 틀리면 그 쪽 전체를 저장하지 않고, 생산자 id 가 바뀌면 멈춥니다. 커밋 직전에 커서가 그대로인지 확인해 두 수집기가 같은 쪽을 두 번 저장하지 않게 합니다.
+- 결과 버전(`ops.work_result`)은 작업 요청마다 1부터 올라가는 버전이고, 한 버전은 호스트 인스턴스·실행·작업 응답 id 조합 하나입니다. 스냅숏을 키 정렬 JSON 으로 만든 SHA-256 을 `result_hash` 로 둡니다. 코드는 버전 행을 덧붙이기만 하고 `acknowledged_at` 만 한 번 채웁니다. 이 표에는 변경을 막는 DB 트리거가 없으므로 불변은 코드 관례입니다.
+- 외부 결과 API 는 `GET /integration/v1/job-orders/{id}/results/latest`, `GET .../results/{version}`, 수신 확인 `POST .../results/{version}/ack` 를 제공합니다. 본문은 정확히 `{"resultHash": "<64자리 16진>"}` 이고, 해시가 다르면 409 `RESULT_CONFLICT`, 같은 수신 확인을 다시 보내면 처음 기록한 `acknowledgedAt` 을 그대로 돌려줍니다. 다른 출처의 작업 요청은 404 입니다.
+- 콜백 전달(`WorkResultDelivery`)은 `PICASSO_LOCAL_CALLBACK_URL` 이 있을 때만 켜지고 주소는 루프백 IP 리터럴 http 만 받습니다. `ops.results.delivery-ms`(2000ms)마다 설정 출처의 결과 버전을 `work_result_delivery` 에 넣고, 한 번에 최대 10건을 `FOR UPDATE SKIP LOCKED` 와 30초 임대로 집어 보냅니다. 본문은 `receiptId`·`version`·`resultHash`·`snapshot`, 헤더는 `Idempotency-Key: <작업 요청 id>/v<버전>` 입니다. 2xx 면 `DELIVERED`, 아니면 `RETRY` 이고 다음 시도까지 2의 min(시도 수, 8)제곱 초를 기다립니다(최대 256초, 코드의 300초 상한에는 닿지 않음). 시도 수 상한이나 영구 실패 상태가 없어 4xx 도 계속 다시 보냅니다. HTTP 성공은 전달 성공일 뿐 수신 확인이 아닙니다.
+
+## 공유 스테이션 조정
+
+공유 스테이션(`ops.rf_station`)은 엔지니어가 등록합니다(`POST /api/stations`). 준비 신호와 완료 신호는 셀 대역에 선언된 안전 신호가 아닌 일반 BOOLEAN 신호여야 하고 서로 달라야 하며, 단계 기한 `timeout_seconds` 는 5~3600초입니다. 등록 뒤 바꿀 수 없습니다. 스테이션은 한 번에 한 작업만 점유합니다(`rf_station.owner`, 부분 유일 색인 `station_one_owner`). 스테이션 작업(`ops.station_run`)은 두 길로 생깁니다. 운영자가 `POST /api/stations/runs` 로 직접 요청하거나(요청 ID, 스테이션, 호출 계약과 버전, 조회한 배포 버전, 입력), 임무에 필수 자원(`ops.mission_resource_requirement`, 임무당 스테이션 하나, 엔지니어 등록, 변경·삭제 금지)이 있으면 모든 작업 요청 경로가 작업 요청을 `WAITING_RESOURCE` 로 두고 같은 id 의 스테이션 작업을 대기열에 넣습니다. 스테이션 워커(`StationWorker`)가 `ops.stations.poll-ms`(기본 2000ms)마다 `StationCoordinator.tick` 을 부릅니다. 상태가 바뀔 때마다 `revision` 이 오르고 `ops.station_event` 에 한 행이 남습니다. 근거는 `GET /api/stations/runs/{id}/evidence`(스키마 `ops.station.evidence/1`)로 읽습니다.
+
+### 스테이션 작업 상태
+
+| 상태 | 뜻 | 다음 상태 |
+| --- | --- | --- |
+| `QUEUED` | 대기열에서 차례를 기다림 | 스테이션에 점유 작업이 없으면 가장 먼저 들어온 작업(`created_at`, `run_id` 순)이 점유해 `WAITING_READY`. 운영자 `CANCEL_QUEUED` 면 `CANCELLED` |
+| `WAITING_READY` | 스테이션을 점유하고 설비 준비를 기다림. 로봇에는 아직 보내지 않음 | 준비 신호가 true 이고 완료 신호가 false 면 `DISPATCHING`(이때 `dispatched_at` 기록). 단계 기한이 지나면 `TIMED_OUT` |
+| `DISPATCHING` | 고정한 호출 계약으로 작업 요청을 제출함 | 제출 결과가 `ACCEPTED` 면 `RUNNING`, 전송 전 미배정이면 `WAITING_ROBOT`, `REJECTED` 면 `REJECTED`, 그 밖이거나 호출 결과를 모르면 `REVIEW_REQUIRED`. 프로세스가 이 상태에서 멈췄다면 다음 `tick` 이 같은 키로 작업 요청을 다시 찾아볼 뿐 새로 보내지 않음 |
+| `RUNNING` | 로봇이 받아 실행 중. 저장된 결과와 새 설비 완료 신호를 기다림 | 완료 조건(아래 기준선 절)이 맞으면 `COMPLETED`. 기준선보다 새 결과의 물리 상태가 `OPERATOR_HOLD`·`IN_DOUBT`·`UNVERIFIED`·`FAILED`·`ABORTED`·`PARTIAL` 이면 `REVIEW_REQUIRED`. 셀 신호를 읽을 수 없거나 단계 기한이 지나도 `REVIEW_REQUIRED` |
+| `WAITING_ROBOT` | 호스트에 보내기 전 배정 가능 기체가 없었음 | 설비가 여전히 준비 상태이고 이 상태에 들어온 지 5초가 지났으며 재평가가 3번 미만이면 `RETRYING` 으로 선점한 뒤 미배정 재평가. 작업 요청이 더는 전송 전 미배정이 아니면 그 상태에 따라 전이. 단계 기한이 지나면 `REVIEW_REQUIRED` |
+| `RETRYING` | 미배정 재평가를 호스트에 보내는 중 | 결과에 따라 `RUNNING`·`WAITING_ROBOT`·`REJECTED`·`REVIEW_REQUIRED`, 결과를 모르면 `REVIEW_REQUIRED`. `tick` 이 이 상태를 처음 보면 앞 프로세스가 멈춘 것으로 읽고 `REVIEW_REQUIRED` |
+| `REWORKING` | 운영자 재작업을 실행 호스트에 전달하는 중. 다른 판단을 막음 | 아래 재작업 관문 절. `tick` 이 이 상태를 보면 앞 프로세스가 멈춘 것으로 읽고 `REVIEW_REQUIRED` |
+| `REVIEW_REQUIRED` | 자동으로 판단하지 않고 점유를 유지한 채 현장 확인을 기다림 | 운영자 `RESUME_OBSERVATION` 이면 `RUNNING`, `CONFIRM_CLEAR` 면 `MANUALLY_CLEARED`, 재작업 관문을 지나면 `REWORKING` |
+| `COMPLETED` | 로봇 물리 완료와 이번 작업의 설비 완료 신호를 확인하고 점유를 풂 | 종료 |
+| `TIMED_OUT` | 설비 준비 단계 기한 초과, 로봇에 보내기 전에 점유를 풂 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE` 면 `REJECTED` |
+| `CANCELLED` | 운영자가 대기열에서 취소 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE` 면 `REJECTED` |
+| `REJECTED` | 작업 요청 제출이 거부되어 점유를 풂 | 종료 |
+| `MANUALLY_CLEARED` | 운영자가 현장 확인 뒤 점유를 풂. 물리 완료 판정이 아님 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE`·`UNASSIGNED` 면 `REJECTED`(실행하지 않음), `DISPATCHING` 이면 `IN_DOUBT`(실행 관측으로 확인), `IN_DOUBT`·`ACCEPTED`·`REJECTED` 는 그대로 |
+
+단계 기한은 그 상태에 들어온 시각(`phase_at`)부터 스테이션의 `timeout_seconds` 로 잽니다. 실행 중 기한 초과는 점유를 유지하고 자동으로 다시 실행하지 않습니다. 미배정 재평가 요청 ID 는 스테이션 작업 id 와 시도 번호로 정해지는 UUID 이고, 재평가는 최대 3번입니다.
+
+### 운영자 판단
+
+`POST /api/stations/runs/{id}/decision`(운영자 모드만, 본문 `expectedRevision`·`decision`·`reason`, 조회한 버전과 지금 버전이 다르면 409)으로 요청합니다.
+
+- `CANCEL_QUEUED`: `QUEUED` 만 `CANCELLED` 로 바꿉니다.
+- `RESUME_OBSERVATION`: 작업 요청이 묶인 `REVIEW_REQUIRED` 만 대상으로 합니다. 셀 신호를 스테이션 잠금 전에 읽고, 읽지 못하면 503, 설비 완료 신호가 켜져 있으면 409(신호를 초기화한 뒤 다시 하라)를 반환합니다. 통과하면 `RUNNING` 으로 돌리고 `dispatched_at` 을 지금으로 다시 정합니다. 로봇에 아무것도 다시 보내지 않습니다.
+- `CONFIRM_CLEAR`: `REVIEW_REQUIRED` 만 `MANUALLY_CLEARED` 로 바꿉니다. 점유를 풀고 같은 트랜잭션에서 묶인 작업 요청을 위 표처럼 닫습니다.
+
+### 재작업 관문
+
+인시던트 화면의 보류 해소 가운데 재작업(`REWORK`)만 관문 `StationReworkGuard` 를 지납니다. 재작업은 보류한 단위를 다시 돌려 로봇이 다시 움직이기 때문입니다. 운영 서비스가 실행 호스트의 실행 목록에서 실행 id 로 작업 지시를 찾고 작업 요청과 잇습니다. 실행 목록을 읽지 못하면 503 `HOST_SILENT`, 그 실행이 목록에 없으면 409 `EXECUTION_NOT_FOUND` 로 막습니다(자원 관리 여부를 알 수 없으니 막음). 요청한 인스턴스가 호스트의 현재 인스턴스가 아니면 그대로 넘기고 호스트가 `INSTANCE_MISMATCH` 로 거부합니다. 작업 요청이 없거나 필수 자원이 없는 작업 요청이면 그대로 넘깁니다. 필수 자원이 있는 작업 요청이면 그 스테이션 작업이 지금 스테이션의 점유 작업이고 상태가 `REVIEW_REQUIRED` 일 때만 허용합니다. 아니면 409(«자원 관리 작업의 재작업은 스테이션 점유를 유지한 확인 필요 상태에서만 할 수 있습니다»)를 반환합니다. 허용하면 먼저 `REWORKING` 으로 선점하고, DB 잠금 밖에서 호스트에 전달한 뒤 다시 잠금 안에서 결과를 반영합니다. 반영 시 호스트가 거부하거나 결과를 모르거나, 셀 신호를 모르거나, 설비 완료 신호가 켜져 있으면 사유를 남기고 `REVIEW_REQUIRED` 로 돌립니다(점유 유지). 반영되었고 완료 신호가 꺼져 있으면 `RUNNING` 으로 가고 `dispatched_at` 을 지금으로 다시 정합니다. 관문이 막은 요청은 사전 거부라 조작 기록에 남지 않습니다.
+
+### 결과 버전 기준선
+
+V16 이 `station_run.result_baseline` 과 `baseline_review_only` 를 더했습니다. `RUNNING` 에 들어갈 때마다(제출 수락, 미배정 재평가 수락, 관측 재개, 재작업 반영) 같은 잠금 트랜잭션에서 그 작업 요청의 최신 결과 버전을 `result_baseline` 으로 적습니다. 그보다 새 결과만 이번 시도의 근거로 씁니다. 그래서 재작업이나 관측 재개 직후 이미 저장된 이전 보류 결과로 곧바로 `REVIEW_REQUIRED` 로 되돌아가지 않습니다. 관측 재개는 같은 실행을 다시 보는 것이므로 `baseline_review_only` 를 true 로 둡니다. 이때는 확인 대기 중 저장된 `PHYSICALLY_DONE` 도 완료 근거로 인정하되, `REVIEW_REQUIRED` 로 넘기는 판단에는 기준선보다 새 결과만 씁니다. 재작업은 재작업 전에 저장된 물리 완료를 완료 근거로 쓰지 않습니다. `COMPLETED` 조건 전체는 저장된 최신 결과의 물리 상태가 `PHYSICALLY_DONE` 이고(기준선보다 새 결과이거나 관측 재개), 설비 완료 신호가 true 이며, 그 신호의 `observedAt` 이 `dispatched_at` 보다 뒤여야 합니다. 설비 완료 신호의 `observedAt` 은 셀 대역에서 그 값이 마지막으로 쓰인 시각입니다.
+
+### 잠금과 실행 단위
+
+DB 잠금(스테이션 행 `FOR UPDATE`, 임무별 advisory 잠금 `pg_advisory_xact_lock(hashtext(임무 id))`)은 판단에만 쓰고 호스트 호출 동안에는 잡지 않습니다. `tick` 과 `rework` 는 JVM 의 `@Synchronized` 로 한 프로세스 안에서 서로 겹치지 않습니다. `tick` 이 `RETRYING`·`REWORKING` 을 보면 앞 프로세스가 멈췄다고 읽는 것은 조정기가 하나뿐일 때만 맞습니다. 배포 전제는 [보장 범위](guarantees.md) 링크를 봅니다.
 
 ## 시스템 동작 및 운영 상세
 
 ### 데이터와 재기동
 
-새로운 실행이 시작되면 응답을 반환하기 전에 작업 지시와 배정 기체를 실행 일지에 먼저 기록합니다.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/sequence-restart.dark.svg">
+  <img alt="재기동 시퀀스" src="diagrams/sequence-restart.svg">
+</picture>
+
+운영 서비스는 실행 호스트를 부르기 전에 작업 요청을 먼저 커밋하므로, 운영 서비스가 재기동해도 같은 키의 재전송은 기존 작업 요청을 돌려주고 다시 제출하지 않습니다. 새로운 실행이 시작되면 응답을 반환하기 전에 작업 지시와 배정 기체를 실행 일지에 먼저 기록합니다.
 
 복원은 pump 호출 전에 진행됩니다. 아직 정착하지 않은 일지 행을 수신 순서와 수신 당시의 임무 버전 그대로 복원하며, 동일한 태스크 id로 다시 연결되므로 새로운 명령은 생성되지 않습니다.
 
@@ -115,7 +242,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 재기동 후에도 활성 임무 버전은 그대로 유지되며, 이전 인스턴스의 인시던트는 사본을 통해 조회합니다.
 
-상위 시스템이 없으므로 전선 자리 대신 송신 기록을 보관합니다. 새 인스턴스의 첫 응답이 가장 최근 송신 기록과 같으면 재기동에 따른 중복으로 간주하여 송신하지 않습니다.
+실행 호스트는 작업 응답마다 처분을 송신 기록(`job_response_log`)에 남깁니다. 새 인스턴스에서 어떤 작업 지시의 첫 작업 응답이 그 작업 지시의 가장 최근 송신 기록과 내용이 같으면 재기동 중복(`RESTART_DUPLICATE`)으로 적고 결과 outbox에 넣지 않습니다. 처분이 송신(`SENT`)인 응답만 `result_outbox`를 거쳐 운영 서비스의 결과 버전이 되고, 콜백이 설정되어 있으면 Mock MES로 전달됩니다. 상위 시스템 연계는 로컬 Mock MES 하나로만 검증했습니다.
 
 사본 기록 시점은 pump 뒤입니다. 운영자 판단 직후 다음 사본 기록 전에 재기동되면 해당 판단은 조작 기록에만 남게 됩니다.
 
@@ -125,11 +252,13 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 기한 보류는 재기동 후 기한만큼 지연되어 다시 발생하며, 그동안 화면에는 도는 것으로 표시됩니다.
 
-실행 일지, 송신 기록, 사본에는 별도의 보존 기한이 없습니다.
+실행 일지, 송신 기록, 사본에는 별도의 보존 기한이 없습니다. 결과 outbox와 운영 서비스의 작업 요청·결과 버전·스테이션 작업 기록에도 보존 기한이나 삭제 코드가 없습니다.
 
-`mission` 스키마는 임무 버전 관련 표 3개와 S4b 표 5개로 구성된 덧붙이기 전용 구조입니다. 데이터베이스 트리거가 UPDATE, DELETE, TRUNCATE를 차단하므로 데이터를 삭제하려면 스키마째 제거해야 합니다.
+`mission` 스키마의 표는 이제 10개입니다(임무 버전 표 3, S4b 표 5, V4의 `result_producer`·`result_outbox`). 이 가운데 `result_producer`는 마지막 순번을 올리는 한 행짜리 카운터라 UPDATE를 하고, 나머지 9개는 트리거가 UPDATE·DELETE·TRUNCATE를 막습니다. 데이터를 지우려면 스키마째 지웁니다.
 
 셀 신호 값은 런처 재기동 시 처음 값으로 재설정됩니다.
+
+운영 서비스가 멈췄다 다시 뜨면 스테이션 점유, 대기열, 상태 이력은 DB에 남아 그대로 이어집니다. 결과 수집은 `ops.result_cursor`의 순번부터 이어 읽습니다. 멈춘 시점에 `DISPATCHING`·`RETRYING`·`REWORKING`이던 것의 처리는 «작업 요청과 결과 회신»·«공유 스테이션 조정» 절에 있습니다.
 
 ### 현장 대역의 한계
 
@@ -143,7 +272,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 `quadruped-01` 기체는 `pick_place` 케이퍼빌리티가 없으므로 연결 상태 장애만 발생할 수 있습니다.
 
-셀 신호 세트는 `rack_present`, 안전 신호인 `guard_closed`, 그리고 `lot_code`로 구성됩니다. 이 신호들은 시간 경과에 따라 자동으로 바뀌지 않으며, `POST /cell/signals/{name}` 요청으로만 변경할 수 있습니다. 안전 신호에 대한 쓰기 요청은 거부됩니다.
+신호는 다섯입니다. 공유 검사 스테이션의 일반 공정 신호 `inspection_ready`(처음 true)와 `inspection_complete`(처음 false), 랙 자리 `RACK-204`의 `rack_present`(처음 false), 안전 신호 `guard_closed`(처음 true), 텍스트 신호 `lot_code`(처음 `LOT-0001`)로 구성됩니다. 시간이 지나도 스스로 바뀌지 않고 `POST /cell/signals/{name}`로만 바뀌며, 안전 신호 쓰기는 거부됩니다. 신호의 `observedAt`은 마지막으로 값을 쓴 시각이고, 한 번도 쓰지 않은 처음 값은 `observedAt`이 비어 있습니다.
 
 신호 사양은 셀 대역 픽스처 코드에 상수로 정의되어 있으며, 화면 편집이나 버전 관리를 지원하지 않습니다.
 
@@ -193,9 +322,15 @@ registry는 티칭 명칭의 개수만 대조하며, 명칭 자체의 문자열�
 
 모의 실행 시에는 현장 시간값 대신 케이퍼빌리티 기본값을 사용합니다. 이로 인해 임무 검증 결과의 `basisVersion` 항목은 항상 비어 있습니다.
 
+#18부터 엔지니어는 기본 두 임무 밖의 새 임무를 입력 프로파일(`POST /api/mission-profiles`, 입력 스키마와 선언형 매핑, 실행 식이나 스크립트 없음)로 등록할 수 있고, 등록한 프로파일은 바꾸거나 지울 수 없으며(`ops.mission_profile`), 예제는 `docs/examples/`에 있습니다.
+
 ### 판정과 권한
 
 site는 적재 토큰과 운영자 토큰을 둘 다 받고, 운영 서비스는 운영자 토큰만 받고, 실행 호스트는 둘 다 받지 않습니다(실행 명령의 `env -u`). 브라우저에는 토큰을 보내지 않습니다.
+
+운영 서비스는 선택으로 외부 주문 토큰 `PICASSO_INTEGRATION_TOKEN`을 받습니다. 하나의 공유 Bearer 토큰이 하나의 설정 출처(기본 `mock-mes`)를 뜻하며, 비교는 SHA-256 다이제스트의 상수 시간 비교입니다. 비어 있으면 `/integration/v1/...`는 모두 401입니다. 테넌트별 권한 체계는 아닙니다.
+
+화면 API의 `X-Ops-Mode`·`X-Ops-User` 헤더는 모드와 사용자 이름을 고르는 값이지 인증이 아닙니다. 운영 서비스 API에 닿을 수 있으면 누구나 이 헤더를 붙일 수 있습니다. 헤더가 없거나 틀리면 400, 모드가 맞지 않으면 403으로 호출 전에 막습니다.
 
 registry, 실행 호스트, 운영 서비스, 셀 대역은 모두 `127.0.0.1`에만 바인딩됩니다.
 
@@ -251,34 +386,41 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ## 시험
 
+### 시험 수
+
+Kotlin 네 모듈은 2026-10-13에 `main 511d5bc`의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 아래 표의 실행 기록과 같습니다. UI는 2026-10-13 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 23개 파일 213개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+
+| 모듈 | 시험 수 | 실행으로 확인한 곳 |
+|---|---|---|
+| `ops-service` | 360 | PR #22 의 실행 기록(357 에서 360 으로 늘고 모두 통과) |
+| `mission-host` | 83 | 로컬 시험 결과 XML 83건 |
+| `site` | 38 | 로컬 시험 결과 XML 38건 |
+| `e2e` | 67(시험 클래스 14개) | PR #21 의 실행 기록(14개 클래스 67건 모두 통과) |
+| `ui`(vitest) | 213(시험 파일 23개) | 2026-10-13 로컬 실행 |
+
+모듈마다 잰 때가 달라 합계를 내지 않습니다.
+
 ### E2E 통합 시험 내부 구조
 
 현장 가상 시계를 시험이 직접 진행합니다. 호스트 기동 전에 `ops` 스키마를 올려 설정 버전 1 적용 상태로 시작합니다.
+
 임무 버전 시험에서는 실행 호스트만 같은 포트로 다시 띄워 활성 버전이 유지되는지 확인합니다.
+
 장애 및 인시던트 시험은 새 스택에서 스킬 실패를 먼저 검증하며, 오래됨 단계에서만 실제 60초를 넘겨 대기합니다.
+
 재기동 시험인 `RestartRecoveryTest`는 6단계로 약 81초가 걸립니다. 재기동은 `E2eStack.restartHost()`로 수행하며, 새 명령 수신 여부는 site의 `Site.taskHistory`로 확인합니다.
+
 실제 대기가 필요한 구간은 1분 넘게 기다리는 오래됨 확인과 20초 동안 대기하는 운영자 보류입니다.
-시험 파일은 `SkeletonTest`, `LifecycleTest`, `AdapterTest`, `CommissioningTest`, `SiteSettingsTest`, `JobOrderTest`, `MissionVersionTest`, `SiteTimingsTest`, `FaultIncidentTest`, `RestartRecoveryTest`가 있으며, 도우미 파일로 `E2eStack`, `ExecutionDriver`, `Commissioned`를 사용합니다.
 
-### Playwright 생애주기 시험 단계
+`StationScenarioTest`는 데이터 임무 `StationInspection`(예제 `docs/examples/mission-profile-station-inspection.json`)을 활성화하고 호출 계약 `station-check`를 배포한 뒤 스테이션 `inspection-1`에 작업 둘을 넣어, 두 번째가 `QUEUED`로 기다리고 첫 작업이 로봇 물리 완료만으로는 `RUNNING`에 머물다가 설비 완료 신호를 켜야 `COMPLETED`가 되는 것을 봅니다. `MixedResourceScenarioTest`는 `InspectAsset`에 필수 자원을 등록한 뒤 외부 주문, 호출 계약 호출, 수동 요청, 기존 `POST /api/job-orders` 네 경로가 모두 같은 스테이션 대기열을 지나 차례로 실행되고 외부 주문 재전송이 같은 작업 요청을 돌려주는 것을 봅니다. `ManufacturingScenarioTest`는 스테이션을 쓰지 않습니다. 같은 검사 호출 계약으로 낸 작업 요청 둘이 두 기체에 하나씩 배정되고, 시운전을 마쳤어도 `pick_place`가 없는 기체는 순차 공급(`PrepareSequencedRack`) 후보에서 빠지며, 운영자 보류에 선 순차 공급을 재작업으로 해소하고 끝낸 뒤에도 같은 요청 ID 재전송이 같은 작업 요청·작업 지시·변환 결과를 돌려주는 것을 봅니다. `StationPhysicalStateParityTest`는 스택을 띄우지 않고 스테이션 조정기의 확인 필요 물리 상태 목록(`StationCoordinator.REVIEW_PHYSICAL_STATES`)을 picasso `PhysicalState`와 이름으로 맞댑니다. 운영 서비스 main과 그 시험에는 picasso 미들웨어가 클래스패스에 없어 이 모듈에서 봅니다.
 
-`ui/e2e/lifecycle.spec.ts`의 단일 시험에서 전 생애주기 단계를 다음과 같이 검증합니다.
+`SkeletonTest`는 `ops.flyway_schema_history`의 성공한 버전이 1부터 16까지인지 봅니다.
 
-1. 기체 선언, 퇴역, 퇴역 뒤 보고, 복귀를 확인하고 어댑터 제품, 빌드, 인스턴스를 등록합니다.
-2. 리비전 제출, 시험 요청, 실행기의 `TESTED`, 활성화, 바인딩, 명칭 기록을 거쳐 `humanoid-01` 시운전을 완료합니다. `quadruped-01` 기체는 «기체가 아는 명칭 없음»으로 막힙니다.
-3. 연결 기준 120초의 설정 버전 2를 적용하고 운영자 변경 거부를 확인한 뒤, `stallWindow` 600초인 버전 3과 호스트 반영을 검증합니다.
-4. 운영자 `InspectAsset`을 요청하고 `humanoid-01`만 배정 가능한 상태에서 배정하여 «코드 정의» 실행이 `PHYSICALLY_DONE`으로 종료되는지 확인합니다.
-5. 데이터 정의 초안 저장, 검증, 모의 실행, 활성화를 거쳐 «버전 1 (활성)» 상태로 만듭니다.
-6. `rack_present` 신호를 쓰고 슬롯 하나에 `PrepareSequencedRack` 강제 스킬 실패를 일으켜 `GRASP_FAILED` 인시던트를 발생시킵니다.
-7. 운영자 보류 대기의 실제 20초 기한 동안 엔지니어 판단 버튼이 없음을 확인합니다. 운영자 재작업 선택, 신호 켜기, 실행 종료를 거쳐 «사람이 판단함» 상태를 확인합니다. 보류 버전이 DB에 남기 때문에 이 단계를 시험의 끝 쪽에 둡니다.
-8. S4b 송신 기록에서 «송신 기록의 작업 지시»를 선택하고, 처분 «송신», «재기동 중복» 0행, «그 가운데 재기동 중복 0건»을 확인합니다.
-9. 마지막으로 registry를 중단하고 «모름» 상태를 확인합니다.
-
-해당 시험에는 재기동 단계가 없습니다(시험 주석: «재기동 단계는 통합 시험(RestartRecoveryTest)이 본다»).
+시험 클래스는 14개로, `SkeletonTest`, `LifecycleTest`, `AdapterTest`, `CommissioningTest`, `SiteSettingsTest`, `JobOrderTest`, `MissionVersionTest`, `SiteTimingsTest`, `FaultIncidentTest`, `RestartRecoveryTest`에 `StationScenarioTest`, `MixedResourceScenarioTest`, `ManufacturingScenarioTest`, `StationPhysicalStateParityTest`가 더해졌습니다. 도우미 파일은 그대로 `E2eStack`, `ExecutionDriver`, `Commissioned`입니다. `E2eStack.start(integrationToken = …)`로 외부 주문 API를 켠 스택을 띄웁니다.
 
 ### 입증 근거 통합 시험 메서드
 
-통합 시험 소스 파일 경로는 `e2e/src/test/kotlin/dev/picasso/ops/e2e/<클래스>.kt`이며, 메서드 이름 뒤의 괄호는 `main 443a14c` 기준 행 번호입니다.
+통합 시험 소스 파일 경로는 `e2e/src/test/kotlin/dev/picasso/ops/e2e/<클래스>.kt`이며, 메서드 이름 뒤의 괄호는 `main 511d5bc` 기준 행 번호입니다. 옛 목록의 행 번호는 `511d5bc`에서 다시 대조해 모두 같았습니다.
 
 `LifecycleTest`:
 
@@ -340,16 +482,76 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 - `단계 5 설비 대기 보류를 재작업으로 판단한 뒤 다시 띄우면 대기가 새 기한으로 다시 서고 그 보류 응답은 재기동 중복이며 옛 인시던트와 그 판단은 earlier 에만 있다`(245)
 - `단계 6 재기동 뒤 이전 인스턴스의 인시던트와 판단이 보이고 이전 인스턴스를 실은 판단은 INSTANCE_MISMATCH 로 거부된다`(289)
 
+`SkeletonTest`:
+
+- `ops 스키마는 운영 서비스가 올리고 조작 기록은 비어 있다`(51)
+
+`StationScenarioTest`:
+
+- `shared station serializes two real mission calls and requires fresh equipment completion`(20)
+
+`MixedResourceScenarioTest`:
+
+- `MES operator contract manual and legacy submissions share the same required resource and stable receipts`(24)
+
+`ManufacturingScenarioTest`:
+
+- `shared inspection contract and evidence gated supply preserve upstream identity across rework`(31)
+
+`StationPhysicalStateParityTest`:
+
+- `확인 필요 물리 상태는 정착한 비성공 상태와 운영자 보류와 결과 불명이다`(15)
+
+### Playwright 화면 시험
+
+화면 시험은 `ui/e2e/lifecycle.spec.ts` 와 `ui/e2e/station.spec.ts` 의 시험 하나씩입니다. 기본 설정 `ui/playwright.config.ts` 는 `testMatch` 로 생애주기만 돌고, 생애주기 시험이 끝에서 registry 를 멈추기 때문에 공유 스테이션 시험은 `ui/playwright.station.config.ts` 로 새 스택을 씁니다. CI 는 둘을 차례로 돕니다. 배포본은 먼저 `./gradlew :site:installDist :mission-host:installDist :ops-service:installDist` 로 만듭니다.
+
+```bash
+./gradlew :site:installDist :mission-host:installDist :ops-service:installDist
+cd ui
+npx playwright test
+npx playwright test --config=playwright.station.config.ts
+```
+
+시험을 실행할 때 띄우는 스택은 Mock MES 콜백 수신기(`ui/e2e/mock-mes-callback.mjs`, 포트 8786, 키마다 첫 시도는 503 으로 응답), Postgres(compose 프로젝트 `picasso-ops-e2e`, 시작할 때와 끝날 때 `down -v`), 런처, 재기동 제어가 붙은 실행 호스트(제어 포트 8789), host-link 프록시(`ui/e2e/host-link.mjs`, 프록시 8791, 제어 8790), 외부 주문 토큰과 콜백이 켜지고 프록시를 거쳐 호스트를 부르는 운영 서비스(제어 포트 8788), 화면 preview 4173 입니다. 시험 시간 제한은 600초, 작업자는 1 입니다.
+
+#### 생애주기 시험
+
+`ui/e2e/lifecycle.spec.ts` 의 시험 `화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 registry 를 멈추면 모름을 본다` 는 다음 순서로 검증합니다.
+
+1. 로봇 추가의 도입 준비 안내(새 제조사, 기존 유형)를 확인하고, 기체 선언, `CONFIRMED`, 퇴역, 퇴역 뒤 보고, 복귀, 조작 기록, 어댑터 제품·빌드·인스턴스 등록을 거칩니다.
+2. 리비전 제출, 시험 요청, 실행기의 `TESTED`, 활성화, 바인딩, 명칭 기록으로 `humanoid-01` 시운전을 마칩니다. `quadruped-01` 은 «기체가 아는 명칭 없음»으로 막힙니다.
+3. 연결 기준 120초의 현장 설정 버전 2 와 운영자 변경 거부를 보고, `stallWindow` 600초 버전 3 과 실행 호스트 반영을 봅니다.
+4. 운영자가 작업 지시 폼으로 `InspectAsset` 을 내면 `POST /api/work-requests/manual` 이 202 이고 출처 `ops:manual`, 요청자 `operator/local` 입니다. `humanoid-01` 에 배정되어 «코드 정의» 실행이 `PHYSICALLY_DONE` 으로 끝납니다. «동일 작업 요청 확인»은 새로고침 뒤에도 같은 작업 요청을 돌려주고(`duplicate` true) 실행 목록에는 그 작업 지시가 한 행뿐입니다.
+5. 호출 계약 `asset-check` 를 작성·매핑 미리보기·공개하고 실행 배포 v2 를 적용한 뒤 배정 가능을 확인하고 작업 요청을 냅니다. 응답은 `ACCEPTED` 이고 배포 버전 2, 임무 버전 `CODE` 이며, 같은 요청 확인은 «추가 실행 없음»입니다.
+6. 외부 주문 API: 토큰 없이 401, 새 외부 주문 202(`ACCEPTED`), 같은 외부 주문 재전송 200(같은 작업 요청 id), 같은 키에 다른 입력 409, 빈 입력은 202 에 `REJECTED` 입니다. 상세를 조회하지 않아도 결과 수집이 결과 v1 을 저장하고, Mock MES 콜백은 두 번째 시도에 받습니다. 수신 확인은 토큰 없이 401, 틀린 해시 409, 맞는 해시 200 이고 다시 보내면 같은 응답입니다. 화면에는 «v1 수신 확인됨», 전달 이력 `DELIVERED`, 운영 개요의 «수집 중»이 보입니다.
+7. 호출 계약을 공개 중지하면 그 계약 호출은 202 에 `REJECTED` 입니다. 이어 데이터 정의 초안 저장, 검증, 모의 실행, 활성화로 «버전 1 (활성)» 을 만듭니다.
+8. `rack_present` 신호를 쓰고 슬롯 하나짜리 `PrepareSequencedRack` 에 스킬 실패를 넣어 `GRASP_FAILED` 인시던트를 봅니다.
+9. 운영자 보류 대기의 실제 20초 기한 동안 엔지니어 판단 버튼이 없음을 확인하고, 운영자 재작업, 신호 켜기, 실행 종료를 거쳐 «사람이 판단함» 을 봅니다. 보류 버전이 DB 에 남으므로 이 단계를 뒤쪽에 둡니다.
+10. 송신 기록에서 그 작업 지시의 처분 «송신», «재기동 중복» 0행, «그 가운데 재기동 중복 0건» 을 봅니다.
+11. 새 임무 `LineAssetCheck` 를 화면에서 등록, 초안 저장, 검증, 모의 실행, 활성화하고 호출 계약 `line-asset-check` 에 임무 버전 1 을 배포·공개한 뒤 작업 요청을 내어 `PHYSICALLY_DONE` 까지 봅니다.
+12. 검증 도구의 «제조 시나리오 검증»에서 두 작업 요청을 비교해 «계약 또는 실행 배포가 다릅니다» 를 봅니다.
+13. 결과 불명: host-link 가 실행 호스트의 수락 응답 직후 연결을 끊으면 외부 주문 `MES-RESTART-1` 은 202 에 `IN_DOUBT` 이고 결과 수집은 `UNAVAILABLE` 이 됩니다. 운영자가 현장 확인(`IN_PROGRESS`)을 기록하고, 호스트에서 실행이 `PHYSICALLY_DONE` 이 되어도 결과 v1 은 아직 404 입니다. 운영 서비스를 재기동해도 결과 커서 순번은 그대로이고 재전송은 200 에 같은 작업 요청이며 호스트 제출 수는 1 만 늘어 있습니다. 실행 호스트를 재기동해도 결과 피드는 같습니다. 연결을 되살리면 결과 v1 이 200 이 되고 작업 요청은 `ACCEPTED` 로 올라가며 호스트 제출 수는 여전히 1 만 늘어 있습니다.
+14. 화면이 존재하지 않는 API(404)를 부르지 않았고 주요 API 가 200 을 받았는지 확인합니다.
+15. 마지막으로 registry 를 멈추고 «모름» 과 직전 값 목록을 봅니다.
+
+생애주기 시험은 13단계에서 운영 서비스와 실행 호스트를 재기동합니다. 실행 중인 실행의 복원(같은 태스크로 다시 붙기, 재기동 중복 처분)은 통합 시험 `RestartRecoveryTest` 가 보며, 생애주기 시험의 송신 기록 단계 주석도 그렇게 적고 있습니다.
+
+#### 공유 스테이션 시험
+
+공유 스테이션 시험은 `ui/e2e/station.spec.ts` 의 시험 `공유 스테이션은 설비 준비 후 두 미션을 순차 실행하고 새 완료 근거로 해제한다` 하나를 돕니다. 운영 서비스 API 로 `humanoid-01` 시운전을 마치고 호출 계약 `shared-inspection` 을 공개한 뒤, 화면에서 스테이션 `inspection-1` 과 임무 필수 자원 `InspectAsset → inspection-1` 을 등록합니다. 운영자가 화면에서 스테이션 작업 A 를 내면 `WAITING_READY`(작업 요청 없음)이고, 호출 계약으로 낸 B 는 202 에 스테이션 작업 `QUEUED` 입니다. 준비 신호를 켜면 A 가 `RUNNING`, B 는 `QUEUED` 입니다. A 는 로봇 물리 완료 뒤에도 `RUNNING` 이고 완료 신호를 켜야 `COMPLETED` 가 됩니다. 그 뒤 B 는 `WAITING_READY` 이고 작업 요청은 `WAITING_RESOURCE` 입니다. 완료 신호를 끄면 B 가 `RUNNING`, 물리 완료와 완료 신호로 `COMPLETED` 입니다. 근거 응답의 `schema` 는 `ops.station.evidence/1`, `explanationMayChangeState` 는 false 입니다. 이 시험과 생애주기 시험은 실행할 때마다 `docs/screens/style-preview/` 의 `*-fullstack.png` 를 다시 찍습니다.
+
 ### 스크린숏 촬영
 
-스크린숏 촬영은 CI와 분리된 별도 설정으로 실행합니다.
+촬영은 CI 와 분리된 설정으로 합니다. 스택은 생애주기 시험과 같고 시험 디렉터리만 `ui/screens`(`capture.spec.ts`)입니다.
 
 ```bash
 cd ui && npx playwright test -c playwright.screens.config.ts
 ```
 
-동일한 스택을 기동하여 `docs/screens/img/` 경로의 PNG 파일을 모두 삭제한 뒤 다시 촬영하며, `INDEX.md`를 다시 작성합니다. 이때 동일한 Compose 환경의 `down -v` 수행에 유의합니다.
-촬영 조건은 해상도 1440×900, 배율 1, 밝은 색 테마, `ko-KR` 언어 환경입니다. 전체 65장 가운데 `-mock` 대상이 9장(55~63번)이며, 작업자 수는 1, 제한 시간은 900초입니다. CI 실행은 포함하지 않습니다.
+실행하면 `docs/screens/img/` 의 `NN-*.png` 를 지우고 대표 21장(1440×900 데스크톱 19장, 390px 폭 모바일 2장)을 다시 찍은 뒤 `docs/screens/img/INDEX.md` 를 다시 씁니다. INDEX 에는 실행마다 바뀌는 작업 지시 id, 인스턴스 id, 시각을 자리 표시로 바꿔 적습니다. 찍기 전에 화면에 보여야 할 문구를 단언하고 틀린 상태면 찍지 않고 실패합니다.
+
+조건은 배율 1, 밝은 색 구성, `ko-KR`, 작업자 1, 시험 시간 제한 1,500,000ms 입니다. 대역 응답으로 그린 것은 `14-operations-restart-restored-mock.png` 한 장입니다. PR #24 기록으로 한 번 촬영에 약 7분이 걸렸습니다. Postgres 는 compose 프로젝트 `picasso-ops-e2e` 를 시작과 끝에 `down -v` 하므로 그 프로젝트의 데이터는 남지 않습니다.
 
 ## 단계별 설계 스펙 및 JSON 계약
 
@@ -365,28 +567,39 @@ cd ui && npx playwright test -c playwright.screens.config.ts
 | S4a | `docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design.md` | `docs/superpowers/specs/2026-10-09-s4a-json-contract.md` |
 | S4b | `docs/superpowers/specs/2026-10-09-s4b-restart-recovery-design.md` | `docs/superpowers/specs/2026-10-09-s4b-json-contract.md` |
 
-`docs/superpowers/plans/` 경로에 17개 구현 계획이 있습니다: P1, S1a, S1b, S1c, P2a, P2b, P3, P4, S1d, S2, S3a, S3b, P5, P6, S3c, S4a, S4b.
+`docs/superpowers/specs/`에 설계·JSON 계약 문서 14개, `docs/superpowers/plans/`에 구현 계획 17개(P1, S1a, S1b, S1c, P2a, P2b, P3, P4, S1d, S2, S3a, S3b, P5, P6, S3c, S4a, S4b)가 있습니다. 이 수는 디렉터리의 파일을 세어 얻었습니다.
+
+#18 이후 변경에는 이 디렉터리의 설계 문서가 없고, 구현 기록은 `docs/screens/`의 날짜 붙은 문서에 있습니다.
+
+- [공유 스테이션 오케스트레이션](screens/shared-station-orchestration-2026-10-12.md): 스테이션 상태와 복구
+- [임무 필수 자원](screens/mission-resource-enforcement-2026-10-12.md): 모든 작업 요청 경로의 필수 자원 적용
+- [결과 전달 신뢰성](screens/reliability-implementation-2026-10-11.md): 결과 outbox, 커서, 결과 불명 흐름
+- [상위 결과 버전과 수신 확인](screens/upstream-results-2026-10-11.md): 결과 버전·해시·수신 확인
+- [수동 작업 요청](screens/manual-receipts-2026-10-11.md): 화면의 수동 작업 요청과 요청 ID
+
+이 문서들은 그때의 기록이고, #20~#22의 수정은 이 참고 문서의 «작업 요청과 결과 회신»·«공유 스테이션 조정» 절에 반영했습니다.
 
 ## 용어 풀이
 
-- pump: 실행 호스트가 250ms 고정 지연으로 셀 대역 `GET /cell`을 읽고 `Middleware.pump()`를 호출하는 한 라운드입니다(`MissionHost.kt:793` `PUMP_PERIOD`).
+- pump: 실행 호스트가 250ms 고정 지연으로 셀 대역 `GET /cell`을 읽고 `Middleware.pump()`를 호출하는 한 라운드입니다(`MissionHost.kt:829` `PUMP_PERIOD`).
 - 정착: 실행이 종료 상태에 도달함을 뜻합니다. 일지 이벤트 `SETTLED`는 `PHYSICALLY_DONE`, `UNVERIFIED`, `FAILED`, `ABORTED`에만 기록되며, `PARTIAL`은 제외됩니다.
 - 봉인: 라운드 종료 시 `sealIncidents`로 인시던트를 확정하는 작업입니다. `unresolved`는 봉인 시점에 단위가 OPERATOR_HOLD 또는 IN_DOUBT였는지를 나타내는 칸이며, 봉인 뒤에는 그 값을 유지합니다(picasso `docs/glossary.md` 206행).
 - 근거 등급: E2는 셀 슬롯 관측 근거로 확인된 등급이고, E0은 복원 뒤 앞선 단위 등과 같이 설비 근거가 없는 등급입니다.
 - P/S: P는 picasso 저장소 단계, S는 picasso-ops 단계를 뜻합니다.
 - 인스턴스(`instanceId`): 실행 호스트를 기동할 때마다 새로 생성되는 `Middleware`이며, `exec-N`, `resp-N`, `incident-N` 식별자는 1부터 시작합니다.
+- 작업 요청(`work_request`): 외부 주문, 호출 계약 호출, 화면 수동 요청이 운영 서비스에 남기는 영속 기록입니다. 작업 지시 id는 `JO-<작업 요청 id>`입니다.
+- 스테이션 작업(`station_run`): 공유 스테이션 하나를 차례로 점유하는 단위입니다. 필수 자원 경로에서는 작업 요청과 같은 id입니다.
+- 결과 버전(`work_result`): 작업 요청마다 1부터 붙는 저장 결과입니다. 수신 확인은 버전과 `resultHash`에 묶입니다.
+- 기준선(`result_baseline`): 스테이션 작업이 `RUNNING`에 들어갈 때 적은 최신 결과 버전입니다. 그보다 새 결과만 이번 시도의 근거입니다.
 
 ## 추가 화면 참고
 
 ![코드 정의 InspectAsset 실행](screens/img/12-operations-executions.png)
 
-위 화면은 `32-operations-executions-running.png`로, 코드 정의 `InspectAsset` 실행과 실행 호스트 인스턴스 및 마지막 pump 상태를 보여 줍니다(크기 1408×258, 실제 스택 환경).
+이 그림은 `12-operations-executions.png`로, 운영자가 수동 작업 요청(`InspectAsset`)을 낸 직후의 수동 작업 요청 추적과 실행 목록입니다(실제 스택에서 촬영). 대표 스크린숏은 21장이고 목록과 촬영 조건은 [스크린숏 목록](screens/img/INDEX.md) 링크에 있습니다. 이 문서의 절과 맞닿는 그림 다섯은 다음과 같습니다.
 
-그 밖의 참고 화면 목록은 다음과 같습니다.
-
-- `14-robots-detail-commissioned.png`: 시운전 완료 상세 화면입니다.
-- `29-operations-order-assigned.png`: 배정됨 화면입니다.
-- `49-operations-incident-decided.png`: «사람이 판단함: local» 화면입니다.
-- `50-operations-job-responses-filtered.png`: 재기동 중복 0건 화면입니다.
-- `54-history-overview-populated.png`: 변경 이력 화면입니다.
-- `52-operations-overview-operator.png`: 운영자 개요 화면입니다(1440×3267, 세로 길이가 깁니다).
+- `09-requests-in-doubt.png`: 전송 결과 불명 작업 요청과 현장 확인 기록 폼
+- `10-stations-queue.png`: 스테이션 점유 작업 실행 중과 다음 작업 요청 자원 대기
+- `11-stations-review-required.png`: 단계 기한 초과로 현장 확인 필요
+- `13-operations-incident-hold.png`: 설비 대기 기한 초과로 보류 중인 인시던트와 보류 해소 폼
+- `14-operations-restart-restored-mock.png`: 실행 호스트 재기동 뒤 복원 보고(응답 대역으로 그림)

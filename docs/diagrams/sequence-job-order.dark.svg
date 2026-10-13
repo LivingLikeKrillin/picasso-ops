@@ -1,67 +1,72 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="840" height="620" viewBox="0 0 840 620">
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="792" viewBox="0 0 840 792">
   <defs>
     <marker id="data" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1,1 L8,5 L1,9" fill="none" stroke="#e6e6e6" stroke-width="1.2"/></marker>
     <marker id="obs" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1,1 L8,5 L1,9" fill="none" stroke="#9a9a9a" stroke-width="1.2"/></marker>
     <marker id="cmd" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,1 L9,5 L0,9 Z" fill="#d4654a"/></marker>
   </defs>
   <g font-family="'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', sans-serif" fill="#e6e6e6">
-    <text x="20" y="36" font-size="17" font-weight="700">작업 지시 흐름</text>
-    <text x="20" y="56" font-size="12" fill="#9a9a9a">운영자 작업 지시부터 실행 정착과 작업 응답 기록까지</text>
+    <text x="20" y="36" font-size="17" font-weight="700">외부 주문 처리 시퀀스</text>
+    <text x="20" y="56" font-size="12" fill="#9a9a9a">외부 주문 수신부터 결과 수신 확인까지</text>
     <g stroke="#4a4a4a" stroke-width="1">
-      <path d="M100,116 V556" fill="none"/>
-      <path d="M228,116 V556" fill="none"/>
-      <path d="M356,116 V556" fill="none"/>
-      <path d="M484,116 V556" fill="none"/>
-      <path d="M612,116 V556" fill="none"/>
-      <path d="M740,116 V556" fill="none"/>
+      <path d="M100,116 V256 M100,279 V728" fill="none"/>
+      <path d="M260,116 V256 M260,279 V728" fill="none"/>
+      <path d="M420,116 V256 M420,279 V728" fill="none"/>
+      <path d="M580,116 V256 M580,279 V728" fill="none"/>
+      <path d="M740,116 V728" fill="none"/>
     </g>
-    <rect x="44" y="84" width="112" height="32" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
-    <text x="100" y="105" font-size="12.5" font-weight="700" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ui</text>
-    <rect x="172" y="84" width="112" height="32" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
-    <text x="228" y="105" font-size="12.5" font-weight="700" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops-service</text>
-    <rect x="300" y="84" width="112" height="32" fill="#0d1117" stroke="#4a4a4a" stroke-width="1"/>
-    <text x="356" y="105" font-size="12" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">registry</text>
-    <rect x="428" y="84" width="112" height="32" fill="#0d1117" stroke="#4a4a4a" stroke-width="1"/>
-    <text x="484" y="105" font-size="12" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">Postgres</text>
-    <rect x="556" y="84" width="112" height="32" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
-    <text x="612" y="105" font-size="12.5" font-weight="700" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mission-host</text>
+    <rect x="44" y="84" width="112" height="32" fill="#0d1117" stroke="#4a4a4a" stroke-width="1"/>
+    <text x="100" y="105" font-size="12" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">Mock MES</text>
+    <rect x="204" y="84" width="112" height="32" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
+    <text x="260" y="105" font-size="12.5" font-weight="700" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops-service</text>
+    <rect x="364" y="84" width="112" height="32" fill="#0d1117" stroke="#4a4a4a" stroke-width="1"/>
+    <text x="420" y="105" font-size="12" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">Postgres</text>
+    <rect x="524" y="84" width="112" height="32" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
+    <text x="580" y="105" font-size="12.5" font-weight="700" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mission-host</text>
     <rect x="684" y="84" width="112" height="32" fill="#0d1117" stroke="#4a4a4a" stroke-width="1"/>
     <text x="740" y="105" font-size="12" text-anchor="middle" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mimic</text>
-    <path d="M100,156 H226" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
-    <text x="164" y="149" font-size="10.5" fill="#e6e6e6" text-anchor="middle">1. 배정 가능 판정 요청</text>
-    <path d="M228,192 H354" fill="none" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#obs)"/>
-    <text x="292" y="185" font-size="10.5" fill="#9a9a9a" text-anchor="middle">2. 기체·바인딩 읽기</text>
-    <path d="M228,228 H610" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
-    <text x="292" y="221" font-size="10.5" fill="#e6e6e6" text-anchor="middle">3. 스킬·실행 판정 요청</text>
-    <path d="M100,264 H226" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
-    <text x="164" y="257" font-size="10.5" fill="#e6e6e6" text-anchor="middle">4. 작업 지시 제출</text>
-    <path d="M228,300 H610" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
-    <text x="292" y="293" font-size="10.5" fill="#e6e6e6" text-anchor="middle">5. 배정 가능 후보 제출</text>
-    <path d="M612,336 H486" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
-    <text x="548" y="329" font-size="10.5" fill="#e6e6e6" text-anchor="middle">6. 응답 전 일지 쓰기</text>
-    <path d="M612,372 H230" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
-    <text x="548" y="365" font-size="10.5" fill="#e6e6e6" text-anchor="middle">7. ACCEPTED 반환</text>
-    <path d="M228,408 H482" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
-    <text x="292" y="401" font-size="10.5" fill="#e6e6e6" text-anchor="middle">8. 조작 기록 쓰기</text>
-    <path d="M612,444 H738" fill="none" stroke="#d4654a" stroke-width="2" marker-end="url(#cmd)"/>
-    <text x="676" y="437" font-size="10.5" fill="#d4654a" text-anchor="middle">9. StartTask 보냄</text>
-    <path d="M740,480 H614" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
-    <text x="676" y="473" font-size="10.5" fill="#e6e6e6" text-anchor="middle">10. 갱신 반환</text>
-    <path d="M612,516 H486" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
-    <text x="548" y="509" font-size="10.5" fill="#e6e6e6" text-anchor="middle">11. 정착 작업 응답 쓰기</text>
+    <path d="M100,156 H258" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="180" y="149" font-size="10.5" fill="#e6e6e6" text-anchor="middle">1. 외부 주문 보냄</text>
+    <path d="M260,192 H418" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="340" y="185" font-size="10.5" fill="#e6e6e6" text-anchor="middle">2. RECEIVED 로 커밋함</text>
+    <path d="M260,228 H284 V242 H263" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="292" y="239" font-size="10.5" fill="#e6e6e6">3. 작업 지시로 변환함</text>
+    <path d="M20,278 H820" fill="none" stroke="#4a4a4a" stroke-width="1"/>
+    <text x="24" y="271" font-size="10.5" fill="#9a9a9a">필수 자원은 3번 뒤 WAITING_RESOURCE 커밋, Mock MES 202 반환 후 멈추고 점유·준비 시 재개, 없으면 4번으로 감</text>
+    <path d="M260,328 H418" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="340" y="321" font-size="10.5" fill="#e6e6e6" text-anchor="middle">4. DISPATCHING 상태 씀</text>
+    <path d="M260,364 H578" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="340" y="357" font-size="10.5" fill="#e6e6e6" text-anchor="middle">5. 작업 지시 제출함</text>
+    <path d="M580,400 H422" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="500" y="393" font-size="10.5" fill="#e6e6e6" text-anchor="middle">6. 실행 일지 씀</text>
+    <path d="M580,436 H262" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="500" y="429" font-size="10.5" fill="#e6e6e6" text-anchor="middle">7. ACCEPTED 반환함</text>
+    <path d="M260,472 H102" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="180" y="465" font-size="10.5" fill="#e6e6e6" text-anchor="middle">8. 202 ACCEPTED 반환함</text>
+    <path d="M580,508 H738" fill="none" stroke="#d4654a" stroke-width="2" marker-end="url(#cmd)"/>
+    <text x="660" y="501" font-size="10.5" fill="#d4654a" text-anchor="middle">9. StartTask 보냄</text>
+    <path d="M580,544 H422" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="500" y="537" font-size="10.5" fill="#e6e6e6" text-anchor="middle">10. 결과 outbox 추가함</text>
+    <path d="M260,580 H578" fill="none" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#obs)"/>
+    <text x="340" y="573" font-size="10.5" fill="#9a9a9a" text-anchor="middle">11. 커서 뒤 결과 읽기</text>
+    <path d="M260,616 H418" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="340" y="609" font-size="10.5" fill="#e6e6e6" text-anchor="middle">12. 결과 버전과 커서 씀</text>
+    <path d="M260,652 H102" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="180" y="645" font-size="10.5" fill="#e6e6e6" text-anchor="middle">13. 결과 callback 보냄</text>
+    <path d="M100,688 H258" fill="none" stroke="#e6e6e6" stroke-width="1.2" marker-end="url(#data)"/>
+    <text x="180" y="681" font-size="10.5" fill="#e6e6e6" text-anchor="middle">14. 결과 수신 확인 보냄</text>
     <g font-size="10.5" fill="#9a9a9a">
-      <path d="M20,596 H44" fill="none" stroke="#e6e6e6" stroke-width="1.2"/>
-      <text x="50" y="600">데이터</text>
-      <path d="M105,596 H129" fill="none" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3"/>
-      <text x="135" y="600">관측·읽기</text>
-      <path d="M207,596 H231" fill="none" stroke="#d4654a" stroke-width="2"/>
-      <text x="237" y="600">제어 명령</text>
-      <path d="M306,590 H320 V600 H308" fill="none" stroke="#e6e6e6" stroke-width="1.2"/>
-      <text x="328" y="600">프로세스 안</text>
-      <rect x="418" y="590" width="14" height="10" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
-      <text x="438" y="600">이 저장소</text>
-      <rect x="507" y="590" width="14" height="10" fill="none" stroke="#4a4a4a"/>
-      <text x="527" y="600">대역·외부</text>
+      <path d="M20,768 H44" fill="none" stroke="#e6e6e6" stroke-width="1.2"/>
+      <text x="50" y="772">데이터 흐름</text>
+      <path d="M129,768 H153" fill="none" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3"/>
+      <text x="159" y="772">관측·읽기</text>
+      <path d="M231,768 H255" fill="none" stroke="#d4654a" stroke-width="2"/>
+      <text x="261" y="772">제어 명령</text>
+      <path d="M330,762 H344 V772 H332" fill="none" stroke="#e6e6e6" stroke-width="1.2"/>
+      <text x="352" y="772">자체 내부 처리</text>
+      <rect x="445" y="762" width="14" height="10" fill="#232a3a" stroke="#8fa2cc" stroke-width="1.5"/>
+      <text x="465" y="772">저장소 내부</text>
+      <rect x="544" y="762" width="14" height="10" fill="#0d1117" stroke="#4a4a4a"/>
+      <text x="564" y="772">대역·외부</text>
     </g>
   </g>
 </svg>
