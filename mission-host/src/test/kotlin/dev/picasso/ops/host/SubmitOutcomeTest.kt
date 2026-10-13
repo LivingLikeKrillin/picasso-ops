@@ -15,8 +15,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * 미들웨어 거부를 제출 결과로 옮기는 자리. 실행 호스트의 `assign` 경로는 지금 버전의 picasso 에서 출발 결품과 연쇄 거부를 UNASSIGNED
- * 로 접으므로(MissionHostTest 의 출발 결품 시험) 구조가 실린 REJECTED 는 HTTP 로 만들 수 없다. 그래서 picasso 의 거부 값을 직접 세운다.
+ * 미들웨어 거부와 미배정 사유를 제출 결과로 옮기는 자리. 실행 호스트의 `assign` 경로는 출발 결품과 연쇄 거부를 UNASSIGNED 로 내므로
+ * (MissionHostTest 의 출발 결품 시험) 구조가 실린 REJECTED 는 HTTP 로 만들 수 없고, 미배정의 셀 무응답(`alternatives` null)도 호스트
+ * 셀 대역으로는 만들 수 없다. 그래서 picasso 의 값을 직접 세운다.
  */
 class SubmitOutcomeTest {
 
@@ -46,6 +47,29 @@ class SubmitOutcomeTest {
         val silent = body(SubmitOutcome.rejected(Middleware.Submission.Rejected("출발 자리 비었다"), source, emptyList()))
         assertTrue(silent.has("alternativeLocations") && silent["alternativeLocations"].isNull, silent.toString())
         assertTrue(silent["sourceMissing"].isObject, silent.toString())
+    }
+
+    @Test
+    fun `미배정의 기체별 사유는 출발 결품일 때만 대체 자리와 그 자리를 싣고 널과 빈 목록을 접지 않는다`() {
+        fun refusal(missing: RemedyOutcome.SourceMissing?) = json.readTree(json.writeValueAsString(Refusal.of("humanoid-01", "출발 자리 비었다", missing)))
+
+        val listed = refusal(source.copy(alternatives = listOf("SEQ-IN-03.BIN-B")))
+        assertEquals(listOf("SEQ-IN-03.BIN-B"), listed["alternativeLocations"].map { it.asText() }, listed.toString())
+        assertEquals("SEQ-IN-02.BIN-A", listed["sourceMissing"]["source"].asText())
+        assertEquals("ENGINE-COVER-A", listed["sourceMissing"]["material"].asText())
+        assertTrue(listed["sourceMissing"].has("observed") && listed["sourceMissing"]["observed"].isNull, listed.toString())
+
+        val none = refusal(source.copy(alternatives = emptyList()))
+        assertTrue(none["alternativeLocations"].isArray && none["alternativeLocations"].isEmpty, none.toString())
+
+        // 셀이 답하지 않았다. 빈 목록으로 접지 않고, 출발 결품이라는 것은 sourceMissing 이 말한다.
+        val silent = refusal(source)
+        assertTrue(silent.has("alternativeLocations") && silent["alternativeLocations"].isNull, silent.toString())
+        assertTrue(silent["sourceMissing"].isObject, silent.toString())
+
+        val other = refusal(null)
+        assertTrue(other.has("alternativeLocations") && other["alternativeLocations"].isNull, other.toString())
+        assertTrue(other.has("sourceMissing") && other["sourceMissing"].isNull, other.toString())
     }
 
     @Test

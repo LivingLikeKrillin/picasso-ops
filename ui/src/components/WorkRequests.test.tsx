@@ -114,3 +114,39 @@ it('호스트 미배정은 서버가 바꾼 기체별 사유를 상세 문장으
  expect(await within(detail).findByText('호스트 미배정: humanoid-01: 출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다')).toBeVisible()
  expect(within(detail).queryByRole('region',{name:'거부 사유'})).not.toBeInTheDocument()
 })
+async function unassignedDetail(unassigned:unknown) {
+ window.history.replaceState(null,'','#')
+ const row={...receipt,detail:'호스트 미배정: humanoid-01: 출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다',submission:{outcome:{result:'UNASSIGNED'}}}
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(url.startsWith('/api/work-requests?')?{total:1,requests:[row],offset:0,limit:20}:{receipt:row,hostRead:'OK',execution:null,instanceId:'mw',journalBlocked:false,observedAt:'t2',rejection:null,unassigned}),{status:200})))
+ render(<WorkRequests session={session}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 작업 요청 보기'}))
+ return screen.findByRole('article',{name:'작업 요청 상세'})
+}
+it('호스트 미배정은 상세 문장을 두고 기체별 출발 자리와 대체 위치를 보인다',async()=>{
+ const detail=await unassignedDetail({refusals:[
+  {robotId:'humanoid-01',reason:'출발 자리 비었다',alternativeLocations:['SEQ-IN-03.BIN-B'],sourceMissing:missing},
+  {robotId:'humanoid-02',reason:'출발 자리 비었다',alternativeLocations:[],sourceMissing:{...missing,observed:'ENGINE-COVER-B'}},
+  {robotId:'humanoid-03',reason:'자재 선언과 배정이 어긋난다',alternativeLocations:null,sourceMissing:null}]})
+ expect(await within(detail).findByText('호스트 미배정: humanoid-01: 출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다')).toBeVisible()
+ const shown=within(detail).getByRole('region',{name:'기체별 출발 결품'})
+ const rows=within(shown).getAllByRole('listitem')
+ expect(rows).toHaveLength(2)
+ expect(within(rows[0]).getByText('humanoid-01')).toBeVisible()
+ expect(within(rows[0]).getByText('출발 자리 SEQ-IN-02.BIN-A · 비어 있음')).toBeVisible()
+ expect(within(rows[0]).getByText('대체 위치: SEQ-IN-03.BIN-B')).toBeVisible()
+ expect(within(rows[1]).getByText('출발 자리 SEQ-IN-02.BIN-A · ENGINE-COVER-B 있음')).toBeVisible()
+ expect(within(rows[1]).getByText('대체 위치 없음')).toBeVisible()
+ expect(within(shown).queryByText('humanoid-03')).not.toBeInTheDocument()
+ expect(within(detail).queryByRole('region',{name:'거부 사유'})).not.toBeInTheDocument()
+})
+it('호스트 미배정의 기체별 대체 위치 조회 불가를 대체 위치 없음으로 접지 않는다',async()=>{
+ const detail=await unassignedDetail({refusals:[{robotId:'humanoid-01',reason:'출발 자리 비었다',alternativeLocations:null,sourceMissing:missing}]})
+ const shown=await within(detail).findByRole('region',{name:'기체별 출발 결품'})
+ expect(within(shown).getByText('대체 위치 조회 불가')).toBeVisible()
+ expect(within(shown).queryByText('대체 위치 없음')).not.toBeInTheDocument()
+})
+it('출발 결품이 없는 호스트 미배정은 기체별 출발 결품을 보이지 않는다',async()=>{
+ const detail=await unassignedDetail({refusals:[{robotId:'humanoid-01',reason:'자재 선언과 배정이 어긋난다',alternativeLocations:null,sourceMissing:null}]})
+ expect(await within(detail).findByText('호스트 미배정: humanoid-01: 출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다')).toBeVisible()
+ expect(within(detail).queryByRole('region',{name:'기체별 출발 결품'})).not.toBeInTheDocument()
+ expect(within(detail).queryByText(/대체 위치/)).not.toBeInTheDocument()
+})

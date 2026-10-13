@@ -1,5 +1,5 @@
 import type { Delivered, JobOrderOutcome } from '../api'
-import { SUBMIT_RESULT_LABEL, kindLabel } from '../labels'
+import { SUBMIT_RESULT_LABEL, alternativesLabel, kindLabel, sourceMissingLabel } from '../labels'
 
 interface Props {
   /** 어느 임무의 작업 지시인지. 예: `InspectAsset 작업 지시` */
@@ -81,6 +81,12 @@ export function JobOrderNotice({ what, sent }: Props) {
             {outcome.refusals.map((refusal) => (
               <li key={refusal.robotId}>
                 {refusal.robotId}: {refusal.reason}
+                {refusal.sourceMissing && (
+                  <>
+                    <p>{sourceMissingLabel(refusal.sourceMissing)}</p>
+                    <p>{alternativesLabel(refusal)}</p>
+                  </>
+                )}
               </li>
             ))}
           </ul>

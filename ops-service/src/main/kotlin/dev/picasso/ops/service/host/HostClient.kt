@@ -68,22 +68,35 @@ data class HostEligibilityList(val robots: List<HostEligibility>)
 /** 미들웨어 제출 결과 넷의 이름(S3a JSON 계약 §4). */
 enum class HostSubmitResult { ACCEPTED, IDEMPOTENT, REJECTED, UNASSIGNED }
 
-/** `assign` 이 기체마다 낸 미배정 사유. */
+/**
+ * `assign` 이 기체마다 낸 미배정 사유(S3a JSON 계약 §4).
+ *
+ * 뒤 두 칸은 그 기체가 출발 결품으로 떨어졌을 때만 값이 있고 모양은 [HostSubmitOutcome] 의 같은 이름 칸과 같다. 다른 사유로 떨어진
+ * 기체와 이 칸이 없던 호스트의 본문은 둘 다 `null` 이다.
+ *
+ * @param alternativeLocations 그 자재를 든 다른 자리. 빈 목록(든 자리 없음)과 `null`(답 없음 또는 출발 결품 아님)을 접지 않는다
+ * @param sourceMissing 이 기체가 출발 결품으로 떨어졌으면 그 자리와 관측. 아니면 `null`
+ */
 @JsonIgnoreProperties(ignoreUnknown = true)
-data class HostRefusal(val robotId: String, val reason: String)
+data class HostRefusal(
+    val robotId: String,
+    val reason: String,
+    val alternativeLocations: List<String>? = null,
+    val sourceMissing: HostSourceMissing? = null,
+)
 
 /**
  * `POST /host/job-orders` 의 200 본문(S3a JSON 계약 §4). 결과가 무엇이든 200 이며 결과는 [result] 에 있다.
  *
  * @param executionId·robotId ACCEPTED·IDEMPOTENT 일 때만 있다
  * @param rejectionReason REJECTED 일 때만 있다
- * @param refusals UNASSIGNED 일 때 `assign` 이 기체마다 낸 사유
+ * @param refusals UNASSIGNED 일 때 `assign` 이 기체마다 낸 사유. 출발 결품의 대체 자리와 출발 자리는 기체마다 [HostRefusal] 에 있다
  * @param excluded 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행
  * @param remedy 미들웨어 거부의 조치 탐색 응답(`kind` 가 `FOUND`·`NONE`). 운영 서비스는 해석하지 않고 그대로 옮긴다. 없으면 `null`
  * @param remedyWithheld 조치 시퀀스를 계산했으나 사람이 먼저 진단하도록 보류했다
- * @param alternativeLocations 출발 결품일 때 그 자재를 든 다른 자리. 빈 목록(든 자리 없음)과 `null`(답 없음 또는 출발 결품 아님)을
- *   접지 않는다. 이 칸이 없던 호스트의 본문은 `null` 이다
- * @param sourceMissing 출발 결품 거부이면 그 자리와 관측. 아니면 `null`
+ * @param alternativeLocations 출발 결품 REJECTED 일 때 그 자재를 든 다른 자리. 빈 목록(든 자리 없음)과 `null`(답 없음 또는 출발 결품
+ *   아님)을 접지 않는다. 이 칸이 없던 호스트의 본문과 UNASSIGNED 는 `null` 이다
+ * @param sourceMissing 출발 결품 REJECTED 이면 그 자리와 관측. 아니면 `null`(UNASSIGNED 포함)
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class HostSubmitOutcome(
