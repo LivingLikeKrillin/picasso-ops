@@ -139,6 +139,35 @@ class MissionHostTest {
             assertTrue(rejected.body["executionId"].isNull)
             assertTrue(rejected.body["robotId"].isNull)
             assertTrue("E2" in rejected.body["rejectionReason"].asText(), rejected.body.toString())
+            // 근거 등급 거부는 조치 탐색도 출발 결품도 아니다. 칸은 늘 있고 값이 비었다.
+            assertTrue(rejected.body["remedy"].isNull, rejected.body.toString())
+            assertEquals(false, rejected.body["remedyWithheld"].asBoolean())
+            assertTrue(rejected.body.has("alternativeLocations") && rejected.body["alternativeLocations"].isNull, rejected.body.toString())
+            assertTrue(rejected.body.has("sourceMissing") && rejected.body["sourceMissing"].isNull, rejected.body.toString())
+            assertEquals(0, bench.get("/host/executions")["executions"].size())
+        }
+    }
+
+    /**
+     * 지금 버전의 picasso 에서 `assign` 은 관문 거부를 기체별 사유 문자열로 접는다(`Unassigned`). 그래서 출발 결품은 REJECTED 가 아니라
+     * UNASSIGNED 이고 대체 자리는 구조로 오지 않는다. picasso 가 그 구조를 실어 주면 이 시험이 깨져 미배정 사유의 모양을 다시 정하게 한다.
+     */
+    @Test
+    fun `출발 자리가 비면 지금은 UNASSIGNED 이고 대체 자리는 사유 문장에만 있다`() {
+        HostBench().use { bench ->
+            bench.cellBody = HostBench.STANDARD_CELL.replace(
+                """{"id":"${HostBench.SOURCE}","occupied":true,"material":"${HostBench.MATERIAL}","observedAt":null}""",
+                """{"id":"${HostBench.SOURCE}","occupied":false,"material":null,"observedAt":null},""" +
+                    """{"id":"SEQ-IN-03.BIN-B","occupied":true,"material":"${HostBench.MATERIAL}","observedAt":null}""",
+            )
+            bench.eventually("빈 출발 자리를 읽는다") {
+                bench.get("/host/cell")["cell"]?.get("presentations")?.any { it["id"].asText() == HostBench.SOURCE && !it["occupied"].asBoolean() } == true
+            }
+            val outcome = bench.post("/host/job-orders", request(rack("JO-1", "RACK-204.S01"), "candidates", HUMANOID)).body!!
+            assertEquals("UNASSIGNED", outcome["result"].asText(), outcome.toString())
+            val reason = outcome["refusals"].single()["reason"].asText()
+            assertTrue(reason.startsWith("출발 자리 ${HostBench.SOURCE} 에 ${HostBench.MATERIAL} 이 없다"), reason)
+            assertTrue(outcome["alternativeLocations"].isNull && outcome["sourceMissing"].isNull, outcome.toString())
             assertEquals(0, bench.get("/host/executions")["executions"].size())
         }
     }

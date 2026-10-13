@@ -92,7 +92,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | 순서 | 해시 | 메뉴 글자 | 영역 설명(화면 글자) | 그리는 컴포넌트 |
 |---|---|---|---|---|
 | 1 | `#overview` | «운영 개요» | «작업 요청과 로봇 실행의 현재 관측, 확인이 필요한 작업을 살펴봅니다.» | `OverviewArea`, `CollectorStatus` |
-| 2 | `#requests` | «작업 요청» | «외부 주문과 운영자 요청을 검색하고 작업 요청부터 실행 결과까지 추적합니다.» | `WorkRequests`, `RequestRecovery`, `RequestReview`, `StoredResultSummary` |
+| 2 | `#requests` | «작업 요청» | «외부 주문과 운영자 요청을 검색하고 작업 요청부터 실행 결과까지 추적합니다.» | `WorkRequests`, `RequestRecovery`, `RequestReview`, `RejectionSummary`, `StoredResultSummary` |
 | 3 | `#stations` | «공유 자원» | «공유 스테이션의 점유와 준비 조건, 임무 실행·완료 근거를 조정합니다.» | `StationWorkspace`, `MissionResourceSettings` |
 | 4 | `#operations` | «운영» | «작업의 진행과 완료 근거를 확인하고 필요한 판단을 기록합니다.» | `OperationsArea` |
 | 5 | `#robots` | «로봇» | «기체와 어댑터를 연결하고 운영에 필요한 준비 상태를 확인합니다.» | `RobotsArea` |
@@ -240,10 +240,10 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 |---|---|
 | 한 번도 못 읽음(«모름:» 접두 없음) | «작업 요청 목록을 아직 읽지 못했습니다.», «호출 계약 목록을 아직 읽지 못했습니다.», «자원 요구를 아직 읽지 못했습니다.», «배포 이력을 아직 읽지 못했습니다.», «최근 작업 요청 모름», «수집 상태 모름», «실행 상태 모름 · 관측을 기다립니다.», «판단 대기 상태 모름», 지표 카드 값 «모름» |
 | 읽는 중 | «지원 임무 계약을 조회하고 있습니다.», «필수 자원 확인 중», 버튼 글자 «검증 중…», «등록 중…», «비교 조회 중» |
-| 읽었고 비었음 | «저장된 작업 요청이 없습니다.», «조건에 맞는 작업 요청이 없습니다. 이전 직접 제출 API의 작업은 별도 실행 이력에서 확인합니다.», «등록된 공유 스테이션이 없습니다. 엔지니어 모드에서 현장 신호를 연결하세요.», «등록된 임무 자원 요구가 없습니다.», «저장된 호출 계약이 없습니다. 입력 매핑을 검증하고 첫 버전을 만들어 보세요.» |
+| 읽었고 비었음 | «저장된 작업 요청이 없습니다.», «대체 위치 없음»(거부 사유, 셀이 «든 자리 없음» 이라 답함), «조건에 맞는 작업 요청이 없습니다. 이전 직접 제출 API의 작업은 별도 실행 이력에서 확인합니다.», «등록된 공유 스테이션이 없습니다. 엔지니어 모드에서 현장 신호를 연결하세요.», «등록된 임무 자원 요구가 없습니다.», «저장된 호출 계약이 없습니다. 입력 매핑을 검증하고 첫 버전을 만들어 보세요.» |
 | 직전 값(alert 안 꼬리) | « · 직전 조회 값입니다.», « · 상세는 직전 값입니다.», « · 아래는 직전 값입니다.», « · 표는 직전 값입니다. 조작 전 다시 조회하세요.», « · 목록은 직전 검색 값입니다.» |
 | 직전 값(카드·접기) | 지표 카드 작은 글자 «직전 값 · 재확인 필요», 로봇 도입 준비 «직전 관측입니다. 최신 조회 전에는 현재 준비 완료로 판단하지 마세요.», 작업 요청 상세 접기 «마지막으로 확인한 실행 · 직전 관측» |
-| 칸 하나를 모름 | «확인 안 됨»(작업 요청 상세, 비교 표, 저장 결과 요약), «모름 · 호스트 조회 실패», «현재 실행 확인 안 됨», 옛 영역의 칸 값 «모름» |
+| 칸 하나를 모름 | «확인 안 됨»(작업 요청 상세, 비교 표, 저장 결과 요약), «모름 · 호스트 조회 실패», «현재 실행 확인 안 됨», 옛 영역의 칸 값 «모름», «대체 위치 조회 불가»(거부 사유, 셀이 답하지 않음) |
 
 지금 화면에는 다음 표현이 함께 쓰입니다.
 - «모름: …»
@@ -458,6 +458,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | `FAULT_KIND_LABEL` | SKILL_EXECUTION_FAILED «스킬 실패», CONNECTION «연결 상태» | `labels.ts` |
 | `DISPOSITION_LABEL` | SENT «송신», RESTART_DUPLICATE «재기동 중복(송신 안 함)» | `labels.ts` |
 | `DECISION_LABEL` | CONFIRM_DONE «완료 확인», REWORK «재작업» | `labels.ts` |
+| `REMEDY_CAUSE_LABEL` | NO_CAPABILITY «케이퍼빌리티 없음», DEPTH_LIMIT «탐색 상한 도달»(모르는 값은 코드 그대로) | `labels.ts` |
 | `reviewLabels`(현장 관측) | NOT_CONFIRMED «현장 상태 미확인», NOT_STARTED «현장 미착수 확인», IN_PROGRESS «현장 진행 중 확인», COMPLETED «현장 완료 관측» | `labels.ts` |
 | 작업 요청 상태 | WAITING_RESOURCE «필수 자원·설비 대기», RECEIVED «수신됨», DISPATCHING «제출 처리 중·확인 필요», ACCEPTED «호스트 수락», REJECTED «거부», UNASSIGNED «미배정», IN_DOUBT «전송 결과 불명», 필터 전용 NEEDS_CONFIRMATION «제출 확인 필요 · 전체» | `WorkRequests.tsx` |
 | 작업 요청 출처 | `ops:manual` «운영자 수동», `ops:interface` «호출 계약 · 운영자», 그 밖은 출처 식별자 그대로 | `WorkRequests.tsx` |
@@ -481,6 +482,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 - 확인 결과
 - 이력 결과(SUCCEEDED 등)
 - 결과 전달 상태(DELIVERED 등)
+- 조치 제안 단계의 스킬 이름(skillType), 출발 자리·대체 위치 id(거부 사유 구역)
 
 운영 개요의 «최근 작업 요청» 표와 검증 도구 비교 카드는 작업 요청 상태와 출처도 코드 값 그대로 보입니다(작업 요청 목록은 글자로 풉니다). 시험이 이 코드 글자에 기댑니다.
 
@@ -564,7 +566,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | 목적 | 외부 주문(Mock MES)과 운영자 수동 작업 요청, 호출 계약으로 만든 작업 요청을 한 목록에서 검색하고, 작업 요청부터 실행 결과·외부 결과 수신 확인까지 추적합니다. 작업 요청 수신, 호스트 수락, 물리 완료는 서로 다른 상태로 보입니다. |
 | 누가 | 조회는 두 모드가 합니다. 미배정 재평가와 현장 확인 기록은 운영자가 합니다. |
 | 진입 | 메뉴 2번, 운영 개요의 지표 카드와 최근 작업 요청 링크, 공유 자원의 «작업 요청·실행 결과» 링크, 호출 계약의 «작업 요청·실행 결과 보기», 검증 도구 링크로 진입합니다. 운영 영역 맨 위에도 같은 컴포넌트가 들어갑니다(§3.4.1). |
-| 컴포넌트 | `WorkRequests.tsx`, `RequestRecovery.tsx`, `RequestReview.tsx`, `StoredResultSummary.tsx`, 구역 `section[aria-label=상위 작업 요청]` |
+| 컴포넌트 | `WorkRequests.tsx`, `RequestRecovery.tsx`, `RequestReview.tsx`, `RejectionSummary.tsx`, `StoredResultSummary.tsx`, 구역 `section[aria-label=상위 작업 요청]` |
 | API | GET `/api/work-requests?search=&state=&offset=&limit=20&result=`, GET `/api/work-requests/{receiptId}`(5초), POST `/api/work-requests/{receiptId}/recover` `{requestId, reason, expectedUpdatedAt}`, POST `/api/work-requests/{receiptId}/reviews` `{requestId, observation, reason, expectedUpdatedAt}` |
 
 검색어, 상태, 외부 결과 필터, 쪽 위치, 고른 작업 요청이 `#requests?search=&state=&result=&offset=&receipt=` 에 남습니다. 운영 영역 안에서는 해시가 `#operations` 라 URL 에 남지 않습니다.
@@ -614,7 +616,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 |---|---|---|
 | 1 | 머리 | h3 «작업 요청 상세», 버튼 «작업 요청 상세 닫기» |
 | 2 | 읽기 실패 | alert «${error}», 앞서 읽은 상세가 있으면 « · 상세는 직전 값입니다.» |
-| 3 | 제목 | h4 «${externalOrderId} · ${상태 글자}» 와 서버 detail 문장 |
+| 3 | 제목 | h4 «${externalOrderId} · ${상태 글자}» 와 서버 detail 문장. 상세 응답에 `rejection` 이 있으면(호스트가 거부한 REJECTED) detail 문장 대신 region «거부 사유»(`RejectionSummary.tsx`) 표시. 위에서 아래로: 굵게 «거부 사유» 와 «${reason}»(reason 이 null 이면 «사유 없음»); `sourceMissing` 이 있으면 «출발 자리 ${source} · 비어 있음»(observed null) 또는 «출발 자리 ${source} · ${observed} 있음»; 대체 위치(목록이 있으면 «대체 위치: A, B», 빈 목록이면 «대체 위치 없음», null 이면 `sourceMissing` 이 있을 때만 «대체 위치 조회 불가», 출발 결품이 아니면 줄 없음); 조치(`remedyWithheld` 면 «조치 제안 보류 · 사람이 먼저 진단», `FOUND` 면 «조치 제안 ${n}단계: a → b»(skillType 을 « → » 로 이음), `NONE` 이면 «조치 제안 없음 · ${REMEDY_CAUSE_LABEL}», remedy null 이면 줄 없음). 호스트 미배정은 region 없이 서버가 바꾼 detail 문장(«호스트 미배정: …»)을 그대로 보임 |
 | 4 | 자원 대기(필수 자원이 있을 때, region «작업 요청의 자원 대기») | h4 «필수 자원 ${stationId}», «${state} · ${reason}», «앞선 대기 작업 ${n}건 · 점유 작업 ${owner}»(없으면 «없음»), 링크 «공유 자원에서 점유·복구 확인» |
 | 5 | dl | «출처», «요청자»(payload 의 requestedBy, 없으면 «외부 시스템»), «작업 요청 ID», «내부 작업 ID», «호스트 조회»(«조회됨» 또는 «모름 · 호스트 조회 실패»), «실행 상태»(물리 상태, 없으면 «현재 실행 확인 안 됨»), «기체»(없으면 «확인 안 됨»), «적용 임무 버전»(번호, «코드 정의», «확인 안 됨») |
 | 6 | 일지 차단 | alert «일지 저장 실패로 호스트의 새 명령 진행이 차단되었습니다.» |
@@ -1890,6 +1892,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | region | «상위 작업 요청» | `lifecycle.spec.ts` |
 | region | «외부 결과 수신 확인» | `lifecycle.spec.ts` |
 | region | «저장 결과의 완료 근거» | `WorkRequests.test.tsx`, `lifecycle.spec.ts` |
+| region | «거부 사유» | `WorkRequests.test.tsx` |
 | region | «현장 확인 기록»·«현장 확인 이력» | `lifecycle.spec.ts` |
 | region | «공유 스테이션 운영»·«임무 필수 자원» | `station.spec.ts` |
 | region | «작업 지시»·«수동 작업 요청 추적» | `lifecycle.spec.ts` |

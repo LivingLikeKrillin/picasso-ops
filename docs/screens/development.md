@@ -138,7 +138,7 @@ PR #23은 층 이름 통일입니다.
 
 ## 3. 컴포넌트
 
-`ui/src/components/`의 시험 아닌 `.tsx` 40개는 다음과 같습니다.
+`ui/src/components/`의 시험 아닌 `.tsx` 41개는 다음과 같습니다.
 
 | 파일 | 하는 일 | 영역 |
 |---|---|---|
@@ -173,6 +173,7 @@ PR #23은 층 이름 통일입니다.
 | OverviewArea | 운영 개요 | 운영 개요 |
 | ProfilesSection | 프로파일 리비전 표와 제출 | 로봇 |
 | RegistryBanner | 전체 상태 띠 | 전역 |
+| RejectionSummary | 호스트 거부 사유·출발 자리·대체 위치·조치 제안 요약 | 작업 요청 |
 | RequestRecovery | 미배정 재평가 | 작업 요청 |
 | RequestReview | 현장 확인 기록 | 작업 요청 |
 | RobotDetail | 기체 상세 | 로봇 |
@@ -327,6 +328,7 @@ URL 은 해시만 씁니다. `App.tsx` 가 영역을 읽고 씁니다. `WorkRequ
 전용 시험 파일이 없는 컴포넌트는 영역 시험이 함께 봅니다. 예시는 다음과 같습니다.
 - `CollectorStatus`: `FollowupWorkspace.test.tsx`
 - `StoredResultSummary`: `WorkRequests.test.tsx`
+- `RejectionSummary`: `WorkRequests.test.tsx`
 - `EligibilityTable`: `OperationsArea.test.tsx`, `MissionInterfaces.test.tsx`
 - `InterfaceDeployment`: `FollowupWorkspace.test.tsx`
 

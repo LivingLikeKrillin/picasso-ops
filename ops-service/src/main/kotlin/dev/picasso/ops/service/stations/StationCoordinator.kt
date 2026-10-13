@@ -124,7 +124,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  private fun received(run:StationRun,receipt:StationReceipt) {when {
   receipt.state=="ACCEPTED" -> transition(run,"RUNNING","로봇 수락; 저장 결과와 새 설비 완료 신호를 기다립니다",context=receipt.snapshot)
   receipt.safeToRetry -> transition(run,"WAITING_ROBOT","전송 전 미배정; 가용 기체를 재평가합니다")
-  receipt.state=="REJECTED" -> transition(run,"REJECTED","계약 제출 거부; 자원 해제",release=true)
+  receipt.state=="REJECTED" -> transition(run,"REJECTED",receipt.detail?.takeIf{it.isNotBlank()}?.let{"계약 제출 거부: $it; 자원 해제"} ?: "계약 제출 거부; 자원 해제",release=true)
   else -> transition(run,"REVIEW_REQUIRED","작업 요청 ${receipt.state}; 실행 여부 확인 전 점유 유지")
  }}
  private fun observe(run:StationRun,station:RfStation,signals:StationSignals?,readAt:Instant) {

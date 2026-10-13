@@ -184,6 +184,12 @@ export const DECISION_LABEL: Record<HoldDecision, string> = {
   REWORK: '재작업',
 }
 
+/** 조치 탐색이 대안을 못 찾은 종류(picasso `Remedy.None.Cause`). 「없다」와 「덜 봤다」를 가른다. */
+export const REMEDY_CAUSE_LABEL: Record<string, string> = {
+  NO_CAPABILITY: '케이퍼빌리티 없음',
+  DEPTH_LIMIT: '탐색 상한 도달',
+}
+
 export const reviewLabels:Record<string,string>={NOT_CONFIRMED:'현장 상태 미확인',NOT_STARTED:'현장 미착수 확인',IN_PROGRESS:'현장 진행 중 확인',COMPLETED:'현장 완료 관측'}
 
 /** 공유 스테이션의 작업 번호 검증과 격리 문구. 서버 사유와 같은 낱말을 쓴다. */

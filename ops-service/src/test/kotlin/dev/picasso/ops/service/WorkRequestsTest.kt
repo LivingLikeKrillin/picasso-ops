@@ -490,6 +490,60 @@ class WorkRequestsTest {
  private fun ready(value:Boolean,complete:Boolean=false) {bench.cell=HostCall.Ok(json.readTree("""{"cell":{"signals":[{"name":"ready","kind":"BOOLEAN","safety":false,"value":"$value","observedAt":"${java.time.Instant.now().plusSeconds(1)}"},{"name":"complete","kind":"BOOLEAN","safety":false,"value":"$complete","observedAt":"${java.time.Instant.now().plusSeconds(1)}"}]}}"""))}
  private fun coordinator()=dev.picasso.ops.service.stations.StationCoordinator(jdbc,TransactionTemplate(DataSourceTransactionManager(ds)),dev.picasso.ops.service.stations.OpsStationPort(service,interfaces,bench.host))
  private fun manual(id:UUID=UUID.randomUUID())=service.receiveManual(Actor(Mode.OPERATOR,"kim"),json.readTree("""{"requestId":"$id","form":${JobOrderBench.INSPECT_FORM}}"""))
+ private fun rejectedBy(reason:String,extra:String="")="""{"result":"REJECTED","executionId":null,"robotId":null,"rejectionReason":"$reason","refusals":[],"excluded":[]$extra}"""
+ @Test fun `호스트 거부는 상세를 실제 사유로 바꾸고 구조화된 거부를 제출 기록과 상세 칸에 보존한다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-R$n")
+  val reason="출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다 (설비 관측, 보내지 않았다)"
+  val missing=""","sourceMissing":{"material":"ENGINE-COVER-A","source":"SEQ-IN-02.BIN-A","observed":null}"""
+  // 빈 목록: 그 자재를 든 다른 자리가 없다.
+  bench.answer=HostWrite.Answered(200,rejectedBy(reason,""","remedy":null,"remedyWithheld":false,"alternativeLocations":[]$missing"""))
+  val empty=service.receive("mes",order(1)).receipt
+  assertEquals("REJECTED",empty.state);assertEquals("호스트 제출 거부: $reason",empty.detail)
+  assertTrue(empty.submission!!["outcome"]["alternativeLocations"].let{it.isArray && it.isEmpty},empty.submission.toString())
+  val none=service.detail(empty.receiptId)["rejection"] as WorkRequestRejection
+  assertEquals(reason,none.reason);assertEquals(emptyList(),none.alternativeLocations);assertEquals("SEQ-IN-02.BIN-A",none.sourceMissing!!.source);assertNull(none.sourceMissing.observed)
+  // 널: 셀이 대체 자리 질문에 답하지 않았다. 빈 목록으로 접지 않는다.
+  bench.answer=HostWrite.Answered(200,rejectedBy(reason,""","remedy":null,"remedyWithheld":false,"alternativeLocations":null$missing"""))
+  val silent=service.detail(service.receive("mes",order(2)).receipt.receiptId)
+  assertTrue((silent["receipt"] as Receipt).submission!!["outcome"].let{it.has("alternativeLocations") && it["alternativeLocations"].isNull})
+  val unknown=silent["rejection"] as WorkRequestRejection
+  assertNull(unknown.alternativeLocations);assertNotNull(unknown.sourceMissing)
+  // 대체 자리와 조치 탐색 응답은 그대로 옮긴다.
+  bench.answer=HostWrite.Answered(200,rejectedBy("사전 조건이 어긋난다",""","remedy":{"kind":"NONE","cause":"DEPTH_LIMIT","unmet":[]},"remedyWithheld":true,"alternativeLocations":["SEQ-IN-03.BIN-B"]"""))
+  val listed=service.detail(service.receive("mes",order(3)).receipt.receiptId)["rejection"] as WorkRequestRejection
+  assertEquals(listOf("SEQ-IN-03.BIN-B"),listed.alternativeLocations);assertEquals("NONE",listed.remedy!!["kind"].asText());assertTrue(listed.remedyWithheld);assertNull(listed.sourceMissing)
+  // 새 칸이 없던 호스트 본문도 읽고, 거부가 아닌 접수에는 거부 칸이 없다.
+  bench.answer=HostWrite.Answered(200,rejectedBy("요구 근거 등급 E2"))
+  val old=service.receive("mes",order(4)).receipt;assertEquals("호스트 제출 거부: 요구 근거 등급 E2",old.detail)
+  val plain=service.detail(old.receiptId)["rejection"] as WorkRequestRejection
+  assertNull(plain.alternativeLocations);assertNull(plain.sourceMissing);assertNull(plain.remedy);assertFalse(plain.remedyWithheld)
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val accepted=service.receive("mes",order(5)).receipt;assertEquals("ACCEPTED",accepted.state);assertNull(service.detail(accepted.receiptId)["rejection"])
+  assertEquals("공통 작업 요청 검증 완료",accepted.detail)
+ }
+ @Test fun `호스트 미배정은 상세를 기체별 사유로 바꾸고 제출 기록을 보존한다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-U$n")
+  bench.answer=HostWrite.Answered(200,"""{"result":"UNASSIGNED","executionId":null,"robotId":null,"rejectionReason":null,
+   "refusals":[{"robotId":"humanoid-01","reason":"출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다"}],
+   "excluded":[{"robotId":"quadruped-01","skillFit":"FIT","missingSkills":[],"runningExecutionId":"exec-3","passed":false,"reasons":["도는 실행이 있다: exec-3","실행 일지 저장 실패: 호스트 복구 전 배정 차단"]}]}""")
+  val row=service.receive("mes",order(1)).receipt
+  assertEquals("UNASSIGNED",row.state)
+  assertEquals("호스트 미배정: humanoid-01: 출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다 / quadruped-01: 도는 실행이 있다: exec-3; 실행 일지 저장 실패: 호스트 복구 전 배정 차단",row.detail)
+  assertEquals("UNASSIGNED",row.submission!!["outcome"]["result"].asText());assertEquals(row.detail,(service.detail(row.receiptId)["receipt"] as Receipt).detail)
+  assertNull(service.detail(row.receiptId)["rejection"])
+  bench.answer=HostWrite.Answered(200,"""{"result":"UNASSIGNED","executionId":null,"robotId":null,"rejectionReason":null,"refusals":[],"excluded":[]}""")
+  assertEquals("호스트 미배정: 기체별 사유 없음",service.receive("mes",order(2)).receipt.detail)
+ }
+ @Test fun `호스트가 거부한 스테이션 작업은 실제 거부 사유와 자원 해제를 함께 남긴다`() {
+  resource();ready(true)
+  bench.answer=HostWrite.Answered(200,rejectedBy("요구 근거 등급 E2 은 InspectAsset 의 최고 등급 E0 를 넘는다"))
+  val run=UUID.randomUUID();val c=coordinator()
+  c.enqueue(Actor(Mode.OPERATOR,"kim"),json.readTree("""{"requestId":"$run","stationId":"inspection-1","interfaceId":"asset-check","interfaceVersion":1,"expectedDeploymentVersion":1,"input":${body["input"]}}"""))
+  c.tick();c.tick()
+  val closed=c.get(run);assertEquals("REJECTED",closed.state,closed.reason)
+  assertEquals("계약 제출 거부: 호스트 제출 거부: 요구 근거 등급 E2 은 InspectAsset 의 최고 등급 E0 를 넘는다; 자원 해제",closed.reason)
+  assertNull(c.stations().single().owner);assertEquals(1,bench.submitted.size)
+ }
  @Test fun `상위 주문 계약 호출 수동 직접 제출은 하나의 필수 자원 대기열을 사용한다`() {
   resource();ready(false)
   val mes=service.receive("mes",body)
@@ -730,6 +784,7 @@ class WorkRequestsTest {
   val closed=coordinator().get(run);assertEquals("REJECTED",closed.state)
   val receipt=service.get(closed.receiptId!!)
   assertEquals("REJECTED",receipt.state);assertContains(receipt.detail!!,"배포가 변경");assertNull(receipt.normalizedOrder)
+  assertEquals("계약 제출 거부: ${receipt.detail}; 자원 해제",closed.reason)
   val station=coordinator().stations().single();assertNull(station.owner);assertNull(station.quarantinedBy)
   assertTrue(bench.submitted.isEmpty())
  }

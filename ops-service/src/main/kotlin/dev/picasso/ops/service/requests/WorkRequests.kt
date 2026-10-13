@@ -22,6 +22,23 @@ data class Receipt(val receiptId: UUID, val sourceSystemId: String, val external
  val jobOrderId: String, val state: String, val detail: String?, val payload: JsonNode,
  val normalizedOrder: JsonNode?, val submission: JsonNode?, val receivedAt: String, val updatedAt: String, val lastExecution: JsonNode?, val executionObservedAt: String?, val executionInstanceId: String?, val requiredStationId:String?=null)
 data class ReceiptAccepted(val receipt: Receipt, val duplicate: Boolean)
+/**
+ * The host's REJECTED on a work request. [alternativeLocations] keeps null (no answer, or not a source-missing rejection) apart from
+ * an empty list (no other place holds the material); [sourceMissing] tells the two nulls apart. [remedy] is the host's tagged answer as is.
+ */
+data class WorkRequestRejection(val reason:String?, val remedy:JsonNode?, val remedyWithheld:Boolean,
+ val alternativeLocations:List<String>?, val sourceMissing:dev.picasso.ops.service.host.HostSourceMissing?)
+/** Detail text for a host rejection: the host's own reason, so the stale pre-dispatch line never stands in for it. */
+fun rejectedDetail(outcome:dev.picasso.ops.service.host.HostSubmitOutcome?):String =
+ "호스트 제출 거부: ${outcome?.rejectionReason?.takeIf{it.isNotBlank()} ?: "사유 없음"}".take(2000)
+/**
+ * Detail text for a host UNASSIGNED: per-robot refusals, then robots the host excluded before assign, in the
+ * `id: reason; reason / id: …` form of the pre-dispatch no-eligible line.
+ */
+fun unassignedDetail(outcome:dev.picasso.ops.service.host.HostSubmitOutcome?):String {
+ val robots=outcome?.refusals.orEmpty().map{"${it.robotId}: ${it.reason}"}+outcome?.excluded.orEmpty().map{"${it.robotId}: ${it.reasons.joinToString("; ")}"}
+ return "호스트 미배정: ${robots.joinToString(" / ").ifBlank{"기체별 사유 없음"}}".take(2000)
+}
 
 /** Commit the unique receipt before any host call. Replays never dispatch, including uncertain receipts. */
 class WorkRequests(private val jdbc: JdbcClient, private val interfaces: MissionInterfaces,
@@ -29,6 +46,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  private val transactions: org.springframework.transaction.support.TransactionTemplate,
  private val durableResults:Boolean=false) {
  private val json = ObjectMapper()
+ private val kotlinJson = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
  val resources=dev.picasso.ops.service.stations.MissionResources(jdbc,transactions)
  fun receive(source: String, payload: JsonNode): ReceiptAccepted {
   val external = payload["externalOrderId"]?.takeIf { it.isTextual }?.asText()
@@ -140,8 +158,11 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
       value.result==OperationResult.REJECTED -> "REJECTED"
       else -> "IN_DOUBT"
      }
-     jdbc.sql("UPDATE ops.work_request SET state=:state,submission=CAST(:submission AS JSONB),updated_at=clock_timestamp() WHERE receipt_id=:id")
-      .param("state",state).param("submission",ObjectMapper().findAndRegisterModules().writeValueAsString(value)).param("id",id).update()
+     // A rejection or an unassignment replaces the pre-dispatch detail with the host's own reasons; the structured outcome stays in submission.
+     val detail=when(state){"REJECTED"->rejectedDetail(value.outcome);"UNASSIGNED"->unassignedDetail(value.outcome);else->null}
+     jdbc.sql("UPDATE ops.work_request SET state=:state,submission=CAST(:submission AS JSONB),${if(detail!=null)"detail=:detail," else ""}updated_at=clock_timestamp() WHERE receipt_id=:id")
+      .param("state",state).param("submission",ObjectMapper().findAndRegisterModules().writeValueAsString(value)).param("id",id)
+      .let{if(detail!=null)it.param("detail",detail) else it}.update()
     }
    }
   } catch(e: Exception) { org.slf4j.LoggerFactory.getLogger(WorkRequests::class.java).warn("접수 {} 제출 결과 불명: {}",id,e.javaClass.simpleName); update(id,"IN_DOUBT","제출 결과를 확정할 수 없습니다. 실행 이력을 확인하세요") }
@@ -374,7 +395,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   }
   mapOf("resource" to resources.context(id),"receipt" to receipt,"hostRead" to if(body==null) "UNAVAILABLE" else "OK", "instanceId" to body?.get("instanceId"),
    "execution" to execution,"journalBlocked" to blocked,"observedAt" to observedAt.toString(),
-   "latestResult" to storedResult(id,null),
+   "latestResult" to storedResult(id,null),"rejection" to rejection(receipt),
    "deliveries" to jdbc.sql("SELECT version,state,attempts,last_error,next_attempt_at,delivered_at FROM ops.work_result_delivery WHERE receipt_id=:id ORDER BY version DESC")
     .param("id",id).query {rs,_ -> mapOf("version" to rs.getInt(1),"state" to rs.getString(2),"attempts" to rs.getInt(3),"lastError" to rs.getString(4),"nextAttemptAt" to rs.getString(5),"deliveredAt" to rs.getString(6))}.list(),
    "reviews" to jdbc.sql("SELECT request_id,actor,observation,reason,created_at,context FROM ops.work_request_review WHERE receipt_id=:id ORDER BY created_at,request_id")
@@ -382,6 +403,14 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    "recoveries" to jdbc.sql("SELECT attempt_id,actor,reason,created_at FROM ops.work_request_recovery WHERE receipt_id=:id ORDER BY created_at")
     .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"actor" to rs.getString(2),"reason" to rs.getString(3),"createdAt" to rs.getString(4))}.list())
  }!!
+ /** The host's own REJECTED, typed from the stored submission so the screen never parses the raw record. Other closes have no host rejection. */
+ fun rejection(receipt:Receipt):WorkRequestRejection? {
+  if(receipt.state!="REJECTED")return null
+  val outcome=receipt.submission?.get("outcome")?.takeIf{it.isObject} ?: return null
+  val host=runCatching{kotlinJson.treeToValue(outcome,dev.picasso.ops.service.host.HostSubmitOutcome::class.java)}.getOrNull()
+   ?.takeIf{it.result==dev.picasso.ops.service.host.HostSubmitResult.REJECTED} ?: return null
+  return WorkRequestRejection(host.rejectionReason,host.remedy?.takeUnless{it.isNull},host.remedyWithheld,host.alternativeLocations,host.sourceMissing)
+ }
  /** Capture host response versions, never infer success from a physical state alone. */
  private fun captureResult(receipt:Receipt, instance:String, execution:JsonNode) {
   val response=execution["jobResponse"]?.takeIf { it.isObject } ?: return

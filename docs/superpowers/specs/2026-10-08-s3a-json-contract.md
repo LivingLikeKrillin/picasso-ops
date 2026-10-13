@@ -165,7 +165,11 @@ InspectAsset 예:
   "robotId": "humanoid-01",
   "rejectionReason": null,
   "refusals": [],
-  "excluded": [ {HostEligibility of quadruped-01} ]
+  "excluded": [ {HostEligibility of quadruped-01} ],
+  "remedy": null,
+  "remedyWithheld": false,
+  "alternativeLocations": null,
+  "sourceMissing": null
 }
 ```
 
@@ -173,10 +177,39 @@ InspectAsset 예:
 |---|---|---|---|---|
 | `ACCEPTED` | `Submission.Accepted` | 새 실행 | null | `[]` |
 | `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 그 실행이 끝났고 후보가 판정을 통과해야 `assign` 까지 간다) | 기존 실행과 그 기체 | null | `[]` |
-| `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과, 관문 거부 등) | null | 사유(한국어) | `[]` |
+| `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과 등), 실행 일지 차단 | null | 사유(한국어) | `[]` |
 | `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "..."}]`, `assign` 이 기체마다 낸 관문 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
 
 - `excluded`: 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행(2.2). 결과와 무관하게 늘 있다(없으면 `[]`).
+- `remedy`: 미들웨어 `Rejected.remedy`(조치 탐색 응답). null = 탐색 안 함 또는 보류. `{"kind":"FOUND","steps":[{skillType, requires:[{subject, requires}], expectedHold, onFailureHold}]}` 또는 `{"kind":"NONE","cause":"NO_CAPABILITY"|"DEPTH_LIMIT","unmet":[{subject, required, observed, detail}]}`. 파지·조건 값은 계약 enum 이름(`HOLD_KIND_EMPTY`, `PRECONDITION_SUBJECT_HOLD` 등).
+- `remedyWithheld`: 조치 시퀀스를 계산했으나 사람이 먼저 진단하도록 보류. 참이면 `remedy` 는 null(보류한 단계는 싣지 않음). «대안 없음»(`NONE`)과 다르다.
+- `alternativeLocations`: 출발 결품일 때 그 자재를 든 다른 자리. `[]` = 든 자리 없음, null = 셀이 답하지 않았거나 출발 결품 거부가 아님. 둘을 접지 않는다. 두 null 은 `sourceMissing` 으로 가른다.
+- `sourceMissing`: 출발 결품 거부이면 `{material, source, observed}`(`observed` null = 빈 자리, 아니면 거기 있던 다른 식별 정보, `material` 은 단위가 자재를 지정하지 않았으면 null). 이번 제출로 미들웨어 조치 탐색 기록(`remedySearches()`)에 새로 붙은 `SOURCE_MISSING` 줄에서 옮긴다. 아니면 null.
+- 네 칸은 미들웨어가 거부한 REJECTED 일 때만 값이 있다. ACCEPTED·IDEMPOTENT·UNASSIGNED·일지 차단 REJECTED 는 null·false.
+- 지금 실행 호스트의 `assign` 경로에서 출발 결품은 UNASSIGNED 로 오므로 `sourceMissing`·`alternativeLocations` 가 찬 REJECTED 는 HTTP 로 나오지 않는다. 모양은 `SubmitOutcomeTest` 가 picasso 거부 값을 직접 세워 고정한다.
+
+미들웨어가 출발 결품으로 거부한 REJECTED 의 모양(지금 경로에서는 나오지 않는다):
+
+```json
+{
+  "result": "REJECTED",
+  "executionId": null,
+  "robotId": null,
+  "rejectionReason": "출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다 (설비 관측, 보내지 않았다)",
+  "refusals": [],
+  "excluded": [],
+  "remedy": null,
+  "remedyWithheld": false,
+  "alternativeLocations": ["SEQ-IN-03.BIN-B"],
+  "sourceMissing": {"material": "ENGINE-COVER-A", "source": "SEQ-IN-02.BIN-A", "observed": null}
+}
+```
+
+```json
+{"kind": "FOUND", "steps": [{"skillType": "release", "requires": [{"subject": "PRECONDITION_SUBJECT_HOLD", "requires": "HOLD_KIND_HOLDING"}], "expectedHold": "HOLD_KIND_EMPTY", "onFailureHold": "HOLD_KIND_HOLDING"}]}
+{"kind": "NONE", "cause": "DEPTH_LIMIT", "unmet": [{"subject": "PRECONDITION_SUBJECT_HOLD", "required": "HOLD_KIND_EMPTY", "observed": "HOLD_KIND_HOLDING", "detail": "든 채다"}]}
+```
+
 - 같은 `jobOrderId` 를 그 실행이 도는 중에 다시 내면, 그 기체가 `runningExecutionId` 로 빠져 UNASSIGNED 다.
 
 ## 5. `GET /host/executions`
@@ -395,7 +428,11 @@ InspectAsset 예:
     "robotId": "humanoid-01",
     "rejectionReason": null,
     "refusals": [],
-    "excluded": []
+    "excluded": [],
+    "remedy": null,
+    "remedyWithheld": false,
+    "alternativeLocations": null,
+    "sourceMissing": null
   }
 }
 ```
@@ -407,7 +444,7 @@ InspectAsset 예:
 |---|---|---|---|
 | 200 `ACCEPTED`·`IDEMPOTENT` | `SUCCEEDED` | null | 호스트 본문(4절) |
 | 200 `REJECTED`·`UNASSIGNED` | `REJECTED` | null | 호스트 본문(4절) |
-| 4xx(`{error, detail}`) | `REJECTED` | null | 운영 서비스가 옮긴 모양: `result: "REJECTED"`, `rejectionReason: "실행 호스트가 거부했다(HTTP 400): <error>: <detail>"`, 나머지 null·`[]`. 폼을 먼저 검사하므로 정상 흐름에서는 나오지 않는다 |
+| 4xx(`{error, detail}`) | `REJECTED` | null | 운영 서비스가 옮긴 모양: `result: "REJECTED"`, `rejectionReason: "실행 호스트가 거부했다(HTTP 400): <error>: <detail>"`, 나머지 null·`[]`·`remedyWithheld` false(`remedy`·`alternativeLocations`·`sourceMissing` 은 null). 폼을 먼저 검사하므로 정상 흐름에서는 나오지 않는다. 운영 서비스 `HostSubmitOutcome` 은 새 네 칸이 없던 호스트 본문도 읽는다(없으면 null·false) |
 | 5xx, 연결 실패, 시간 초과, 200 인데 본문을 못 읽음 | `NO_RESPONSE` | 재조회에서 그 작업 지시 id 의 실행이 있으면 `CONFIRMED_APPLIED`, 없으면 `CONFIRMED_NOT_APPLIED`, 재조회도 못 읽으면 null | null |
 
 - 재조회는 1초 뒤 `GET /host/executions` 한 번이다. 그래서 `NO_RESPONSE` 응답은 1초 남짓 늦게 온다(시간 초과면 5초에 1초를 더한다).

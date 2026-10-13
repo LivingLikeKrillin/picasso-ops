@@ -1,7 +1,12 @@
 package dev.picasso.ops.host
 
+import com.fasterxml.jackson.annotation.JsonSubTypes
+import com.fasterxml.jackson.annotation.JsonTypeInfo
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import dev.picasso.capability.PreconditionViolation
+import dev.picasso.capability.Remedy
+import dev.picasso.capability.RemedyStep
 import dev.picasso.contracts.v1.TaskState
 import dev.picasso.middleware.ActiveMission
 import dev.picasso.middleware.Approver
@@ -13,6 +18,7 @@ import dev.picasso.middleware.Middleware
 import dev.picasso.middleware.OperatorDecision
 import dev.picasso.middleware.PhysicalState
 import dev.picasso.middleware.PrepareSequencedRack
+import dev.picasso.middleware.RemedyOutcome
 import dev.picasso.middleware.Route
 import dev.picasso.middleware.ResolveOutcome
 import dev.picasso.middleware.RobotPort
@@ -75,10 +81,20 @@ data class Refusal(val robotId: String, val reason: String)
 /**
  * 제출의 결과.
  *
+ * 뒤 네 칸([remedy]·[remedyWithheld]·[alternativeLocations]·[sourceMissing])은 미들웨어 `Submission.Rejected` 의 나머지 칸이다.
+ * 미들웨어가 거부한 REJECTED 일 때만 값이 있고 그 밖에는 `null`·`false` 다. 앞 여섯 칸의 모양은 그대로다.
+ *
  * @param executionId·robotId ACCEPTED·IDEMPOTENT 일 때만 있다.
  * @param rejectionReason REJECTED 일 때만 있다.
  * @param refusals UNASSIGNED 일 때 `assign` 이 기체마다 낸 사유. 호스트가 먼저 뺀 기체는 여기 없고 [excluded] 에 있다.
  * @param excluded 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체와 그 판정.
+ * @param remedy 깨진 전제를 채우는 조치 탐색의 응답. `FOUND` 는 단계가 있고 `NONE` 은 못 찾은 종류와 못 채운 조건이 있다.
+ *   탐색하지 않았으면 `null` 이다. 보류했으면 [remedyWithheld] 가 참이고 이것은 `null` 이다(보류한 단계는 싣지 않는다).
+ * @param remedyWithheld 조치 시퀀스를 계산했으나 사람이 먼저 진단하도록 보류했다. «대안 없음» 과 다르다.
+ * @param alternativeLocations 출발 자리가 비었을 때 그 자재를 든 다른 자리. 빈 목록은 «든 자리가 없다» 는 응답이고 `null` 은 셀이
+ *   응답하지 않았거나 출발 결품 거부가 아니다. 미들웨어가 둘을 가르지 않으므로 [sourceMissing] 으로 가른다.
+ * @param sourceMissing 이 거부가 출발 결품이면 그 자리와 관측. 이번 제출로 미들웨어 조치 탐색 기록에 적힌 `SOURCE_MISSING` 에서
+ *   옮긴다. 아니면 `null` 이다.
  */
 data class SubmitOutcome(
     val result: SubmitResult,
@@ -87,7 +103,71 @@ data class SubmitOutcome(
     val rejectionReason: String?,
     val refusals: List<Refusal>,
     val excluded: List<HostEligibility>,
-)
+    val remedy: RemedyView? = null,
+    val remedyWithheld: Boolean = false,
+    val alternativeLocations: List<String>? = null,
+    val sourceMissing: SourceMissingView? = null,
+) {
+    companion object {
+        /**
+         * 미들웨어 거부를 옮긴다. [noted] 는 이 제출로 조치 탐색 기록에 새로 적힌 응답이다. 거기서는 출발 결품 하위 범주만 읽는다.
+         * 대체 자리 목록은 [rejected] 의 값을 그대로 쓴다. `null` 과 빈 목록을 접지 않는다.
+         */
+        fun rejected(rejected: Middleware.Submission.Rejected, noted: RemedyOutcome?, excluded: List<HostEligibility>) = SubmitOutcome(
+            SubmitResult.REJECTED, null, null, rejected.reason, emptyList(), excluded,
+            remedy = rejected.remedy?.let(RemedyView::of),
+            remedyWithheld = rejected.remedyWithheld,
+            alternativeLocations = rejected.alternativeLocations,
+            sourceMissing = (noted as? RemedyOutcome.SourceMissing)?.let { SourceMissingView(it.material, it.source, it.observed) },
+        )
+    }
+}
+
+/**
+ * 조치 탐색의 응답(picasso `Remedy`). `kind` 가 하위 범주이고 나머지는 그 하위 범주의 칸이다. 단계와 조건의 칸 이름은 picasso 조치
+ * 탐색 기록 내보내기(`FOUND`·`NONE` 줄)와 같다.
+ */
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "kind")
+@JsonSubTypes(JsonSubTypes.Type(RemedyView.Found::class, name = "FOUND"), JsonSubTypes.Type(RemedyView.None::class, name = "NONE"))
+sealed interface RemedyView {
+    /** 이 단계들을 하면 그 스킬을 보낼 수 있다. 승인은 미들웨어의 제안 승인으로만 한다. */
+    data class Found(val steps: List<RemedyStepView>) : RemedyView
+
+    /** 못 찾았다. [cause] 는 `NO_CAPABILITY`(이 기체로는 없다)·`DEPTH_LIMIT`(상한 안에서 못 찾았다)다. */
+    data class None(val cause: String, val unmet: List<UnmetView>) : RemedyView
+
+    companion object {
+        fun of(remedy: Remedy): RemedyView = when (remedy) {
+            is Remedy.Found -> Found(remedy.steps.map(RemedyStepView::of))
+            is Remedy.None -> None(remedy.cause.name, remedy.unmet.map(UnmetView::of))
+        }
+    }
+}
+
+/** 조치 시퀀스의 단계 하나. 파지 값은 계약 `HoldKind` 의 이름이다. */
+data class RemedyStepView(val skillType: String, val requires: List<RequiredHoldView>, val expectedHold: String, val onFailureHold: String) {
+    companion object {
+        fun of(step: RemedyStep) = RemedyStepView(
+            step.skillType, step.requires.map { RequiredHoldView(it.subject.name, it.requires.name) }, step.expectedHold.name, step.onFailureHold.name,
+        )
+    }
+}
+
+/** 단계의 전제 하나(계약 `Precondition`). */
+data class RequiredHoldView(val subject: String, val requires: String)
+
+/** 끝내 못 채운 조건 하나(picasso `PreconditionViolation`). */
+data class UnmetView(val subject: String, val required: String, val observed: String, val detail: String) {
+    companion object {
+        fun of(v: PreconditionViolation) = UnmetView(v.subject.name, v.required.name, v.observed.name, v.detail)
+    }
+}
+
+/**
+ * 출발 결품 거부의 자리(picasso `RemedyOutcome.SourceMissing` 의 앞 세 칸). [observed] 가 `null` 이면 빈 자리이고 아니면 거기 있던
+ * 다른 식별 정보다. [material] 은 단위가 자재를 지정하지 않았으면 `null` 이다. 대체 자리는 [SubmitOutcome.alternativeLocations] 에 있다.
+ */
+data class SourceMissingView(val material: String?, val source: String, val observed: String?)
 
 /** 실행의 단위 하나. [reached] 는 단위가 이른 근거 등급이다. */
 data class UnitView(val unitId: String, val skillType: String, val state: String, val reached: String)
@@ -475,6 +555,7 @@ class MissionHost(
         val judged = candidates.distinct().map { judge(order, it, applied) }
         val excluded = judged.filter { !it.passed }
         val existed = middleware.executions().any { it.order.jobOrderId == order.jobOrderId }
+        val searched = middleware.remedySearches().size
         when (val submission = middleware.assign(order, judged.filter { it.passed }.map { it.robotId })) {
             is Middleware.Submission.Accepted -> {
                 if (!existed) journal(submission.execution)
@@ -485,8 +566,11 @@ class MissionHost(
             is Middleware.Submission.Idempotent -> SubmitOutcome(
                 SubmitResult.IDEMPOTENT, submission.execution.executionId, submission.execution.robotId, null, emptyList(), excluded,
             )
-            is Middleware.Submission.Rejected -> SubmitOutcome(
-                SubmitResult.REJECTED, null, null, submission.reason, emptyList(), excluded,
+            // 같은 잠금 안이라 이번 assign 뒤에 조치 탐색 기록에 붙은 줄은 이 제출의 것이다. 한 번의 작업 수락은 많아야 한 줄을 남긴다.
+            is Middleware.Submission.Rejected -> SubmitOutcome.rejected(
+                submission,
+                middleware.remedySearches().drop(searched).lastOrNull { it.jobOrderId == order.jobOrderId }?.outcome,
+                excluded,
             )
             is Unassigned -> SubmitOutcome(
                 SubmitResult.UNASSIGNED, null, null, null,

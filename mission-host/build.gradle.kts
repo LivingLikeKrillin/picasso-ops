@@ -14,6 +14,8 @@ dependencies {
     implementation("dev.picasso:picasso")
     // picasso 가 client 를 implementation 으로 들므로 ClientRobotPort 에 넘길 PicassoClient 를 직접 의존한다.
     implementation("dev.picasso:client")
+    // 미들웨어 거부의 조치 탐색 응답(`Remedy`)이 capability 타입이고 picasso 가 그것을 implementation 으로 든다. 제출 결과로 옮기려고 직접 의존한다.
+    implementation("dev.picasso:capability")
     // 모의 실행이 프로세스 안에 별도 mimic 과 가상 시계를 띄운다(S3b 스펙 §6.4). 하네스가 in-process 로 세우고 mimic 은 그 안에서 돈다.
     implementation("dev.picasso:harness")
     implementation("dev.picasso:mimic")
