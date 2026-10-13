@@ -143,6 +143,31 @@ class FaultIncidentTest {
         )
         val request = json.readTree(logged["request"].asText())
         assertEquals("SKILL_EXECUTION_FAILED" to true, request["kind"].asText() to request["state"].isNull, "$logged")
+
+        // 잔여 파지(P0-b2). pick_place 가 든 채로 FAILED 에 정착했으므로 실행 호스트가 표시를 세우고 humanoid-01 을 배정에서 뺀다.
+        val hold = awaitResidualHold()
+        assertEquals(
+            listOf(HUMANOID, jobOrderId, executionId, "RACK-204.S01"),
+            listOf("robotId", "jobOrderId", "executionId", "unitId").map { hold[it].asText() },
+            "$hold",
+        )
+        val excluded = humanoidEligibility()
+        assertEquals(false, excluded["eligible"].asBoolean(), "$excluded")
+        assertTrue(excluded["reasons"].any { it.asText() == "잔여 파지 확인 필요: $jobOrderId RACK-204.S01" }, "$excluded")
+
+        // 운영자가 현장에서 빈손을 확인해 표시를 푼다. 그 뒤 단계의 작업 지시가 humanoid-01 에 배정된다.
+        val markerId = hold["markerId"].asLong()
+        val cleared = stack.send("POST", "/api/robots/$HUMANOID/residual-holds/$markerId/clear", "operator", body = """{"reason":"현장 빈손 확인"}""")
+        assertEquals(200 to "SUCCEEDED", cleared.status to cleared.body!!["result"].asText(), "${cleared.body}")
+        assertEquals(0, stack.get("/api/robots/residual-holds")["holds"].size())
+        val clearedRow = operations("CONFIRM_ROBOT_EMPTY").single()
+        assertEquals(
+            listOf("OPERATOR", "kim", "$HUMANOID/$markerId", "SUCCEEDED", "현장 빈손 확인"),
+            listOf("mode", "user", "target", "result", "reason").map { clearedRow[it].asText() },
+            "$clearedRow",
+        )
+        val assignable = humanoidEligibility()
+        assertEquals(true, assignable["eligible"].asBoolean(), "$assignable")
     }
 
     @Test
@@ -381,6 +406,23 @@ class FaultIncidentTest {
         }
         return seen
     }
+
+    /** 미해소 잔여 파지 표시가 하나 설 때까지 실제 시간으로 기다린다. 표시는 정착을 적는 트랜잭션이 커밋된 뒤에 보인다. */
+    private fun awaitResidualHold(): JsonNode {
+        val until = Instant.now().plus(LINK_WAIT)
+        var holds = stack.get("/api/robots/residual-holds")["holds"]
+        while (holds.size() == 0) {
+            check(Instant.now().isBefore(until)) { "${LINK_WAIT.seconds}초 안에 잔여 파지 표시가 서지 않았다" }
+            Thread.sleep(100)
+            holds = stack.get("/api/robots/residual-holds")["holds"]
+        }
+        return holds.single()
+    }
+
+    /** 다음 슬롯(S02) 작업 지시에 대한 humanoid-01 의 배정 가능 행. */
+    private fun humanoidEligibility(): JsonNode =
+        stack.send("POST", "/api/job-orders/eligibility", mode = null, body = rack("RACK-204.S02")).body!!["robots"]
+            .single { it["robotId"].asText() == HUMANOID }
 
     /** 대기 단위가 운영자 보류가 될 때까지 [ExecutionDriver.STEP] 씩 민다. 기한 20초면 다섯 번 안이다. */
     private fun pushUntilHeld(executionId: String): JsonNode {

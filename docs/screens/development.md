@@ -338,7 +338,7 @@ URL 은 해시만 씁니다. `App.tsx` 가 영역을 읽고 씁니다. `WorkRequ
 
 ### 5.2 Playwright
 
-`ui/e2e/lifecycle.spec.ts` 는 657행이며 시험 하나입니다. 설정은 `ui/playwright.config.ts` 이며 `testMatch` 로 이 파일만 지정합니다. 스택 구성은 다음과 같습니다.
+`ui/e2e/lifecycle.spec.ts` 는 685행이며 시험 하나입니다. 설정은 `ui/playwright.config.ts` 이며 `testMatch` 로 이 파일만 지정합니다. 스택 구성은 다음과 같습니다.
 - Mock MES 콜백(`e2e/mock-mes-callback.mjs`, 8786)
 - Postgres(`e2e/postgres.mjs`)
 - 런처(`run-dist.mjs site`)

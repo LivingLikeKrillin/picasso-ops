@@ -1928,7 +1928,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | region | «작업 지시»·«수동 작업 요청 추적» | `lifecycle.spec.ts` |
 | region | «실행» | `ExecutionRestore.test.tsx`, `OperationsArea.test.tsx` |
 | region | «재기동 복원 보고» | `ExecutionRestore.test.tsx` |
-| region | «잔여 파지 확인» | `ExecutionControls.test.tsx` |
+| region | «잔여 파지 확인» | `ExecutionControls.test.tsx`, `lifecycle.spec.ts` |
 | region | «인시던트»·«이전 인스턴스»·«관측» | `IncidentSection.test.tsx` |
 | region | «인시던트 상세»·«사람의 판단» | `IncidentSection.test.tsx`, `lifecycle.spec.ts` |
 | region | «셀 대역» | `OperationsArea.test.tsx` |
@@ -1956,7 +1956,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 |---|---|---|
 | table | «기체별 배정 가능» | `MissionInterfaces.test.tsx`, `OperationsArea.test.tsx`, `lifecycle.spec.ts` |
 | table | «실행 목록» | `ExecutionRestore.test.tsx`, `OperationsArea.test.tsx`, `ExecutionControls.test.tsx`, `lifecycle.spec.ts` |
-| table | «미해소 잔여 파지» | `ExecutionControls.test.tsx` |
+| table | «미해소 잔여 파지» | `ExecutionControls.test.tsx`, `lifecycle.spec.ts` |
 | table | «인시던트 목록»·«이전 인스턴스 인시던트 목록»·«근거 윈도우» | `IncidentSection.test.tsx` |
 | table | «셀 대역 신호»·«셀 대역 자리» | `OperationsArea.test.tsx` |
 | table | «송신 기록 목록» | `JobResponseLog.test.tsx`, `lifecycle.spec.ts` |
@@ -2051,10 +2051,10 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | status | «exec-1(JO-1) 실행 취소: 취소를 걸었습니다. 실행 호스트의 다음 pump 에서 중단(ABORTED)으로 정착합니다» | `ExecutionControls.test.tsx` |
 | status 안 | «실행 호스트가 재기동해 인스턴스가 다름» | `ExecutionControls.test.tsx` |
 | status 안 | «이미 해소한 잔여 파지 표시» | `ExecutionControls.test.tsx` |
-| status 안 | «빈손 확인이 기록되었습니다. 그 기체는 다음 배정 판정부터 다시 판정됩니다» | `ExecutionControls.test.tsx` |
+| status 안 | «빈손 확인이 기록되었습니다. 그 기체는 다음 배정 판정부터 다시 판정됩니다» | `ExecutionControls.test.tsx`, `lifecycle.spec.ts` |
 | 문장 | «실행 취소는 운영자 모드에서 합니다» | `ExecutionControls.test.tsx` |
 | 문장 | «기체 빈손 확인은 운영자 모드에서 합니다» | `ExecutionControls.test.tsx` |
-| 문장 | «미해소 잔여 파지 표시가 없습니다» | `ExecutionControls.test.tsx` |
+| 문장 | «미해소 잔여 파지 표시가 없습니다» | `ExecutionControls.test.tsx`, `lifecycle.spec.ts` |
 | 문장 | «이름 없음» | `ExecutionControls.test.tsx` |
 | 정규식 | «^모름: 잔여 파지 표시를 아직 읽지 못했습니다 \(실행 호스트가 답하지 않는다» | `ExecutionControls.test.tsx` |
 
