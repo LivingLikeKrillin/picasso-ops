@@ -49,7 +49,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | 구성 요소 | 역할 | 포트·바인딩 | 저장 |
 |---|---|---|---|
 | `ui/` | React·Vite·TypeScript 관리 화면, 운영 서비스만 호출, 메뉴 아홉(운영 개요, 작업 요청, 공유 자원, 운영, 로봇, 임무, 현장 설정, 이력, 검증 도구) | dev 5173, Playwright preview 4173 | 없음 |
-| `ops-service/` | 화면의 유일한 백엔드, 외부 주문 API(`/integration/v1/...`), 작업 요청 영속 저장·결과 버전·수신 확인·콜백 전달, 공유 스테이션 조정, registry·실행 호스트 REST 호출, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백(`server.address=127.0.0.1`) | 스키마 `ops`, 마이그레이션 V1~V18, 표 16개와 뷰 1개 |
+| `ops-service/` | 화면의 유일한 백엔드, 외부 주문 API(`/integration/v1/...`), 작업 요청 영속 저장·결과 버전·수신 확인·콜백 전달, 공유 스테이션 조정, registry·실행 호스트 REST 호출, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백(`server.address=127.0.0.1`) | 스키마 `ops`, 마이그레이션 V1~V19, 표 17개와 뷰 1개 |
 | `mission-host/` | picasso 미들웨어로 작업 지시 실행, 임무 정의 검증·모의 실행·활성화, 250ms 마다 셀 대역 읽기·pump, 내보낸 작업 응답을 결과 outbox 에 기록하고 `GET /host/result-events` 로 내줌, 호출자는 운영 서비스뿐 | `HOST_PORT=8785`, 루프백 | 스키마 `mission`, 마이그레이션 V1~V5, 표 13개 |
 | `site/` | registry·mimic·`site-runner`·셀 대역을 한 프로세스에서 구동 | 아래 세부 구성 요소 참조 | registry 마이그레이션을 런처가 실행 |
 | `registry` | 기체 원장, 어댑터·리비전·바인딩·명칭·생존 보고 | `REGISTRY_PORT=8781`, 루프백 | Postgres public |
@@ -70,6 +70,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - V14~V16: `rf_station`(공유 스테이션, 점유 작업 칸 `owner`), `station_run`(스테이션 작업), `station_event`(스테이션 작업 상태 이력, 변경·삭제·통째 비우기 금지), `mission_resource_requirement`(임무 필수 자원, 변경·삭제·통째 비우기 금지), V15 가 `work_request.required_station_id` 와 상태 `WAITING_RESOURCE` 를, V16 이 `station_run.result_baseline`·`baseline_review_only` 를 더함
 - V17: 표를 새로 만들지 않고 `rf_station` 에 칸 넷(`job_signal`, `job_echo_signal`, `quarantined_by`, `quarantined_at`)과 제약 둘(`station_job_pair`, `station_quarantine_pair`, `job_signal`·`job_echo_signal` 은 각각 유일)을 더함
 - V18: `work_request_source_confirmation`(출발 자리 확인)을 만듦. 덧붙이기만 하고 행 트리거로 UPDATE·DELETE 를 막음. `confirmer_kind='PERSON'` 이며 `context` 에 사람이 확인한 출발 미관측 답(호스트 답)을 남김
+- V19: `work_request_supersession`(상위 시스템 대체 연결)을 만듦. `original_receipt_id` 가 기본 키(앞선 작업 요청 하나에 대체 하나), `replacement_receipt_id` 는 유일, 칸 `source_system_id`, `original_state`(`REJECTED`·`UNASSIGNED` 만), `created_at`. 두 id 가 같으면 거부함. 행 트리거(`ops.protect_interface_deployment`)로 UPDATE·DELETE 를 막음
 
 `mission` 스키마의 표는 다음과 같습니다.
 
@@ -155,8 +156,8 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | `WAITING_RESOURCE` | 임무 필수 자원의 스테이션 대기열에 들어간 상태입니다. 스테이션 작업(`station_run`, 상태 `QUEUED`)과 같은 트랜잭션에서 기록합니다. | 스테이션이 준비되면 `DISPATCHING`, 스테이션 작업이 `TIMED_OUT`·`CANCELLED`·`REJECTED` 가 되거나 운영자가 현장 확인 후 해제(`CONFIRM_CLEAR`)하면 `REJECTED` 입니다. |
 | `DISPATCHING` | 실행 호스트에 제출하는 중입니다. 이 뒤의 중단은 보냈는지 알 수 없습니다. | 제출 결과에 따라 `ACCEPTED`·`UNASSIGNED`·`REJECTED`·`IN_DOUBT` 입니다. 제출 직전 자원 권한 확인이 거부되면 `REJECTED`(호스트 호출 전이라 보내지 않은 것이 확실)입니다. 현장 확인 후 해제되면 `IN_DOUBT` 입니다. 오래 멈추면 정리가 `IN_DOUBT` 로 닫습니다. |
 | `ACCEPTED` | 실행 호스트가 작업 지시를 받은 상태입니다(제출 응답이나 관측으로 확인). `ACCEPTED`·`IN_DOUBT` 는 `detail` 을 바꾸지 않아 제출 전 문장(«공통 작업 요청 검증 완료», «필수 자원 확보 및 설비 준비 확인», «운영자 미배정 재평가: <사유>», «출발 자리 확인 후 다시 제출: <출발 자리> = <확인한 신원> (<행위자>): <사유>»)이 남습니다. | 종료 상태입니다. 결과는 결과 버전으로 따로 쌓입니다. |
-| `REJECTED` | 보내지 않았거나 실행 호스트가 거부한 상태입니다. 실행 호스트가 거부(호스트 200 `REJECTED` 또는 호스트 4xx)하면 `detail` 을 «호스트 제출 거부: <rejectionReason>»(사유가 비면 «호스트 제출 거부: 사유 없음», 2000자에서 자름)로 바꿉니다(전에는 제출 전 문장이 남음). 구조는 `submission.outcome` 에 그대로 남고, 상세 API `GET /api/work-requests/{id}` 가 `rejection {reason, remedy, remedyWithheld, alternativeLocations, sourceMissing, sourceUnobserved}` 으로 싣습니다(호스트가 거부한 `REJECTED` 일 때만 있고 입력 검증, 제출 직전 권한, 배포 변경, 멈춤 정리, 스테이션 종료로 닫힌 `REJECTED` 와 다른 상태는 null, 이들은 제 `detail` 그대로). `sourceUnobserved` 는 출발 미관측으로 거부한 `REJECTED` 일 때 값이 있고, 지금 제출 경로에서는 나오지 않습니다(출발 미관측은 `UNASSIGNED` 로 옵니다). | 종료 상태입니다. |
-| `UNASSIGNED` | 배정 가능 기체가 없어 제출하지 못한 상태입니다. 두 갈래로 나뉩니다. 전송 전 미배정(운영 서비스 판정에 배정 가능 기체 없음, 호스트 안 부름, 제출 기록 없음)은 `detail` 이 전과 같은 판정 문장(`humanoid-01: 이유; 이유 / quadruped-01: 이유` 꼴)입니다. 호스트 미배정(호스트가 200 `UNASSIGNED`)은 `detail` 을 «호스트 미배정: <robotId>: <reason> / <robotId>: <reason>; <reason>» 로 바꿉니다(앞은 `refusals` 가 기체마다 낸 사유, 뒤는 `excluded` 로 호스트가 판정에서 뺀 기체 이유를 `; ` 로 이음. 둘 다 없으면 «호스트 미배정: 기체별 사유 없음», 2000자에서 자름). 기체별 사유 구조는 `submission.outcome.refusals[]` 와 작업 요청 상세 API(`GET /api/work-requests/{id}`)의 `unassigned` 칸에 실립니다. 제출 기록이 있으므로 미배정 재평가 대상이 아닙니다. 호스트 미배정의 기체별 사유에 출발 미관측이 있으면 상세 API 의 `pendingSources`(출발 자리마다 `{source, material, occupied, robotIds}`)가 비지 않습니다. 운영자의 출발 자리 확인(`POST /api/work-requests/{id}/source-confirmations`, 본문 `requestId`·`source`·`identity`·`reason`·`expectedUpdatedAt`)만 같은 작업 지시 id 로 다시 보냅니다. 자동 재제출은 없습니다. 결품(`sourceMissing`)과 전송 전 미배정은 409 `SOURCE_NOT_PENDING` 입니다. 오류 이름은 `BAD_SOURCE_CONFIRMATION`(400), `MODE_NOT_ALLOWED`(403), `STALE_SOURCE_CONFIRMATION`·`SOURCE_NOT_PENDING`·`SOURCE_CONFIRMATION_CONFLICT`·`RESOURCE_MANAGED`(409)입니다. 새로 기록하면 202, 같은 요청 id 에 같은 내용이면 200 `duplicate:true` 입니다. 이 작업 요청의 이후 모든 제출(미배정 재평가 포함)은 기록된 확인을 출발 자리마다 최신 하나씩 싣습니다. 확인을 받으면 `DISPATCHING` 으로 잡을 때 앞 호스트 답(`submission`)을 비웁니다(그 답은 확인 행의 `context` 에 남습니다). 그래서 다시 낼 때 배정 가능 기체가 없으면 전송 전 미배정(제출 기록 없음)이 되어 미배정 재평가 대상이 되고 확인 대기로 남지 않습니다. 확인 이력은 상세 API 칸 `sourceConfirmations` 에 있습니다. | 제출 기록과 실행 관측이 없는 `UNASSIGNED` 만 운영자 미배정 재평가(`POST /api/work-requests/{id}/recover`)로 `DISPATCHING` 이 됩니다. 필수 자원이 있는 작업 요청은 이 API 가 409 `RESOURCE_MANAGED` 로 막고 공유 스테이션 조정만 재평가합니다. 출발 자리 확인을 받으면 같은 작업 지시 id 로 `DISPATCHING` 이 됩니다. |
+| `REJECTED` | 보내지 않았거나 실행 호스트가 거부한 상태입니다. 실행 호스트가 거부(호스트 200 `REJECTED` 또는 호스트 4xx)하면 `detail` 을 «호스트 제출 거부: <rejectionReason>»(사유가 비면 «호스트 제출 거부: 사유 없음», 2000자에서 자름)로 바꿉니다(전에는 제출 전 문장이 남음). 구조는 `submission.outcome` 에 그대로 남고, 상세 API `GET /api/work-requests/{id}` 가 `rejection {reason, remedy, remedyWithheld, alternativeLocations, sourceMissing, sourceUnobserved}` 으로 싣습니다(호스트가 거부한 `REJECTED` 일 때만 있고 입력 검증, 제출 직전 권한, 배포 변경, 멈춤 정리, 스테이션 종료로 닫힌 `REJECTED` 와 다른 상태는 null, 이들은 제 `detail` 그대로). `sourceUnobserved` 는 출발 미관측으로 거부한 `REJECTED` 일 때 값이 있고, 지금 제출 경로에서는 나오지 않습니다(출발 미관측은 `UNASSIGNED` 로 옵니다). | 종료 상태입니다. 상위 시스템이 대체한 앞선 작업 요청도 상태·`detail`·`submission` 이 그대로입니다. |
+| `UNASSIGNED` | 배정 가능 기체가 없어 제출하지 못한 상태입니다. 두 갈래로 나뉩니다. 전송 전 미배정(운영 서비스 판정에 배정 가능 기체 없음, 호스트 안 부름, 제출 기록 없음)은 `detail` 이 전과 같은 판정 문장(`humanoid-01: 이유; 이유 / quadruped-01: 이유` 꼴)입니다. 호스트 미배정(호스트가 200 `UNASSIGNED`)은 `detail` 을 «호스트 미배정: <robotId>: <reason> / <robotId>: <reason>; <reason>» 로 바꿉니다(앞은 `refusals` 가 기체마다 낸 사유, 뒤는 `excluded` 로 호스트가 판정에서 뺀 기체 이유를 `; ` 로 이음. 둘 다 없으면 «호스트 미배정: 기체별 사유 없음», 2000자에서 자름). 기체별 사유 구조는 `submission.outcome.refusals[]` 와 작업 요청 상세 API(`GET /api/work-requests/{id}`)의 `unassigned` 칸에 실립니다. 제출 기록이 있으므로 미배정 재평가 대상이 아닙니다. 호스트 미배정의 기체별 사유에 출발 미관측이 있으면 상세 API 의 `pendingSources`(출발 자리마다 `{source, material, occupied, robotIds}`)가 비지 않습니다. 운영자의 출발 자리 확인(`POST /api/work-requests/{id}/source-confirmations`, 본문 `requestId`·`source`·`identity`·`reason`·`expectedUpdatedAt`)만 같은 작업 지시 id 로 다시 보냅니다. 자동 재제출은 없습니다. 결품(`sourceMissing`)과 전송 전 미배정은 409 `SOURCE_NOT_PENDING` 입니다. 오류 이름은 `BAD_SOURCE_CONFIRMATION`(400), `MODE_NOT_ALLOWED`(403), `STALE_SOURCE_CONFIRMATION`·`SOURCE_NOT_PENDING`·`SOURCE_CONFIRMATION_CONFLICT`·`RESOURCE_MANAGED`(409)입니다. 새로 기록하면 202, 같은 요청 id 에 같은 내용이면 200 `duplicate:true` 입니다. 이 작업 요청의 이후 모든 제출(미배정 재평가 포함)은 기록된 확인을 출발 자리마다 최신 하나씩 싣습니다. 확인을 받으면 `DISPATCHING` 으로 잡을 때 앞 호스트 답(`submission`)을 비웁니다(그 답은 확인 행의 `context` 에 남습니다). 그래서 다시 낼 때 배정 가능 기체가 없으면 전송 전 미배정(제출 기록 없음)이 되어 미배정 재평가 대상이 되고 확인 대기로 남지 않습니다. 확인 이력은 상세 API 칸 `sourceConfirmations` 에 있습니다. | 제출 기록과 실행 관측이 없는 `UNASSIGNED` 만 운영자 미배정 재평가(`POST /api/work-requests/{id}/recover`)로 `DISPATCHING` 이 됩니다. 필수 자원이 있는 작업 요청은 이 API 가 409 `RESOURCE_MANAGED` 로 막고 공유 스테이션 조정만 재평가합니다. 출발 자리 확인을 받으면 같은 작업 지시 id 로 `DISPATCHING` 이 됩니다. 상위 시스템이 대체한 앞선 작업 요청은 상태·`detail`·`submission` 이 그대로이고, 미배정 재평가(`recover`)와 출발 자리 확인(`source-confirmations`)이 409 `ORIGINAL_REPLACED` 입니다(재평가·확인 기록을 남기지 않고 제출하지 않습니다). |
 | `IN_DOUBT` | 제출 결과를 확정할 수 없는 상태입니다(응답 없음, 재조회에도 안 보임, 예외, 제출 중 중단). | 자동 재제출은 없습니다. 결과 피드 이벤트나 상세 조회에서 호스트 실행 목록에 그 작업 지시가 보이면 `ACCEPTED` 로 올라갑니다. 미배정 재평가는 409 `RECOVERY_NOT_SAFE` 입니다. |
 
 운영자는 `POST /api/work-requests/{id}/reviews` 로 현장 확인을 기록할 수 있습니다. 관측 값은 `NOT_CONFIRMED`·`NOT_STARTED`·`IN_PROGRESS`·`COMPLETED` 넷이고 사유와 조회한 `updatedAt` 이 필요합니다(바뀌었으면 409 `STALE_REVIEW`). 기록은 `work_request_review` 에 남고 변경·삭제가 금지되며, 작업 요청 상태를 바꾸거나 제출하거나 완료로 만들지 않습니다. 출발 자리 확인(`source-confirmations`)은 현장 확인(`reviews`)과 다른 표에 남고, 현장 확인과 달리 같은 작업 지시를 다시 제출합니다.
@@ -168,6 +169,11 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - 재전송은 상태와 상관없이 다시 제출하지 않습니다. `IN_DOUBT` 도 마찬가지입니다.
 - 기존 경로 `POST /api/job-orders` 는 호출마다 새 `requestId` 를 만들어 같은 작업 요청 경로를 지나므로, 호출자 쪽 재전송의 중복 방지는 제공하지 않습니다.
 - 변환한 작업 지시(`normalized_order`)에는 작업 요청을 받은 시점의 배포(`deploymentVersion`, `missionVersion`)가 들어갑니다. 대기열에서 나와 제출할 때는 저장한 작업 지시를 그대로 쓰고, 미배정 재평가는 원래 입력을 다시 변환해 저장본과 다르면 409 `RECOVERY_INPUT_CHANGED` 로 막습니다. 호출 계약 호출에 `expectedDeploymentVersion` 을 주면 현재 배포와 다를 때 409 `STALE_DEPLOYMENT` 입니다.
+- 상위 시스템 대체 연결: 외부 주문 본문의 선택 칸 `replacesExternalOrderId` 는 같은 출처의 앞선 `externalOrderId`(1~160자 문자열, 자기 자신 불가)입니다. 잘못된 값은 400 `BAD_REPLACES`, 이 출처에 없으면(다른 출처의 주문도 같은 답) 409 `ORIGINAL_NOT_FOUND`, 앞선 작업 요청이 `REJECTED`·`UNASSIGNED` 가 아니거나 실행 관측·결과 버전이 있거나 스테이션 작업이 끝나지 않았으면 409 `ORIGINAL_NOT_REPLACEABLE`, 이미 다른 작업 요청이 대체했으면 409 `ORIGINAL_ALREADY_REPLACED` 입니다. 이 거부들은 작업 요청을 남기지 않습니다.
+- 연결은 새 작업 요청 행과 같은 트랜잭션에서 앞선 작업 요청 행의 잠금 아래 기록합니다. 같은 앞선 작업 요청을 잇는 동시 새 작업 요청은 하나만 받습니다.
+- 같은 새 주문의 재전송은 연결 판정 없이 기존 작업 요청을 돌려줍니다(200). 연결 칸은 본문 해시에 들어갑니다.
+- 대체 위치의 재검증은 새 작업 요청의 제출 관문이 합니다(실행 호스트가 그 순간의 셀을 다시 봅니다). 운영 서비스는 미리 거르지 않습니다.
+- 상세 API `GET /api/work-requests/{id}` 와 외부 조회 `GET /integration/v1/job-orders/{id}` 는 칸 `replaces`, `supersededBy`(`{receiptId, externalOrderId, state, linkedAt}` 또는 null)를 싣습니다.
 
 ### 멈춘 작업 요청 정리
 
@@ -181,7 +187,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - 실행 호스트는 처분이 송신인 작업 응답을 `mission.result_outbox` 에 기록합니다. 순번은 `mission.result_producer` 한 행을 잠그고 같은 트랜잭션에서 하나씩 올리므로 커밋 순서와 같고 빈 번호가 없습니다. 재기동 중복으로 판정한 응답은 기록하지 않습니다. `GET /host/result-events?after=&limit=`(limit 1~200)이 생산자 id(`producerId`), 마지막 순번(`highWatermark`), 이벤트 목록을 줍니다.
 - 운영 서비스 수집은 `ops.result_cursor` 의 순번 다음부터 100건씩 읽습니다. 순번이 이어지지 않거나 이벤트 하나라도 형식이 틀리면 그 쪽 전체를 저장하지 않고, 생산자 id 가 바뀌면 멈춥니다. 커밋 직전에 커서가 그대로인지 확인해 두 수집기가 같은 쪽을 두 번 저장하지 않게 합니다.
 - 결과 버전(`ops.work_result`)은 작업 요청마다 1부터 올라가는 버전이고, 한 버전은 호스트 인스턴스·실행·작업 응답 id 조합 하나입니다. 스냅숏을 키 정렬 JSON 으로 만든 SHA-256 을 `result_hash` 로 둡니다. 코드는 버전 행을 덧붙이기만 하고 `acknowledged_at` 만 한 번 채웁니다. 이 표에는 변경을 막는 DB 트리거가 없으므로 불변은 코드 관례입니다.
-- 외부 결과 API 는 `GET /integration/v1/job-orders/{id}/results/latest`, `GET .../results/{version}`, 수신 확인 `POST .../results/{version}/ack` 를 제공합니다. 본문은 정확히 `{"resultHash": "<64자리 16진>"}` 이고, 해시가 다르면 409 `RESULT_CONFLICT`, 같은 수신 확인을 다시 보내면 처음 기록한 `acknowledgedAt` 을 그대로 돌려줍니다. 다른 출처의 작업 요청은 404 입니다.
+- 외부 결과 API 는 `GET /integration/v1/job-orders/{id}/results/latest`, `GET .../results/{version}`, 수신 확인 `POST .../results/{version}/ack` 를 제공합니다. 본문은 정확히 `{"resultHash": "<64자리 16진>"}` 이고, 해시가 다르면 409 `RESULT_CONFLICT`, 같은 수신 확인을 다시 보내면 처음 기록한 `acknowledgedAt` 을 그대로 돌려줍니다. 다른 출처의 작업 요청은 404 입니다. 실행하지 않은 작업 요청(`REJECTED`·`UNASSIGNED`)에는 결과 버전이 없어 `results/latest` 가 404 `RESULT_NOT_READY` 이고 콜백(`WorkResultDelivery`)도 없습니다. 출발 결품의 대체 위치는 외부 조회 `GET /integration/v1/job-orders/{id}` 에서만 읽습니다.
 - 콜백 전달(`WorkResultDelivery`)은 `PICASSO_LOCAL_CALLBACK_URL` 이 있을 때만 켜지고 주소는 루프백 IP 리터럴 http 만 받습니다. `ops.results.delivery-ms`(2000ms)마다 설정 출처의 결과 버전을 `work_result_delivery` 에 넣고, 한 번에 최대 10건을 `FOR UPDATE SKIP LOCKED` 와 30초 임대로 집어 보냅니다. 본문은 `receiptId`·`version`·`resultHash`·`snapshot`, 헤더는 `Idempotency-Key: <작업 요청 id>/v<버전>` 입니다. 2xx 면 `DELIVERED`, 아니면 `RETRY` 이고 다음 시도까지 2의 min(시도 수, 8)제곱 초를 기다립니다(최대 256초, 코드의 300초 상한에는 닿지 않음). 시도 수 상한이나 영구 실패 상태가 없어 4xx 도 계속 다시 보냅니다. HTTP 성공은 전달 성공일 뿐 수신 확인이 아닙니다.
 
 ## 공유 스테이션 조정
@@ -409,15 +415,15 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-14에 `feat/source-observation` 브랜치(출발 관측 선언·출발 미관측 변경)의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-14 `feat/source-observation` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 25개 파일 240개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-14에 `feat/upstream-alternatives` 브랜치(출발 결품 대체 위치의 상위 시스템 전달과 대체 연결 변경)의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-14 `feat/upstream-alternatives` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 25개 파일 242개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 400(393 에서 7 늘어남, `WorkRequestsTest` 6, `HostClientTest` 1) | 로컬 시험 결과 XML 400건, 실패 0 |
-| `mission-host` | 106 | 로컬 시험 결과 XML 106건 실패 0(97 에서 9 늘어남, 새 파일 `SourceObservationHostTest` 7, `SubmitOutcomeTest` 2) |
+| `ops-service` | 407(400 에서 7 늘어남, `WorkRequestsTest` 7) | 로컬 시험 결과 XML 407건, 실패 0 |
+| `mission-host` | 107 | 로컬 시험 결과 XML 107건 실패 0(106 에서 1 늘어남, `MissionHostTest` 1) |
 | `site` | 38 | 로컬 시험 결과 XML 38건, 실패 0 |
-| `e2e` | 70(시험 클래스 16개, 새 `SourceObservationTest` 1. `SkeletonTest` 의 마이그레이션 목록 기대를 1..18 로 고침, 수는 그대로) | 로컬 시험 결과 XML 70건, 실패 0 |
-| `ui`(vitest) | 240(시험 파일 25개, `WorkRequests.test.tsx` 4건, `JobOrderNotice.test.tsx` 2건 추가) | 2026-10-14 로컬 실행 |
+| `e2e` | 71(시험 클래스 17개, 새 `UpstreamReplacementTest` 1. `SkeletonTest` 의 마이그레이션 목록 기대를 1..19 로 고침, 수는 그대로) | 로컬 시험 결과 XML 71건, 실패 0 |
+| `ui`(vitest) | 242(시험 파일 25개, `WorkRequests.test.tsx` 2건 추가) | 2026-10-14 로컬 실행 |
 | `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | 2026-10-14 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
@@ -438,13 +444,13 @@ Kotlin 네 모듈은 2026-10-14에 `feat/source-observation` 브랜치(출발 �
 
 `StationLateCompletionTest`는 `StationScenarioTest`와 같은 데이터 임무 `StationInspection`과 호출 계약 `station-check`로 스테이션 `inspection-1`(단계 기한 20초)을 씁니다. X를 보내고 로봇을 끝내지 않아 실행 기한 초과 → `REVIEW_REQUIRED` → `CONFIRM_CLEAR`. 작업 번호 쌍(`inspection_job`·`inspection_job_done`) 변형: Y가 다른 기체로 `RUNNING`, `inspection_job`에 Y의 번호가 쓰여 있음, 시험이 설비 역할로 X의 번호와 완료 true를 쓰면 Y는 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다»로 `REVIEW_REQUIRED`이고 점유 유지, 신호를 내리고 관측 재개 뒤 Y의 번호와 완료를 쓰면 `COMPLETED`. 쌍이 없는 변형: X 해제 뒤 스테이션이 격리되고 Y는 `WAITING_READY`(작업 요청 없음)에 머물며, 완료 신호가 켜져 있으면 `CONFIRM_STATION_IDLE`이 409, 끄고 판단하면 격리가 풀리고 Y가 실행되어 완료. 두 변형 모두 `build/reports/station-late-completion-echo.json`, `station-late-completion-quarantine.json`에 근거를 남깁니다.
 
-`SkeletonTest`는 `ops.flyway_schema_history`의 성공한 버전이 1부터 18까지인지 봅니다.
+`SkeletonTest`는 `ops.flyway_schema_history`의 성공한 버전이 1부터 19까지인지 봅니다.
 
-시험 클래스는 16개로, `SkeletonTest`, `LifecycleTest`, `AdapterTest`, `CommissioningTest`, `SiteSettingsTest`, `JobOrderTest`, `MissionVersionTest`, `SiteTimingsTest`, `FaultIncidentTest`, `RestartRecoveryTest`에 `StationScenarioTest`, `MixedResourceScenarioTest`, `ManufacturingScenarioTest`, `StationPhysicalStateParityTest`, `StationLateCompletionTest`, `SourceObservationTest`가 더해졌습니다. 도우미 파일은 그대로 `E2eStack`, `ExecutionDriver`, `Commissioned`입니다. `E2eStack.start(integrationToken = …)`로 외부 주문 API를 켠 스택을 띄웁니다.
+시험 클래스는 17개로, `SkeletonTest`, `LifecycleTest`, `AdapterTest`, `CommissioningTest`, `SiteSettingsTest`, `JobOrderTest`, `MissionVersionTest`, `SiteTimingsTest`, `FaultIncidentTest`, `RestartRecoveryTest`에 `StationScenarioTest`, `MixedResourceScenarioTest`, `ManufacturingScenarioTest`, `StationPhysicalStateParityTest`, `StationLateCompletionTest`, `SourceObservationTest`, `UpstreamReplacementTest`가 더해졌습니다. 도우미 파일은 그대로 `E2eStack`, `ExecutionDriver`, `Commissioned`입니다. `E2eStack.start(integrationToken = …)`로 외부 주문 API를 켠 스택을 띄웁니다.
 
 ### 입증 근거 통합 시험 메서드
 
-통합 시험 소스 파일 경로는 `e2e/src/test/kotlin/dev/picasso/ops/e2e/<클래스>.kt`이며, 메서드 이름 뒤의 괄호는 `main 511d5bc` 기준 행 번호입니다. 옛 목록의 행 번호는 `511d5bc`에서 다시 대조해 모두 같았습니다. `StationLateCompletionTest`의 행 번호는 PR #26 기준이고, 다른 클래스의 행 번호는 PR #26에서도 같습니다. `SourceObservationTest` 의 행 번호는 `feat/source-observation` 브랜치 기준입니다.
+통합 시험 소스 파일 경로는 `e2e/src/test/kotlin/dev/picasso/ops/e2e/<클래스>.kt`이며, 메서드 이름 뒤의 괄호는 `main 511d5bc` 기준 행 번호입니다. 옛 목록의 행 번호는 `511d5bc`에서 다시 대조해 모두 같았습니다. `StationLateCompletionTest`의 행 번호는 PR #26 기준이고, 다른 클래스의 행 번호는 PR #26에서도 같습니다. `SourceObservationTest` 의 행 번호는 `feat/source-observation` 브랜치 기준입니다. `UpstreamReplacementTest` 의 행 번호는 `feat/upstream-alternatives` 브랜치 기준입니다.
 
 `LifecycleTest`:
 
@@ -534,6 +540,10 @@ Kotlin 네 모듈은 2026-10-14에 `feat/source-observation` 브랜치(출발 �
 `SourceObservationTest`:
 
 - `출발 미관측은 확인 대기로 보류되고 사람의 출발 자리 확인을 기록하면 같은 작업 지시가 관문을 지나 실행이 선다`(50)
+
+`UpstreamReplacementTest`:
+
+- `상위 시스템은 출발 결품의 대체 위치를 상태 조회로 읽고 앞선 외부 주문을 이은 새 외부 주문으로 고쳐 보내 실행이 서고 연결이 양쪽에 보인다`(55)
 
 ### Playwright 화면 시험
 

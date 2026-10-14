@@ -236,6 +236,47 @@ class MissionHostTest {
         }
     }
 
+    /**
+     * 상위 시스템이 대체 위치로 고쳐 보낸 새 작업 지시도 제출 때 셀을 다시 본다. 미리 받은 대체 위치는 그 순간의 답일 뿐이라, 그 자리가
+     * 그사이 비었으면 새 작업 지시가 다시 출발 결품이 되고 대체 위치도 지금 셀로 다시 센다. 아직 있으면 지난다.
+     */
+    @Test
+    fun `대체 위치로 고쳐 낸 작업 지시도 제출 때 셀을 다시 보아 그 자리가 비었으면 새 대체 위치와 함께 다시 출발 결품이다`() {
+        val alternative = "SEQ-IN-03.BIN-B"
+        fun place(id: String, held: Boolean) =
+            """{"id":"$id","occupied":$held,"material":${if (held) "\"${HostBench.MATERIAL}\"" else "null"},"observedAt":null}"""
+        fun cell(source: Boolean, other: Boolean) = HostBench.STANDARD_CELL.replace(
+            """{"id":"${HostBench.SOURCE}","occupied":true,"material":"${HostBench.MATERIAL}","observedAt":null}""",
+            place(HostBench.SOURCE, source) + "," + place(alternative, other),
+        )
+        fun from(jobOrderId: String, source: String) =
+            rack(jobOrderId, "RACK-204.S01").replace("""{"id":"${HostBench.SOURCE}","equipmentUse":"source"""", """{"id":"$source","equipmentUse":"source"""")
+        HostBench().use { bench ->
+            fun read(source: Boolean, other: Boolean) {
+                bench.cellBody = cell(source, other)
+                bench.eventually("셀을 다시 읽는다") {
+                    bench.get("/host/cell")["cell"]?.get("presentations")?.associate { it["id"].asText() to it["occupied"].asBoolean() } ==
+                        mapOf(HostBench.SOURCE to source, alternative to other)
+                }
+            }
+            read(source = false, other = true)
+            val first = bench.post("/host/job-orders", request(from("JO-1", HostBench.SOURCE), "candidates", HUMANOID)).body!!["refusals"].single()
+            assertEquals(listOf(alternative), first["alternativeLocations"].map { it.asText() }, first.toString())
+            // 그사이 대체 위치가 비고 처음 자리가 다시 찼다.
+            read(source = true, other = false)
+            val second = bench.post("/host/job-orders", request(from("JO-2", alternative), "candidates", HUMANOID)).body!!
+            assertEquals("UNASSIGNED", second["result"].asText(), second.toString())
+            val refusal = second["refusals"].single()
+            assertEquals(alternative, refusal["sourceMissing"]["source"].asText(), refusal.toString())
+            assertEquals(listOf(HostBench.SOURCE), refusal["alternativeLocations"].map { it.asText() }, refusal.toString())
+            assertEquals(0, bench.get("/host/executions")["executions"].size())
+            // 대체 위치에 자재가 아직 있으면 같은 관문을 지난다.
+            read(source = false, other = true)
+            val third = bench.post("/host/job-orders", request(from("JO-3", alternative), "candidates", HUMANOID)).body!!
+            assertEquals("ACCEPTED", third["result"].asText(), third.toString())
+        }
+    }
+
     /** 출발 결품이 아닌 관문 사유(여기서는 자재 선언과 배정이 어긋난 주문)는 대체 자리도 출발 자리도 싣지 않는다. 빈 목록으로 채우면 «든 자리 없음» 으로 읽힌다. */
     @Test
     fun `출발 결품이 아닌 기체별 미배정 사유는 대체 자리와 출발 자리가 둘 다 null 이다`() {

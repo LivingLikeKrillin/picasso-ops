@@ -206,3 +206,43 @@ it('출발 미관측 거부는 결품 줄과 대체 위치 없이 출발 미관�
  expect(within(detail).getByText('출발 미관측 · 출발 자리 SEQ-IN-02.BIN-A · 있음 · 신원 모름')).toBeVisible()
  expect(within(detail).queryByText(/대체 위치|비어 있음/)).not.toBeInTheDocument()
 })
+
+const superseding={receiptId:'r2',externalOrderId:'MES-205',state:'ACCEPTED',linkedAt:'t3'}
+const earlier={receiptId:'r1',externalOrderId:'MES-204',state:'UNASSIGNED',linkedAt:'t3'}
+const replacement={...receipt,receiptId:'r2',externalOrderId:'MES-205',jobOrderId:'JO-205',state:'ACCEPTED',detail:'공통 작업 요청 검증 완료'}
+function linkedFetch(original:Record<string,unknown>={}){
+ return vi.fn(async(url:string,_init?:RequestInit)=>new Response(JSON.stringify(url.startsWith('/api/work-requests?')?{total:2,requests:[receipt,replacement],offset:0,limit:20}
+  :url==='/api/work-requests/r2'?{receipt:replacement,hostRead:'OK',execution:null,instanceId:'mw',journalBlocked:false,observedAt:'t4',replaces:earlier,supersededBy:null}
+  :{receipt,hostRead:'OK',execution:null,instanceId:'mw',journalBlocked:false,observedAt:'t4',replaces:null,supersededBy:superseding,...original}),{status:200}))
+}
+it('상위 시스템이 대신 보낸 작업 요청은 앞선 작업 요청에서 연결로 보이고 재평가를 내지 않으며 그 작업 요청으로 옮겨 가 앞선 작업 요청을 보인다',async()=>{
+ window.history.replaceState(null,'','#')
+ // 전송 전 미배정이라 대체가 없으면 재평가 양식이 나오는 작업 요청이다.
+ const fetcher=linkedFetch({receipt:{...receipt,normalizedOrder:{workMasterId:'InspectAsset'}}});vi.stubGlobal('fetch',fetcher)
+ render(<WorkRequests session={session}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 작업 요청 보기'}))
+ const detail=await screen.findByRole('article',{name:'작업 요청 상세'})
+ const later=await within(detail).findByRole('region',{name:'상위 시스템이 대신 보낸 작업 요청'})
+ expect(within(later).getByText('MES-205 · 호스트 수락 · 연결 t3')).toBeVisible()
+ expect(within(later).getByText('이 작업 요청은 다시 제출하지 않습니다. 상태와 기록은 그대로입니다.')).toBeVisible()
+ // 앞선 작업 요청은 미배정 그대로이고 재평가 양식과 안내가 없다.
+ expect(within(detail).getByRole('heading',{name:'MES-204 · 미배정'})).toBeVisible()
+ expect(within(detail).queryByRole('region',{name:'미배정 안전 재평가'})).not.toBeInTheDocument()
+ expect(within(detail).queryByText(/운영자 판단으로 재평가할 수 있습니다/)).not.toBeInTheDocument()
+ expect(within(detail).queryByRole('region',{name:'상위 시스템이 대신한 앞선 작업 요청'})).not.toBeInTheDocument()
+ await userEvent.click(within(later).getByRole('button',{name:'MES-205 작업 요청 열기'}))
+ const earlierLink=await screen.findByRole('region',{name:'상위 시스템이 대신한 앞선 작업 요청'})
+ expect(within(earlierLink).getByText('MES-204 · 미배정 · 연결 t3')).toBeVisible()
+ expect(screen.queryByRole('region',{name:'상위 시스템이 대신 보낸 작업 요청'})).not.toBeInTheDocument()
+ expect(fetcher.mock.calls.some(([url])=>url==='/api/work-requests/r2')).toBe(true)
+ expect(fetcher.mock.calls.every(([,init])=>!init?.method || init.method==='GET')).toBe(true)
+})
+it('출발 미관측이 남은 앞선 작업 요청도 상위 시스템이 대신 보냈으면 출발 자리 확인을 받지 않는다',async()=>{
+ window.history.replaceState(null,'','#')
+ const pending=[{source:'SEQ-IN-02.BIN-A',material:'ENGINE-COVER-A',occupied:null,robotIds:['humanoid-01']}]
+ vi.stubGlobal('fetch',linkedFetch({receipt:{...receipt,submission:{outcome:{result:'UNASSIGNED'}}},pendingSources:pending,sourceConfirmations:[]}))
+ render(<WorkRequests session={session}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 작업 요청 보기'}))
+ const detail=await screen.findByRole('article',{name:'작업 요청 상세'})
+ expect(await within(detail).findByRole('region',{name:'상위 시스템이 대신 보낸 작업 요청'})).toBeVisible()
+ expect(within(detail).queryByRole('region',{name:'출발 미관측'})).not.toBeInTheDocument()
+ expect(within(detail).queryByRole('button',{name:'출발 자리 확인 기록'})).not.toBeInTheDocument()
+})
