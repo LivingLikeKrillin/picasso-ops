@@ -279,3 +279,7 @@ npx playwright test --config=playwright.station.config.ts
 | [운영 보장 명세](docs/guarantees.md) | 보장·비보장 범위·배포 전제·릴리스 조합 표기 |
 | [상세 참조](docs/reference.md) | 구성·스키마·핵심 경로·상태 모델의 상세 기록 |
 | [화면 자료](docs/screens/README.md) | 촬영 조건과 다시 찍는 방법 |
+
+## 라이선스
+
+[Apache License 2.0](LICENSE). 서브모듈 picasso는 그 저장소의 라이선스를 따릅니다.
