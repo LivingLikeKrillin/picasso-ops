@@ -428,14 +428,14 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-15에 `feat/ha-stage0` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 이 브랜치에서 손대지 않아 2026-10-14 `feat/work-permit` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 26개 파일 245개 통과를 확인한 기록을 그대로 씁니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-15에 `perf/station-tick` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 이 브랜치에서 손대지 않아 2026-10-14 `feat/work-permit` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 26개 파일 245개 통과를 확인한 기록을 그대로 씁니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 424(420 에서 4 늘어남, 모두 `StationCoordinatorTest`) | 로컬 시험 결과 XML 424건, 실패 0 |
-| `mission-host` | 133 | 로컬 시험 결과 XML 133건 실패 0(120 에서 13 늘어남: `JudgmentRecordHostTest` 8, `HostInstanceTest` 5) |
-| `site` | 39(이 브랜치에서 그대로) | 로컬 시험 결과 XML 39건, 실패 0 |
-| `e2e` | 72(수와 시험 클래스 18개 그대로. 이 브랜치에서는 `SkeletonTest` 의 마이그레이션 기대값이 `(1..20)` 에서 `(1..21)` 로, `RestartRecoveryTest` 단계 1·4·5 의 이름과 단언이 바뀜) | 로컬 시험 결과 XML 72건, 실패 0 |
+| `ops-service` | 428(424 에서 4 늘어남, 모두 `StationTickCostTest`) | 로컬 시험 결과 XML 428건, 실패 0 |
+| `mission-host` | 135(133 에서 2 늘어남, 모두 `ExecutionsViewTest`) | 로컬 시험 결과 XML 135건, 실패 0 |
+| `site` | 39 | 로컬 시험 결과 XML 39건, 실패 0 |
+| `e2e` | 72(시험 클래스 18개) | 로컬 시험 결과 XML 72건, 실패 0, 이 브랜치에서 e2e 시험은 바뀌지 않음 |
 | `ui`(vitest) | 245(시험 파일 26개) | 2026-10-14 로컬 실행 |
 | `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | 이 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 

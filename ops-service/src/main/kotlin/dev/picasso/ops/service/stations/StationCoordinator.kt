@@ -27,7 +27,7 @@ data class StationRun(val runId:UUID,val stationId:String,val payload:JsonNode,v
  */
 class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionTemplate,private val port:StationPort,private val clock:Clock=Clock.systemUTC(),private val instance:OpsInstance=OpsInstance(jdbc)) {
  private val json=ObjectMapper().findAndRegisterModules().disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
- fun stations():List<RfStation> = jdbc.sql("SELECT * FROM ops.rf_station ORDER BY station_id").query {r,_->RfStation(r.getString("station_id"),r.getString("name"),r.getString("ready_signal"),r.getString("complete_signal"),r.getInt("timeout_seconds"),r.getObject("owner",UUID::class.java),r.getString("created_by"),r.getString("created_at"),r.getString("job_signal"),r.getString("job_echo_signal"),r.getObject("quarantined_by",UUID::class.java),r.getString("quarantined_at"))}.list()
+ fun stations():List<RfStation> = jdbc.sql("SELECT * FROM ops.rf_station ORDER BY station_id").query(::stationRow).list()
  fun runs():List<StationRun> = jdbc.sql("SELECT * FROM ops.station_run ORDER BY created_at DESC,run_id LIMIT 100").query(::row).list()
  fun get(id:UUID):StationRun = jdbc.sql("SELECT * FROM ops.station_run WHERE run_id=:id").param("id",id).query(::row).optional().orElseThrow{RequestRejected("RUN_NOT_FOUND","스테이션 작업이 없습니다",404)}
  fun events(id:UUID):List<Map<String,Any?>> {get(id);return jdbc.sql("SELECT * FROM ops.station_event WHERE run_id=:id ORDER BY event_id").param("id",id).query {r,_->mapOf("state" to r.getString("state"),"reason" to r.getString("reason"),"actor" to r.getString("actor"),"recordedAt" to r.getString("recorded_at"),"context" to json.readTree(r.getString("context")))}.list()}
@@ -75,10 +75,10 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   val readAt=clock.instant();val signals=runCatching{port.read()}.getOrNull()
   // Read outside every lock, like the signals. A permit that cannot be read is no permit.
   val permit=runCatching{port.permit()}.getOrElse{StationPermit.Unreadable(it.toString())}
-  for(station in stations()) {
+  // One host execution read serves every observation of this tick; a dispatch in it is followed by a new read (HA design record §10).
+  port.observing { for(station in stations()) {
    val next=tx.execute {
-    lock(station.stationId)
-    var current=stations().single{it.stationId==station.stationId}
+    var current=lock(station.stationId)
     if(current.owner==null) {
      val queued=jdbc.sql("SELECT run_id FROM ops.station_run WHERE station_id=:station AND state='QUEUED' ORDER BY created_at,run_id LIMIT 1").param("station",station.stationId).query(UUID::class.java).optional().orElse(null)
      if(queued!=null) {jdbc.sql("UPDATE ops.rf_station SET owner=:id WHERE station_id=:station").param("id",queued).param("station",station.stationId).update();transition(get(queued),"WAITING_READY",if(current.quarantinedBy!=null)QUARANTINED else "자원 확보; 설비 준비와 완료 신호 초기화를 기다립니다");current=current.copy(owner=queued)}
@@ -108,12 +108,12 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
    }
    val dispatch=if(next?.state=="WAITING_READY") numbered(next,signals) else next
    if(dispatch!=null) dispatch(dispatch)
-   val owner=stations().single{it.stationId==station.stationId}.owner ?: continue
+   val owner=station(station.stationId).owner ?: continue
    val run=get(owner)
    // A previous process may have stopped after committing DISPATCHING. Same-key receipt lookup is safe, blind retry is not.
    if(run.state=="DISPATCHING" && dispatch==null) dispatch(run)
    if(run.state in setOf("RUNNING","WAITING_ROBOT")) observe(run,station,signals,readAt)
-  }
+  }}
  }
  /**
   * A RETRYING/REWORKING claim found by tick (HA design record §7, §8 stage 0). Left by this instance it is a failed cleanup: the claim and
@@ -133,7 +133,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   val name=station(run.stationId).jobSignal!!;val token=run.runId.toString()
   val written=runCatching{port.write(name,token,actor(run))}.getOrDefault(false)
   return tx.execute {
-   lock(run.stationId);val current=get(run.runId);val station=station(run.stationId)
+   val station=lock(run.stationId);val current=get(run.runId)
    if(current.state!="WAITING_READY" || current.revision!=run.revision || station.owner!=run.runId || station.quarantinedBy!=null)return@execute null
    if(!written) {hold(current,WRITE_FAILED,json.createObjectNode().put("jobSignal",name).put("jobToken",token));return@execute null}
    transition(current,"DISPATCHING","설비 준비 확인; 고정 계약을 제출합니다",dispatch=true,context=json.createObjectNode().put("jobSignal",name).put("jobToken",token).set("signals",snapshot(signals)))
@@ -281,7 +281,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
    }
   }
  }
- private fun station(id:String)=stations().single{it.stationId==id}
+ /** One station by key: a decision never re-reads the whole list (HA design record §10). */
+ private fun station(id:String):RfStation = jdbc.sql("SELECT * FROM ops.rf_station WHERE station_id=:id").param("id",id).query(::stationRow).optional().orElseThrow{NoSuchElementException("스테이션이 없습니다: $id")}
  /** The hold reason and its context when [permit] holds a station, else null. The reason carries no time: a changed reason is a new event. */
  private fun permitHeld(permit:StationPermit):Pair<String,JsonNode>? = when(permit) {
   StationPermit.Undeclared -> null
@@ -323,7 +324,9 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   close("DISPATCHING","IN_DOUBT","현장 확인으로 자원을 해제했습니다. 제출 결과는 실행 관측으로 확인합니다: $reason")
  }
  private fun event(run:StationRun,reason:String,by:String,context:JsonNode?=null) {jdbc.sql("INSERT INTO ops.station_event(run_id,state,reason,actor,context,recorded_at) VALUES(:id,:state,:reason,:actor,CAST(:context AS JSONB),:at)").param("id",run.runId).param("state",run.state).param("reason",reason).param("actor",by).param("context",(context?:json.nullNode()).toString()).param("at",java.sql.Timestamp.from(clock.instant())).update()}
- private fun lock(station:String) {jdbc.sql("SELECT station_id FROM ops.rf_station WHERE station_id=:id FOR UPDATE").param("id",station).query(String::class.java).optional().orElseThrow{RequestRejected("STATION_NOT_FOUND","스테이션이 없습니다",404)}}
+ /** Locks the station row and returns it as locked. */
+ private fun lock(station:String):RfStation = jdbc.sql("SELECT * FROM ops.rf_station WHERE station_id=:id FOR UPDATE").param("id",station).query(::stationRow).optional().orElseThrow{RequestRejected("STATION_NOT_FOUND","스테이션이 없습니다",404)}
+ private fun stationRow(r:java.sql.ResultSet,@Suppress("UNUSED_PARAMETER") i:Int)=RfStation(r.getString("station_id"),r.getString("name"),r.getString("ready_signal"),r.getString("complete_signal"),r.getInt("timeout_seconds"),r.getObject("owner",UUID::class.java),r.getString("created_by"),r.getString("created_at"),r.getString("job_signal"),r.getString("job_echo_signal"),r.getObject("quarantined_by",UUID::class.java),r.getString("quarantined_at"))
  private fun actor(run:StationRun)=Actor(Mode.OPERATOR,run.actor.substringAfter('/'))
  private fun row(r:java.sql.ResultSet,@Suppress("UNUSED_PARAMETER") i:Int)=StationRun(r.getObject("run_id",UUID::class.java),r.getString("station_id"),json.readTree(r.getString("payload")),r.getString("actor"),r.getString("state"),r.getString("reason"),r.getObject("receipt_id",UUID::class.java),r.getInt("attempt"),r.getInt("revision"),r.getTimestamp("created_at").toInstant(),r.getTimestamp("phase_at").toInstant(),r.getTimestamp("dispatched_at")?.toInstant(),r.getObject("result_baseline") as Int?,r.getBoolean("baseline_review_only"),r.getString("instance_id"))
  private fun exact(p:JsonNode,fields:Set<String>) {if(!p.isObject || p.fieldNames().asSequence().toSet()!=fields)reject("요청 필드를 확인하세요")}

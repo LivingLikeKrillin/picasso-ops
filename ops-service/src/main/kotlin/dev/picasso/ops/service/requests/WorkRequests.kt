@@ -530,16 +530,11 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   get(id,source)
   jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",id).query(UUID::class.java).single()
   var receipt=get(id,source)
-  val body=(call as? HostCall.Ok)?.value?.takeIf { it["instanceId"]?.isTextual == true && it["executions"]?.isArray == true }
+  val body=executionsBody(call)
   val execution=body?.get("executions")?.firstOrNull { it["jobOrderId"]?.asText()==receipt.jobOrderId }
-  val blocked=body?.get("journalBlockedExecutionIds")?.any { it.asText()==execution?.get("executionId")?.asText() } ?: false
+  val blocked=journalBlocked(body,execution)
   if(execution!=null && !blocked) {
-   val observed=jdbc.sql("""UPDATE ops.work_request SET last_execution=CAST(:execution AS JSONB),execution_observed_at=:at,execution_instance_id=:instance,
-     state=CASE WHEN state IN ('RECEIVED','DISPATCHING','IN_DOUBT') THEN 'ACCEPTED' ELSE state END,
-     updated_at=clock_timestamp() WHERE receipt_id=:id AND (execution_observed_at IS NULL OR execution_observed_at < :at)""")
-    .param("execution",execution.toString()).param("at",java.time.OffsetDateTime.ofInstant(observedAt,java.time.ZoneOffset.UTC))
-    .param("instance",body.get("instanceId").asText()).param("id",id).update()
-   if(observed>0 && !durableResults) captureResult(receipt,body.get("instanceId").asText(),execution)
+   record(receipt,body!!,execution,observedAt)
    receipt=get(id,source)
   }
   mapOf("resource" to resources.context(id),"receipt" to receipt,"hostRead" to if(body==null) "UNAVAILABLE" else "OK", "instanceId" to body?.get("instanceId"),
@@ -556,6 +551,34 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    "sourceConfirmations" to jdbc.sql("SELECT request_id,source,identity,actor,reason,created_at,context FROM ops.work_request_source_confirmation WHERE receipt_id=:id ORDER BY created_at,request_id")
     .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"source" to rs.getString(2),"identity" to rs.getString(3),"actor" to rs.getString(4),"reason" to rs.getString(5),"createdAt" to rs.getString(6),"context" to json.readTree(rs.getString(7)))}.list())
  }!!
+ private fun executionsBody(call:HostCall<JsonNode>):JsonNode? = (call as? HostCall.Ok)?.value?.takeIf { it["instanceId"]?.isTextual == true && it["executions"]?.isArray == true }
+ private fun journalBlocked(body:JsonNode?,execution:JsonNode?):Boolean = body?.get("journalBlockedExecutionIds")?.any { it.asText()==execution?.get("executionId")?.asText() } ?: false
+ /** Records [execution] on the locked [receipt]: the observation, ACCEPTED for an uncertain submission, and under legacy polling its result. */
+ private fun record(receipt:Receipt,body:JsonNode,execution:JsonNode,observedAt:java.time.Instant) {
+  val observed=jdbc.sql("""UPDATE ops.work_request SET last_execution=CAST(:execution AS JSONB),execution_observed_at=:at,execution_instance_id=:instance,
+    state=CASE WHEN state IN ('RECEIVED','DISPATCHING','IN_DOUBT') THEN 'ACCEPTED' ELSE state END,
+    updated_at=clock_timestamp() WHERE receipt_id=:id AND (execution_observed_at IS NULL OR execution_observed_at < :at)""")
+   .param("execution",execution.toString()).param("at",java.time.OffsetDateTime.ofInstant(observedAt,java.time.ZoneOffset.UTC))
+   .param("instance",body.get("instanceId").asText()).param("id",receipt.receiptId).update()
+  if(observed>0 && !durableResults) captureResult(receipt,body.get("instanceId").asText(),execution)
+ }
+ /** One `GET /host/executions` read and the instant taken before it, as [detail] takes them. A station tick shares one (HA design record §10). */
+ class ExecutionsRead(val call:HostCall<JsonNode>,val observedAt:java.time.Instant)
+ fun readExecutions():ExecutionsRead {val observedAt=java.time.Instant.now();return ExecutionsRead(host.executions(),observedAt)}
+ /**
+  * What a station judges a receipt by: records [receipt]'s execution seen in [read] as [detail] does, then returns the latest stored
+  * result, or null. Reads no host and none of the detail fields (HA design record §10). The receipt lock is taken only when there is an
+  * execution to record; [detail] writes nothing either without one.
+  */
+ fun stationResult(receipt:Receipt,read:ExecutionsRead):Map<String,Any?>? {
+  val body=executionsBody(read.call)
+  val execution=body?.get("executions")?.firstOrNull { it["jobOrderId"]?.asText()==receipt.jobOrderId }
+  if(body!=null && execution!=null && !journalBlocked(body,execution)) transactions.executeWithoutResult {
+   jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",receipt.receiptId).query(UUID::class.java).single()
+   record(get(receipt.receiptId),body,execution,read.observedAt)
+  }
+  return storedResult(receipt.receiptId,null)
+ }
  /** The host's own REJECTED, typed from the stored submission so the screen never parses the raw record. Other closes have no host rejection. */
  fun rejection(receipt:Receipt):WorkRequestRejection? {
   if(receipt.state!="REJECTED")return null
