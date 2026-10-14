@@ -158,6 +158,12 @@ interface HostReads {
 
     /** `GET /host/cell` 본문 그대로. 셀 대역을 못 읽은 호스트는 `{"cell": null}` 을 200 으로 준다. */
     fun cell(): HostCall<JsonNode>
+
+    /**
+     * `GET /host/work-permits` 본문 그대로(ADR 52). 현장이 작업 허가 대응을 선언하지 않았으면 `declared` 가 거짓이다. 읽을 줄 모르는
+     * 구현은 모름이고, 모름을 받은 스테이션 조정은 닫힌 쪽(보류)으로 읽는다.
+     */
+    fun workPermits(): HostCall<JsonNode> = HostCall.Silent("작업 허가 조회를 지원하지 않는 호스트 읽기다")
 }
 
 /** 호스트 제출. 시험이 호스트 없이 대신 끼운다. */
@@ -345,6 +351,8 @@ class HostClient(
     override fun executions(): HostCall<JsonNode> = get("/host/executions")
 
     override fun cell(): HostCall<JsonNode> = get("/host/cell")
+
+    override fun workPermits(): HostCall<JsonNode> = get("/host/work-permits")
 
     override fun submit(jobOrder: ObjectNode, candidates: List<String>): HostWrite = submit(jobOrder, candidates, emptyList())
 

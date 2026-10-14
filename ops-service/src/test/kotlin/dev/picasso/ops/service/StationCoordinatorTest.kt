@@ -47,6 +47,9 @@ class StationCoordinatorTest {
   var writeFails=false;val writes=mutableListOf<Pair<String,String>>()
   /** Runs once after a read has been taken, before its caller judges it. */
   var afterRead:(()->Unit)?=null
+  /** The host's work permit (ADR 52). Undeclared keeps today's behaviour. */
+  var permit:StationPermit=StationPermit.Undeclared;var permitThrows=false
+  override fun permit():StationPermit {if(permitThrows)error("host down");return permit}
   override fun validate(payload:JsonNode){require(valid)}
   override fun signals()=signals
   override fun read():StationSignals? {val taken=signals?.let{StationSignals(it,texts)};afterRead?.let{afterRead=null;it()};return taken}
@@ -388,6 +391,52 @@ class StationCoordinatorTest {
   assertEquals(1,service.events(run.runId).count{it["reason"]==StationCoordinator.WRITE_FAILED});assertEquals(run.runId.toString(),context(run.runId,"WAITING_READY",StationCoordinator.WRITE_FAILED)["jobToken"].asText())
   now=now.plusSeconds(3);port.writeFails=false;service.tick()
   assertEquals("RUNNING",service.get(run.runId).state);assertEquals(1,port.sends);assertEquals(run.runId.toString(),port.texts.getValue("job").value)
+ }
+ private fun robotPermit(robot:String,permit:String,cause:String="REPORTED",subject:String?="guard_closed=false",basis:String="안전 계통이 guard_closed 을 true 으로 되돌릴 때")=
+  StationRobotPermit(robot,permit,listOf(cause),listOfNotNull(subject),listOf(basis))
+ private val permitted=StationPermit.Read(listOf(robotPermit("humanoid-01","PERMITTED",subject="guard_closed=true"),robotPermit("quadruped-01","PERMITTED",subject="guard_closed=true")))
+ @Test fun `작업 허가가 INHIBITED 면 작업 번호를 쓰지 않고 설비 준비 대기에 막은 기체와 주체와 풀릴 근거를 남기며 PERMITTED 가 되면 그때 쓴다`() {
+  echoing();port.permit=StationPermit.Read(listOf(robotPermit("humanoid-01","INHIBITED"),robotPermit("quadruped-01","PERMITTED",subject="guard_closed=true")))
+  val run=enqueue();service.tick();service.tick()
+  val waiting=service.get(run.runId);assertEquals("WAITING_READY",waiting.state)
+  assertEquals("${StationCoordinator.PERMIT_HELD}: humanoid-01 INHIBITED(guard_closed=false); 풀릴 근거: 안전 계통이 guard_closed 을 true 으로 되돌릴 때",waiting.reason)
+  assertTrue(port.writes.isEmpty());assertEquals(0,port.sends)
+  assertEquals(1,service.events(run.runId).count{it["reason"]==waiting.reason})
+  assertEquals(listOf("humanoid-01","quadruped-01"),context(run.runId,"WAITING_READY",waiting.reason)["workPermits"].map{it["robotId"].asText()})
+  // A permit block is a wait: the readiness deadline does not run out while it holds.
+  now=now.plusSeconds(30);service.tick();assertEquals("WAITING_READY",service.get(run.runId).state);assertTrue(port.writes.isEmpty())
+  port.permit=permitted;service.tick()
+  val resumed=service.get(run.runId);assertEquals("WAITING_READY",resumed.state);assertEquals(StationCoordinator.PERMIT_RESUMED,resumed.reason);assertEquals(now,resumed.phaseAt)
+  service.tick()
+  assertEquals("RUNNING",service.get(run.runId).state);assertEquals(listOf("job" to run.runId.toString()),port.writes);assertEquals(1,port.sends)
+ }
+ @Test fun `작업 허가가 UNKNOWN 이거나 읽히지 않아도 작업 번호를 쓰지 않고 까닭을 남긴다`() {
+  echoing();port.permit=StationPermit.Read(listOf(robotPermit("humanoid-01","UNKNOWN",cause="EXPIRED",subject="guard_closed=true",basis="원천 cell/guard_closed 가 유효한 관측을 다시 낼 때")))
+  val run=enqueue();service.tick();service.tick()
+  assertEquals("${StationCoordinator.PERMIT_HELD}: humanoid-01 UNKNOWN EXPIRED(guard_closed=true); 풀릴 근거: 원천 cell/guard_closed 가 유효한 관측을 다시 낼 때",service.get(run.runId).reason)
+  port.permit=StationPermit.Read(listOf(robotPermit("humanoid-01","UNKNOWN",cause="NOT_COVERED",subject=null,basis="이 기체를 덮는 허가 원천이 생길 때")))
+  service.tick();assertEquals("${StationCoordinator.PERMIT_HELD}: humanoid-01 UNKNOWN NOT_COVERED; 풀릴 근거: 이 기체를 덮는 허가 원천이 생길 때",service.get(run.runId).reason)
+  port.permitThrows=true;service.tick()
+  assertEquals("${StationCoordinator.PERMIT_HELD}: 작업 허가를 읽지 못했습니다",service.get(run.runId).reason);assertEquals("WAITING_READY",service.get(run.runId).state)
+  port.permitThrows=false;port.permit=StationPermit.Unreadable("offline");service.tick()
+  assertEquals("${StationCoordinator.PERMIT_HELD}: 작업 허가를 읽지 못했습니다",service.get(run.runId).reason);assertEquals("WAITING_READY",service.get(run.runId).state)
+  assertTrue(port.writes.isEmpty());assertEquals(0,port.sends)
+ }
+ @Test fun `작업 번호 신호가 없는 스테이션도 작업 허가가 막으면 작업 요청을 내지 않고 허가가 돌아오면 낸다`() {
+  port.permit=StationPermit.Read(listOf(robotPermit("humanoid-01","INHIBITED")))
+  val run=enqueue();service.tick();service.tick()
+  assertEquals("WAITING_READY",service.get(run.runId).state);assertTrue(service.get(run.runId).reason.startsWith(StationCoordinator.PERMIT_HELD));assertEquals(0,port.sends)
+  port.permit=permitted;service.tick();service.tick()
+  assertEquals("RUNNING",service.get(run.runId).state);assertEquals(1,port.sends)
+ }
+ @Test fun `작업 허가 본문은 선언 없음과 기체마다의 판정과 못 읽음을 가른다`() {
+  val read={body:String->permitOf(json.readTree(body))}
+  assertEquals(StationPermit.Undeclared,read("""{"declared":false,"robots":[]}"""))
+  val judged=read("""{"declared":true,"robots":[{"robotId":"humanoid-01","permit":"INHIBITED","reasons":[{"source":"cell/guard_closed","cause":"REPORTED","subject":"guard_closed=false","resumeBasis":"b","observedAt":"t"}]},
+   {"robotId":"quadruped-01","permit":"PERMITTED","reasons":[{"source":"cell/guard_closed","cause":"REPORTED","subject":"guard_closed=true","resumeBasis":"c","observedAt":"t"}]}]}""") as StationPermit.Read
+  assertEquals(listOf(StationRobotPermit("humanoid-01","INHIBITED",listOf("REPORTED"),listOf("guard_closed=false"),listOf("b"))),judged.blocking)
+  for(bad in listOf("{}","""{"declared":true}""","""{"declared":true,"robots":[{"permit":"PERMITTED"}]}"""))assertIs<StationPermit.Unreadable>(read(bad),bad)
+  assertIs<StationPermit.Unreadable>(permitOf(null))
  }
  @Test fun `작업 번호 쓰기 실패가 이어져도 설비 준비 기한은 그대로라 전송 전에 시간 초과로 해제한다`() {
   echoing();port.writeFails=true;val run=enqueue();service.tick();now=now.plusSeconds(6);service.tick();now=now.plusSeconds(5);service.tick()

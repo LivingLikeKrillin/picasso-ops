@@ -8,6 +8,8 @@ import dev.picasso.ops.host.cell.CellBandClient
 import dev.picasso.ops.host.mission.MissionVersions
 import dev.picasso.ops.host.mission.MockRunner
 import dev.picasso.ops.host.mission.StoredMissionCatalog
+import dev.picasso.ops.host.permit.CellWorkPermits
+import dev.picasso.ops.host.permit.WorkPermitMap
 import dev.picasso.ops.host.store.HostSchema
 import dev.picasso.ops.host.store.HostRecords
 import dev.picasso.ops.host.store.HostSchemaMigrated
@@ -97,7 +99,13 @@ open class MissionHostApplication {
         @Suppress("UNUSED_PARAMETER") migrated: HostSchemaMigrated,
     ): HostRecords = HostRecords(jdbc, TransactionTemplate(DataSourceTransactionManager(dataSource)), json)
 
-    /** 빈을 만들 때 일지로 실행을 복원하고 pump 를 켠다(S4b 스펙 T3). 웹 서버는 그 뒤에 열린다. */
+    /**
+     * 빈을 만들 때 일지로 실행을 복원하고 pump 를 켠다(S4b 스펙 T3). 웹 서버는 그 뒤에 열린다.
+     *
+     * [permitMapping] 은 현장이 선언한 작업 허가 대응 파일의 경로다(`host.work-permit.mapping`, ADR 52). 비어 있으면 선언하지 않은 현장이고
+     * 미들웨어에 허가 포트를 붙이지 않는다. 경로가 있는데 파일을 못 읽거나 모양이 틀리면 기동이 멈춘다 — 선언한 현장을 조용히 선언 안 한
+     * 현장으로 띄우지 않는다.
+     */
     @Bean(destroyMethod = "close")
     open fun missionHost(
         robots: RobotPort,
@@ -108,7 +116,8 @@ open class MissionHostApplication {
         records: HostRecords,
         store: MissionStore,
         json: ObjectMapper,
-    ): MissionHost = MissionHost(robots, cellBand, clock, catalog, timings, records, store, json).start()
+        @Value("\${host.work-permit.mapping}") permitMapping: String,
+    ): MissionHost = MissionHost(robots, cellBand, clock, catalog, timings, records, store, json, workPermits(permitMapping, clock)).start()
 
     /**
      * 모의 실행기(S3b 스펙 §6.4). 프로파일과 스키마 경로는 작업 디렉터리 기준으로 푼다. `:mission-host:run` 은 저장소 루트에서
@@ -134,6 +143,10 @@ open class MissionHostApplication {
     companion object {
         /** mimic 에 싣는 클라이언트 id. */
         const val CLIENT_ID = "mission-host"
+
+        /** 작업 허가 대응 경로에서 포트를 짓는다. 비어 있으면 `null`(선언하지 않은 현장)이다. 경로는 작업 디렉터리 기준이다. */
+        fun workPermits(mapping: String, clock: HostClock): CellWorkPermits? =
+            mapping.trim().takeIf { it.isNotEmpty() }?.let { CellWorkPermits(WorkPermitMap.read(Path.of(it).toAbsolutePath().normalize()), clock.now()) }
 
         /**
          * 설정 파일 이름을 `mission-host` 로 둔다. 같은 JVM 의 registry `application.properties`·운영 서비스 설정과 가리지 않게.

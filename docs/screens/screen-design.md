@@ -633,6 +633,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | 6 | 자원 대기(필수 자원이 있을 때, region «작업 요청의 자원 대기») | h4 «필수 자원 ${stationId}», «${state} · ${reason}», «앞선 대기 작업 ${n}건 · 점유 작업 ${owner}»(없으면 «없음»), 링크 «공유 자원에서 점유·복구 확인» |
 | 7 | dl | «출처», «요청자»(payload 의 requestedBy, 없으면 «외부 시스템»), «작업 요청 ID», «내부 작업 ID», «호스트 조회»(«조회됨» 또는 «모름 · 호스트 조회 실패»), «실행 상태»(물리 상태, 없으면 «현재 실행 확인 안 됨»), «기체»(없으면 «확인 안 됨»), «적용 임무 버전»(번호, «코드 정의», «확인 안 됨») |
 | 8 | 일지 차단 | alert «일지 저장 실패로 호스트의 새 명령 진행이 차단되었습니다.» |
+| 8a | 작업 허가 대기(현재 실행에 `permitBlock` 이 있을 때, region «작업 허가 대기») | §3.4.4 열 6 과 같은 컴포넌트(`PermitBlockNotice.tsx`)와 같은 글자. 근거: `PermitBlockNotice.test.tsx` 의 `작업 요청 상세는 현재 실행의 작업 허가 대기를 보인다`. |
 | 9 | 불명 안내(RECEIVED·DISPATCHING·IN_DOUBT) | «작업 요청 처리 또는 전송 결과를 확정할 수 없습니다. 동일한 외부 주문이나 수동 작업은 자동으로 재제출하지 않습니다. 내부 작업 ID로 실행 이력을 확인하세요.» |
 | 10 | 미배정 안내(UNASSIGNED, 출발 미관측 대기(`pendingSources`)나 `supersededBy` 가 있으면 이 안내를 숨긴다) | «미배정 작업 요청입니다. 전송 전 미배정은 아래에서 운영자 판단으로 재평가할 수 있습니다.» |
 | 11 | 실행 줄 | «실행 ID: ${id} · 호스트 인스턴스: ${id} · 조회 시각: ${at}»(값이 없으면 «확인 안 됨») |
@@ -765,7 +766,7 @@ status에는 «${상태 글자} · ${reason}»이 표시됩니다.
 - REVIEW_REQUIRED 상태에서는 문장 «해제는 물리 완료 판정이 아닙니다. 로봇 작업·잔류 물체·설비 상태를 현장에서 확인한 뒤 판단하세요.»가 표시됩니다. 또한 체크 «현장 작업과 자원 해제 가능 여부를 확인했습니다»와 버튼 «현장 확인 후 자원 해제»(`CONFIRM_CLEAR`, 체크 전 비활성), «재실행 없이 관측 재개»(`RESUME_OBSERVATION`, 작업 요청이 연결된 작업만)를 제공합니다. 버튼 «현장 확인 후 자원 해제» 바로 아래에, 그 작업의 스테이션에 작업 번호 신호가 없을 때만 문장 «자원을 해제해도 이전 작업은 멈추지 않으며 해당 스테이션은 격리됩니다.»가 보입니다. 작업 번호 신호가 있는 스테이션에서는 이 문장이 없습니다.
 - 격리된 스테이션의 `WAITING_READY` 작업에서는 `role="note"` 문단 «설비가 비어 있고 이전 작업 로봇이 멈췄는지 현장에서 확인하세요. 설비 완료 신호가 꺼진 것을 확인한 뒤 판단하세요.», 칸 «운영자 판단 근거»(1000자), 체크 «설비·로봇 상태와 격리 해제 가능 여부를 확인했습니다», 버튼 «현장 확인 후 격리 해제»(`CONFIRM_STATION_IDLE`, 사유가 비었거나 체크 전이거나 조회 실패 중이면 비활성)를 제공합니다. 판단 뒤 선택 작업을 다시 조회하고 칸과 체크를 비웁니다. 이 폼이 보일 때 «현장 확인 후 자원 해제» 버튼은 없습니다.
 
-서버가 상태 줄과 «이유» 칸, 상태 이력에 내는 새 사유는 서버 문장 그대로 보입니다: `WAITING_READY`의 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다», «스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다», `REVIEW_REQUIRED`의 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다», «출발 미관측; 작업 요청 상세에서 출발 자리 확인을 기록하기 전에는 다시 제출하지 않고 점유를 유지합니다», 출발 자리 확인 뒤 이력(`RETRYING`)의 «출발 자리 확인 기록; 같은 작업 요청을 다시 제출합니다», 해제한 작업 이력의 «자원 해제에 따른 스테이션 격리», 격리 해제 뒤 이력의 «현장 확인 후 격리 해제: ${사유}». 설비 쪽 요구는 문서 [공유 스테이션 설비 연동 요구 사양](../station-equipment-requirements.md)에 있습니다.
+서버가 상태 줄과 «이유» 칸, 상태 이력에 내는 새 사유는 서버 문장 그대로 보입니다: `WAITING_READY`의 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다», «스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다», «작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다: ${기체} ${허가}…; 풀릴 근거: ${근거}», 허가를 못 읽으면 «작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다: 작업 허가를 읽지 못했습니다», `REVIEW_REQUIRED`의 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다», «출발 미관측; 작업 요청 상세에서 출발 자리 확인을 기록하기 전에는 다시 제출하지 않고 점유를 유지합니다», 출발 자리 확인 뒤 이력(`RETRYING`)의 «출발 자리 확인 기록; 같은 작업 요청을 다시 제출합니다», 해제한 작업 이력의 «자원 해제에 따른 스테이션 격리», 격리 해제 뒤 이력의 «현장 확인 후 격리 해제: ${사유}», 허가가 돌아온 뒤의 «작업 허가 복귀; 설비 준비 기한을 다시 셉니다». 설비 쪽 요구는 문서 [공유 스테이션 설비 연동 요구 사양](../station-equipment-requirements.md)에 있습니다.
 
 판단은 조회한 버전(`expectedRevision`)을 함께 보냅니다.
 
@@ -949,7 +950,7 @@ region «배정 가능»(h2 «배정 가능», `EligibilityTable.tsx`)에서는 
 3. 임무
 4. 임무 버전(«코드 정의», «버전 ${n}»)
 5. 기체
-6. 물리 상태(코드 값 뒤에, 이 인스턴스에서 건 운영자 취소가 있으면 회색 span(`.restored`) « (취소 요청: ${approverId}, ${reason})», title «${recordedAt}, 취소 때 ${physicalState}»)
+6. 물리 상태(코드 값 뒤에, 이 인스턴스에서 건 운영자 취소가 있으면 회색 span(`.restored`) « (취소 요청: ${approverId}, ${reason})», title «${recordedAt}, 취소 때 ${physicalState}». 실행에 `permitBlock` 이 있으면 같은 칸 아래 region «작업 허가 대기»(`PermitBlockNotice.tsx`, `section.permit-block`, 연한 파랑 바탕과 파란 왼쪽 띠 `#2563eb`). 위에서 아래로 h4 «작업 허가 대기», 안내 «현장 안전 신호가 허가를 내지 않아 이 실행의 새 로봇 명령을 내지 않고 기다립니다. 실패나 운영자 보류가 아닙니다.», dl(«막힌 단위», «내지 않은 명령», «처음 막힌 시각»), 목록 `ul[aria-label=허가를 기다리는 기체]`(기체마다 굵게 «기체 ${robotId}: ${허가 글자}», 그 아래 판단마다 «까닭 ${까닭 글자} · 막는 주체 ${subject} · 풀릴 근거 ${resumeBasis}» 와 작은 글자 «(원천 ${source}, 관측 시각 ${observedAt})», 값이 null 이면 «없음»), 끝에 안내 둘(`PERMIT_BLOCK_TEXT.notOperator`, `notSafety`). 운영자 보류(`OPERATOR_HOLD`)·결함 막음 표시와 섞지 않고 버튼이 없음. 근거: `PermitBlockNotice.test.tsx` 의 `작업 허가로 막힌 실행은 막은 기체와 주체와 풀릴 근거를 운영자 보류와 다른 표시로 보이고 조작 버튼이 없다`, `모름(UNKNOWN)은 까닭과 원천 없음을 그대로 보인다`.)
 7. 단위(«${unitId} ${skillType}: ${state}, 근거 ${reached}»)
 8. 작업 응답(«없음» 또는 작업 응답 요약 목록, «운영자 개입 필요» 포함)
 
@@ -1933,6 +1934,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | region | «작업 지시»·«수동 작업 요청 추적» | `lifecycle.spec.ts` |
 | region | «실행» | `ExecutionRestore.test.tsx`, `OperationsArea.test.tsx` |
 | region | «재기동 복원 보고» | `ExecutionRestore.test.tsx` |
+| region | «작업 허가 대기» | `PermitBlockNotice.test.tsx` |
 | region | «잔여 파지 확인» | `ExecutionControls.test.tsx`, `lifecycle.spec.ts` |
 | region | «인시던트»·«이전 인스턴스»·«관측» | `IncidentSection.test.tsx` |
 | region | «인시던트 상세»·«사람의 판단» | `IncidentSection.test.tsx`, `lifecycle.spec.ts` |
@@ -2064,6 +2066,17 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | 문장 | «미해소 잔여 파지 표시가 없습니다» | `ExecutionControls.test.tsx`, `lifecycle.spec.ts` |
 | 문장 | «이름 없음» | `ExecutionControls.test.tsx` |
 | 정규식 | «^모름: 잔여 파지 표시를 아직 읽지 못했습니다 \(실행 호스트가 답하지 않는다» | `ExecutionControls.test.tsx` |
+
+운영 › 실행과 작업 요청 상세의 작업 허가 대기에서 시험이 글자로 보는 항목(전부 `PermitBlockNotice.test.tsx`, 글자는 `labels.ts` 의 `PERMIT_BLOCK_TEXT`·`WORK_PERMIT_LABEL`·`WITHHELD_ISSUE_LABEL`·`PERMIT_CAUSE_LABEL`):
+
+| 종류 | 문구 | 시험 파일 |
+|---|---|---|
+| 문장 | «운영자 판단이나 결함 해제로 풀리지 않습니다. 아래 풀릴 근거가 채워지면 다음 pump 에 명령을 냅니다.» | `PermitBlockNotice.test.tsx` |
+| 문장 | «작업 허가는 안전 신호를 비춘 정보이며 기체를 세우는 것은 안전 계통입니다. 이미 나간 명령과 도는 단위의 취소는 이 대기와 상관없이 그대로입니다. 다만 미확정 단위의 취소는 재조회가 필요하여 허가가 돌아온 뒤에 나갑니다.» | `PermitBlockNotice.test.tsx` |
+| 굵은 글자 | «기체 humanoid-01: 막음»·«기체 humanoid-01: 모름(막음)»(허가 글자 `PERMITTED` «허가», `INHIBITED` «막음», `UNKNOWN` «모름(막음)») | `PermitBlockNotice.test.tsx` |
+| dd | «단위 출발»·«개정 갱신»(`WITHHELD_ISSUE_LABEL`: `START` «단위 출발», `REVISION_UPDATE` «개정 갱신», `IN_DOUBT_LOOKUP` «미확정 조회») | `PermitBlockNotice.test.tsx` |
+| 정규식 | «원천 보고», «까닭 허가 원천 없음 · 막는 주체 없음»(`PERMIT_CAUSE_LABEL`: `REPORTED` «원천 보고», `EXPIRED` «관측 만료», `SESSION_CHANGED` «원천 세션 바뀜», `SCOPE_UNKNOWN` «대상 기체 모름», `NOT_COVERED` «허가 원천 없음», `PORT_FAILED` «허가를 읽지 못함») | `PermitBlockNotice.test.tsx` |
+| 정규식 | «막는 주체 guard_closed=false», «풀릴 근거 안전 계통이 guard_closed 을 true 으로 되돌릴 때» | `PermitBlockNotice.test.tsx` |
 
 ### 4.4 해시 경로
 

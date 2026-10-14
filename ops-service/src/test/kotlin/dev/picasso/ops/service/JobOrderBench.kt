@@ -44,6 +44,9 @@ class JobOrderBench {
     var executions: HostCall<JsonNode> = HostCall.Ok(json.readTree("""{"instanceId":"mw-1","pumpedAt":null,"executions":[]}"""))
     var cell: HostCall<JsonNode> = HostCall.Ok(json.readTree("""{"cell":null}"""))
 
+    /** `GET /host/work-permits` 본문. 기본은 허가 대응을 선언하지 않은 현장이다(ADR 52). */
+    var workPermits: HostCall<JsonNode> = HostCall.Ok(json.readTree("""{"declared":false,"evaluatedAt":"t","session":null,"validFor":null,"mappings":[],"robots":[]}"""))
+
     /** 호스트가 받은 판정 요청(작업 지시 본문, 기체 id). */
     val judged = mutableListOf<Pair<ObjectNode, List<String>>>()
 
@@ -63,6 +66,8 @@ class JobOrderBench {
         override fun executions(): HostCall<JsonNode> = this@JobOrderBench.executions
 
         override fun cell(): HostCall<JsonNode> = this@JobOrderBench.cell
+
+        override fun workPermits(): HostCall<JsonNode> = this@JobOrderBench.workPermits
 
         override fun submit(jobOrder: ObjectNode, candidates: List<String>): HostWrite = submit(jobOrder, candidates, emptyList())
 

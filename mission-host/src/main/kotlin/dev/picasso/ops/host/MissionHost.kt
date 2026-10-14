@@ -36,6 +36,11 @@ import dev.picasso.ops.host.cell.CellSnapshot
 import dev.picasso.ops.host.cell.SourceConfirmation
 import dev.picasso.ops.host.mission.SiteInputs
 import dev.picasso.ops.host.mission.StoredMissionCatalog
+import dev.picasso.ops.host.permit.CellWorkPermits
+import dev.picasso.ops.host.permit.PermitBlockView
+import dev.picasso.ops.host.permit.PermitMappingView
+import dev.picasso.ops.host.permit.RobotPermitView
+import dev.picasso.ops.host.permit.WorkPermitsView
 import dev.picasso.ops.host.web.BadRequest
 import dev.picasso.ops.host.web.HostRequests
 import dev.picasso.ops.host.store.CancelRow
@@ -254,6 +259,8 @@ data class JobResponseView(
  * @param missionVersion 임무 버전. `null` 이면 코드 정의다.
  * @param jobResponse 그 실행의 마지막 작업 응답. 아직 없으면 `null`.
  * @param cancel 이 인스턴스에서 그 실행에 건 운영자 취소(P0-b2). 없으면 `null`.
+ * @param permitBlock 이 실행의 새 로봇 명령을 지금 막고 있는 작업 허가(ADR 52). 막힌 것이 없거나 현장이 허가 대응을 선언하지 않았으면
+ *   `null` 이다. 운영자 보류·결함 막음과 다른 칸이다([PermitBlockView]).
  */
 data class ExecutionView(
     val executionId: String,
@@ -266,6 +273,7 @@ data class ExecutionView(
     val jobResponse: JobResponseView?,
     val restoredFrom: RestoredFromView?,
     val cancel: CancelRecordView? = null,
+    val permitBlock: PermitBlockView? = null,
 )
 
 /** 다시 지은 실행의 이전 실행(S4b 스펙 §6.3). 바로 앞 인스턴스에서 그 작업 지시를 들었던 실행이다. */
@@ -393,6 +401,13 @@ class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeExc
  * 첫 읽기가 성공하기 전에는 판정이 기체마다 [UNAPPLIED_REASON] 을 더해 통과시키지 않는다. 그래서 제출은 `assign` 에 기체를 하나도
  * 넘기지 않고, 미들웨어는 기체 없는 채택을 사유 없는 UNASSIGNED 로 돌려준다(이유는 [SubmitOutcome.excluded], S3a JSON 계약 그대로).
  * 기본값으로 대신하지 않는다. 나머지 경로는 시간값을 쓰지 않으므로 그대로 동작한다.
+ *
+ * ## 작업 허가(ADR 52)
+ *
+ * [permits] 는 현장이 작업 허가 대응을 선언했을 때만 있다. 있으면 미들웨어의 허가 포트로 붙이고, pump 마다 잠금 밖에서 읽은 셀 대역
+ * 스냅숏을 잠금 아래에서 넘긴다([CellWorkPermits.observe]). 포트의 읽기는 그 스냅숏으로 지어 둔 판독이라 잠금 아래에서 기다리지 않는다.
+ * 없으면 포트를 붙이지 않아 발행 거동이 오늘 그대로다. 허가는 안전 계통 상태를 비춘 정보이고 이 호스트는 그것으로 새 로봇 명령만 내지
+ * 않는다.
  */
 class MissionHost(
     private val robots: RobotPort,
@@ -403,12 +418,15 @@ class MissionHost(
     private val records: HostRecords,
     private val store: MissionStore,
     private val json: ObjectMapper,
+    private val permits: CellWorkPermits? = null,
 ) : AutoCloseable {
 
     private val lock = ReentrantLock(true)
     private val signals = CellBandSignals()
 
-    private val middleware = Middleware(robots = robots, cell = signals, now = clock::now, missions = catalog, siteTimings = siteTimings)
+    private val middleware = Middleware(
+        robots = robots, cell = signals, now = clock::now, missions = catalog, siteTimings = siteTimings, permits = permits,
+    )
 
     private var pumpedAt: Instant? = null
     private var latestCell: CellSnapshot? = null
@@ -571,9 +589,12 @@ class MissionHost(
     fun pumpOnce() {
         try {
             val cell = cellBand.fetch()
+            // 작업 허가 줄의 관측 시각은 이 층이 셀 대역을 읽은 시각이다. 잠금을 기다린 시간은 관측의 나이에 든다.
+            val fetchedAt = clock.now()
             lock.withLock {
                 signals.snapshot = cell
                 latestCell = cell
+                permits?.observe(cell, fetchedAt)
                 val at = clock.now()
                 retryDeferred()
                 if (journalBlocked().isNotEmpty()) return@withLock
@@ -710,6 +731,7 @@ class MissionHost(
                     jobResponse = responses.lastOrNull { it.executionId == execution.executionId }?.let(::view),
                     restoredFrom = restoredFrom[execution.executionId],
                     cancel = cancels[execution.executionId]?.let(CancelRecordView::of),
+                    permitBlock = execution.permitBlock?.let(PermitBlockView::of),
                 )
             },
             restore = restoreView(),
@@ -938,6 +960,23 @@ class MissionHost(
             .groupBy { it.executionId to it.unitId }
             .values.map { it.last().incidentId }
             .toSet()
+    }
+
+    /**
+     * 작업 허가의 지금(ADR 52). 현장이 대응을 선언하지 않았으면 `declared` 가 거짓이고 나머지가 비어 있다. 판정은 발행 관문과 같은 규칙이다
+     * ([CellWorkPermits.evaluate]). 지어 둔 판독만 읽으므로 호스트 잠금을 잡지 않는다.
+     */
+    fun workPermits(): WorkPermitsView {
+        val at = clock.now()
+        val source = permits ?: return WorkPermitsView(false, at, null, null, emptyList(), emptyList())
+        return WorkPermitsView(
+            declared = true,
+            evaluatedAt = at,
+            session = source.currentSession,
+            validFor = source.map.validFor.toString(),
+            mappings = source.map.signals.map { PermitMappingView(it.signal, it.permittedWhen, it.robots.toList()) },
+            robots = source.evaluate(at).map(RobotPermitView::of),
+        )
     }
 
     /** 마지막 pump 가 읽은 셀 대역 스냅숏. 못 읽었으면 `null` 이다. */

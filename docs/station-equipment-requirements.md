@@ -47,6 +47,8 @@
 
 신호 절차는 다음과 같이 진행됩니다.
 
+현장이 작업 허가를 선언했으면 운영 서비스는 아래 1 의 번호 쓰기 전에 작업 허가를 봅니다(격리 확인 다음, 기한 확인 앞). 대응이 맡은 기체 가운데 하나라도 `PERMITTED` 가 아니거나 허가를 못 읽으면 번호를 쓰지 않고 `WAITING_READY` 에 남으며(사유 «작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다: …») 설비 준비 단계 기한은 멈춥니다. 허가가 돌아오면 «작업 허가 복귀; 설비 준비 기한을 다시 셉니다» 로 기한을 다시 셉니다. 설비 쪽 요구는 새로 없습니다(설비는 번호를 받지 못한 채 준비 상태로 기다립니다). 근거: `StationCoordinatorTest` 의 `작업 허가가 INHIBITED 면 작업 번호를 쓰지 않고 설비 준비 대기에 막은 기체와 주체와 풀릴 근거를 남기며 PERMITTED 가 되면 그때 쓴다`.
+
 1. 준비 true 와 완료 false 를 읽으면 운영 서비스가 DB 잠금 밖에서 작업 번호를 `jobSignal` 에 씁니다. 쓰기 경로는 운영자의 신호 쓰기와 같아 운영 서비스 → 실행 호스트 → 현장 순서이며, 조작 기록에 `WRITE_CELL_SIGNAL` 로 남습니다(행위자는 그 스테이션 작업의 요청자). 현장이 받아들였거나, 응답이 없었더라도 다시 읽은 값이 그 번호이면 쓰기 성공으로 봅니다.
 2. 쓰기에 성공한 뒤에만 `DISPATCHING` 으로 넘어가 로봇에 작업 요청을 보냅니다. 이 전이의 근거(`context`)에는 `jobSignal`, `jobToken`, `signals` 가 남습니다.
 3. 쓰기에 실패하면 로봇에 보내지 않고 `WAITING_READY` 에 남으며 사유는 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다» 입니다. 다음 처리 주기에 다시 씁니다. 단계 기한은 다시 시작하지 않으므로 실패가 이어지면 전송 전에 `TIMED_OUT` 으로 풉니다.
@@ -85,7 +87,7 @@
 
 ## 안전 신호를 쓸 수 없음
 
-준비 신호, 완료 신호, 작업 번호 신호에는 안전 신호를 연결할 수 없습니다. 운영 서비스는 안전 신호를 읽기 대상에서 제외하며, 등록 시 안전 신호나 현장에 선언되지 않은 신호가 지정되면 등록을 거부합니다. 셀 대역 또한 안전 신호인 `guard_closed` 에 대한 쓰기 요청을 거부합니다.
+준비 신호, 완료 신호, 작업 번호 신호에는 안전 신호를 연결할 수 없습니다. 운영 서비스는 안전 신호를 읽기 대상에서 제외하며, 등록 시 안전 신호나 현장에 선언되지 않은 신호가 지정되면 등록을 거부합니다. 셀 대역 또한 안전 신호인 `guard_closed` 에 대한 쓰기 요청을 거부합니다. 안전 신호는 실행 호스트의 작업 허가 대응(`host.work-permit.mapping`)을 거쳐서만 새 로봇 명령 판단에 쓰이며 스테이션 신호로는 여전히 연결할 수 없습니다. 작업 허가는 안전 기능이 아니라 안전 신호를 비춘 정보 투영이고 picasso 는 그 값으로 새 로봇 명령만 내지 않습니다. 근거: `CellWorkPermitsTest` 의 `신호가 없거나 안전 신호가 아니거나 신호 목록이 없으면 원천이 말한 UNKNOWN 이다`.
 
 이 규격의 신호들은 일반 공정 신호이며, 인증된 안전 정지, 안전 PLC, 장비 쪽 인터록을 대신할 수 없습니다.
 
@@ -96,12 +98,13 @@
 - `inspection_ready`: BOOLEAN, 초기값 `"true"`
 - `inspection_complete`: BOOLEAN, 초기값 `"false"`
 - `inspection_job`, `inspection_job_done`: TEXT, 초기값 빈 문자열(이번 변경에서 추가)
+- `guard_closed`: BOOLEAN 안전 신호, 초기값 `"true"`. 현장이 작업 허가 대응을 선언하면 작업 허가의 원천(`cell/guard_closed`)이 될 수 있음. 시험에서는 `Site.actuateSafety` 로 여닫음(HTTP 아님, 셀 대역의 HTTP 쓰기는 여전히 거부).
 - 코드 경로: `site/src/main/kotlin/dev/picasso/ops/site/SiteCell.kt`
 
 운영 서비스 구현 코드는 다음과 같습니다.
 
-- `ops-service/src/main/kotlin/dev/picasso/ops/service/stations/StationCoordinator.kt`(`tick`, `numbered`, `observe`, `decide`)
-- `ops-service/src/main/kotlin/dev/picasso/ops/service/stations/StationPort.kt`(`read`, `write`)
+- `ops-service/src/main/kotlin/dev/picasso/ops/service/stations/StationCoordinator.kt`(`tick`, `numbered`, `observe`, `decide`, `permitHeld`)
+- `ops-service/src/main/kotlin/dev/picasso/ops/service/stations/StationPort.kt`(`read`, `write`, `permit`, `permitOf`)
 - `ops-service/src/main/resources/db/ops/V17__station_job_number_quarantine.sql`
 
 단위 시험 `StationCoordinatorTest`(`ops-service/src/test/kotlin/dev/picasso/ops/service/`)에 포함된 대표 회귀 시험 항목은 다음과 같습니다.
@@ -114,6 +117,8 @@
 - `현장 시계가 운영 시계보다 늦어도 전송 뒤 새로 켜진 완료 신호로 완료한다`
 
 통합 시험 `StationLateCompletionTest`(`e2e/src/test/kotlin/dev/picasso/ops/e2e/`)는 실제 스택 환경에서 두 가지 변형을 검증합니다. 작업 번호 쌍이 있는 스테이션의 경우 작업 X 의 늦은 완료를 작업 Y 의 확인 필요로 넘기는 동작을 확인하고, 쌍이 없는 스테이션의 경우 격리 처리되어 격리 해제 전에는 작업 Y 를 보내지 않는 동작을 확인합니다. 이 시험에서 시험 코드가 설비 역할을 맡아 운영 서비스의 신호 쓰기 API 로 반환 번호와 완료 신호를 씁니다.
+
+작업 허가 쪽은 `StationCoordinatorTest` 의 작업 허가 시험 셋(INHIBITED·UNKNOWN·못 읽음, 작업 번호 쌍이 없는 스테이션)이 번호를 쓰지 않고 기다리는 것을, `site` 시험 `SiteCellTest` 의 `안전 계통 대역은 안전 신호의 값과 관측 시각을 바꾸고 일반 신호와 틀린 값은 거부하며 소프트웨어 쓰기는 여전히 403 이다` 가 셀 문 대역을, 통합 시험 `WorkPermitTest` 가 실제 스택에서 셀 문을 열고 닫을 때 실행이 기다렸다가 끝까지 가는 것을 확인합니다.
 
 ## 더 읽을 곳
 

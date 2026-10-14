@@ -94,7 +94,7 @@ picasso 서브모듈 `74e4d3d` 위의 실행 호스트가 실제로 내고 받�
 
 ### H1. `GET /host/executions` 의 `restore` 와 `restoredFrom`
 
-본문(5칸, 이 순서): `instanceId`, `pumpedAt`, `executions`, `restore`, `journalBlockedExecutionIds`. 실행 하나(10칸, 이 순서): S3a 의 8칸 뒤에 `restoredFrom`, `cancel`(S3a JSON 계약 §5.1, P0-b2).
+본문(5칸, 이 순서): `instanceId`, `pumpedAt`, `executions`, `restore`, `journalBlockedExecutionIds`. 실행 하나(11칸, 이 순서): S3a 의 8칸 뒤에 `restoredFrom`, `cancel`(S3a JSON 계약 §5.1, P0-b2), `permitBlock`(S3a JSON 계약 §5.5, ADR 52).
 
 ```json
 {

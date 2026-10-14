@@ -44,12 +44,14 @@ import java.util.concurrent.CopyOnWriteArrayList
  * @param timings 대역 뷰의 한 행(버전, 앞 폭, 뒤 폭, inDoubtGrace, stallWindow). `null` 이면 뷰를 만들지 않아 호스트가 미적용으로 뜬다.
  * @param gated 참이면 호스트의 하위 포트를 [blockedSnapshots] 에 든 기체의 스냅숏을 못 읽는 포트로 넣는다(S4b 의 복원 미룸).
  *   기동마다 새 채널과 새 `ClientRobotPort` 다(재기동한 호스트가 핸들을 처음부터 다시 받는 것과 같게).
+ * @param permitMapping 주면 현장이 이 작업 허가 대응을 선언한 것이다(`host.work-permit.mapping`, ADR 52). 셀 대역 대역의 안전 신호가 원천이다.
  */
 class HostBench(
     private val mockVirtualLimit: Duration? = null,
     private val readInterval: Duration? = null,
     timings: List<Long>? = STANDARD_TIMINGS,
     private val gated: Boolean = false,
+    private val permitMapping: Path? = null,
 ) : AutoCloseable {
 
     /** [gated] 일 때 스냅숏을 못 읽는 기체. 바꾸면 다음 호출부터 미친다. */
@@ -191,6 +193,7 @@ class HostBench(
             add("--host.mock-run.schema=$SCHEMA")
             mockVirtualLimit?.let { add("--host.mock-run.virtual-limit=$it") }
             readInterval?.let { add("--host.site-timings.read-interval=$it") }
+            permitMapping?.let { add("--host.work-permit.mapping=$it") }
         }.toTypedArray(),
     )
 

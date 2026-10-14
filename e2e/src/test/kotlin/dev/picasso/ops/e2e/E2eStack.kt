@@ -42,6 +42,7 @@ class E2eStack private constructor(
     val hostUrl: String,
     val opsUrl: String,
     val siteId: String,
+    private val permitMapping: Path? = null,
 ) : AutoCloseable {
 
     /** 운영 서비스 응답 한 건. 본문이 비면 널이다. */
@@ -69,7 +70,7 @@ class E2eStack private constructor(
         val deadline = Instant.now().plus(RESTART_WAIT)
         while (true) {
             try {
-                host = startHost(site, port)
+                host = startHost(site, port, permitMapping)
                 return
             } catch (e: Exception) {
                 if (Instant.now().isAfter(deadline)) throw IllegalStateException("실행 호스트를 포트 $port 에 다시 띄우지 못했다", e)
@@ -105,7 +106,8 @@ class E2eStack private constructor(
         private val http = HttpClient.newHttpClient()
         private val json = ObjectMapper()
 
-        fun start(integrationToken: String = ""): E2eStack {
+        /** @param permitMapping 주면 현장이 이 작업 허가 대응을 선언한 것이다(ADR 52). 실행 호스트에 그대로 넘긴다. */
+        fun start(integrationToken: String = "", permitMapping: Path? = null): E2eStack {
             val siteId = checkNotNull(System.getenv("SITE_ID")) { "SITE_ID 가 없다(루트 .env)" }
             PostgresSupport.reset()
             PostgresSupport.execute("DROP SCHEMA IF EXISTS ops CASCADE")
@@ -126,7 +128,7 @@ class E2eStack private constructor(
             )
             // 실행 호스트는 Site 다음, 운영 서비스 앞이다. 운영 서비스가 기동에서 호스트 주소를 받는다.
             val host = try {
-                startHost(site)
+                startHost(site, permitMapping = permitMapping)
             } catch (e: Exception) {
                 site.close()
                 throw e
@@ -139,7 +141,7 @@ class E2eStack private constructor(
                 site.close()
                 throw e
             }
-            return E2eStack(site, host, ops, hostUrl, "http://127.0.0.1:${(ops as WebServerApplicationContext).webServer.port}", siteId)
+            return E2eStack(site, host, ops, hostUrl, "http://127.0.0.1:${(ops as WebServerApplicationContext).webServer.port}", siteId, permitMapping)
         }
 
         /** [baseUrl] 의 운영 서비스를 화면처럼 부른다. */
@@ -192,9 +194,10 @@ class E2eStack private constructor(
          *
          * @param port 0 이면 무작위다. 다시 띄울 때는 앞 호스트의 포트다.
          */
-        private fun startHost(site: Site, port: Int = 0): ConfigurableApplicationContext {
+        private fun startHost(site: Site, port: Int = 0, permitMapping: Path? = null): ConfigurableApplicationContext {
             val db = db()
             return MissionHostApplication.builder(HostClock { site.now() }).run(
+                "--host.work-permit.mapping=${permitMapping ?: ""}",
                 "--server.port=$port",
                 "--host.mimic.port=${site.mimicPort}",
                 "--host.cell.url=http://127.0.0.1:${site.cellPort}",
