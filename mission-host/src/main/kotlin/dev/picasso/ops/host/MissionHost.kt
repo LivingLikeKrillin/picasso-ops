@@ -26,12 +26,14 @@ import dev.picasso.middleware.Route
 import dev.picasso.middleware.ResolveOutcome
 import dev.picasso.middleware.RobotPort
 import dev.picasso.middleware.SiteTimingsSource
+import dev.picasso.middleware.SourceUnobserved
 import dev.picasso.middleware.Unassigned
 import dev.picasso.middleware.UnitState
 import dev.picasso.middleware.Verification
 import dev.picasso.ops.host.cell.CellBandClient
 import dev.picasso.ops.host.cell.CellBandSignals
 import dev.picasso.ops.host.cell.CellSnapshot
+import dev.picasso.ops.host.cell.SourceConfirmation
 import dev.picasso.ops.host.mission.SiteInputs
 import dev.picasso.ops.host.mission.StoredMissionCatalog
 import dev.picasso.ops.host.web.BadRequest
@@ -84,25 +86,33 @@ enum class SubmitResult { ACCEPTED, IDEMPOTENT, REJECTED, UNASSIGNED }
 /**
  * `assign` 이 기체마다 낸 미배정 사유.
  *
- * 뒤 두 칸은 출발 결품으로 떨어진 기체에만 값이 있다(picasso `Unassigned.sourceMissing`). 다른 사유로 떨어진 기체는 둘 다 `null` 이다.
+ * 가운데 두 칸은 출발 결품으로 떨어진 기체에만 값이 있다(picasso `Unassigned.sourceMissing`). 다른 사유로 떨어진 기체는 둘 다 `null` 이다.
  * 모양은 REJECTED 의 같은 이름 칸([SubmitOutcome.alternativeLocations]·[SubmitOutcome.sourceMissing])과 같다.
  *
+ * 마지막 칸은 출발 미관측으로 떨어진 기체에만 값이 있다(picasso `Unassigned.sourceUnobserved`). 출발 결품과 접지 않는다. 한 기체는 둘 중
+ * 많아야 하나를 든다(관문이 첫 거절에서 멈춘다).
+ *
  * @param alternativeLocations 그 자재를 든 다른 자리. 빈 목록은 «든 자리가 없다» 는 응답이고 `null` 은 셀이 응답하지 않았거나 출발 결품이
- *   아니다. 둘을 접지 않는다. 어느 `null` 인지는 [sourceMissing] 으로 가른다.
+ *   아니다. 둘을 접지 않는다. 어느 `null` 인지는 [sourceMissing] 으로 가른다. 출발 미관측이면 대체 자리를 계산하지 않으므로 `null` 이다.
  * @param sourceMissing 이 기체가 출발 결품으로 떨어졌으면 그 자리와 관측. 아니면 `null` 이다.
+ * @param sourceUnobserved 이 기체가 출발 미관측으로 떨어졌으면 그 자리와 설비가 말한 것. 아니면 `null` 이다.
  */
 data class Refusal(
     val robotId: String,
     val reason: String,
     val alternativeLocations: List<String>? = null,
     val sourceMissing: SourceMissingView? = null,
+    val sourceUnobserved: SourceUnobservedView? = null,
 ) {
     companion object {
-        /** [missing] 은 이 기체의 출발 결품 답이다. 대체 자리 목록은 그 값을 그대로 쓴다. */
-        fun of(robotId: String, reason: String, missing: RemedyOutcome.SourceMissing?) = Refusal(
+        /**
+         * [missing] 은 이 기체의 출발 결품 답이고 [unobserved] 는 출발 미관측 답이다. 대체 자리 목록은 결품 답의 값을 그대로 쓴다.
+         */
+        fun of(robotId: String, reason: String, missing: RemedyOutcome.SourceMissing?, unobserved: SourceUnobserved? = null) = Refusal(
             robotId, reason,
             alternativeLocations = missing?.alternatives,
             sourceMissing = missing?.let { SourceMissingView(it.material, it.source, it.observed) },
+            sourceUnobserved = unobserved?.let(SourceUnobservedView::of),
         )
     }
 }
@@ -110,13 +120,14 @@ data class Refusal(
 /**
  * 제출의 결과.
  *
- * 뒤 네 칸([remedy]·[remedyWithheld]·[alternativeLocations]·[sourceMissing])은 미들웨어 `Submission.Rejected` 의 나머지 칸이다.
+ * 뒤 다섯 칸([remedy]·[remedyWithheld]·[alternativeLocations]·[sourceMissing]·[sourceUnobserved])은 미들웨어 `Submission.Rejected` 의 나머지 칸이다.
  * 미들웨어가 거부한 REJECTED 일 때만 값이 있고 그 밖에는 `null`·`false` 다. 앞 여섯 칸의 모양은 그대로다.
  *
  * @param executionId·robotId ACCEPTED·IDEMPOTENT 일 때만 있다.
  * @param rejectionReason REJECTED 일 때만 있다.
- * @param refusals UNASSIGNED 일 때 `assign` 이 기체마다 낸 사유. 호스트가 먼저 뺀 기체는 여기 없고 [excluded] 에 있다. 출발 결품으로
- *   떨어진 기체의 대체 자리와 출발 자리는 [Refusal] 의 칸에 있고, UNASSIGNED 의 [alternativeLocations]·[sourceMissing] 은 `null` 이다.
+ * @param refusals UNASSIGNED 일 때 `assign` 이 기체마다 낸 사유. 호스트가 먼저 뺀 기체는 여기 없고 [excluded] 에 있다. 출발 결품·출발
+ *   미관측으로 떨어진 기체의 대체 자리와 출발 자리는 [Refusal] 의 칸에 있고, UNASSIGNED 의 [alternativeLocations]·[sourceMissing]·
+ *   [sourceUnobserved] 는 `null` 이다.
  * @param excluded 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체와 그 판정.
  * @param remedy 깨진 전제를 채우는 조치 탐색의 응답. `FOUND` 는 단계가 있고 `NONE` 은 못 찾은 종류와 못 채운 조건이 있다.
  *   탐색하지 않았으면 `null` 이다. 보류했으면 [remedyWithheld] 가 참이고 이것은 `null` 이다(보류한 단계는 싣지 않는다).
@@ -125,6 +136,8 @@ data class Refusal(
  *   응답하지 않았거나 출발 결품 거부가 아니다. 미들웨어가 둘을 가르지 않으므로 [sourceMissing] 으로 가른다.
  * @param sourceMissing 이 거부가 출발 결품이면 그 자리와 관측. 이번 제출로 미들웨어 조치 탐색 기록에 적힌 `SOURCE_MISSING` 에서
  *   옮긴다. 아니면 `null` 이다.
+ * @param sourceUnobserved 이 거부가 출발 미관측이면 그 자리와 설비가 말한 것(picasso `Submission.Rejected.sourceUnobserved`). 아니면
+ *   `null` 이다. 조치 탐색 기록에는 적히지 않으므로 거부 값에서 바로 옮긴다. 출발 결품이 아니므로 그때 [alternativeLocations] 는 `null` 이다.
  */
 data class SubmitOutcome(
     val result: SubmitResult,
@@ -137,6 +150,7 @@ data class SubmitOutcome(
     val remedyWithheld: Boolean = false,
     val alternativeLocations: List<String>? = null,
     val sourceMissing: SourceMissingView? = null,
+    val sourceUnobserved: SourceUnobservedView? = null,
 ) {
     companion object {
         /**
@@ -149,6 +163,7 @@ data class SubmitOutcome(
             remedyWithheld = rejected.remedyWithheld,
             alternativeLocations = rejected.alternativeLocations,
             sourceMissing = (noted as? RemedyOutcome.SourceMissing)?.let { SourceMissingView(it.material, it.source, it.observed) },
+            sourceUnobserved = rejected.sourceUnobserved?.let(SourceUnobservedView::of),
         )
     }
 }
@@ -199,6 +214,19 @@ data class UnmetView(val subject: String, val required: String, val observed: St
  * UNASSIGNED 이면 기체마다 [Refusal.alternativeLocations] 에 있다.
  */
 data class SourceMissingView(val material: String?, val source: String, val observed: String?)
+
+/**
+ * 출발 미관측 거부의 자리(picasso `SourceUnobserved`). 관측을 요구한 단위의 출발 자리를 설비가 확인해 주지 않았다. **결품이 아니다** —
+ * 다음 행동은 주문을 고치는 것이 아니라 사람의 확인이고, 그 확인은 다음 제출의 [SourceConfirmation] 으로 셀 관측이 되어 들어온다.
+ *
+ * @param material 그 자리에 있어야 할 것. 단위가 자재를 지정하지 않았으면 `null` 이다
+ * @param occupied 설비가 말한 것. `null` 이면 말이 없었고, 참이면 «있다» 고만 하고 무엇인지 말하지 않았다. 둘을 접지 않는다
+ */
+data class SourceUnobservedView(val material: String?, val source: String, val occupied: Boolean?) {
+    companion object {
+        fun of(unobserved: SourceUnobserved) = SourceUnobservedView(unobserved.material, unobserved.source, unobserved.occupied)
+    }
+}
 
 /** 실행의 단위 하나. [reached] 는 단위가 이른 근거 등급이다. */
 data class UnitView(val unitId: String, val skillType: String, val state: String, val reached: String)
@@ -589,18 +617,27 @@ class MissionHost(
      * 새 실행으로 ACCEPTED 이면 같은 잠금 안에서 응답하기 전에 실행 일지를 적는다(S4b 스펙 T2). 이미 있던 실행의 `revise` 가 낸
      * Accepted 와 IDEMPOTENT 는 적지 않는다. pump 도 이 잠금을 잡으므로 일지에 없는 실행은 로봇 명령을 낸 적이 없다. 일지 쓰기가
      * 실패하면 [JournalWriteFailed] 이고 실행은 메모리에 남지만 다음 pump와 신규 제출을 차단한다.
+     *
+     * [confirmations] 는 사람이 기록한 출발 자리 확인이다. 이 `assign` 한 번 동안만 셀 포트의 관측이 되고([CellBandSignals.observe])
+     * 끝나면 비운다. 호스트는 저장하지 않는다 — 다음 제출이나 재배정은 확인을 다시 싣지 않으면 설비의 답만 본다.
      */
-    fun submit(order:JobOrder,candidates:List<String>,missionVersion:String?=null):SubmitOutcome = lock.withLock {
-        catalog.withMission(order.workMasterId,selectedMission(order.workMasterId,missionVersion)) { submitCurrent(order,candidates) }
+    fun submit(order:JobOrder,candidates:List<String>,missionVersion:String?=null,confirmations:List<SourceConfirmation> = emptyList()):SubmitOutcome = lock.withLock {
+        catalog.withMission(order.workMasterId,selectedMission(order.workMasterId,missionVersion)) { submitCurrent(order,candidates,confirmations) }
     }
-    private fun submitCurrent(order: JobOrder, candidates: List<String>): SubmitOutcome = lock.withLock {
+    private fun submitCurrent(order: JobOrder, candidates: List<String>, confirmations: List<SourceConfirmation>): SubmitOutcome = lock.withLock {
         if (journalBlocked().isNotEmpty()) return@withLock SubmitOutcome(SubmitResult.REJECTED, null, null, "실행 일지 저장 실패: 호스트 복구 전 제출 차단", emptyList(), emptyList())
         val applied = siteTimings.current() != null
         val judged = candidates.distinct().map { judge(order, it, applied) }
         val excluded = judged.filter { !it.passed }
         val existed = middleware.executions().any { it.order.jobOrderId == order.jobOrderId }
         val searched = middleware.remedySearches().size
-        when (val submission = middleware.assign(order, judged.filter { it.passed }.map { it.robotId })) {
+        signals.confirmations = confirmations.associateBy { it.source }
+        val assigned = try {
+            middleware.assign(order, judged.filter { it.passed }.map { it.robotId })
+        } finally {
+            signals.confirmations = emptyMap()
+        }
+        when (val submission = assigned) {
             is Middleware.Submission.Accepted -> {
                 if (!existed) journal(submission.execution)
                 SubmitOutcome(
@@ -618,7 +655,10 @@ class MissionHost(
             )
             is Unassigned -> SubmitOutcome(
                 SubmitResult.UNASSIGNED, null, null, null,
-                submission.refusals.map { (robotId, reason) -> Refusal.of(robotId, reason, submission.sourceMissing[robotId]) }, excluded,
+                submission.refusals.map { (robotId, reason) ->
+                    Refusal.of(robotId, reason, submission.sourceMissing[robotId], submission.sourceUnobserved[robotId])
+                },
+                excluded,
             )
         }
     }

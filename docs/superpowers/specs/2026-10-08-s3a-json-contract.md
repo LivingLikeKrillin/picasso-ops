@@ -154,6 +154,7 @@ InspectAsset 예:
 ```
 
 - `candidates` 필수, 비어 있지 않은 문자열 배열.
+- `sourceConfirmations` 선택, `[{source, identity, confirmedBy, confirmedAt}]`(`confirmedAt` 은 ISO-8601 시각). 없거나 null 이면 빈 목록이다. 원소가 객체가 아니거나, 문자열 칸이 비었거나, `confirmedAt` 이 시각이 아니거나, 같은 `source` 가 두 번 오면 400 `BAD_REQUEST` 다. 호스트는 이 칸을 저장하지 않고 그 제출의 `assign` 한 번 동안만 셀 관측으로 쓴다(§7). 운영 서비스는 사람이 기록한 출발 자리 확인이 있을 때만 이 칸을 싣는다. 근거: `SourceObservationHostTest` 의 `출발 자리 확인 칸이 틀리면 400 이다`, `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `HostClientTest` 의 `출발 자리 확인은 있을 때만 제출 본문에 싣고 출발 미관측 답은 결품 칸과 따로 읽는다`.
 - 호스트가 같은 판정을 다시 해 `passed` 인 기체만 `Middleware.assign` 에 넘긴다. 통과한 기체가 없어도 `assign` 을 빈 목록으로 부른다(결과 UNASSIGNED, `refusals` 빈 배열).
 
 응답 200(결과가 무엇이든 200 이다. 상태 코드로 결과를 가르지 말 것):
@@ -169,7 +170,8 @@ InspectAsset 예:
   "remedy": null,
   "remedyWithheld": false,
   "alternativeLocations": null,
-  "sourceMissing": null
+  "sourceMissing": null,
+  "sourceUnobserved": null
 }
 ```
 
@@ -178,14 +180,15 @@ InspectAsset 예:
 | `ACCEPTED` | `Submission.Accepted` | 새 실행 | null | `[]` |
 | `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 그 실행이 끝났고 후보가 판정을 통과해야 `assign` 까지 간다) | 기존 실행과 그 기체 | null | `[]` |
 | `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과 등), 실행 일지 차단 | null | 사유(한국어) | `[]` |
-| `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "...", "alternativeLocations": [...], "sourceMissing": {...}}]`, `assign` 이 기체마다 낸 관문 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
+| `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "...", "alternativeLocations": [...], "sourceMissing": {...}, "sourceUnobserved": {...}}]`, `assign` 이 기체마다 낸 관문 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
 
 - `excluded`: 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행(2.2). 결과와 무관하게 늘 있다(없으면 `[]`).
 - `remedy`: 미들웨어 `Rejected.remedy`(조치 탐색 응답). null = 탐색 안 함 또는 보류. `{"kind":"FOUND","steps":[{skillType, requires:[{subject, requires}], expectedHold, onFailureHold}]}` 또는 `{"kind":"NONE","cause":"NO_CAPABILITY"|"DEPTH_LIMIT","unmet":[{subject, required, observed, detail}]}`. 파지·조건 값은 계약 enum 이름(`HOLD_KIND_EMPTY`, `PRECONDITION_SUBJECT_HOLD` 등).
 - `remedyWithheld`: 조치 시퀀스를 계산했으나 사람이 먼저 진단하도록 보류. 참이면 `remedy` 는 null(보류한 단계는 싣지 않음). «대안 없음»(`NONE`)과 다르다.
 - `alternativeLocations`: 맨 위 칸은 REJECTED 전용, UNASSIGNED 는 `refusals[]` 기체별 칸에 같은 의미. 출발 결품일 때 그 자재를 든 다른 자리. `[]` = 든 자리 없음, null = 셀이 답하지 않았거나 출발 결품 거부가 아님. 둘을 접지 않는다. 두 null 은 `sourceMissing` 으로 가른다.
 - `sourceMissing`: 출발 결품 거부이면 `{material, source, observed}`(`observed` null = 빈 자리, 아니면 거기 있던 다른 식별 정보, `material` 은 단위가 자재를 지정하지 않았으면 null). REJECTED 의 맨 위 `sourceMissing` 은 이번 제출로 미들웨어 조치 탐색 기록(`remedySearches()`)에 새로 붙은 `SOURCE_MISSING` 줄에서 옮긴다. UNASSIGNED 의 기체별 `sourceMissing` 은 picasso `Unassigned.sourceMissing[robotId]`(관문이 계산한 답)에서 옮기며 조치 탐색 기록에는 적히지 않는다. 아니면 null.
-- 맨 위 네 칸은 미들웨어가 거부한 REJECTED 일 때만 값이 있다. ACCEPTED·IDEMPOTENT·UNASSIGNED·일지 차단 REJECTED 는 null·false. UNASSIGNED 의 출발 결품은 맨 위가 아니라 `refusals[]` 의 기체별 칸에 실린다.
+- `sourceUnobserved`: 출발 미관측이면 picasso `SourceUnobserved` 의 `{material, source, occupied}`. `occupied` null = 설비가 말이 없음, true = 설비가 «있다» 고만 함(신원 없음). 출발 결품과 접지 않는다: 그 기체의 `sourceMissing`·`alternativeLocations` 는 null 이다(대체 자리를 계산하지 않음). REJECTED 의 맨 위 칸은 picasso `Submission.Rejected.sourceUnobserved` 에서, UNASSIGNED 의 기체별 칸은 `Unassigned.sourceUnobserved[robotId]` 에서 옮긴다. 조치 탐색 기록에는 적히지 않는다. 출발 관측을 요구한(`REQUIRED`) 단위에서만 나온다. 지금 `assign` 경로에서는 UNASSIGNED 로만 오고, REJECTED 모양은 `SubmitOutcomeTest` 가 picasso 값을 직접 세워 고정한다. 아니면 null. 근거: `SubmitOutcomeTest` 의 `출발 미관측 거부는 그 자리와 설비가 말한 것을 싣고 결품과 대체 자리를 싣지 않는다`, `미배정의 기체별 사유는 출발 미관측일 때만 그 자리를 싣고 결품 칸과 대체 자리는 비었다`, `SourceObservationHostTest` 의 `출발 관측을 요구한 버전은 설비가 말이 없거나 있다고만 하면 미배정이고 기체별 사유에 출발 미관측이 실리며 결품 칸은 비었다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`.
+- 맨 위 다섯 칸(`sourceUnobserved` 포함)은 미들웨어가 거부한 REJECTED 일 때만 값이 있다. ACCEPTED·IDEMPOTENT·UNASSIGNED·일지 차단 REJECTED 는 null·false. UNASSIGNED 의 출발 결품은 맨 위가 아니라 `refusals[]` 의 기체별 칸에 실린다.
 - 지금 실행 호스트의 `assign` 경로에서 출발 결품은 UNASSIGNED 로 오므로 `sourceMissing`·`alternativeLocations` 가 찬 REJECTED 는 HTTP 로 나오지 않는다. 모양은 `SubmitOutcomeTest` 가 picasso 거부 값을 직접 세워 고정한다. UNASSIGNED 는 HTTP 로 기체별 구조를 싣는다. 호스트 셀 대역은 스냅숏이 있으면 늘 답하므로 HTTP 로는 기체별 `[]`·목록만 나오고, 기체별 null(셀 무응답)은 `SubmitOutcomeTest` 가 picasso 값을 직접 세워 고정한다.
 
 미들웨어가 출발 결품으로 거부한 REJECTED 의 모양(지금 경로에서는 나오지 않는다):
@@ -201,7 +204,8 @@ InspectAsset 예:
   "remedy": null,
   "remedyWithheld": false,
   "alternativeLocations": ["SEQ-IN-03.BIN-B"],
-  "sourceMissing": {"material": "ENGINE-COVER-A", "source": "SEQ-IN-02.BIN-A", "observed": null}
+  "sourceMissing": {"material": "ENGINE-COVER-A", "source": "SEQ-IN-02.BIN-A", "observed": null},
+  "sourceUnobserved": null
 }
 ```
 
@@ -223,14 +227,16 @@ InspectAsset 예:
       "robotId": "humanoid-01",
       "reason": "출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다 (설비 관측, 보내지 않았다)",
       "alternativeLocations": ["SEQ-IN-03.BIN-B"],
-      "sourceMissing": {"material": "ENGINE-COVER-A", "source": "SEQ-IN-02.BIN-A", "observed": null}
+      "sourceMissing": {"material": "ENGINE-COVER-A", "source": "SEQ-IN-02.BIN-A", "observed": null},
+      "sourceUnobserved": null
     }
   ],
   "excluded": [],
   "remedy": null,
   "remedyWithheld": false,
   "alternativeLocations": null,
-  "sourceMissing": null
+  "sourceMissing": null,
+  "sourceUnobserved": null
 }
 ```
 
@@ -364,7 +370,7 @@ InspectAsset 예:
 
 ## 7. 셀 신호(호스트 안, 참고)
 
-- `observe(자리)`: 스냅숏의 제시 자리·슬롯에서 같은 id 를 찾아 `SlotSignal(occupied, material, observedAt)`. 없는 자리는 null. 스냅숏이 없으면 null.
+- `observe(자리)`: 스냅숏의 제시 자리·슬롯에서 같은 id 를 찾아 `SlotSignal(occupied, material, observedAt)`. 없는 자리는 null. 스냅숏이 없으면 null. 그 제출 본문에 그 자리의 출발 자리 확인(`sourceConfirmations`)이 있고 스냅숏이 말이 없거나(null) «있다» 고만 하면(점유, 신원 없음) `SlotSignal(true, identity, confirmedAt)` 이다. 스냅숏이 비었다·다른 것이 있다·신원까지 말하면 스냅숏의 답 그대로다(확인이 관측을 뒤집지 않는다). 그 제출이 끝나면 확인을 비운다. 근거: `SourceObservationHostTest` 의 `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`.
 - `holding(자재)`: 그 자재를 든 **제시 자리**만(채운 슬롯은 안 냄). 스냅숏이 없으면 null.
 - `signal(이름)`: 늘 null(S3b).
 
@@ -519,7 +525,8 @@ InspectAsset 예:
     "remedy": null,
     "remedyWithheld": false,
     "alternativeLocations": null,
-    "sourceMissing": null
+    "sourceMissing": null,
+    "sourceUnobserved": null
   }
 }
 ```
@@ -531,7 +538,7 @@ InspectAsset 예:
 |---|---|---|---|
 | 200 `ACCEPTED`·`IDEMPOTENT` | `SUCCEEDED` | null | 호스트 본문(4절) |
 | 200 `REJECTED`·`UNASSIGNED` | `REJECTED` | null | 호스트 본문(4절) |
-| 4xx(`{error, detail}`) | `REJECTED` | null | 운영 서비스가 옮긴 모양: `result: "REJECTED"`, `rejectionReason: "실행 호스트가 거부했다(HTTP 400): <error>: <detail>"`, 나머지 null·`[]`·`remedyWithheld` false(`remedy`·`alternativeLocations`·`sourceMissing` 은 null). 폼을 먼저 검사하므로 정상 흐름에서는 나오지 않는다. 운영 서비스 `HostSubmitOutcome` 은 새 네 칸이 없던 호스트 본문도 읽는다(없으면 null·false) |
+| 4xx(`{error, detail}`) | `REJECTED` | null | 운영 서비스가 옮긴 모양: `result: "REJECTED"`, `rejectionReason: "실행 호스트가 거부했다(HTTP 400): <error>: <detail>"`, 나머지 null·`[]`·`remedyWithheld` false(`remedy`·`alternativeLocations`·`sourceMissing`·`sourceUnobserved` 은 null). 폼을 먼저 검사하므로 정상 흐름에서는 나오지 않는다. 운영 서비스 `HostSubmitOutcome` 은 새 다섯 칸이 없던 호스트 본문도 읽는다(없으면 null·false) |
 | 5xx, 연결 실패, 시간 초과, 200 인데 본문을 못 읽음 | `NO_RESPONSE` | 재조회에서 그 작업 지시 id 의 실행이 있으면 `CONFIRMED_APPLIED`, 없으면 `CONFIRMED_NOT_APPLIED`, 재조회도 못 읽으면 null | null |
 
 - 재조회는 1초 뒤 `GET /host/executions` 한 번이다. 그래서 `NO_RESPONSE` 응답은 1초 남짓 늦게 온다(시간 초과면 5초에 1초를 더한다).
@@ -543,7 +550,7 @@ InspectAsset 예:
 |---|---|
 | `target` | 작업 지시 id |
 | `mode`·`user` | `OPERATOR`·헤더의 사용자 |
-| `request` | `{"op":"SUBMIT_JOB_ORDER","jobOrder":{2.1},"candidates":[...]}`(JSON 문자열) |
+| `request` | `{"op":"SUBMIT_JOB_ORDER","jobOrder":{2.1},"candidates":[...]}`(JSON 문자열). 출발 자리 확인이 있으면 `sourceConfirmations` 도 실린다(근거: `WorkRequestsTest` 의 `출발 자리 확인은 사람과 시각과 신원을 덧붙이기로 남기고 같은 작업 지시를 확인과 함께 다시 제출한다`). |
 | `reason` | null |
 | `result` | 위 표의 `result`. 재조회 행은 같은 `requestId` 의 새 행(`CONFIRMED_*`) |
 | `targetResponse` | 호스트가 답했으면 `{"status": 200, "body": {...}}`(본문이 JSON 객체가 아니면 `body` 는 글자), 닿지 않았으면 `{"cause": "응답 없음: ConnectException"}`, 재조회 행은 `{"observed": {"instanceId", "executionId", "robotId", "physicalState"}}` 또는 `{"observed": null}`(JSON 문자열) |

@@ -3,10 +3,15 @@ package dev.picasso.ops.host.mission
 import dev.picasso.middleware.ActiveMission
 import dev.picasso.middleware.LogicalCapability
 import dev.picasso.middleware.MissionCatalog
+import dev.picasso.middleware.SourceObservation
 import dev.picasso.middleware.mission.DefinedCapability
+import dev.picasso.middleware.mission.MissionDefinition
 import dev.picasso.middleware.mission.MissionDefinitionParser
 import dev.picasso.middleware.mission.MissionParse
+import dev.picasso.middleware.mission.MissionValidator
+import dev.picasso.middleware.mission.UnitStep
 import dev.picasso.ops.host.store.VersionRow
+import org.slf4j.LoggerFactory
 
 /**
  * 호스트의 임무 카탈로그(S3b 스펙 §6.2, T1). picasso `MissionCatalog` 를 직접 구현해 DB 의 활성 버전 번호를 그대로 싣는다.
@@ -77,10 +82,39 @@ class StoredMissionCatalog(code: List<LogicalCapability> = MissionCatalog.codeCa
             is MissionParse.Unreadable -> throw IllegalStateException("$where 을 읽지 못했다: ${parsed.problems.joinToString("; ")}")
         }
         check(definition.workMasterId == row.workMasterId) { "$where 의 정의가 다른 WorkMaster(${definition.workMasterId})다" }
+        val restored = undeclaredAsOptional(definition)
+        if (restored !== definition) {
+            log.warn("{} 은 출발 관측 선언 전에 활성화한 버전이다. 신원을 대는 출발 자리를 OPTIONAL 로 세운다(그때의 거동). 선언한 새 버전을 활성화하십시오", where)
+        }
         return try {
-            DefinedCapability(definition)
+            DefinedCapability(restored)
         } catch (e: IllegalArgumentException) {
             throw IllegalStateException("$where 로 케이퍼빌리티를 세우지 못했다: ${e.message}", e)
+        }
+    }
+
+    companion object {
+        private val log = LoggerFactory.getLogger(StoredMissionCatalog::class.java)
+
+        /**
+         * 저장된 활성 버전 중 출발 관측 선언(`sourceObservation`)이 생기기 전에 활성화한 것. 신원을 대는 출발 자리가 있는데 선언이 없는
+         * 단위 노드를 [SourceObservation.OPTIONAL] 로 채운 정의를 낸다. 고칠 노드가 없으면 받은 객체 그대로다.
+         *
+         * **저장된 버전을 되살릴 때만 쓴다.** 그 버전은 활성화 때의 규칙으로 검증을 지났고, 그때 있던 거동은 OPTIONAL(설비가 말이 없으면
+         * 보낸다) 하나뿐이었다. 채우지 않으면 picasso `DefinedCapability` 가 세우기를 거부해 호스트 기동이 멈추고 이미 활성인 버전이
+         * 사라진다. 검증·활성화·모의 실행은 이 길을 지나지 않으므로 새 정의는 선언 없이 활성화되지 않는다.
+         */
+        fun undeclaredAsOptional(definition: MissionDefinition): MissionDefinition {
+            if (definition.steps.none { it is UnitStep && MissionValidator.needsSourceObservation(it) && it.sourceObservation == null }) return definition
+            return definition.copy(
+                steps = definition.steps.map { step ->
+                    if (step is UnitStep && MissionValidator.needsSourceObservation(step) && step.sourceObservation == null) {
+                        step.copy(sourceObservation = SourceObservation.OPTIONAL)
+                    } else {
+                        step
+                    }
+                },
+            )
         }
     }
 }

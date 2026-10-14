@@ -150,3 +150,59 @@ it('출발 결품이 없는 호스트 미배정은 기체별 출발 결품을 �
  expect(within(detail).queryByRole('region',{name:'기체별 출발 결품'})).not.toBeInTheDocument()
  expect(within(detail).queryByText(/대체 위치/)).not.toBeInTheDocument()
 })
+const unobserved={material:'ENGINE-COVER-A',source:'SEQ-IN-02.BIN-A',occupied:null}
+async function unobservedDetail(extra:Record<string,unknown>,s:{mode:'operator'|'engineer';user:string}=session) {
+ window.history.replaceState(null,'','#')
+ const row={...receipt,detail:'호스트 미배정: humanoid-01: 출발 자리 SEQ-IN-02.BIN-A 의 ENGINE-COVER-A 를 확인하지 못했다',submission:{outcome:{result:'UNASSIGNED'}},updatedAt:'t5'}
+ const fetcher=vi.fn(async(url:string,init?:RequestInit)=>new Response(JSON.stringify(init?.method==='POST'?{receipt:{...row,state:'ACCEPTED'},duplicate:false}:url.startsWith('/api/work-requests?')?{total:1,requests:[row],offset:0,limit:20}:{receipt:row,hostRead:'OK',execution:null,instanceId:'mw',journalBlocked:false,observedAt:'t2',rejection:null,
+  unassigned:{refusals:[{robotId:'humanoid-01',reason:'출발 자리를 확인하지 못했다',alternativeLocations:null,sourceMissing:null,sourceUnobserved:unobserved}]},
+  pendingSources:[{...unobserved,robotIds:['humanoid-01']}],sourceConfirmations:[],...extra}),{status:200}))
+ vi.stubGlobal('fetch',fetcher)
+ render(<WorkRequests session={s}/>);await userEvent.click(await screen.findByRole('button',{name:'MES-204 작업 요청 보기'}))
+ return {detail:await screen.findByRole('article',{name:'작업 요청 상세'}),fetcher}
+}
+it('출발 미관측은 결품과 다른 확인 대기로 보이고 사람의 출발 자리 확인을 기록하면 같은 작업 요청을 다시 낸다',async()=>{
+ const {detail,fetcher}=await unobservedDetail({})
+ const held=await within(detail).findByRole('region',{name:'출발 미관측'})
+ expect(within(held).getByText('출발 미관측 · 확인 필요')).toBeVisible()
+ expect(within(held).getByText('출발 미관측 · 출발 자리 SEQ-IN-02.BIN-A · 설비 응답 없음 · 확인할 자재 ENGINE-COVER-A · 기체 humanoid-01')).toBeVisible()
+ expect(within(held).getByText(/결품이 아닙니다/)).toBeVisible()
+ // 결품 줄과 대체 위치, 일반 재평가 안내는 없다.
+ expect(within(detail).queryByRole('region',{name:'기체별 출발 결품'})).not.toBeInTheDocument()
+ expect(within(detail).queryByText(/대체 위치/)).not.toBeInTheDocument()
+ expect(within(detail).queryByText(/새 제출은 차단됩니다/)).not.toBeInTheDocument()
+ expect(within(held).getByLabelText('확인한 자재')).toHaveValue('ENGINE-COVER-A')
+ expect(within(held).getByRole('button',{name:'출발 자리 확인 기록'})).toBeDisabled()
+ await userEvent.type(within(held).getByLabelText('확인 근거·담당자'),'현장 담당자 김 바코드 확인')
+ await userEvent.click(within(held).getByRole('button',{name:'출발 자리 확인 기록'}))
+ expect(await within(held).findByText('출발 자리 확인 기록됨 · ACCEPTED')).toBeVisible()
+ const [url,init]=fetcher.mock.calls.find(([,init])=>init?.method==='POST')!
+ expect(url).toBe('/api/work-requests/r1/source-confirmations')
+ const sent=JSON.parse(String(init!.body))
+ expect(sent).toMatchObject({source:'SEQ-IN-02.BIN-A',identity:'ENGINE-COVER-A',reason:'현장 담당자 김 바코드 확인',expectedUpdatedAt:'t5'})
+ expect(typeof sent.requestId).toBe('string')
+})
+it('설비가 있다고만 한 출발 미관측은 신원 모름으로 보이고 공유 자원 작업은 그 자원 작업 경로로 확인을 보낸다',async()=>{
+ const {detail,fetcher}=await unobservedDetail({pendingSources:[{...unobserved,occupied:true,robotIds:['humanoid-01','humanoid-02']}],resource:{runId:'run-1',stationId:'inspection-1',state:'REVIEW_REQUIRED',reason:'출발 미관측',owner:'run-1',queuedAhead:0}})
+ const held=await within(detail).findByRole('region',{name:'출발 미관측'})
+ expect(within(held).getByText('출발 미관측 · 출발 자리 SEQ-IN-02.BIN-A · 있음 · 신원 모름 · 확인할 자재 ENGINE-COVER-A · 기체 humanoid-01, humanoid-02')).toBeVisible()
+ await userEvent.type(within(held).getByLabelText('확인 근거·담당자'),'확인')
+ await userEvent.click(within(held).getByRole('button',{name:'출발 자리 확인 기록'}))
+ await waitFor(()=>expect(fetcher.mock.calls.some(([url,init])=>init?.method==='POST' && url==='/api/stations/runs/run-1/source-confirmations')).toBe(true))
+})
+it('엔지니어 모드는 출발 자리 확인을 기록하지 않고 확인 대기가 끝난 작업 요청은 확인 이력만 보인다',async()=>{
+ const {detail}=await unobservedDetail({},{mode:'engineer',user:'lee'})
+ const held=await within(detail).findByRole('region',{name:'출발 미관측'})
+ expect(within(held).getByText('출발 자리 확인은 운영자 모드에서 기록합니다.')).toBeVisible()
+ expect(within(held).queryByRole('button',{name:'출발 자리 확인 기록'})).not.toBeInTheDocument()
+ cleanup()
+ const done=await unobservedDetail({pendingSources:[],sourceConfirmations:[{requestId:'q1',source:'SEQ-IN-02.BIN-A',identity:'ENGINE-COVER-A',actor:'operator/kim',reason:'바코드 확인',createdAt:'t3'}]})
+ expect(within(done.detail).queryByRole('region',{name:'출발 미관측'})).not.toBeInTheDocument()
+ const history=await within(done.detail).findByRole('region',{name:'출발 자리 확인 이력'})
+ expect(within(history).getByText('t3 · operator/kim · SEQ-IN-02.BIN-A = ENGINE-COVER-A')).toBeVisible()
+})
+it('출발 미관측 거부는 결품 줄과 대체 위치 없이 출발 미관측 줄을 보인다',async()=>{
+ const detail=await rejectedDetail({reason:'출발 자리를 확인하지 못했다',remedy:null,remedyWithheld:false,alternativeLocations:null,sourceMissing:null,sourceUnobserved:{...unobserved,occupied:true,material:null}})
+ expect(within(detail).getByText('출발 미관측 · 출발 자리 SEQ-IN-02.BIN-A · 있음 · 신원 모름')).toBeVisible()
+ expect(within(detail).queryByText(/대체 위치|비어 있음/)).not.toBeInTheDocument()
+})

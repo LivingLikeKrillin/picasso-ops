@@ -572,6 +572,147 @@ class WorkRequestsTest {
   val early=service.receive("mes",order(4)).receipt;assertEquals("UNASSIGNED",early.state);assertNull(early.submission)
   assertNull(service.detail(early.receiptId)["unassigned"])
  }
+ private val sourceA="SEQ-IN-02.BIN-A"
+ private fun unobserved(source:String=sourceA,occupied:String="null",material:String="\"ENGINE-COVER-A\"")=""","sourceUnobserved":{"material":$material,"source":"$source","occupied":$occupied}"""
+ private fun unassignedBy(vararg refusals:String)="""{"result":"UNASSIGNED","executionId":null,"robotId":null,"rejectionReason":null,"refusals":[${refusals.joinToString(",")}],"excluded":[],"remedy":null,"remedyWithheld":false,"alternativeLocations":null,"sourceMissing":null,"sourceUnobserved":null}"""
+ private fun refusal(robot:String,extra:String="")="""{"robotId":"$robot","reason":"출발 자리 $sourceA 의 ENGINE-COVER-A 를 확인하지 못했다 — 설비가 말이 없다"$extra}"""
+ private fun confirmation(receipt:Receipt,source:String=sourceA,identity:String="ENGINE-COVER-A",id:UUID=UUID.randomUUID(),expected:String=receipt.updatedAt)=
+  json.valueToTree<com.fasterxml.jackson.databind.node.ObjectNode>(mapOf("requestId" to id.toString(),"source" to source,"identity" to identity,"reason" to "현장 담당자 김이 출발 자리 바코드 확인","expectedUpdatedAt" to expected))
+ @Test fun `호스트 미배정의 출발 미관측은 결품과 따로 제출 기록과 미배정 칸에 남고 확인을 기다리는 출발 자리로 보인다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-O$n")
+  val missing=""","sourceMissing":{"material":"ENGINE-COVER-A","source":"SEQ-IN-09.BIN-Z","observed":null},"alternativeLocations":[]"""
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved()),refusal("humanoid-02",unobserved(occupied="true")),
+   refusal("humanoid-03",missing),refusal("humanoid-04")))
+  val row=service.receive("mes",order(1)).receipt
+  assertEquals("UNASSIGNED",row.state)
+  val stored=row.submission!!["outcome"]["refusals"]
+  assertTrue(stored[0]["sourceUnobserved"]["occupied"].isNull,stored.toString());assertTrue(stored[1]["sourceUnobserved"]["occupied"].asBoolean())
+  val detail=service.detail(row.receiptId)
+  val refusals=(detail["unassigned"] as WorkRequestUnassignment).refusals
+  assertEquals(dev.picasso.ops.service.host.HostSourceUnobserved("ENGINE-COVER-A",sourceA,null),refusals[0].sourceUnobserved)
+  assertNull(refusals[0].sourceMissing);assertNull(refusals[0].alternativeLocations)
+  assertEquals(true,refusals[1].sourceUnobserved!!.occupied)
+  // 결품은 결품 칸에만 있고 출발 미관측 칸은 비었다. 둘을 접지 않는다.
+  assertNull(refusals[2].sourceUnobserved);assertEquals("SEQ-IN-09.BIN-Z",refusals[2].sourceMissing!!.source)
+  assertNull(refusals[3].sourceUnobserved);assertNull(refusals[3].sourceMissing)
+  // 확인을 기다리는 출발 자리: 자리마다 한 줄, 그 자리로 떨어진 기체들. 결품 자리는 없다.
+  assertEquals(listOf(PendingSource(sourceA,"ENGINE-COVER-A",null,listOf("humanoid-01","humanoid-02"))),detail["pendingSources"])
+  assertEquals(emptyList<Any>(),detail["sourceConfirmations"])
+  // REJECTED 의 출발 미관측은 거부 칸에 따로 실리고 확인 대기로 보이지 않는다.
+  bench.answer=HostWrite.Answered(200,rejectedBy("출발 자리를 확인하지 못했다",unobserved()))
+  val rejected=service.detail(service.receive("mes",order(2)).receipt.receiptId)
+  val rejection=rejected["rejection"] as WorkRequestRejection
+  assertEquals(sourceA,rejection.sourceUnobserved!!.source);assertNull(rejection.sourceMissing);assertNull(rejection.alternativeLocations)
+  assertEquals(emptyList<Any>(),rejected["pendingSources"])
+  // 결품만 있는 미배정과 수락은 확인을 기다리지 않는다.
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",missing)))
+  assertEquals(emptyList<Any>(),service.detail(service.receive("mes",order(3)).receipt.receiptId)["pendingSources"])
+ }
+ @Test fun `출발 자리 확인은 사람과 시각과 신원을 덧붙이기로 남기고 같은 작업 지시를 확인과 함께 다시 제출한다`() {
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val row=service.receive("mes",body).receipt;assertEquals("UNASSIGNED",row.state)
+  assertEquals(listOf(emptyList()),bench.confirmed)
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val payload=confirmation(row);val kim=Actor(Mode.OPERATOR,"kim")
+  val sent=service.confirmSource(row.receiptId,kim,payload)
+  assertFalse(sent.duplicate);assertEquals("ACCEPTED",sent.receipt.state)
+  assertEquals(2,bench.submitted.size);assertEquals(row.jobOrderId,bench.submitted[1].first["jobOrderId"].asText())
+  val carried=bench.confirmed[1].single()
+  assertEquals(sourceA,carried.source);assertEquals("ENGINE-COVER-A",carried.identity);assertEquals("operator/kim",carried.confirmedBy)
+  java.time.Instant.parse(carried.confirmedAt)
+  // 조작 기록의 요청 칸에도 실린다.
+  assertTrue(log.list().filter{it.requestId==row.receiptId}.any{json.readTree(it.request).path("sourceConfirmations").size()==1})
+  val recorded=(service.detail(row.receiptId)["sourceConfirmations"] as List<*>).single() as Map<*,*>
+  assertEquals("operator/kim",recorded["actor"]);assertEquals("ENGINE-COVER-A",recorded["identity"]);assertEquals(sourceA,recorded["source"])
+  assertEquals(sourceA,(recorded["context"] as com.fasterxml.jackson.databind.JsonNode)["source"].asText())
+  // 같은 요청은 다시 보내지 않고, 같은 ID 의 다른 확인은 충돌이다.
+  assertTrue(service().confirmSource(row.receiptId,kim,payload).duplicate);assertEquals(2,bench.submitted.size)
+  assertEquals("SOURCE_CONFIRMATION_CONFLICT",assertFailsWith<RequestRejected>{service.confirmSource(row.receiptId,kim,payload.deepCopy().put("identity","ENGINE-COVER-B"))}.code)
+  // 덧붙이기만 한다.
+  assertFails{jdbc.sql("UPDATE ops.work_request_source_confirmation SET identity='x'").update()}
+  assertFails{jdbc.sql("DELETE FROM ops.work_request_source_confirmation").update()}
+ }
+ @Test fun `출발 미관측이 아닌 자리와 낡은 조회와 운영자가 아닌 행위자의 확인은 기록하지 않고 다시 제출하지 않는다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-N$n")
+  val kim=Actor(Mode.OPERATOR,"kim")
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val row=service.receive("mes",order(1)).receipt
+  assertEquals("SOURCE_NOT_PENDING",assertFailsWith<RequestRejected>{service.confirmSource(row.receiptId,kim,confirmation(row,source="SEQ-IN-03.BIN-B"))}.code)
+  assertEquals("STALE_SOURCE_CONFIRMATION",assertFailsWith<RequestRejected>{service.confirmSource(row.receiptId,kim,confirmation(row,expected="old"))}.code)
+  assertEquals(403,assertFailsWith<RequestRejected>{service.confirmSource(row.receiptId,Actor(Mode.ENGINEER,"lee"),confirmation(row))}.status)
+  assertEquals("BAD_SOURCE_CONFIRMATION",assertFailsWith<RequestRejected>{service.confirmSource(row.receiptId,kim,confirmation(row).put("identity",""))}.code)
+  assertEquals("BAD_SOURCE_CONFIRMATION",assertFailsWith<RequestRejected>{service.confirmSource(row.receiptId,kim,confirmation(row).put("extra",1))}.code)
+  // 결품(출발 자리가 비었다)은 사람의 확인으로 넘기지 않는다.
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",""","sourceMissing":{"material":"ENGINE-COVER-A","source":"$sourceA","observed":null}""")))
+  val short=service.receive("mes",order(2)).receipt
+  assertEquals("SOURCE_NOT_PENDING",assertFailsWith<RequestRejected>{service.confirmSource(short.receiptId,kim,confirmation(short))}.code)
+  // 전송 전 미배정은 호스트의 답이 없다.
+  bench.judge={ids->HostCall.Ok(ids.map{JobOrderBench.missing(it,"inspect")})}
+  val early=service.receive("mes",order(3)).receipt;assertEquals("UNASSIGNED",early.state);assertNull(early.submission)
+  assertEquals("SOURCE_NOT_PENDING",assertFailsWith<RequestRejected>{service.confirmSource(early.receiptId,kim,confirmation(early))}.code)
+  assertEquals(2,bench.submitted.size)
+  assertEquals(0L,jdbc.sql("SELECT count(*) FROM ops.work_request_source_confirmation").query(Long::class.java).single())
+  assertEquals("UNASSIGNED",service.get(row.receiptId).state)
+ }
+ @Test fun `확인 뒤 배정 가능한 기체가 없으면 전송 전 미배정이 되어 확인 대기로 남지 않고 재평가가 확인을 싣는다`() {
+  val kim=Actor(Mode.OPERATOR,"kim")
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val row=service.receive("mes",body).receipt
+  bench.judge={ids->HostCall.Ok(ids.map{JobOrderBench.running(it,"busy")})}
+  val early=service.confirmSource(row.receiptId,kim,confirmation(row)).receipt
+  assertEquals("UNASSIGNED",early.state);assertNull(early.submission);assertEquals(1,bench.submitted.size)
+  assertEquals(emptyList<Any>(),service.detail(row.receiptId)["pendingSources"])
+  bench.judge={ids->HostCall.Ok(ids.map(JobOrderBench::pass))}
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val again=service.recover(row.receiptId,kim,json.readTree("""{"requestId":"${UUID.randomUUID()}","reason":"기체 복귀","expectedUpdatedAt":"${early.updatedAt}"}"""))
+  assertEquals("ACCEPTED",again.receipt.state);assertEquals(sourceA,bench.confirmed.last().single().source)
+ }
+ @Test fun `확인 뒤 다른 출발 자리가 남으면 다시 확인 대기이고 다음 제출은 쌓인 확인을 자리마다 하나씩 싣는다`() {
+  val kim=Actor(Mode.OPERATOR,"kim");val sourceB="SEQ-IN-03.BIN-B"
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val row=service.receive("mes",body).receipt
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved(source=sourceB))))
+  val next=service.confirmSource(row.receiptId,kim,confirmation(row)).receipt
+  assertEquals("UNASSIGNED",next.state)
+  assertEquals(listOf(sourceB),(service.detail(row.receiptId)["pendingSources"] as List<*>).map{(it as PendingSource).source})
+  assertEquals("SOURCE_NOT_PENDING",assertFailsWith<RequestRejected>{service.confirmSource(row.receiptId,kim,confirmation(next))}.code)
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  assertEquals("ACCEPTED",service.confirmSource(row.receiptId,kim,confirmation(next,source=sourceB,identity="ENGINE-COVER-B")).receipt.state)
+  assertEquals(listOf(sourceA to "ENGINE-COVER-A",sourceB to "ENGINE-COVER-B"),bench.confirmed.last().map{it.source to it.identity}.sortedBy{it.first})
+  assertEquals(3,bench.submitted.size)
+ }
+ @Test fun `자원 관리 작업의 출발 미관측은 자동 재평가 없이 점유를 유지하고 출발 자리 확인으로만 다시 제출한다`() {
+  resource();ready(true)
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val a=manual().receipt;val c=coordinator();c.tick()
+  val held=c.get(a.receiptId)
+  assertEquals("REVIEW_REQUIRED",held.state);assertEquals(dev.picasso.ops.service.stations.StationCoordinator.SOURCE_UNOBSERVED,held.reason)
+  assertEquals(a.receiptId,c.stations().single().owner);assertEquals(1,bench.submitted.size)
+  // 시간이 지나도 다시 내지 않는다.
+  jdbc.sql("UPDATE ops.station_run SET phase_at=phase_at-interval '1 hour' WHERE run_id=:id").param("id",a.receiptId).update()
+  c.tick();c.tick()
+  assertEquals("REVIEW_REQUIRED",c.get(a.receiptId).state);assertEquals(0,c.get(a.receiptId).attempt);assertEquals(1,bench.submitted.size)
+  // 관측 재개로 확인을 비켜 가지 않는다.
+  val revision=c.get(a.receiptId).revision
+  assertEquals(409,assertFailsWith<RequestRejected>{c.decide(a.receiptId,Actor(Mode.OPERATOR,"kim"),json.readTree("""{"expectedRevision":$revision,"decision":"RESUME_OBSERVATION","reason":"관측 재개"}"""))}.status)
+  // 일반 작업 요청 경로로는 확인하지 못한다.
+  val current=service.get(a.receiptId)
+  assertEquals("RESOURCE_MANAGED",assertFailsWith<RequestRejected>{service.confirmSource(a.receiptId,Actor(Mode.OPERATOR,"kim"),confirmation(current))}.code)
+  // 설비 완료 신호가 켜져 있으면 다시 내지 않고 상태도 그대로다.
+  ready(true,complete=true)
+  assertEquals(409,assertFailsWith<RequestRejected>{c.confirmSource(a.receiptId,Actor(Mode.OPERATOR,"kim"),confirmation(current))}.status)
+  assertEquals(revision,c.get(a.receiptId).revision)
+  // 낡은 조회는 확인을 기록하지 않고 같은 확인 필요로 돌아간다.
+  ready(true)
+  assertEquals("STALE_SOURCE_CONFIRMATION",assertFailsWith<RequestRejected>{c.confirmSource(a.receiptId,Actor(Mode.OPERATOR,"kim"),confirmation(current,expected="old"))}.code)
+  assertEquals("REVIEW_REQUIRED",c.get(a.receiptId).state);assertEquals(dev.picasso.ops.service.stations.StationCoordinator.SOURCE_UNOBSERVED,c.get(a.receiptId).reason)
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val next=c.confirmSource(a.receiptId,Actor(Mode.OPERATOR,"kim"),confirmation(service.get(a.receiptId)))
+  assertEquals("ACCEPTED",next.state);assertEquals("RUNNING",c.get(a.receiptId).state)
+  assertEquals(2,bench.submitted.size);assertEquals(sourceA,bench.confirmed[1].single().source)
+  assertEquals(a.receiptId,c.stations().single().owner)
+  assertTrue(c.events(a.receiptId).any{it["reason"]==dev.picasso.ops.service.stations.StationCoordinator.SOURCE_CONFIRMED && it["actor"]=="operator/kim"})
+ }
  @Test fun `호스트가 거부한 스테이션 작업은 실제 거부 사유와 자원 해제를 함께 남긴다`() {
   resource();ready(true)
   bench.answer=HostWrite.Answered(200,rejectedBy("요구 근거 등급 E2 은 InspectAsset 의 최고 등급 E0 를 넘는다"))

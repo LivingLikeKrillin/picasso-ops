@@ -1,5 +1,5 @@
 import type { Delivered, JobOrderOutcome } from '../api'
-import { SUBMIT_RESULT_LABEL, alternativesLabel, kindLabel, sourceMissingLabel } from '../labels'
+import { SUBMIT_RESULT_LABEL, alternativesLabel, kindLabel, sourceMissingLabel, sourceUnobservedLabel } from '../labels'
 
 interface Props {
   /** 어느 임무의 작업 지시인지. 예: `InspectAsset 작업 지시` */
@@ -74,6 +74,7 @@ export function JobOrderNotice({ what, sent }: Props) {
           </>
         )}
       </dl>
+      {outcome.sourceUnobserved && <p>{sourceUnobservedLabel(outcome.sourceUnobserved)}</p>}
       {outcome.refusals.length > 0 && (
         <>
           <p>기체별 미배정 사유</p>
@@ -87,6 +88,7 @@ export function JobOrderNotice({ what, sent }: Props) {
                     <p>{alternativesLabel(refusal)}</p>
                   </>
                 )}
+                {refusal.sourceUnobserved && <p>{sourceUnobservedLabel(refusal.sourceUnobserved)}</p>}
               </li>
             ))}
           </ul>

@@ -7,6 +7,8 @@ import dev.picasso.middleware.JobOrder
 import dev.picasso.middleware.MaterialRequirement
 import dev.picasso.middleware.OperatorDecision
 import dev.picasso.ops.host.MissionHost
+import dev.picasso.ops.host.cell.SourceConfirmation
+import java.time.Instant
 import java.util.UUID
 
 /** 거부한 요청의 답. 운영 서비스의 사전 거부(`PreRejection`)와 같은 모양이다. */
@@ -44,6 +46,25 @@ object HostRequests {
         val order = jobOrder(body.get("jobOrder"))
         val robots = strings(body.get(listField), listField)
         return order to robots
+    }
+
+    /**
+     * 제출 본문의 선택 칸 `sourceConfirmations` 를 읽는다. 없거나 `null` 이면 빈 목록이다. 있으면 객체의 배열이고 원소마다 `source`·
+     * `identity`·`confirmedBy` 가 비어 있지 않은 문자열, `confirmedAt` 이 ISO-8601 시각이다. 같은 자리가 두 번 오면 어느 확인을 쓸지
+     * 정할 수 없으므로 400 이다.
+     */
+    fun sourceConfirmations(node: JsonNode?): List<SourceConfirmation> {
+        if (node == null || node.isNull) return emptyList()
+        val confirmations = array(node, "sourceConfirmations").map {
+            val at = text(it, "confirmedAt").let { value ->
+                runCatching { Instant.parse(value) }.getOrNull()
+                    ?: throw BadRequest(BAD_REQUEST, "sourceConfirmations 의 confirmedAt 이 ISO-8601 시각이 아니다: $value")
+            }
+            SourceConfirmation(text(it, "source"), text(it, "identity"), text(it, "confirmedBy"), at)
+        }
+        val repeated = confirmations.groupBy { it.source }.filterValues { it.size > 1 }.keys
+        if (repeated.isNotEmpty()) throw BadRequest(BAD_REQUEST, "sourceConfirmations 에 같은 자리가 두 번 있다: ${repeated.sorted()}")
+        return confirmations
     }
 
     fun jobOrder(node: JsonNode?): JobOrder {

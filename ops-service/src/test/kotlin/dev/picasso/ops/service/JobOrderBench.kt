@@ -7,6 +7,7 @@ import dev.picasso.ops.service.host.HostCall
 import dev.picasso.ops.service.host.HostEligibility
 import dev.picasso.ops.service.host.HostReads
 import dev.picasso.ops.service.host.HostSkillFit
+import dev.picasso.ops.service.host.HostSourceConfirmation
 import dev.picasso.ops.service.host.HostWrite
 import dev.picasso.ops.service.host.HostWrites
 import dev.picasso.ops.service.joborders.JobOrderEligibility
@@ -49,6 +50,9 @@ class JobOrderBench {
     /** 호스트가 받은 제출(작업 지시 본문, 후보). */
     val submitted = mutableListOf<Pair<ObjectNode, List<String>>>()
 
+    /** 제출마다 실린 출발 자리 확인. [submitted] 와 같은 순서다. */
+    val confirmed = mutableListOf<List<HostSourceConfirmation>>()
+
     /** 호스트 대역. 읽기와 제출이 이 벤치의 칸을 쓴다. */
     inner class FakeHost : HostReads, HostWrites {
         override fun eligibility(jobOrder: ObjectNode, robotIds: List<String>): HostCall<List<HostEligibility>> {
@@ -60,8 +64,11 @@ class JobOrderBench {
 
         override fun cell(): HostCall<JsonNode> = this@JobOrderBench.cell
 
-        override fun submit(jobOrder: ObjectNode, candidates: List<String>): HostWrite {
+        override fun submit(jobOrder: ObjectNode, candidates: List<String>): HostWrite = submit(jobOrder, candidates, emptyList())
+
+        override fun submit(jobOrder: ObjectNode, candidates: List<String>, sourceConfirmations: List<HostSourceConfirmation>): HostWrite {
             submitted += jobOrder to candidates
+            confirmed += sourceConfirmations
             return answer
         }
     }

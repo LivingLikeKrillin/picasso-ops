@@ -8,7 +8,7 @@
 
 - 단계마다 자동 동작의 근거 시험 이름을 붙입니다. 시험 위치는 운영 서비스 시험 `ops-service/src/test/kotlin/dev/picasso/ops/service/`, 실행 호스트 시험 `mission-host/src/test/kotlin/dev/picasso/ops/host/`, 통합 시험 `e2e/src/test/kotlin/dev/picasso/ops/e2e/`, 화면 시험 `ui/e2e/` 입니다. 코드 위치 접두 `ops-service/src/main/kotlin/dev/picasso/ops/service/` 는 줄여 `requests/WorkRequests.kt` 처럼 씁니다.
 - 용어에서 배포는 같은 호출 계약 버전(`interfaceId`, `interfaceVersion`)의 `deploymentVersion` 입니다. 조합은 (호출 계약 버전, 배포 버전, 임무 버전) 셋입니다.
-- 모드에서 배포 적용은 엔지니어 모드, 미배정 재평가·현장 확인 기록·스테이션 판단·실행 취소·기체 빈손 확인은 운영자 모드에서만 됩니다. API 는 `X-Ops-Mode`·`X-Ops-User` 헤더로 모드와 사용자를 고릅니다(인증 아님).
+- 모드에서 배포 적용은 엔지니어 모드, 미배정 재평가·현장 확인 기록·스테이션 판단·실행 취소·기체 빈손 확인·출발 자리 확인은 운영자 모드에서만 됩니다(엔지니어 모드는 403). API 는 `X-Ops-Mode`·`X-Ops-User` 헤더로 모드와 사용자를 고릅니다(인증 아님).
 - 화면 상세 응답과 API 는 같은 값입니다: 작업 요청 상세는 `GET /api/work-requests/{id}` 입니다.
 
 ## C1 운영 중 호출 계약 배포 변경과 되돌림
@@ -30,8 +30,15 @@
 - 조작: 외부 주문 A 를 보냅니다.
 - 확인할 곳: 작업 요청 → «통합 작업 요청» 에서 A → «작업 요청 상세» 입니다. 구역 «요청 시 고정된 배포» 가 `receipt.normalizedOrder.deployment` 를 보입니다. «적용 임무 버전» 은 실행의 임무 버전이고 null 이면 «코드 정의» 로 보입니다. API 는 `GET /api/work-requests/{id}` 의 `receipt.normalizedOrder.deployment.deploymentVersion`, `receipt.normalizedOrder.missionVersion`, `receipt.jobOrderId`, `receipt.state` 입니다.
 - 기대하는 결과: 새 외부 주문 응답 202 입니다. 배포 1, 임무 버전 X 입니다. 실행의 임무 버전도 X 입니다.
-- 다르면: 상태가 `REJECTED` 이면 `detail` 을 읽습니다. 실행 호스트가 거부했으면 `detail` 이 «호스트 제출 거부: <사유>» 이고 화면은 detail 문장 대신 구역 «거부 사유» 를 보입니다(API `rejection`). `UNASSIGNED` 이고 출발 결품 기체가 있으면 detail 아래 구역 «기체별 출발 결품» 을 보입니다(API `unassigned.refusals[]`). 공개 전 계약이면 «공개된 계약만 호출할 수 있습니다»(409 `INTERFACE_NOT_ENABLED`) 이며 호스트에 보내지 않았습니다.
+- 다르면: 상태가 `REJECTED` 이면 `detail` 을 읽습니다. 실행 호스트가 거부했으면 `detail` 이 «호스트 제출 거부: <사유>» 이고 화면은 detail 문장 대신 구역 «거부 사유» 를 보입니다(API `rejection`). `UNASSIGNED` 이고 출발 결품 기체가 있으면 detail 아래 구역 «기체별 출발 결품» 을 보입니다(API `unassigned.refusals[]`). `UNASSIGNED` 이고 출발 미관측이면 구역 «출발 미관측»(제목 «출발 미관측 · 확인 필요»)에 출발 자리마다 «출발 미관측 · 출발 자리 S · 설비 응답 없음» 또는 «출발 미관측 · 출발 자리 S · 있음 · 신원 모름», 이어서 « · 확인할 자재 M · 기체 …» 가 보입니다(API `pendingSources`). 이것은 결품이 아닙니다. 아래 «출발 미관측일 때 출발 자리 확인» 절대로 합니다. 공개 전 계약이면 «공개된 계약만 호출할 수 있습니다»(409 `INTERFACE_NOT_ENABLED`) 이며 호스트에 보내지 않았습니다.
 - 근거 시험: `MissionInterfacesTest` 의 `배포 이력은 불변이고 새 배포는 새 요청에만 적용된다`, 통합 시험 `ManufacturingScenarioTest`(작업 요청의 `normalizedOrder.missionVersion`), 실행 호스트 시험 `MissionVersionsTest` 의 `배포 고정은 활성 버전 변경 뒤에도 원래 미션으로 실행하고 글로벌 활성 버전을 바꾸지 않는다`(작업 지시의 `missionVersion` 으로 임무 버전을 고름) 입니다.
+
+### 출발 미관측일 때 출발 자리 확인
+- 조작: 출발 자리에 가서 자재를 눈이나 바코드로 확인합니다. «작업 요청 상세» 의 구역 «출발 미관측» 에서 «확인한 자재»(요구 자재가 미리 채워져 있고, 다르면 실제로 본 것을 적는다)와 «확인 근거·담당자» 를 적고 «출발 자리 확인 기록» 을 누릅니다.
+- 확인할 곳: API 는 `POST /api/work-requests/{id}/source-confirmations`(본문 `requestId`·`source`·`identity`·`reason`·`expectedUpdatedAt`), 공유 자원 작업은 `POST /api/stations/runs/{id}/source-confirmations`. 이력은 구역 «출발 자리 확인 이력» 과 API `sourceConfirmations`.
+- 기대하는 결과: 같은 작업 지시가 다시 나가 `ACCEPTED` 가 됩니다. 다른 출발 자리가 남으면 다시 «출발 미관측» 입니다.
+- 다르면: 다른 자재를 적으면 출발 결품(구역 «기체별 출발 결품»)이 되고 대체 위치 선택은 상위 시스템 몫입니다. 출발 자리가 비었다고 설비가 말하면 사람의 확인이 그 관측을 뒤집지 않아 출발 결품입니다. 공유 자원 작업은 스테이션의 준비 신호가 true 이고 완료 신호가 false 여야 하며 아니면 409 입니다.
+- 근거 시험: 통합 시험 `SourceObservationTest` 의 `출발 미관측은 확인 대기로 보류되고 사람의 출발 자리 확인을 기록하면 같은 작업 지시가 관문을 지나 실행이 선다`, `WorkRequestsTest` 의 `출발 자리 확인은 사람과 시각과 신원을 덧붙이기로 남기고 같은 작업 지시를 확인과 함께 다시 제출한다`, `출발 미관측이 아닌 자리와 낡은 조회와 운영자가 아닌 행위자의 확인은 기록하지 않고 다시 제출하지 않는다`, `확인 뒤 배정 가능한 기체가 없으면 전송 전 미배정이 되어 확인 대기로 남지 않고 재평가가 확인을 싣는다`, `확인 뒤 다른 출발 자리가 남으면 다시 확인 대기이고 다음 제출은 쌓인 확인을 자리마다 하나씩 싣는다`, 실행 호스트 시험 `SourceObservationHostTest` 의 `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`.
 
 ### C1-3 새 배포 v2 = Y 적용
 - 조작: 엔지니어 모드에서 «배포할 임무 버전» 으로 Y 를 고르고 «배포 판단 사유» 를 적어 «새 실행 배포 적용» 을 누릅니다.
@@ -143,7 +150,7 @@
 | 실행 일지 저장 실패 | 제출이 500 `JOURNAL_WRITE_FAILED` 입니다. `journalBlockedExecutionIds`, 운영 → «실행» 경고 «실행 일지 저장 실패로 호스트의 명령 진행과 신규 배정이 차단되었습니다», 작업 요청 상세 «일지 저장 실패로 호스트의 새 명령 진행이 차단되었습니다.», 운영 개요 «일지 저장 차단» 입니다. pump 와 신규 제출이 막히고 로봇 태스크가 시작되지 않습니다. | 실행 호스트 재기동뿐입니다. 그 작업 지시는 일지에 없어 다시 짓지 않고, 그 작업 요청은 `IN_DOUBT` 로 남습니다(차단된 실행은 수락 근거로 쓰지 않습니다). | `HostJournalTest` 의 `일지 쓰기가 실패하면 제출은 500이고 pump와 신규 제출을 차단해 로봇 태스크를 시작하지 않는다`, `JobOrderOperationsTest` 의 `일지가 없는 메모리 실행을 반영 완료로 확정하지 않는다`, `WorkRequestsTest` 의 `일지 차단과 재작업 중 이전 응답은 결과를 발행하지 않는다`, `WorkRequestsTest` 의 `결과 불명 작업 요청은 재기동한 호스트에서 다시 지은 실행이 보일 때만 수락이 되고 일지 없는 실행은 사라져도 결과 불명으로 남는다` |
 | 복원 못 한 기체 | 판정 사유 «복원 못 한 실행이 있다», «미룬 실행», «포기한 실행» 입니다. | `DEFERRED` 는 스냅숏이 읽히면 pump 가 다시 짓습니다. `GAVE_UP` 은 그 작업 지시의 태스크가 끝날 때까지 기다리며, 운영자가 남은 태스크를 확인합니다. | `HostRestoreTest` 의 `기체 스냅숏을 못 읽으면 미루고 그 기체를 판정에서 빼며 pump 마다 다시 시도해 읽히면 다시 짓고 그 밖의 거부는 포기한다`, `포기한 행의 작업 지시 태스크가 사람을 기다리는 NEEDS_INTERVENTION 이면 종료 상태가 아니라 그 기체를 계속 판정에서 뺀다` |
 | 현장 시간값 미적용 | 실행 호스트 재기동 직후 첫 읽기 전에는 판정이 미적용 사유를 달고 제출은 `UNASSIGNED` 입니다. | 현장 설정에 «실행 호스트 반영: 버전 N» 이 보인 뒤 새 작업 요청을 보냅니다. | `SiteTimingsHostTest` 의 `첫 읽기 전에는 판정이 기체마다 미적용 이유를 더하고 제출은 사유 없는 UNASSIGNED 다` |
-| 스테이션 `REVIEW_REQUIRED` | 점유를 쥐고 다음 작업을 보내지 않습니다. | 운영자 판단(API `POST /api/stations/runs/{id}/decision`, 본문 `expectedRevision`, `decision`, `reason`)을 합니다: «재실행 없이 관측 재개»(`RESUME_OBSERVATION`, 설비 완료 신호가 켜져 있으면 409), «현장 확인 후 자원 해제»(`CONFIRM_CLEAR`, 로봇에 보낸 작업이고 작업 번호 신호 쌍이 없으면 스테이션 격리), 또는 인시던트 판단의 재작업입니다. | `StationCoordinatorTest` 의 `재평가 중 재기동은 자동 재전송 없이 현장 확인으로 넘긴다`, `재작업 전달 중 프로세스가 멈추면 재기동 뒤 확인 필요로 넘긴다` |
+| 스테이션 `REVIEW_REQUIRED` | 점유를 쥐고 다음 작업을 보내지 않습니다. | 운영자 판단(API `POST /api/stations/runs/{id}/decision`, 본문 `expectedRevision`, `decision`, `reason`)을 합니다: «재실행 없이 관측 재개»(`RESUME_OBSERVATION`, 설비 완료 신호가 켜져 있으면 409), «현장 확인 후 자원 해제»(`CONFIRM_CLEAR`, 로봇에 보낸 작업이고 작업 번호 신호 쌍이 없으면 스테이션 격리), 또는 인시던트 판단의 재작업입니다. 사유가 출발 미관측(«출발 미관측; 작업 요청 상세에서 출발 자리 확인을 기록하기 전에는 다시 제출하지 않고 점유를 유지합니다»)이면 관측 재개는 409 이고 출발 자리 확인(`POST /api/stations/runs/{id}/source-confirmations`)으로만 진행합니다. 이때 해제(`CONFIRM_CLEAR`)는 작업 요청을 `REJECTED` 로 닫습니다(실행하지 않음). | `StationCoordinatorTest` 의 `재평가 중 재기동은 자동 재전송 없이 현장 확인으로 넘긴다`, `재작업 전달 중 프로세스가 멈추면 재기동 뒤 확인 필요로 넘긴다`, `WorkRequestsTest` 의 `자원 관리 작업의 출발 미관측은 자동 재평가 없이 점유를 유지하고 출발 자리 확인으로만 다시 제출한다` |
 | 스테이션 격리 | 다음 작업이 `WAITING_READY`(«스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다»), 설비 준비 기한이 멈춥니다. | 설비가 비었고 이전 로봇이 멈췄는지 현장 확인 뒤 «현장 확인 후 격리 해제»(`CONFIRM_STATION_IDLE`)를 합니다. 격리된 스테이션을 점유한 `WAITING_READY` 작업이 아니면 409, 셀 신호를 못 읽으면 503, 완료 신호가 켜져 있으면 409 입니다. | `StationCoordinatorTest` 의 `작업 번호 반환이 없는 스테이션은 보낸 작업을 해제하면 격리하고 현장 확인 후 격리 해제 전에는 다음 작업을 보내지 않는다`, `격리 해제 판단은 격리된 스테이션을 점유한 설비 준비 대기 작업에서 운영자가 조회 버전으로 한다` |
 | 이전 인스턴스의 보류 판단 | 409 `INSTANCE_MISMATCH` 입니다. | 지금 인스턴스 id 로 다시 판단합니다. | `IncidentResolveTest` 의 `판단 요청에 instanceId 가 없으면 400 이고 지금 인스턴스가 아니면 409 INSTANCE_MISMATCH 이며 판단하지 않는다`, 통합 시험 `RestartRecoveryTest` 의 단계 6 |
 | 부분 완료 실행 | 판정 사유 «도는 실행이 있다: exec-N», 실행 목록 물리 상태 `PARTIAL`. 같은 작업 지시의 리비전도 `UNASSIGNED`. | 현장 확인 뒤 운영 › 실행 «실행 취소»(운영자 모드, API `POST /api/executions/{id}/cancel`, 본문 `instanceId`·`reason`). 다음 pump 에 `ABORTED` 로 정착하고 `ABORTED` 작업 응답이 나감. 이미 정착했거나 취소를 건 실행은 `NOT_CANCELABLE`, 다른 인스턴스는 409. | `MissionHostTest` 의 `부분 완료 실행의 기체는 도는 실행으로 판정과 제출에서 빠진다`, `ExecutionControlTest` 의 `빈손 부분 완료를 운영자가 취소하면 ABORTED 로 정착해 작업 응답이 나가고 표시 없이 기체가 다시 배정된다` |
@@ -152,7 +159,7 @@
 ### D1 에서 확인하는 기록
 | 기록 | 화면 | API | 알 수 있는 것 |
 |---|---|---|---|
-| 작업 요청 상태와 상세 | 작업 요청 → «작업 요청 상세», 구역 «거부 사유», 구역 «기체별 출발 결품» | `GET /api/work-requests/{id}` | `receipt.state`·`detail`, `hostRead`, `journalBlocked`, `executionInstanceId`, `reviews`, `recoveries`, `resource`, `rejection`(호스트가 거부한 `REJECTED` 만, 그 밖 null), `unassigned`(호스트가 낸 `UNASSIGNED` 만, 그 밖 null) |
+| 작업 요청 상태와 상세 | 작업 요청 → «작업 요청 상세», 구역 «거부 사유», 구역 «기체별 출발 결품», 구역 «출발 미관측», 구역 «출발 자리 확인 이력» | `GET /api/work-requests/{id}` | `receipt.state`·`detail`, `hostRead`, `journalBlocked`, `executionInstanceId`, `reviews`, `recoveries`, `resource`, `rejection`(호스트가 거부한 `REJECTED` 만, 그 밖 null), `unassigned`(호스트가 낸 `UNASSIGNED` 만, 그 밖 null), `pendingSources`, `sourceConfirmations`, `unassigned.refusals[].sourceUnobserved`, `rejection.sourceUnobserved` |
 | 실행 목록과 복원 보고 | 운영 → «실행» | `GET /api/executions` | 지금 인스턴스, 다시 지은 실행과 이전 인스턴스, `journalBlockedExecutionIds`, `restore`, `executions[].cancel`(이 인스턴스에서 건 운영자 취소: 승인자, 사유, 건 때 물리 상태, 기록 시각, 없으면 null). 화면은 물리 상태 칸 뒤 «(취소 요청: <승인자>, <사유>)». |
 | 잔여 파지 표시 | 운영 → «배정 가능» 아래 «잔여 파지 확인» | `GET /api/robots/residual-holds` | 미해소 표시(`markerId`, `robotId`, `jobOrderId`, `executionId`, `instanceId`, `unitId`, `objectRef`, `recordedAt`). 해소한 표시는 목록에서 빠지고 해소 기록(승인자·사유·시각)은 호스트 표 `mission.robot_residual_hold_clearing` 과 조작 기록 `CONFIRM_ROBOT_EMPTY` 행에 있음. |
 | 작업 응답 송신 기록 | 운영 → «작업 응답 송신 기록» | `GET /api/job-responses?jobOrderId=` | `SENT` 와 `RESTART_DUPLICATE` 처분 |

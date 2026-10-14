@@ -18,8 +18,11 @@ data class StationSignal(val value: Boolean, val observedAt: Instant?)
 data class StationText(val value: String, val observedAt: Instant?)
 /** One cell read. A completion and its job-number echo are judged from the same snapshot. */
 data class StationSignals(val flags: Map<String, StationSignal>, val texts: Map<String, StationText> = emptyMap())
-/** [detail] is the work request's own line; a rejected run carries it so the station history names the actual reason. */
-data class StationReceipt(val id: UUID, val state: String, val safeToRetry: Boolean, val updatedAt: String, val physicalState: String?, val snapshot: JsonNode?, val resultVersion: Int? = null, val detail: String? = null)
+/**
+ * [detail] is the work request's own line; a rejected run carries it so the station history names the actual reason.
+ * [sourceUnobserved]: the host's own UNASSIGNED left a source unobserved. Only a person's source confirmation sends it again.
+ */
+data class StationReceipt(val id: UUID, val state: String, val safeToRetry: Boolean, val updatedAt: String, val physicalState: String?, val snapshot: JsonNode?, val resultVersion: Int? = null, val detail: String? = null, val sourceUnobserved: Boolean = false)
 interface StationPort {
  fun validate(payload: JsonNode)
  fun signals(): Map<String, StationSignal>?
@@ -30,6 +33,10 @@ interface StationPort {
  fun receipt(id: UUID): StationReceipt
  fun retryForRun(receipt:StationReceipt,attempt:UUID,actor:Actor,runId:UUID):StationReceipt=retry(receipt,attempt,actor)
  fun retry(receipt: StationReceipt, attempt: UUID, actor: Actor): StationReceipt
+ /** Reads a source confirmation body before the run is claimed; throws the work request's refusal. */
+ fun checkSourceConfirmation(payload: JsonNode) {}
+ /** Records a person's source confirmation on the run's receipt and submits it again. */
+ fun confirmSourceForRun(receipt: StationReceipt, actor: Actor, payload: JsonNode, runId: UUID): StationReceipt = error("출발 자리 확인을 받지 않는 포트입니다")
 }
 /** Uses durable receipts; an uncertain submission is never sent again. */
 class OpsStationPort(private val requests: WorkRequests, private val interfaces: MissionInterfaces, private val host: HostReads, private val cell: CellSignalOperations? = null): StationPort {
@@ -66,7 +73,13 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
   val receipt=requests.get(id)
   // Use stored result evidence. A missing current host execution never means the work did not start.
   val stored=runCatching{requests.result(id,receipt.sourceSystemId)}.getOrNull();val saved=stored?.get("snapshot") as? JsonNode
-  return StationReceipt(id,receipt.state,receipt.state=="UNASSIGNED" && receipt.submission==null && receipt.lastExecution==null,receipt.updatedAt,saved?.path("jobResponse")?.path("physicalState")?.takeIf{it.isTextual}?.asText(),saved,stored?.get("version") as? Int,receipt.detail)
+  return StationReceipt(id,receipt.state,receipt.state=="UNASSIGNED" && receipt.submission==null && receipt.lastExecution==null,receipt.updatedAt,saved?.path("jobResponse")?.path("physicalState")?.takeIf{it.isTextual}?.asText(),saved,stored?.get("version") as? Int,receipt.detail,
+   requests.pendingSources(receipt).isNotEmpty())
+ }
+ override fun checkSourceConfirmation(payload:JsonNode) {requests.sourceConfirmationRequest(payload)}
+ override fun confirmSourceForRun(receipt:StationReceipt,actor:Actor,payload:JsonNode,runId:UUID):StationReceipt {
+  requests.confirmSource(receipt.id,actor,payload,runId)
+  return mapped(receipt.id)
  }
  override fun retry(receipt:StationReceipt,attempt:UUID,actor:Actor):StationReceipt=error("자원 작업 ID가 필요합니다")
  override fun retryForRun(receipt:StationReceipt,attempt:UUID,actor:Actor,runId:UUID):StationReceipt {

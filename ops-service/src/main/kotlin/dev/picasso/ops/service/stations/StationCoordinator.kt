@@ -124,6 +124,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  private fun received(run:StationRun,receipt:StationReceipt) {when {
   receipt.state=="ACCEPTED" -> transition(run,"RUNNING","로봇 수락; 저장 결과와 새 설비 완료 신호를 기다립니다",context=receipt.snapshot)
   receipt.safeToRetry -> transition(run,"WAITING_ROBOT","전송 전 미배정; 가용 기체를 재평가합니다")
+  // Never re-evaluated on a timer: the same cell answers the same way, and a retry loop would hide that a person must confirm the source.
+  receipt.sourceUnobserved -> transition(run,"REVIEW_REQUIRED",SOURCE_UNOBSERVED)
   receipt.state=="REJECTED" -> transition(run,"REJECTED",receipt.detail?.takeIf{it.isNotBlank()}?.let{"계약 제출 거부: $it; 자원 해제"} ?: "계약 제출 거부; 자원 해제",release=true)
   else -> transition(run,"REVIEW_REQUIRED","작업 요청 ${receipt.state}; 실행 여부 확인 전 점유 유지")
  }}
@@ -164,6 +166,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   val asked=p.path("decision").asText()
   val signals=if(actor.mode==Mode.OPERATOR && asked in SIGNAL_DECISIONS) runCatching{port.read()}.getOrNull() else null
   val released=if(actor.mode==Mode.OPERATOR && asked=="CONFIRM_CLEAR") runCatching{get(id).receiptId?.let(port::receipt)}.getOrNull() else null
+  // Nothing was sent for a source-unobserved run: resuming observation would only wait out the deadline and hide the pending confirmation.
+  val unobserved=actor.mode==Mode.OPERATOR && asked=="RESUME_OBSERVATION" && runCatching{get(id).receiptId?.let(port::receipt)?.sourceUnobserved}.getOrNull()==true
   return tx.execute {
   if(actor.mode!=Mode.OPERATOR)reject("운영자만 확인합니다",403)
   exact(p,setOf("expectedRevision","decision","reason"))
@@ -173,6 +177,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   when(decision) {
    "CANCEL_QUEUED" -> {if(current.state!="QUEUED")reject("대기열 작업만 취소할 수 있습니다",409);transition(current,"CANCELLED",reason,by=actor.header())}
    "RESUME_OBSERVATION" -> {if(current.state!="REVIEW_REQUIRED" || current.receiptId==null)reject("작업 요청이 있는 확인 필요 작업만 관측을 재개합니다",409)
+    if(unobserved)reject(SOURCE_HELD,409)
     // Only completion evidence newer than the resume counts, and a completion signal still on cannot be told apart from this run's.
     val complete=signals?.flags?.get(station(current.stationId).completeSignal) ?: reject("현장 신호를 확인할 수 없어 관측을 재개하지 않습니다",503)
     if(complete.value)reject("설비 완료 신호가 켜져 있습니다. 신호를 초기화한 뒤 관측을 재개하십시오",409)
@@ -209,6 +214,31 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   }!!
   val outcome=try {forward()} catch(e:Exception) {runCatching{reworked(claimed,null,actor,context)}.onFailure(e::addSuppressed);throw e}
   reworked(claimed,applied(outcome),actor,context);return outcome
+ }
+ /**
+  * A person's source confirmation for a run held on a source-unobserved host answer. The run must still own its station in review and the
+  * station must be ready with its completion signal off, as for any dispatch. The claim (RETRYING) blocks other decisions; the host call
+  * runs under this monitor, never under a DB lock. A refused confirmation returns the run to the same review.
+  */
+ @Synchronized fun confirmSource(id:UUID,actor:Actor,payload:JsonNode):StationReceipt {
+  if(actor.mode!=Mode.OPERATOR)reject("운영자만 출발 자리 확인을 기록합니다",403)
+  port.checkSourceConfirmation(payload)
+  val receipt=get(id).receiptId?.let{runCatching{port.receipt(it)}.getOrNull()}
+  val signals=runCatching{port.read()}.getOrNull()
+  val claimed=tx.execute {
+   val run=get(id);lock(run.stationId);val current=get(id);val station=station(current.stationId)
+   if(station.owner!=current.runId || current.state!="REVIEW_REQUIRED" || receipt?.sourceUnobserved!=true)reject(SOURCE_HELD,409)
+   val ready=signals?.flags?.get(station.readySignal);val complete=signals?.flags?.get(station.completeSignal)
+   if(ready==null || complete==null)reject("현장 신호를 확인할 수 없어 다시 제출하지 않습니다",503)
+   if(!ready.value || complete.value)reject("설비 준비와 완료 신호 초기화를 확인한 뒤 출발 자리 확인을 기록하십시오",409)
+   transition(current,"RETRYING",SOURCE_CONFIRMED,by=actor.header(),context=snapshot(signals));get(id)
+  }!!
+  val next=try {port.confirmSourceForRun(receipt!!,actor,payload,claimed.runId)} catch(e:Exception) {
+   runCatching{tx.execute{lock(claimed.stationId);val r=get(id);if(r.state=="RETRYING")transition(r,"REVIEW_REQUIRED",if(e is RequestRejected)SOURCE_UNOBSERVED else "출발 자리 확인 뒤 재제출 결과 불명; 점유 유지",by=actor.header())}}.onFailure(e::addSuppressed)
+   throw e
+  }
+  tx.execute{lock(claimed.stationId);val r=get(id);if(r.state=="RETRYING")received(r,next)}
+  return next
  }
  private fun reworked(run:StationRun,applied:Boolean?,actor:Actor,context:JsonNode) {
   val signals=if(applied==true) runCatching{port.signals()}.getOrNull() else null
@@ -274,5 +304,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   const val QUARANTINED="스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다"
   const val QUARANTINE="자원 해제에 따른 스테이션 격리"
   const val IDLE_CONFIRMED="현장 확인 후 격리 해제"
+  const val SOURCE_UNOBSERVED="출발 미관측; 작업 요청 상세에서 출발 자리 확인을 기록하기 전에는 다시 제출하지 않고 점유를 유지합니다"
+  const val SOURCE_CONFIRMED="출발 자리 확인 기록; 같은 작업 요청을 다시 제출합니다"
+  const val SOURCE_HELD="출발 자리 확인은 출발 미관측으로 점유를 유지한 확인 필요 작업에서만 기록합니다"
  }
 }

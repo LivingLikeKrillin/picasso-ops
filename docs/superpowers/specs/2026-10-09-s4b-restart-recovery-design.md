@@ -95,7 +95,7 @@ e2e 재기동 시험의 여섯은 다음과 같습니다. 복원 직후 단위�
 | 태스크 id 는 `jobOrderId#unitId[@rN]` 로 결정적입니다 | `Middleware.kt` `startUnit` |
 | 재작업은 `attempt` 를 1 올리고, 태스크 id 를 비워 다시 계획합니다 | `Middleware.kt` `resolve` 의 `REWORK` |
 | `submit` 의 내부 경로는 넘겨받은 `ActiveMission` 으로 카탈로그를 건너뛸 수 있고, `ActiveMission` 은 케이퍼빌리티와 임무 버전입니다 | `Middleware.kt` 의 private `submit`, `Ports.kt` `ActiveMission` |
-| 배정 관문은 출발 자리의 자재를 셀 관측으로 봅니다 | picasso `AdmissionGate.kt` 출발 결품 검사 |
+| 배정 관문은 출발 자리의 자재를 셀 관측으로 봅니다. 출발 관측을 요구한 단위는 셀이 말이 없으면 출발 미관측으로 보내지 않습니다. 사람의 출발 자리 확인은 제출 본문(`sourceConfirmations`)으로만 들어오고 재배정(`reassign`)에는 실리지 않습니다. | picasso `AdmissionGate.kt` 출발 결품 검사, `SourceObservationHostTest` |
 | mimic 은 같은 태스크 id 를 같은 리비전으로 다시 받으면 검증과 사전 조건 전에 기존 태스크를 돌려주고, 종료 상태이거나 RUNNING 이어도 같습니다 | picasso `mimic/.../TaskHost.kt` `start`·`update`, `TaskMachine.kt` |
 | mimic 스냅숏은 호스팅 중인 태스크를 종료 여부와 무관하게 다 싣지만, 계약의 `GetSnapshot` 은 종료한 태스크를 싣는다고 정하지 않습니다. picasso 의 `RobotSnapshot.tasks` 는 태스크 id 에서 상태로 가는 맵이라 재시도 횟수 칸이 없습니다 | `mimic/.../EventStream.kt` `taskSnapshots` |
 | 새 `ClientRobotPort` 는 처음 보는 핸들을 갱신 색인 0 부터 다시 받습니다 | picasso `Ports.kt` `ClientRobotPort.watch` |

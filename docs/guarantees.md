@@ -39,9 +39,9 @@
 
 ### 불확실한 결과 자동 재제출 방지
 
-- 동작: 제출 결과를 모르면 `IN_DOUBT` 로 두고 재전송이나 재평가로 다시 보내지 않습니다. 미배정 재평가는 제출 기록과 실행 관측이 없는 `UNASSIGNED` 만 받습니다. 호스트가 그 작업 지시를 가지고 있음이 관측되면(결과 피드 이벤트나 실행 목록) `ACCEPTED` 로 올립니다.
-- 코드: `requests/WorkRequests.kt` 의 `dispatch`, `recover`, `collectEvents`, `detail`
-- 시험: `WorkRequestsTest` 의 `응답 불명과 제출 중단 상태는 재접수로 다시 실행하지 않는다`, `전송 불명은 실행 관측으로 확정하고 호스트 단절 후에도 직전 관측을 보존한다`, `불명 접수와 오래된 상태는 재평가할 수 없다`, `StationCoordinatorTest` 의 `응답 불명은 운영자 확인 전 해제나 재전송하지 않는다`, 화면 시험 `lifecycle.spec.ts` 의 결과 불명 단계(연결 단절, 운영 서비스와 실행 호스트를 재기동한 뒤에도 호스트 제출 수가 1 만 늘어 있음)
+- 동작: 제출 결과를 모르면 `IN_DOUBT` 로 두고 재전송이나 재평가로 다시 보내지 않습니다. 미배정 재평가는 제출 기록과 실행 관측이 없는 `UNASSIGNED` 만 받습니다. 호스트가 그 작업 지시를 가지고 있음이 관측되면(결과 피드 이벤트나 실행 목록) `ACCEPTED` 로 올립니다. 호스트가 출발 미관측으로 답한 `UNASSIGNED`(호스트가 보내지 않았다고 답한 것)는 운영자가 출발 자리 확인을 기록할 때만 같은 작업 지시 id 로 다시 보냅니다. 시간이 지나거나 재조회해서는 다시 보내지 않습니다.
+- 코드: `requests/WorkRequests.kt` 의 `dispatch`, `recover`, `collectEvents`, `detail`, `confirmSource`
+- 시험: `WorkRequestsTest` 의 `응답 불명과 제출 중단 상태는 재접수로 다시 실행하지 않는다`, `전송 불명은 실행 관측으로 확정하고 호스트 단절 후에도 직전 관측을 보존한다`, `불명 접수와 오래된 상태는 재평가할 수 없다`, `출발 미관측이 아닌 자리와 낡은 조회와 운영자가 아닌 행위자의 확인은 기록하지 않고 다시 제출하지 않는다`, `자원 관리 작업의 출발 미관측은 자동 재평가 없이 점유를 유지하고 출발 자리 확인으로만 다시 제출한다`, `StationCoordinatorTest` 의 `응답 불명은 운영자 확인 전 해제나 재전송하지 않는다`, 화면 시험 `lifecycle.spec.ts` 의 결과 불명 단계(연결 단절, 운영 서비스와 실행 호스트를 재기동한 뒤에도 호스트 제출 수가 1 만 늘어 있음)
 
 ### 멈춘 작업 요청 정리
 
@@ -63,9 +63,9 @@
 
 ### 공유 스테이션 해제 조건
 
-- 동작: 로봇에 보낸 뒤의 스테이션 작업은 자동으로는 `COMPLETED` 가 될 때만 점유를 풉니다. 그 밖의 자동 해제는 로봇에 보내기 전의 준비 기한 초과(`TIMED_OUT`)와 제출 거부(`REJECTED`)뿐이고, 운영자의 현장 확인 후 해제(`MANUALLY_CLEARED`)는 물리 완료로 기록하지 않습니다. 새 완료 판정은 세 조건을 모두 만족해야 합니다. 첫째, 저장된 최신 결과의 물리 상태가 `PHYSICALLY_DONE` 이고 그 결과가 `RUNNING` 진입 때 적은 기준선(`result_baseline`)보다 새 버전이어야 합니다(관측 재개는 같은 실행을 다시 보므로 예외입니다). 둘째, 처리 주기마다 셀 신호를 읽은 시각(운영 서비스 시계)이 그 스테이션 작업의 `RUNNING` 진입 시각 `phase_at`(운영 서비스 시계)과 같거나 뒤인 읽기여야 하며 설비 완료 신호가 true 여야 합니다(신호의 `observedAt` 은 비교하지 않습니다). 셋째, 작업 번호 신호 쌍이 있는 스테이션은 같은 읽기의 반환 번호가 이번 작업 번호여야 합니다. 그리고 `RUNNING` 진입 길(처음 전송 전 준비 확인, 전송 전 미배정 재평가, 관측 재개, 재작업 반영)은 모두 그 직전에 완료 신호 false 를 요구합니다.
-- 코드: `stations/StationCoordinator.kt` 의 `tick`, `observe`, `transition`, `ops-service/src/main/resources/db/ops/V16__station_result_baseline.sql`
-- 시험: `StationCoordinatorTest` 의 `자원 점유는 직렬화되고 로봇 완료와 새로운 설비 완료 근거가 모두 필요하다`, `이전 완료 true와 로봇 수락만으로 점유를 풀지 않는다`, `처음 실행은 전송 전에 저장된 결과를 판단에 쓰지 않는다`, `재작업은 재작업 전에 저장된 물리 완료를 완료 근거로 쓰지 않는다`, `관측 재개는 같은 실행을 다시 보므로 확인 대기 중 저장된 물리 완료를 새 완료 신호와 함께 인정한다`, `현장 시계가 운영 시계보다 늦어도 전송 뒤 새로 켜진 완료 신호로 완료한다`, `실행 진입 전에 읽은 신호는 그 실행의 완료 근거로 쓰지 않는다`, `전송 전 미배정 재평가도 설비 완료 신호가 꺼져 있어야 실행으로 들어간다`, `WorkRequestsTest` 의 `공통 접수도 로봇 완료와 새 설비 완료를 모두 확인한 뒤 다음 요청을 허용한다`, 통합 시험 `StationScenarioTest`, 화면 시험 `station.spec.ts`
+- 동작: 로봇에 보낸 뒤의 스테이션 작업은 자동으로는 `COMPLETED` 가 될 때만 점유를 풉니다. 그 밖의 자동 해제는 로봇에 보내기 전의 준비 기한 초과(`TIMED_OUT`)와 제출 거부(`REJECTED`)뿐이고, 운영자의 현장 확인 후 해제(`MANUALLY_CLEARED`)는 물리 완료로 기록하지 않습니다. 새 완료 판정은 세 조건을 모두 만족해야 합니다. 첫째, 저장된 최신 결과의 물리 상태가 `PHYSICALLY_DONE` 이고 그 결과가 `RUNNING` 진입 때 적은 기준선(`result_baseline`)보다 새 버전이어야 합니다(관측 재개는 같은 실행을 다시 보므로 예외입니다). 둘째, 처리 주기마다 셀 신호를 읽은 시각(운영 서비스 시계)이 그 스테이션 작업의 `RUNNING` 진입 시각 `phase_at`(운영 서비스 시계)과 같거나 뒤인 읽기여야 하며 설비 완료 신호가 true 여야 합니다(신호의 `observedAt` 은 비교하지 않습니다). 셋째, 작업 번호 신호 쌍이 있는 스테이션은 같은 읽기의 반환 번호가 이번 작업 번호여야 합니다. 그리고 `RUNNING` 진입 길(처음 전송 전 준비 확인, 전송 전 미배정 재평가, 관측 재개, 재작업 반영, 출발 자리 확인 뒤 재제출)은 모두 그 직전에 완료 신호 false 를 요구합니다.
+- 코드: `stations/StationCoordinator.kt` 의 `tick`, `observe`, `transition`, `confirmSource`, `ops-service/src/main/resources/db/ops/V16__station_result_baseline.sql`
+- 시험: `StationCoordinatorTest` 의 `자원 점유는 직렬화되고 로봇 완료와 새로운 설비 완료 근거가 모두 필요하다`, `이전 완료 true와 로봇 수락만으로 점유를 풀지 않는다`, `처음 실행은 전송 전에 저장된 결과를 판단에 쓰지 않는다`, `재작업은 재작업 전에 저장된 물리 완료를 완료 근거로 쓰지 않는다`, `관측 재개는 같은 실행을 다시 보므로 확인 대기 중 저장된 물리 완료를 새 완료 신호와 함께 인정한다`, `현장 시계가 운영 시계보다 늦어도 전송 뒤 새로 켜진 완료 신호로 완료한다`, `실행 진입 전에 읽은 신호는 그 실행의 완료 근거로 쓰지 않는다`, `전송 전 미배정 재평가도 설비 완료 신호가 꺼져 있어야 실행으로 들어간다`, `WorkRequestsTest` 의 `공통 접수도 로봇 완료와 새 설비 완료를 모두 확인한 뒤 다음 요청을 허용한다`, `자원 관리 작업의 출발 미관측은 자동 재평가 없이 점유를 유지하고 출발 자리 확인으로만 다시 제출한다`(완료 신호가 true 면 409 이고 상태 그대로임을 확인), 통합 시험 `StationScenarioTest`, 화면 시험 `station.spec.ts`
 
 ### 해제한 이전 작업의 늦은 완료 신호 차단
 
@@ -75,14 +75,14 @@
 
 ### 필수 자원 우회 차단
 
-- 동작: 임무에 필수 자원이 있으면 Ops 의 모든 작업 요청 경로(외부 주문, 호출 계약 호출, 화면 수동 요청, 기존 `POST /api/job-orders`, 스테이션 직접 요청, 미배정 재평가)가 같은 스테이션 대기열과 점유 확인을 지납니다. 제출 직전에도 권한을 다시 확인하고, 거부되면 보내지 않고 `REJECTED` 로 닫습니다. 재작업(`REWORK`)은 그 스테이션 작업이 점유자이고 `REVIEW_REQUIRED` 일 때만 넘기고, 실행 목록을 못 읽으면 막습니다.
-- 코드: `stations/MissionResources.kt` 의 `admit`, `authorize`, `requests/WorkRequests.kt` 의 `dispatch`, `recover`, `stations/StationPort.kt` 의 `OpsStationPort.validate`, `StationReworkGuard`, `stations/StationCoordinator.kt` 의 `rework`
-- 시험: `WorkRequestsTest` 의 `상위 주문 계약 호출 수동 직접 제출은 하나의 필수 자원 대기열을 사용한다`, `필수 자원 미배정은 일반 재평가 API로 우회하지 못한다`, `서로 다른 계약과 예전 배포도 같은 미션 자원 요구를 생략하지 못한다`, `등록 전 미배정 접수는 등록 뒤 일반 재평가로 자원 요구를 우회하지 못한다`, `제출 직전 자원 요구가 바뀌면 호스트에 보내지 않고 거절로 닫으며 오류를 알린다`, `StationCoordinatorTest` 의 `해제 뒤 다른 작업이 점유한 스테이션에서는 이전 작업의 재작업을 호스트에 넘기지 않는다`, `점유 중이어도 확인 필요 상태가 아니면 재작업을 넘기지 않는다`, `확인 필요 상태여도 스테이션 점유가 없으면 재작업을 넘기지 않는다`, `실행 목록을 못 읽거나 실행이 없으면 재작업을 넘기지 않는다`, 통합 시험 `MixedResourceScenarioTest`
+- 동작: 임무에 필수 자원이 있으면 Ops 의 모든 작업 요청 경로(외부 주문, 호출 계약 호출, 화면 수동 요청, 기존 `POST /api/job-orders`, 스테이션 직접 요청, 미배정 재평가, 출발 자리 확인)가 같은 스테이션 대기열과 점유 확인을 지납니다. 제출 직전에도 권한을 다시 확인하고, 거부되면 보내지 않고 `REJECTED` 로 닫습니다. 재작업(`REWORK`)은 그 스테이션 작업이 점유자이고 `REVIEW_REQUIRED` 일 때만 넘기고, 실행 목록을 못 읽으면 막습니다. 필수 자원이 있는 작업 요청의 출발 자리 확인은 일반 작업 요청 API(`POST /api/work-requests/{id}/source-confirmations`)가 409 `RESOURCE_MANAGED` 로 막고, 스테이션 작업 경로(`POST /api/stations/runs/{id}/source-confirmations`)로만 받습니다.
+- 코드: `stations/MissionResources.kt` 의 `admit`, `authorize`, `requests/WorkRequests.kt` 의 `dispatch`, `recover`, `confirmSource`, `stations/StationPort.kt` 의 `OpsStationPort.validate`, `StationReworkGuard`, `stations/StationCoordinator.kt` 의 `rework`, `confirmSource`
+- 시험: `WorkRequestsTest` 의 `상위 주문 계약 호출 수동 직접 제출은 하나의 필수 자원 대기열을 사용한다`, `필수 자원 미배정은 일반 재평가 API로 우회하지 못한다`, `서로 다른 계약과 예전 배포도 같은 미션 자원 요구를 생략하지 못한다`, `등록 전 미배정 접수는 등록 뒤 일반 재평가로 자원 요구를 우회하지 못한다`, `제출 직전 자원 요구가 바뀌면 호스트에 보내지 않고 거절로 닫으며 오류를 알린다`, `자원 관리 작업의 출발 미관측은 자동 재평가 없이 점유를 유지하고 출발 자리 확인으로만 다시 제출한다`, `StationCoordinatorTest` 의 `해제 뒤 다른 작업이 점유한 스테이션에서는 이전 작업의 재작업을 호스트에 넘기지 않는다`, `점유 중이어도 확인 필요 상태가 아니면 재작업을 넘기지 않는다`, `확인 필요 상태여도 스테이션 점유가 없으면 재작업을 넘기지 않는다`, `실행 목록을 못 읽거나 실행이 없으면 재작업을 넘기지 않는다`, 통합 시험 `MixedResourceScenarioTest`
 
 ### 임무 잠금으로 등록과 재평가 직렬화
 
-- 동작: 자원 요구 등록, 작업 요청의 대기열 입장, 미배정 재평가가 같은 임무 advisory 잠금(`pg_advisory_xact_lock(hashtext(임무 id))`)을 먼저 잡습니다. 그래서 재평가의 권한 확인과 `DISPATCHING` 커밋 사이에 자원 요구 등록이 끼어들 수 없습니다. 잠금 순서는 임무, 스테이션, 작업 요청 행입니다.
-- 코드: `stations/MissionResources.kt` 의 `lockMission`, `create`, `admit`, `requests/WorkRequests.kt` 의 `recover`
+- 동작: 자원 요구 등록, 작업 요청의 대기열 입장, 미배정 재평가가 같은 임무 advisory 잠금(`pg_advisory_xact_lock(hashtext(임무 id))`)을 먼저 잡습니다. 그래서 재평가의 권한 확인과 `DISPATCHING` 커밋 사이에 자원 요구 등록이 끼어들 수 없습니다. 잠금 순서는 임무, 스테이션, 작업 요청 행입니다. 출발 자리 확인도 같은 임무 advisory 잠금을 먼저 잡고 그 뒤 작업 요청 행을 잠급니다.
+- 코드: `stations/MissionResources.kt` 의 `lockMission`, `create`, `admit`, `requests/WorkRequests.kt` 의 `recover`, `confirmSource`
 - 시험: `WorkRequestsTest` 의 `재평가 승인과 커밋 사이의 자원 요구 등록은 재평가 커밋을 기다리고 접수를 제출 중에 남기지 않는다`, `자원 요구는 운영자가 바꾸지 못하고 기존 불명 작업 중에는 등록하지 못한다`, `자원 요구 등록은 이 미션에서 아직 진행 중이거나 완료 근거가 없는 접수만 막는다`
 
 ### 부분 완료·잔여 파지 기체의 배정 제외
@@ -90,6 +90,12 @@
 - 동작: 실행 호스트 판정의 도는 실행은 picasso `PhysicalState.occupiesRobot` 이라 부분 완료(`PARTIAL`) 실행의 기체에 새 작업 지시(같은 작업 지시 id 의 리비전 포함)를 배정하지 않습니다. 부분 완료는 운영자 실행 취소로 닫으며, 취소 행을 먼저 적고 미들웨어를 부르고 다음 pump 가 `ABORTED` 로 정착시킵니다. 정착할 때 마지막 로봇 단위(계획 순서)의 파지 관측이 `HOLDING` 이면 같은 트랜잭션에서 잔여 파지 표시를 적고, 사람이 빈손을 확인해 해소할 때까지 그 기체를 뺍니다. 표시는 재기동 뒤에도 DB 에서 다시 읽습니다. 취소와 해소의 승인자는 사람뿐입니다(DB `CHECK`). 이 표시는 실행 호스트의 운영 정책(ADR 41)이고 picasso 보장이 아닙니다(picasso 는 정착한 실행의 파지를 판단이 아니라 정보로 둡니다, §15.146).
 - 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `judge`, `cancel`, `clearResidualHold`, `recordAfterPump`, `residualHoldUnit`, `restore`, `mission-host/src/main/kotlin/dev/picasso/ops/host/store/HostRecords.kt` 의 `cancel`, `markResidualHold`, `openResidualHolds`, `clearResidualHold`, `mission-host/src/main/resources/db/mission/V5__execution_cancel_residual_hold.sql`, `mission-host/src/main/kotlin/dev/picasso/ops/host/web/ExecutionControlController.kt`, 운영 서비스 `executions/ExecutionControls.kt`, `web/ExecutionControlController.kt`
 - 시험: 실행 호스트 시험 `MissionHostTest` 의 `부분 완료 실행의 기체는 도는 실행으로 판정과 제출에서 빠진다`, `ExecutionControlTest` 의 `빈손 부분 완료를 운영자가 취소하면 ABORTED 로 정착해 작업 응답이 나가고 표시 없이 기체가 다시 배정된다`, `든 채 끝난 부분 완료를 취소하면 정착 때 잔여 파지 표시가 서고 사람이 해소해야 기체가 다시 배정된다`, `든 채 실패로 정착한 실행의 표시는 재기동해도 기체를 빼고 해소도 재기동 뒤까지 남으며 표시는 작업 지시마다 하나다`, `잔여 파지 단위는 로봇 단위의 마지막 파지 관측이고 플릿 단위의 HOLDING 은 보지 않는다`, `MissionStoreTest` 의 `P0-b2 표 셋도 덧붙이기만 하고 승인자는 사람뿐이며 표시는 작업 지시마다 하나고 해소는 표시마다 하나다`, 운영 서비스 시험 `ExecutionControlsTest` 의 `취소는 승인자가 행위자이고 CANCELED 는 성공 그 밖의 결과와 호스트 4xx 는 거부로 남는다`, `빈손 확인은 승인자가 행위자이고 해소는 성공 404 409 는 거부이며 응답이 없으면 미해소 목록으로 대조한다`, 통합 시험 `FaultIncidentTest` 의 `단계 1 데이터 정의 버전으로 도는 pick_place 에 스킬 실패를 넣으면 단위가 FAILED 이고 GRASP_FAILED 인시던트가 두 버전과 함께 보인다`, Playwright `ui/e2e/lifecycle.spec.ts`
+
+### 출발 미관측과 출발 결품의 분리
+
+- 동작: 출발 미관측은 출발 결품과 접히지 않습니다. 실행 호스트, 운영 서비스, 화면 모두 칸과 문구가 따로입니다. 사람의 출발 자리 확인은 셀 관측이 모자란 자리(설비가 말이 없거나 «있다» 고만 한 자리)만 채우고 설비의 관측을 뒤집지 않습니다.
+- 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/cell/CellBand.kt` 의 `CellBandSignals.observe`, `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `SourceUnobservedView`, `host/HostClient.kt` 의 `HostSourceUnobserved`, `requests/WorkRequests.kt` 의 `pendingSources`, `ui/src/labels.ts` 의 `sourceUnobservedLabel`
+- 시험: 실행 호스트 시험 `SourceObservationHostTest` 의 `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`, `WorkRequestsTest` 의 `호스트 미배정의 출발 미관측은 결품과 따로 제출 기록과 미배정 칸에 남고 확인을 기다리는 출발 자리로 보인다`, 화면 시험 `WorkRequests.test.tsx` 의 `출발 미관측은 결품과 다른 확인 대기로 보이고 사람의 출발 자리 확인을 기록하면 같은 작업 요청을 다시 낸다`
 
 ## 보장하지 않는 것
 

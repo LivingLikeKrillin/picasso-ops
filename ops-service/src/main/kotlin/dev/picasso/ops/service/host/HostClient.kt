@@ -71,11 +71,12 @@ enum class HostSubmitResult { ACCEPTED, IDEMPOTENT, REJECTED, UNASSIGNED }
 /**
  * `assign` 이 기체마다 낸 미배정 사유(S3a JSON 계약 §4).
  *
- * 뒤 두 칸은 그 기체가 출발 결품으로 떨어졌을 때만 값이 있고 모양은 [HostSubmitOutcome] 의 같은 이름 칸과 같다. 다른 사유로 떨어진
- * 기체와 이 칸이 없던 호스트의 본문은 둘 다 `null` 이다.
+ * 가운데 두 칸은 그 기체가 출발 결품으로 떨어졌을 때만 값이 있고 모양은 [HostSubmitOutcome] 의 같은 이름 칸과 같다. 다른 사유로 떨어진
+ * 기체와 이 칸이 없던 호스트의 본문은 둘 다 `null` 이다. 마지막 칸은 출발 미관측으로 떨어진 기체에만 있고 출발 결품과 접지 않는다.
  *
  * @param alternativeLocations 그 자재를 든 다른 자리. 빈 목록(든 자리 없음)과 `null`(답 없음 또는 출발 결품 아님)을 접지 않는다
  * @param sourceMissing 이 기체가 출발 결품으로 떨어졌으면 그 자리와 관측. 아니면 `null`
+ * @param sourceUnobserved 이 기체가 출발 미관측으로 떨어졌으면 그 자리와 설비가 말한 것. 아니면 `null`(이 칸이 없던 호스트 본문 포함)
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class HostRefusal(
@@ -83,6 +84,7 @@ data class HostRefusal(
     val reason: String,
     val alternativeLocations: List<String>? = null,
     val sourceMissing: HostSourceMissing? = null,
+    val sourceUnobserved: HostSourceUnobserved? = null,
 )
 
 /**
@@ -97,6 +99,7 @@ data class HostRefusal(
  * @param alternativeLocations 출발 결품 REJECTED 일 때 그 자재를 든 다른 자리. 빈 목록(든 자리 없음)과 `null`(답 없음 또는 출발 결품
  *   아님)을 접지 않는다. 이 칸이 없던 호스트의 본문과 UNASSIGNED 는 `null` 이다
  * @param sourceMissing 출발 결품 REJECTED 이면 그 자리와 관측. 아니면 `null`(UNASSIGNED 포함)
+ * @param sourceUnobserved 출발 미관측 REJECTED 이면 그 자리와 설비가 말한 것. 아니면 `null`(UNASSIGNED 포함, 기체별 칸은 [HostRefusal])
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class HostSubmitOutcome(
@@ -110,11 +113,26 @@ data class HostSubmitOutcome(
     val remedyWithheld: Boolean = false,
     val alternativeLocations: List<String>? = null,
     val sourceMissing: HostSourceMissing? = null,
+    val sourceUnobserved: HostSourceUnobserved? = null,
 )
 
 /** 출발 결품 거부의 자리. [observed] 가 `null` 이면 빈 자리이고 아니면 거기 있던 다른 식별 정보다. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class HostSourceMissing(val material: String? = null, val source: String, val observed: String? = null)
+
+/**
+ * 출발 미관측 거부의 자리(S3a JSON 계약 §4). 관측을 요구한 단위의 출발 자리를 설비가 확인해 주지 않았다. 결품이 아니다 — 다음 행동은
+ * 사람의 출발 자리 확인이다. [occupied] 가 `null` 이면 설비가 말이 없었고 참이면 «있다» 고만 했다.
+ */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class HostSourceUnobserved(val material: String? = null, val source: String, val occupied: Boolean? = null)
+
+/**
+ * 제출 본문의 `sourceConfirmations` 원소(S3a JSON 계약 §4). 사람이 기록한 출발 자리 확인이고 호스트가 그 제출 한 번 동안 셀 관측으로 쓴다.
+ *
+ * @param confirmedAt ISO-8601 시각
+ */
+data class HostSourceConfirmation(val source: String, val identity: String, val confirmedBy: String, val confirmedAt: String)
 
 /** `GET /host/executions` 의 실행 한 줄 중 재조회가 쓰는 칸. 나머지는 버린다. */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -145,6 +163,14 @@ interface HostReads {
 /** 호스트 제출. 시험이 호스트 없이 대신 끼운다. */
 fun interface HostWrites {
     fun submit(jobOrder: ObjectNode, candidates: List<String>): HostWrite
+
+    /**
+     * 사람이 기록한 출발 자리 확인을 함께 싣는 제출. 확인이 없으면 [submit] 과 같다. 확인을 실을 줄 모르는 구현은 확인을 버리고 보내지
+     * 않고 예외를 던진다 — 버리면 사람이 확인한 자리가 다시 출발 미관측으로 돌아온다.
+     */
+    fun submit(jobOrder: ObjectNode, candidates: List<String>, sourceConfirmations: List<HostSourceConfirmation>): HostWrite =
+        if (sourceConfirmations.isEmpty()) submit(jobOrder, candidates)
+        else throw UnsupportedOperationException("출발 자리 확인을 실을 수 없는 제출 구현이다")
 }
 
 /**
@@ -320,10 +346,14 @@ class HostClient(
 
     override fun cell(): HostCall<JsonNode> = get("/host/cell")
 
-    override fun submit(jobOrder: ObjectNode, candidates: List<String>): HostWrite {
+    override fun submit(jobOrder: ObjectNode, candidates: List<String>): HostWrite = submit(jobOrder, candidates, emptyList())
+
+    /** 확인이 없으면 본문에 `sourceConfirmations` 칸을 두지 않는다(그 칸이 없던 때의 본문 그대로). */
+    override fun submit(jobOrder: ObjectNode, candidates: List<String>, sourceConfirmations: List<HostSourceConfirmation>): HostWrite {
         val body = json.createObjectNode()
         body.set<JsonNode>("jobOrder", jobOrder)
         body.putArray("candidates").apply { candidates.forEach(::add) }
+        if (sourceConfirmations.isNotEmpty()) body.set<JsonNode>("sourceConfirmations", json.valueToTree(sourceConfirmations))
         return post("/host/job-orders", body)
     }
 

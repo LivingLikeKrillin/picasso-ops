@@ -25,9 +25,18 @@ data class ReceiptAccepted(val receipt: Receipt, val duplicate: Boolean)
 /**
  * The host's REJECTED on a work request. [alternativeLocations] keeps null (no answer, or not a source-missing rejection) apart from
  * an empty list (no other place holds the material); [sourceMissing] tells the two nulls apart. [remedy] is the host's tagged answer as is.
+ * [sourceUnobserved] is the host's source-unobserved answer (the cell did not confirm the source); it is never folded into [sourceMissing].
  */
 data class WorkRequestRejection(val reason:String?, val remedy:JsonNode?, val remedyWithheld:Boolean,
- val alternativeLocations:List<String>?, val sourceMissing:dev.picasso.ops.service.host.HostSourceMissing?)
+ val alternativeLocations:List<String>?, val sourceMissing:dev.picasso.ops.service.host.HostSourceMissing?,
+ val sourceUnobserved:dev.picasso.ops.service.host.HostSourceUnobserved?=null)
+/**
+ * A source the host could not observe on a host UNASSIGNED: the source, what should be there, what the cell said, and the robots refused for it.
+ * The work request holds until a person records a source confirmation for it ([WorkRequests.confirmSource]).
+ */
+data class PendingSource(val source:String, val material:String?, val occupied:Boolean?, val robotIds:List<String>)
+/** The body of a source confirmation, parsed before any lock so a coordinator can refuse it before claiming its run. */
+data class SourceConfirmationRequest(val requestId:UUID, val source:String, val identity:String, val reason:String, val expectedUpdatedAt:String)
 /**
  * The host's UNASSIGNED on a work request: its per-robot refusals as the host sent them. A refusal's [alternativeLocations][dev.picasso.ops.service.host.HostRefusal.alternativeLocations]
  * and sourceMissing have the [WorkRequestRejection] shape and are null unless that robot's source was missing; null and an empty list stay apart.
@@ -153,7 +162,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   }
   // A crash after this point remains DISPATCHING; recovery is observation, never blind resubmission.
   try {
-   when(val sent=operations.submit(actor,draft,interfaceRef,interfaceInput,id,jobId)) {
+   when(val sent=operations.submit(actor,draft,interfaceRef,interfaceInput,id,jobId,sourceConfirmations(id))) {
     is JobOrderSubmission.NoEligibleRobot -> update(id,"UNASSIGNED",sent.detail)
     is JobOrderSubmission.Submitted -> {
      val value=sent.outcome
@@ -222,20 +231,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    // Refuse before claiming DISPATCHING, including a requirement registered after this receipt.
    resources.authorize(id,receipt.normalizedOrder["workMasterId"].asText())
    if(receipt.updatedAt!=expected || receipt.normalizedOrder["workMasterId"].asText()!=wm) throw RequestRejected("STALE_RECOVERY","작업 요청 상태가 바뀌었습니다. 다시 조회하세요",409)
-   val original=receipt.payload
-   try {
-    draft=if(receipt.sourceSystemId=="ops:manual") JobOrderForm.read(original["form"]) else {
-     val interfaceId=original["interfaceId"].asText();val version=original["interfaceVersion"].asInt()
-     ref="$interfaceId/v$version";input=original["input"]
-     interfaces.draft(interfaceId,version,input!!,true)
-    }
-   } catch(e:InterfaceRejected) {throw RequestRejected(e.code,e.message,e.status)}
-   receipt.normalizedOrder["deployment"]?.let { saved ->
-    val originalDraft=(draft as? dev.picasso.ops.service.joborders.DeployedJobOrderDraft)?.original ?: draft!!
-    draft=dev.picasso.ops.service.joborders.DeployedJobOrderDraft(originalDraft,saved)
-   }
-   if(canonical(JobOrderForm.jobOrder(draft!!,receipt.jobOrderId,json))!=canonical(receipt.normalizedOrder))
-    throw RequestRejected("RECOVERY_INPUT_CHANGED","원래 변환 입력과 달라 재평가를 차단했습니다",409)
+   val again=redraft(receipt);draft=again.draft;ref=again.ref;input=again.input
    jdbc.sql("INSERT INTO ops.work_request_recovery(attempt_id,receipt_id,actor,reason,expected_updated_at) VALUES(:attempt,:id,:actor,:reason,:expected)")
     .param("attempt",attempt).param("id",id).param("actor",actor.header()).param("reason",reason).param("expected",expected).update()
    jdbc.sql("UPDATE ops.work_request SET state='DISPATCHING',detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id")
@@ -245,6 +241,93 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   if(claimed) dispatch(id,actor,draft!!,ref,input,get(id).jobOrderId)
   return ReceiptAccepted(get(id),!claimed)
  }
+ private class Redraft(val draft:dev.picasso.ops.service.joborders.JobOrderDraft,val ref:String?,val input:JsonNode?)
+ /** The receipt's original input converted again under its pinned deployment. Refuses when it no longer yields the stored job order. */
+ private fun redraft(receipt:Receipt):Redraft {
+  val original=receipt.payload;val normalized=receipt.normalizedOrder!!
+  var ref:String?=null;var input:JsonNode?=null
+  var draft=try {
+   if(receipt.sourceSystemId=="ops:manual") JobOrderForm.read(original["form"]) else {
+    val interfaceId=original["interfaceId"].asText();val version=original["interfaceVersion"].asInt()
+    ref="$interfaceId/v$version";input=original["input"]
+    interfaces.draft(interfaceId,version,input!!,true)
+   }
+  } catch(e:InterfaceRejected) {throw RequestRejected(e.code,e.message,e.status)}
+  normalized["deployment"]?.let { saved ->
+   val originalDraft=(draft as? dev.picasso.ops.service.joborders.DeployedJobOrderDraft)?.original ?: draft
+   draft=dev.picasso.ops.service.joborders.DeployedJobOrderDraft(originalDraft,saved)
+  }
+  if(canonical(JobOrderForm.jobOrder(draft,receipt.jobOrderId,json))!=canonical(normalized))
+   throw RequestRejected("RECOVERY_INPUT_CHANGED","원래 변환 입력과 달라 재평가를 차단했습니다",409)
+  return Redraft(draft,ref,input)
+ }
+ /** Parses a source confirmation body. Exact fields; source and identity up to 160 characters, reason up to 1000. */
+ fun sourceConfirmationRequest(payload:JsonNode):SourceConfirmationRequest {
+  val raw=payload["requestId"]?.takeIf{it.isTextual}?.asText()
+  val requestId=raw?.let{runCatching{UUID.fromString(it)}.getOrNull()}?.takeIf{it.toString().equals(raw,ignoreCase=true)}
+  fun text(key:String,max:Int)=payload[key]?.takeIf{it.isTextual}?.asText()?.trim()?.takeIf{it.isNotEmpty() && it.length<=max}
+  val source=text("source",160);val identity=text("identity",160);val reason=text("reason",1000);val expected=text("expectedUpdatedAt",64)
+  if(!payload.isObject || payload.fieldNames().asSequence().toSet()!=setOf("requestId","source","identity","reason","expectedUpdatedAt") ||
+   requestId==null || source==null || identity==null || reason==null || expected==null)
+   throw RequestRejected("BAD_SOURCE_CONFIRMATION","확인 UUID·출발 자리·확인한 신원·판단 근거·조회한 updatedAt이 필요합니다")
+  return SourceConfirmationRequest(requestId,source,identity,reason,expected)
+ }
+ /**
+  * A person records what they confirmed at a source the host could not observe (picasso SourceUnobserved), then the same job order is
+  * submitted again. Only a source still pending on the host's own UNASSIGNED is accepted. The row is append-only and every later dispatch of
+  * this work request carries it to the host as the cell observation of that source. A resource-managed receipt goes through its station run.
+  */
+ fun confirmSource(id:UUID,actor:Actor,payload:JsonNode,stationRunId:UUID?=null):ReceiptAccepted {
+  if(actor.mode!=Mode.OPERATOR) throw RequestRejected("MODE_NOT_ALLOWED","운영자만 출발 자리 확인을 기록합니다",403)
+  val asked=sourceConfirmationRequest(payload)
+  var again:Redraft?=null
+  val claimed=transactions.execute {
+   val wm=get(id).normalizedOrder?.get("workMasterId")?.asText()?.also(resources::lockMission)
+   jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",id).query(UUID::class.java).single()
+   val old=jdbc.sql("SELECT receipt_id,actor,source,identity,reason,expected_updated_at FROM ops.work_request_source_confirmation WHERE request_id=:request")
+    .param("request",asked.requestId).query {rs,_ -> (1..6).map{rs.getString(it)}}.optional().orElse(null)
+   if(old!=null) {
+    if(old!=listOf(id.toString(),actor.header(),asked.source,asked.identity,asked.reason,asked.expectedUpdatedAt))
+     throw RequestRejected("SOURCE_CONFIRMATION_CONFLICT","확인 요청 ID가 다른 확인에 사용되었습니다",409)
+    return@execute false
+   }
+   val receipt=get(id)
+   if(receipt.requiredStationId!=null) {
+    if(stationRunId==null)throw RequestRejected("RESOURCE_MANAGED","자원 관리 작업은 공유 자원 작업으로 출발 자리 확인을 기록합니다",409)
+    if(resources.context(id)?.get("runId")!=stationRunId)throw RequestRejected("RESOURCE_MANAGED","다른 자원 작업의 출발 자리 확인입니다",409)
+   }
+   if(receipt.updatedAt!=asked.expectedUpdatedAt || receipt.normalizedOrder?.get("workMasterId")?.asText()!=wm)
+    throw RequestRejected("STALE_SOURCE_CONFIRMATION","작업 요청 상태가 바뀌었습니다. 다시 조회하세요",409)
+   val pending=pendingSources(receipt).firstOrNull{it.source==asked.source}
+    ?: throw RequestRejected("SOURCE_NOT_PENDING","출발 미관측으로 확인을 기다리는 출발 자리가 아닙니다",409)
+   resources.authorize(id,wm!!)
+   again=redraft(receipt)
+   jdbc.sql("""INSERT INTO ops.work_request_source_confirmation(request_id,receipt_id,source,identity,actor,confirmer_kind,reason,expected_updated_at,context)
+    VALUES(:request,:id,:source,:identity,:actor,'PERSON',:reason,:expected,CAST(:context AS JSONB))""")
+    .param("request",asked.requestId).param("id",id).param("source",asked.source).param("identity",asked.identity).param("actor",actor.header())
+    .param("reason",asked.reason).param("expected",asked.expectedUpdatedAt).param("context",kotlinJson.writeValueAsString(pending)).update()
+   // The host's UNASSIGNED proved nothing was sent; its answer now lives in the confirmation's context. Clearing it keeps a later
+   // pre-dispatch UNASSIGNED (no eligible robot) a plain pre-dispatch one, never a stale pending source.
+   jdbc.sql("UPDATE ops.work_request SET state='DISPATCHING',submission=NULL,detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id")
+    .param("id",id).param("detail","출발 자리 확인 후 다시 제출: ${asked.source} = ${asked.identity} (${actor.header()}): ${asked.reason}".take(2000)).update()
+   true
+  }!!
+  if(claimed) again!!.let{dispatch(id,actor,it.draft,it.ref,it.input,get(id).jobOrderId)}
+  return ReceiptAccepted(get(id),!claimed)
+ }
+ /**
+  * Sources the host's own UNASSIGNED left unobserved, one per source in refusal order. Empty for any other state and for a pre-dispatch
+  * UNASSIGNED, which has no host answer.
+  */
+ fun pendingSources(receipt:Receipt):List<PendingSource> =
+  unassignment(receipt)?.refusals.orEmpty().filter{it.sourceUnobserved!=null}.groupBy{it.sourceUnobserved!!.source}
+   .map{(source,refusals)->val first=refusals.first().sourceUnobserved!!;PendingSource(source,first.material,first.occupied,refusals.map{it.robotId})}
+ /** Latest confirmation per source of this work request, as the host's `sourceConfirmations`. */
+ private fun sourceConfirmations(id:UUID):List<dev.picasso.ops.service.host.HostSourceConfirmation> =
+  jdbc.sql("""SELECT DISTINCT ON (source) source,identity,actor,created_at FROM ops.work_request_source_confirmation
+   WHERE receipt_id=:id ORDER BY source,created_at DESC,request_id""").param("id",id).query {rs,_ ->
+   dev.picasso.ops.service.host.HostSourceConfirmation(rs.getString(1),rs.getString(2),rs.getString(3),rs.getTimestamp(4).toInstant().toString())
+  }.list()
  fun review(id:UUID,actor:Actor,payload:JsonNode):Map<String,Any?> = transactions.execute {
   if(actor.mode!=Mode.OPERATOR)throw RequestRejected("MODE_NOT_ALLOWED","운영자만 현장 확인을 기록합니다",403)
   val raw=payload.path("requestId").asText();val requestId=runCatching{UUID.fromString(raw)}.getOrNull()?.takeIf{it.toString()==raw}
@@ -406,7 +489,10 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    "reviews" to jdbc.sql("SELECT request_id,actor,observation,reason,created_at,context FROM ops.work_request_review WHERE receipt_id=:id ORDER BY created_at,request_id")
     .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"actor" to rs.getString(2),"observation" to rs.getString(3),"reason" to rs.getString(4),"createdAt" to rs.getString(5),"context" to json.readTree(rs.getString(6)))}.list(),
    "recoveries" to jdbc.sql("SELECT attempt_id,actor,reason,created_at FROM ops.work_request_recovery WHERE receipt_id=:id ORDER BY created_at")
-    .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"actor" to rs.getString(2),"reason" to rs.getString(3),"createdAt" to rs.getString(4))}.list())
+    .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"actor" to rs.getString(2),"reason" to rs.getString(3),"createdAt" to rs.getString(4))}.list(),
+   "pendingSources" to pendingSources(receipt),
+   "sourceConfirmations" to jdbc.sql("SELECT request_id,source,identity,actor,reason,created_at,context FROM ops.work_request_source_confirmation WHERE receipt_id=:id ORDER BY created_at,request_id")
+    .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"source" to rs.getString(2),"identity" to rs.getString(3),"actor" to rs.getString(4),"reason" to rs.getString(5),"createdAt" to rs.getString(6),"context" to json.readTree(rs.getString(7)))}.list())
  }!!
  /** The host's own REJECTED, typed from the stored submission so the screen never parses the raw record. Other closes have no host rejection. */
  fun rejection(receipt:Receipt):WorkRequestRejection? {
@@ -414,7 +500,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   val outcome=receipt.submission?.get("outcome")?.takeIf{it.isObject} ?: return null
   val host=runCatching{kotlinJson.treeToValue(outcome,dev.picasso.ops.service.host.HostSubmitOutcome::class.java)}.getOrNull()
    ?.takeIf{it.result==dev.picasso.ops.service.host.HostSubmitResult.REJECTED} ?: return null
-  return WorkRequestRejection(host.rejectionReason,host.remedy?.takeUnless{it.isNull},host.remedyWithheld,host.alternativeLocations,host.sourceMissing)
+  return WorkRequestRejection(host.rejectionReason,host.remedy?.takeUnless{it.isNull},host.remedyWithheld,host.alternativeLocations,host.sourceMissing,host.sourceUnobserved)
  }
  /** The host's own UNASSIGNED, typed from the stored submission like [rejection]. A pre-dispatch UNASSIGNED has no host answer and is null. */
  fun unassignment(receipt:Receipt):WorkRequestUnassignment? {
