@@ -50,7 +50,7 @@ class StationLateCompletionTest {
    assertEquals(x,dispatching(x)["jobToken"].asText())
    // Y: 준비 true, 완료 false 라 번호를 쓰고 바로 보낸다. X 의 기체는 아직 실행 중이라 다른 기체로 간다.
    val y=enqueue();val yRun=waitFor(y,"RUNNING");val yExecution=execution(yRun);assertNotEquals(xExecution,yExecution)
-   assertEquals(y,cell("inspection_job"));assertEquals(y,dispatching(y)["jobToken"].asText())
+   assertEquals(y,cellAfterPump("inspection_job",y));assertEquals(y,dispatching(y)["jobToken"].asText())
    // X 쪽 설비가 늦게 X 의 번호와 완료를 쓴다. Y 의 로봇은 아직 끝나지 않았다.
    signal("inspection_job_done",x);signal("inspection_complete","true")
    val review=waitFor(y,"REVIEW_REQUIRED");assertEquals("설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다",review["reason"].asText())
@@ -96,6 +96,8 @@ class StationLateCompletionTest {
  private fun station()=stack.get("/api/stations")["stations"].single{it["stationId"].asText()=="inspection-1"}
  private fun dispatching(id:String)=stack.get("/api/stations/runs/$id/evidence")["events"].last{it["state"].asText()=="DISPATCHING"}["context"]
  private fun cell(name:String)=stack.get("/api/cell")["cell"]["signals"].single{it["name"].asText()==name}["value"].asText()
+ /** The host serves the cell band as of its last pump, so a value written by the station shows after a later pump. */
+ private fun cellAfterPump(name:String,expected:String):String {val until=Instant.now().plusSeconds(5);while(Instant.now().isBefore(until)){val value=cell(name);if(value==expected)return value;Thread.sleep(100)};return cell(name)}
  private fun execution(run:JsonNode)=stack.get("/api/work-requests/${run["receiptId"].asText()}")["receipt"]["submission"]["outcome"]["executionId"].asText()
  private fun read(id:String)=stack.get("/api/stations/runs/$id")["run"]
  private fun decision(id:String,decision:String,reason:String)="""{"expectedRevision":${read(id)["revision"].asInt()},"decision":"$decision","reason":"$reason"}"""
