@@ -15,6 +15,7 @@
 "parameters": { "object_id": { "from": "PAIRED_ID", "otherwise": "" }, "destination": { "from": "ITEM_ID" } },
 "expectedIdentity": { "from": "ITEM_PROPERTY", "property": "material" },
 "source": { "from": "PAIRED_ID" },
+"sourceObservation": "OPTIONAL",
 "destination": { "from": "ITEM_ID" }
 }
 ]

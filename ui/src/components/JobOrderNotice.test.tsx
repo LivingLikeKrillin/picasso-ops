@@ -35,3 +35,23 @@ it('미배정의 기체별 대체 위치 조회 불가를 대체 위치 없음�
   expect(rows[1]).toHaveTextContent('humanoid-02: 작업 구역 점유')
   expect(within(rows[1]).queryByText(/대체 위치/)).not.toBeInTheDocument()
 })
+
+it('미배정의 기체별 출발 미관측은 결품 줄과 대체 위치 없이 출발 미관측 줄을 붙인다', () => {
+  const rows = show([
+    { robotId: 'humanoid-01', reason: '출발 자리를 확인하지 못했다', alternativeLocations: null, sourceMissing: null, sourceUnobserved: { material: 'ENGINE-COVER-A', source: 'SEQ-IN-02.BIN-A', occupied: null } },
+    { robotId: 'humanoid-02', reason: '출발 자리 비었다', alternativeLocations: [], sourceMissing: missing, sourceUnobserved: null },
+  ])
+  expect(within(rows[0]).getByText('출발 미관측 · 출발 자리 SEQ-IN-02.BIN-A · 설비 응답 없음 · 확인할 자재 ENGINE-COVER-A')).toBeVisible()
+  expect(within(rows[0]).queryByText(/대체 위치|비어 있음/)).not.toBeInTheDocument()
+  expect(within(rows[1]).queryByText(/출발 미관측/)).not.toBeInTheDocument()
+  expect(within(rows[1]).getByText('대체 위치 없음')).toBeVisible()
+})
+
+it('출발 미관측 거부의 제출 결과는 거부 사유 아래에 출발 미관측 줄을 보인다', () => {
+  render(<JobOrderNotice what="PrepareSequencedRack 작업 지시" sent={{ kind: 'outcome', outcome: {
+    requestId: 'q1', jobOrderId: 'JO-1', result: 'REJECTED', confirmation: null,
+    outcome: { result: 'REJECTED', executionId: null, robotId: null, rejectionReason: '출발 자리를 확인하지 못했다', refusals: [], excluded: [],
+      sourceUnobserved: { material: 'ENGINE-COVER-A', source: 'SEQ-IN-02.BIN-A', occupied: true } },
+  } }} />)
+  expect(screen.getByText('출발 미관측 · 출발 자리 SEQ-IN-02.BIN-A · 있음 · 신원 모름 · 확인할 자재 ENGINE-COVER-A')).toBeVisible()
+})

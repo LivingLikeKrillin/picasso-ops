@@ -217,16 +217,24 @@ class MockRunner(
 
     /**
      * 이상적 현장(T8). 표본 작업 지시의 목적지 슬롯은 처음부터 점유이고 그 슬롯의 기대 자재를 낸다. 관측 시각은 `null` 이라
-     * 읽은 순간이 시각이므로 E2 시간 윈도우 안에 든다. 그 밖의 자리(제시 자리 포함)는 `null`(침묵)이다. 관문은 침묵을
-     * 판정하지 않으므로 통과한다. 이름 있는 신호는 대기 노드의 기대 값이다.
+     * 읽은 순간이 시각이므로 E2 시간 윈도우 안에 든다. 출발 자리(`source`)는 점유이고 그 자리의 자재를 낸다 — 이상적 현장에서는
+     * 설비가 출발 자리의 신원을 말하므로 출발 관측을 요구한 단위(`REQUIRED`)도 관문을 지난다. 그 밖의 자리는 `null`(침묵)이다.
+     * 이름 있는 신호는 대기 노드의 기대 값이다.
      */
     private class IdealCell(order: JobOrder, private val ideal: Map<String, String>) : CellSignals {
         private val destinations: Map<String, String?> = order.equipmentRequirements
             .filter { it.equipmentUse == EquipmentUse.DESTINATION }
             .associate { it.id to it.properties[EquipmentUse.PROP_MATERIAL] }
 
-        override fun observe(location: String): SlotSignal? =
-            if (location in destinations) SlotSignal(true, destinations[location], null) else null
+        private val sources: Map<String, String?> = order.equipmentRequirements
+            .filter { it.equipmentUse == EquipmentUse.SOURCE }
+            .associate { it.id to it.properties[EquipmentUse.PROP_MATERIAL] }
+
+        override fun observe(location: String): SlotSignal? = when (location) {
+            in destinations -> SlotSignal(true, destinations[location], null)
+            in sources -> SlotSignal(true, sources[location], null)
+            else -> null
+        }
 
         override fun signal(name: String): NamedSignal? = ideal[name]?.let { NamedSignal(it, null) }
     }

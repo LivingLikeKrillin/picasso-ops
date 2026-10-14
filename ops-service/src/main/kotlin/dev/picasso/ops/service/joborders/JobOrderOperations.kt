@@ -9,6 +9,7 @@ import dev.picasso.ops.service.host.HostCall
 import dev.picasso.ops.service.host.HostExecutionRef
 import dev.picasso.ops.service.host.HostExecutions
 import dev.picasso.ops.service.host.HostReads
+import dev.picasso.ops.service.host.HostSourceConfirmation
 import dev.picasso.ops.service.host.HostSubmitOutcome
 import dev.picasso.ops.service.host.HostSubmitResult
 import dev.picasso.ops.service.host.HostWrite
@@ -69,7 +70,11 @@ class JobOrderOperations(
     private val json: ObjectMapper = jacksonObjectMapper(),
 ) {
 
-    fun submit(actor: Actor, draft: JobOrderDraft, interfaceRef: String? = null, interfaceInput: JsonNode? = null, requestId: UUID = UUID.randomUUID(), stableJobOrderId: String? = null): JobOrderSubmission {
+    /**
+     * [sourceConfirmations] 는 이 작업 요청에 사람이 기록한 출발 자리 확인이다. 호스트 본문과 조작 기록의 요청 칸에 함께 싣는다. 없으면 두
+     * 본문 모두 그 칸이 없다.
+     */
+    fun submit(actor: Actor, draft: JobOrderDraft, interfaceRef: String? = null, interfaceInput: JsonNode? = null, requestId: UUID = UUID.randomUUID(), stableJobOrderId: String? = null, sourceConfirmations: List<HostSourceConfirmation> = emptyList()): JobOrderSubmission {
         val jobOrderId = stableJobOrderId ?: jobOrderId(requestId)
         val order = JobOrderForm.jobOrder(draft, jobOrderId, json)
         val judged = eligibility.judge(order)
@@ -81,11 +86,12 @@ class JobOrderOperations(
         if (interfaceInput != null) request.set<JsonNode>("interfaceInput", interfaceInput)
         request.set<JsonNode>("jobOrder", order)
         request.putArray("candidates").apply { candidates.forEach(::add) }
+        if (sourceConfirmations.isNotEmpty()) request.set<JsonNode>("sourceConfirmations", json.valueToTree(sourceConfirmations))
         val requestJson = json.writeValueAsString(request)
         fun record(result: OperationResult, response: String) =
             log.append(requestId, actor, jobOrderId, requestJson, null, result, response)
 
-        val write = writes.submit(order, candidates)
+        val write = writes.submit(order, candidates, sourceConfirmations)
         if (write is HostWrite.NoResponse) {
             record(OperationResult.NO_RESPONSE, json.writeValueAsString(json.createObjectNode().put("cause", write.cause)))
             return confirm(requestId, jobOrderId, ::record)

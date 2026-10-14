@@ -12,6 +12,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 
 /** 실행 호스트 REST 클라이언트(S3a 스펙 §8). 호스트는 JDK HttpServer 대역이다. */
@@ -85,6 +86,32 @@ class HostClientTest {
             json.readTree("""{"jobOrder":{"jobOrderId":"JO-1","workMasterId":"InspectAsset"},"candidates":["humanoid-01","quadruped-01"]}"""),
             json.readTree(seen.getValue("/host/job-orders").third),
         )
+    }
+
+    @Test
+    fun `출발 자리 확인은 있을 때만 제출 본문에 싣고 출발 미관측 답은 결품 칸과 따로 읽는다`() {
+        val client = serve("/host/job-orders" to (200 to "{}"))
+        val confirmation = dev.picasso.ops.service.host.HostSourceConfirmation("SEQ-IN-02.BIN-A", "ENGINE-COVER-A", "operator/kim", "2026-10-14T00:00:00Z")
+        client.submit(order, listOf("humanoid-01"), listOf(confirmation))
+        assertEquals(
+            json.readTree("""{"jobOrder":{"jobOrderId":"JO-1","workMasterId":"InspectAsset"},"candidates":["humanoid-01"],
+              "sourceConfirmations":[{"source":"SEQ-IN-02.BIN-A","identity":"ENGINE-COVER-A","confirmedBy":"operator/kim","confirmedAt":"2026-10-14T00:00:00Z"}]}"""),
+            json.readTree(seen.getValue("/host/job-orders").third),
+        )
+        client.submit(order, listOf("humanoid-01"), emptyList())
+        assertFalse(json.readTree(seen.getValue("/host/job-orders").third).has("sourceConfirmations"))
+
+        val outcome = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().readValue(
+            """{"result":"UNASSIGNED","refusals":[{"robotId":"humanoid-01","reason":"r","sourceUnobserved":{"material":"ENGINE-COVER-A","source":"SEQ-IN-02.BIN-A","occupied":null}},
+              {"robotId":"humanoid-02","reason":"r","sourceUnobserved":{"material":null,"source":"SEQ-IN-02.BIN-A","occupied":true}},{"robotId":"humanoid-03","reason":"r"}],
+              "sourceUnobserved":null}""",
+            dev.picasso.ops.service.host.HostSubmitOutcome::class.java,
+        )
+        assertEquals(dev.picasso.ops.service.host.HostSourceUnobserved("ENGINE-COVER-A", "SEQ-IN-02.BIN-A", null), outcome.refusals[0].sourceUnobserved)
+        assertEquals(true, outcome.refusals[1].sourceUnobserved!!.occupied)
+        assertEquals(null, outcome.refusals[0].sourceMissing)
+        assertEquals(null, outcome.refusals[2].sourceUnobserved)
+        assertEquals(null, outcome.sourceUnobserved)
     }
 
     @Test

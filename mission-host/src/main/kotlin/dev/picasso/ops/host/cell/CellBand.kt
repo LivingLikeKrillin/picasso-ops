@@ -158,10 +158,24 @@ class CellBandClient(
 }
 
 /**
+ * 사람이 기록한 출발 자리 확인 한 건. 운영 서비스가 작업 요청마다 덧붙이기로 적고, 그 작업 요청을 다시 낼 때 제출 본문의
+ * `sourceConfirmations` 로 싣는다. 호스트는 저장하지 않는다 — 그 제출 한 번 동안만 셀 포트의 관측이 된다([CellBandSignals.confirmations]).
+ *
+ * picasso `SourceUnobserved` 가 말하는 «기록된 수동 확인» 이다. 미들웨어의 덮어쓰기 칸이 아니라 셀 포트의 답으로 들어간다.
+ *
+ * @param identity 사람이 그 자리에서 확인한 신원. 요구한 자재와 다르면 관문이 출발 결품으로 판정한다
+ * @param confirmedBy 확인한 사람(운영 서비스 행위자 헤더)
+ * @param confirmedAt 확인을 기록한 시각. 셀 관측의 시각이 된다
+ */
+data class SourceConfirmation(val source: String, val identity: String, val confirmedBy: String, val confirmedAt: Instant)
+
+/**
  * 셀 대역 스냅숏 위의 [CellSignals](S3a 스펙 §7.4). 호스트가 pump 직전에 [snapshot] 을 갈아 끼우고, 미들웨어는 같은 잠금
  * 아래에서 읽는다.
  *
- * - [observe]: 스냅숏에서 자리 id 로 답한다. 스냅숏에 없는 자리는 `null`(말이 없다)이다.
+ * - [observe]: 스냅숏에서 자리 id 로 답한다. 스냅숏에 없는 자리는 `null`(말이 없다)이다. 그 자리에 사람의 확인([confirmations])이
+ *   있고 설비가 말이 없거나 «있다» 고만 했으면 확인한 신원으로 답한다. 설비가 비었다·다른 것이 있다·무엇인지까지 말했으면 설비의 답이
+ *   이긴다 — 확인은 관측이 모자란 자리를 채울 뿐 관측을 뒤집지 않는다.
  * - [holding]: 그 자재를 든 **제시 자리**만 낸다. 채운 슬롯을 대안 자리로 내면 미들웨어가 막 놓은 자재를 다시 집으러 보낸다.
  * - [signal]: 스냅숏의 신호에서 이름으로 값과 관측 시각을 낸다(S3b 스펙 §6.6). 모르는 이름은 `null`(못 읽었다)이고
  *   설비 대기는 그때 기한까지 기다린다.
@@ -172,11 +186,16 @@ class CellBandSignals : CellSignals {
 
     var snapshot: CellSnapshot? = null
 
+    /** 출발 자리 id → 사람의 확인. 호스트가 제출 한 번 동안만 채우고 끝나면 비운다. 비어 있으면 설비의 답 그대로다. */
+    var confirmations: Map<String, SourceConfirmation> = emptyMap()
+
     override fun observe(location: String): SlotSignal? {
-        val current = snapshot ?: return null
-        val place = (current.presentations.asSequence() + current.slots.asSequence()).firstOrNull { it.id == location }
-            ?: return null
-        return SlotSignal(place.occupied, place.material, place.observedAt)
+        val seen = snapshot?.let { current ->
+            (current.presentations.asSequence() + current.slots.asSequence()).firstOrNull { it.id == location }
+        }?.let { SlotSignal(it.occupied, it.material, it.observedAt) }
+        val confirmed = confirmations[location] ?: return seen
+        if (seen != null && !(seen.occupied && seen.identity == null)) return seen
+        return SlotSignal(occupied = true, identity = confirmed.identity, observedAt = confirmed.confirmedAt)
     }
 
     override fun holding(material: String): List<String>? =

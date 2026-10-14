@@ -11,6 +11,7 @@ import type {
   Owner,
   SkillFit,
   SourceMissing,
+  SourceUnobserved,
   TestRequestState,
 } from './api'
 
@@ -66,7 +67,7 @@ export const KIND_LABEL: Record<string, string> = {
   NO_ELIGIBLE_ROBOT: '배정 가능한 기체 없음',
   MODE_NOT_ALLOWED: '이 모드에서 할 수 없는 조작',
   ACTOR_REQUIRED: '행위자 없음',
-  // 임무 정의 거부 9종(S3b JSON 계약 §3.1). 호스트는 바닥 소유를 쥐지 않아 FLOOR_UNOWNED 를 내지 않지만 이름은 둔다.
+  // 임무 정의 거부 10종(S3b JSON 계약 §3.1). 호스트는 바닥 소유를 쥐지 않아 FLOOR_UNOWNED 를 내지 않지만 이름은 둔다.
   UNREADABLE: '읽을 수 없는 정의',
   DUPLICATE_NODE_ID: '노드 id 겹침',
   DEADLINE_INVALID: '대기 기한 오류',
@@ -77,6 +78,7 @@ export const KIND_LABEL: Record<string, string> = {
   SKILL_NOT_IN_CONTRACT: '계약에 없는 스킬',
   SKILL_NOT_ON_SITE: '현장에 없는 스킬',
   SAFETY_SIGNAL_WAIT: '안전 신호 대기',
+  SOURCE_OBSERVATION_UNDECLARED: '출발 관측 선언 없음',
   // 임무·신호 조작의 사전 거부와 호스트·현장의 4xx(S3b JSON 계약 §10).
   MISSION_BAD_REQUEST: '임무 요청 오류',
   REASON_REQUIRED: '사유 없음',
@@ -261,3 +263,7 @@ export function alternativesLabel(answer: SourceAnswer): string | null {
 /** 출발 자리 한 줄. `observed` 가 null 이면 빈 자리다. */
 export const sourceMissingLabel = (missing: SourceMissing) =>
   `출발 자리 ${missing.source} · ${missing.observed === null ? '비어 있음' : `${missing.observed} 있음`}`
+
+/** 출발 미관측 한 줄. 결품 줄과 다른 말로 쓴다 — 설비가 말이 없었는지 «있다» 고만 했는지를 접지 않는다. */
+export const sourceUnobservedLabel = (unobserved: SourceUnobserved) =>
+  `출발 미관측 · 출발 자리 ${unobserved.source} · ${unobserved.occupied === null ? '설비 응답 없음' : '있음 · 신원 모름'}${unobserved.material === null ? '' : ` · 확인할 자재 ${unobserved.material}`}`

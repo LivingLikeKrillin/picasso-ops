@@ -474,8 +474,17 @@ export type HostSubmitResult = 'ACCEPTED' | 'IDEMPOTENT' | 'REJECTED' | 'UNASSIG
 /** 출발 결품의 자리(S3a JSON 계약 §4). `observed` 가 null 이면 빈 자리이고 아니면 거기 있던 다른 식별 정보다. */
 export interface SourceMissing { material: string | null; source: string; observed: string | null }
 
-/** 미배정의 기체별 사유. 뒤 두 칸은 REJECTED 의 같은 이름 칸과 모양이 같고, 그 기체가 출발 결품으로 떨어졌을 때만 값이 있다. */
-export interface UnassignedRefusal { robotId: string; reason: string; alternativeLocations?: string[] | null; sourceMissing?: SourceMissing | null }
+/**
+ * 출발 미관측의 자리(S3a JSON 계약 §4). 관측을 요구한 단위의 출발 자리를 설비가 확인해 주지 않았다. 결품이 아니다.
+ * `occupied` 가 null 이면 설비가 말이 없었고 true 면 «있다» 고만 했다.
+ */
+export interface SourceUnobserved { material: string | null; source: string; occupied: boolean | null }
+
+/**
+ * 미배정의 기체별 사유. 가운데 두 칸은 REJECTED 의 같은 이름 칸과 모양이 같고, 그 기체가 출발 결품으로 떨어졌을 때만 값이 있다.
+ * `sourceUnobserved` 는 출발 미관측으로 떨어진 기체에만 있다.
+ */
+export interface UnassignedRefusal { robotId: string; reason: string; alternativeLocations?: string[] | null; sourceMissing?: SourceMissing | null; sourceUnobserved?: SourceUnobserved | null }
 
 /**
  * 실행 호스트의 제출 결과(S3a JSON 계약 §4). `refusals` 는 미배정일 때 기체별 관문 사유, `excluded` 는 호스트가 판정에서 뺀 기체다.
@@ -488,6 +497,8 @@ export interface HostSubmitOutcome {
   rejectionReason: string | null
   refusals: UnassignedRefusal[]
   excluded: HostEligibility[]
+  /** 출발 미관측 REJECTED 일 때만 있다. 칸이 없던 호스트 본문은 undefined 다. */
+  sourceUnobserved?: SourceUnobserved | null
 }
 
 /**

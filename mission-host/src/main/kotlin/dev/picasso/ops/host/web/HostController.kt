@@ -38,9 +38,10 @@ class HostController(private val host: MissionHost, private val json: ObjectMapp
         EligibilityView(host.eligibility(order, robots, mission))
     }
 
+    /** 선택 칸 `sourceConfirmations` 는 사람이 기록한 출발 자리 확인이다([HostRequests.sourceConfirmations]). 이 제출 한 번에만 쓴다. */
     @PostMapping("/host/job-orders", consumes = [MediaType.APPLICATION_JSON_VALUE])
     fun submit(@RequestBody(required = false) body: ByteArray?): ResponseEntity<Any> = accepting(body, "candidates") { order, candidates, mission ->
-        host.submit(order, candidates, mission)
+        host.submit(order, candidates, mission, HostRequests.sourceConfirmations(body?.let { json.readTree(it) }?.get("sourceConfirmations")))
     }
 
     @GetMapping("/host/executions")

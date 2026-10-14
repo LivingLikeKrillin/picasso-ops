@@ -9,6 +9,7 @@ import dev.picasso.contracts.v1.Precondition
 import dev.picasso.contracts.v1.PreconditionSubject
 import dev.picasso.middleware.Middleware
 import dev.picasso.middleware.RemedyOutcome
+import dev.picasso.middleware.SourceUnobserved
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -70,6 +71,42 @@ class SubmitOutcomeTest {
         val other = refusal(null)
         assertTrue(other.has("alternativeLocations") && other["alternativeLocations"].isNull, other.toString())
         assertTrue(other.has("sourceMissing") && other["sourceMissing"].isNull, other.toString())
+    }
+
+    @Test
+    fun `출발 미관측 거부는 그 자리와 설비가 말한 것을 싣고 결품과 대체 자리를 싣지 않는다`() {
+        fun rejected(occupied: Boolean?) = body(SubmitOutcome.rejected(
+            Middleware.Submission.Rejected("출발 자리를 확인하지 못했다", sourceUnobserved = SourceUnobserved("ENGINE-COVER-A", "SEQ-IN-02.BIN-A", occupied)),
+            null, emptyList(),
+        ))
+        val silent = rejected(null)
+        assertEquals("REJECTED", silent["result"].asText())
+        assertEquals("SEQ-IN-02.BIN-A", silent["sourceUnobserved"]["source"].asText(), silent.toString())
+        assertEquals("ENGINE-COVER-A", silent["sourceUnobserved"]["material"].asText())
+        assertTrue(silent["sourceUnobserved"].has("occupied") && silent["sourceUnobserved"]["occupied"].isNull, silent.toString())
+        assertTrue(silent.has("sourceMissing") && silent["sourceMissing"].isNull, silent.toString())
+        assertTrue(silent.has("alternativeLocations") && silent["alternativeLocations"].isNull, silent.toString())
+        assertEquals(true, rejected(true)["sourceUnobserved"]["occupied"].asBoolean())
+
+        // 출발 결품 거부와 다른 거부는 출발 미관측 칸이 비었다.
+        val missing = body(SubmitOutcome.rejected(Middleware.Submission.Rejected("출발 자리 비었다"), source, emptyList()))
+        assertTrue(missing.has("sourceUnobserved") && missing["sourceUnobserved"].isNull, missing.toString())
+    }
+
+    @Test
+    fun `미배정의 기체별 사유는 출발 미관측일 때만 그 자리를 싣고 결품 칸과 대체 자리는 비었다`() {
+        fun refusal(missing: RemedyOutcome.SourceMissing?, unobserved: SourceUnobserved?) =
+            json.readTree(json.writeValueAsString(Refusal.of("humanoid-01", "출발 자리를 확인하지 못했다", missing, unobserved)))
+
+        val unobserved = refusal(null, SourceUnobserved(null, "SEQ-IN-02.BIN-A", true))
+        assertEquals("SEQ-IN-02.BIN-A", unobserved["sourceUnobserved"]["source"].asText(), unobserved.toString())
+        assertTrue(unobserved["sourceUnobserved"].has("material") && unobserved["sourceUnobserved"]["material"].isNull, unobserved.toString())
+        assertEquals(true, unobserved["sourceUnobserved"]["occupied"].asBoolean())
+        assertTrue(unobserved["sourceMissing"].isNull && unobserved["alternativeLocations"].isNull, unobserved.toString())
+
+        val missing = refusal(source, null)
+        assertTrue(missing["sourceMissing"].isObject, missing.toString())
+        assertTrue(missing.has("sourceUnobserved") && missing["sourceUnobserved"].isNull, missing.toString())
     }
 
     @Test

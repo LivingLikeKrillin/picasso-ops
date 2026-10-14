@@ -242,7 +242,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 |---|---|
 | 한 번도 못 읽음(«모름:» 접두 없음) | «작업 요청 목록을 아직 읽지 못했습니다.», «호출 계약 목록을 아직 읽지 못했습니다.», «자원 요구를 아직 읽지 못했습니다.», «배포 이력을 아직 읽지 못했습니다.», «최근 작업 요청 모름», «수집 상태 모름», «실행 상태 모름 · 관측을 기다립니다.», «판단 대기 상태 모름», 지표 카드 값 «모름» |
 | 읽는 중 | «지원 임무 계약을 조회하고 있습니다.», «필수 자원 확인 중», 버튼 글자 «검증 중…», «등록 중…», «비교 조회 중» |
-| 읽었고 비었음 | «저장된 작업 요청이 없습니다.», «대체 위치 없음»(거부 사유·미배정의 기체별 출발 결품 구역, 셀이 «든 자리 없음» 이라 답함), «조건에 맞는 작업 요청이 없습니다. 이전 직접 제출 API의 작업은 별도 실행 이력에서 확인합니다.», «등록된 공유 스테이션이 없습니다. 엔지니어 모드에서 현장 신호를 연결하세요.», «등록된 임무 자원 요구가 없습니다.», «저장된 호출 계약이 없습니다. 입력 매핑을 검증하고 첫 버전을 만들어 보세요.» |
+| 읽었고 비었음 | «저장된 작업 요청이 없습니다.», «대체 위치 없음»(거부 사유·미배정의 기체별 출발 결품 구역, 셀이 «든 자리 없음» 이라 답함. 출발 미관측에는 대체 위치 줄이 없다(«대체 위치 조회 불가» 로도 보이지 않는다)), «조건에 맞는 작업 요청이 없습니다. 이전 직접 제출 API의 작업은 별도 실행 이력에서 확인합니다.», «등록된 공유 스테이션이 없습니다. 엔지니어 모드에서 현장 신호를 연결하세요.», «등록된 임무 자원 요구가 없습니다.», «저장된 호출 계약이 없습니다. 입력 매핑을 검증하고 첫 버전을 만들어 보세요.» |
 | 직전 값(alert 안 꼬리) | « · 직전 조회 값입니다.», « · 상세는 직전 값입니다.», « · 아래는 직전 값입니다.», « · 표는 직전 값입니다. 조작 전 다시 조회하세요.», « · 목록은 직전 검색 값입니다.» |
 | 직전 값(카드·접기) | 지표 카드 작은 글자 «직전 값 · 재확인 필요», 로봇 도입 준비 «직전 관측입니다. 최신 조회 전에는 현재 준비 완료로 판단하지 마세요.», 작업 요청 상세 접기 «마지막으로 확인한 실행 · 직전 관측» |
 | 칸 하나를 모름 | «확인 안 됨»(작업 요청 상세, 비교 표, 저장 결과 요약), «모름 · 호스트 조회 실패», «현재 실행 확인 안 됨», 옛 영역의 칸 값 «모름», «대체 위치 조회 불가»(거부 사유·미배정 기체별, 셀이 답하지 않음, «대체 위치 없음» 으로 접히지 않음) |
@@ -435,17 +435,17 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | DEADLINE_INVALID | «대기 기한 오류» | SIGNAL_NOT_IN_SPEC | «신호 사양에 없는 신호» |
 | SIGNAL_VALUE_INVALID | «신호 종류에 맞지 않는 값» | FLOOR_UNOWNED | «바닥 소유 없음» |
 | SKILL_NOT_IN_CONTRACT | «계약에 없는 스킬» | SKILL_NOT_ON_SITE | «현장에 없는 스킬» |
-| SAFETY_SIGNAL_WAIT | «안전 신호 대기» | MISSION_BAD_REQUEST | «임무 요청 오류» |
-| REASON_REQUIRED | «사유 없음» | DRAFT_NOT_FOUND | «없는 초안» |
-| REQUEST_ID_REUSED | «요청 id 재사용» | HOST_SILENT | «실행 호스트 불통» |
-| SIGNAL_BAD_REQUEST | «신호 값 형식 오류» | UNKNOWN_SIGNAL | «모르는 신호» |
-| SAFETY_SIGNAL_READ_ONLY | «안전 신호는 쓸 수 없음» | NO_RUNNING_TASK | «진행 중 태스크 없음» |
-| UNSUPPORTED_FAULT | «받지 않는 장애 종류» | FAULT_REFUSED | «mimic 엔진이 강제를 거부함» |
-| UNSUPPORTED_MEDIA_TYPE | «JSON 이 아닌 본문» | FAULT_BAD_REQUEST | «장애 주입 본문 오류» |
-| RESOLVE_BAD_REQUEST | «판단 본문 오류» | INSTANCE_MISMATCH | «실행 호스트가 재기동해 인스턴스가 다름» |
-| JOB_RESPONSE_BAD_REQUEST | «송신 기록 요청 오류» | CANCEL_BAD_REQUEST | «취소 본문 오류» |
-| CLEAR_BAD_REQUEST | «빈손 확인 본문 오류» | RESIDUAL_HOLD_NOT_FOUND | «없는 잔여 파지 표시» |
-| RESIDUAL_HOLD_ALREADY_CLEARED | «이미 해소한 잔여 파지 표시» | | |
+| SAFETY_SIGNAL_WAIT | «안전 신호 대기» | SOURCE_OBSERVATION_UNDECLARED | «출발 관측 선언 없음» |
+| MISSION_BAD_REQUEST | «임무 요청 오류» | REASON_REQUIRED | «사유 없음» |
+| DRAFT_NOT_FOUND | «없는 초안» | REQUEST_ID_REUSED | «요청 id 재사용» |
+| HOST_SILENT | «실행 호스트 불통» | SIGNAL_BAD_REQUEST | «신호 값 형식 오류» |
+| UNKNOWN_SIGNAL | «모르는 신호» | SAFETY_SIGNAL_READ_ONLY | «안전 신호는 쓸 수 없음» |
+| NO_RUNNING_TASK | «진행 중 태스크 없음» | UNSUPPORTED_FAULT | «받지 않는 장애 종류» |
+| FAULT_REFUSED | «mimic 엔진이 강제를 거부함» | UNSUPPORTED_MEDIA_TYPE | «JSON 이 아닌 본문» |
+| FAULT_BAD_REQUEST | «장애 주입 본문 오류» | RESOLVE_BAD_REQUEST | «판단 본문 오류» |
+| INSTANCE_MISMATCH | «실행 호스트가 재기동해 인스턴스가 다름» | JOB_RESPONSE_BAD_REQUEST | «송신 기록 요청 오류» |
+| CANCEL_BAD_REQUEST | «취소 본문 오류» | CLEAR_BAD_REQUEST | «빈손 확인 본문 오류» |
+| RESIDUAL_HOLD_NOT_FOUND | «없는 잔여 파지 표시» | RESIDUAL_HOLD_ALREADY_CLEARED | «이미 해소한 잔여 파지 표시» |
 
 풀이 함수 동작은 다음과 같습니다.
 - `kindLabel`: 모르는 이름은 그대로 둡니다.
@@ -493,7 +493,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 - 확인 결과
 - 이력 결과(SUCCEEDED 등)
 - 결과 전달 상태(DELIVERED 등)
-- 조치 제안 단계의 스킬 이름(skillType), 출발 자리·대체 위치 id(거부 사유 구역, «기체별 출발 결품» 구역, «기체별 미배정 사유» 목록)
+- 조치 제안 단계의 스킬 이름(skillType), 출발 자리·대체 위치 id(거부 사유 구역, «기체별 출발 결품» 구역, «기체별 미배정 사유» 목록), 구역 «출발 미관측» 의 출발 자리 id·자재 id·기체 id, 구역 «출발 자리 확인 이력» 의 행위자
 
 운영 개요의 «최근 작업 요청» 표와 검증 도구 비교 카드는 작업 요청 상태와 출처도 코드 값 그대로 보입니다(작업 요청 목록은 글자로 풉니다). 시험이 이 코드 글자에 기댑니다.
 
@@ -577,8 +577,8 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | 목적 | 외부 주문(Mock MES)과 운영자 수동 작업 요청, 호출 계약으로 만든 작업 요청을 한 목록에서 검색하고, 작업 요청부터 실행 결과·외부 결과 수신 확인까지 추적합니다. 작업 요청 수신, 호스트 수락, 물리 완료는 서로 다른 상태로 보입니다. |
 | 누가 | 조회는 두 모드가 합니다. 미배정 재평가와 현장 확인 기록은 운영자가 합니다. |
 | 진입 | 메뉴 2번, 운영 개요의 지표 카드와 최근 작업 요청 링크, 공유 자원의 «작업 요청·실행 결과» 링크, 호출 계약의 «작업 요청·실행 결과 보기», 검증 도구 링크로 진입합니다. 운영 영역 맨 위에도 같은 컴포넌트가 들어갑니다(§3.4.1). |
-| 컴포넌트 | `WorkRequests.tsx`, `RequestRecovery.tsx`, `RequestReview.tsx`, `RejectionSummary.tsx`, `StoredResultSummary.tsx`, 구역 `section[aria-label=상위 작업 요청]` |
-| API | GET `/api/work-requests?search=&state=&offset=&limit=20&result=`, GET `/api/work-requests/{receiptId}`(5초), POST `/api/work-requests/{receiptId}/recover` `{requestId, reason, expectedUpdatedAt}`, POST `/api/work-requests/{receiptId}/reviews` `{requestId, observation, reason, expectedUpdatedAt}` |
+| 컴포넌트 | `WorkRequests.tsx`, `RequestRecovery.tsx`, `RequestReview.tsx`, `RejectionSummary.tsx`, `SourceConfirmation.tsx`, `StoredResultSummary.tsx`, 구역 `section[aria-label=상위 작업 요청]` |
+| API | GET `/api/work-requests?search=&state=&offset=&limit=20&result=`, GET `/api/work-requests/{receiptId}`(5초), POST `/api/work-requests/{receiptId}/recover` `{requestId, reason, expectedUpdatedAt}`, POST `/api/work-requests/{receiptId}/reviews` `{requestId, observation, reason, expectedUpdatedAt}`, POST `/api/work-requests/{receiptId}/source-confirmations` `{requestId, source, identity, reason, expectedUpdatedAt}`, 공유 자원 작업은 같은 본문으로 POST `/api/stations/runs/{runId}/source-confirmations`(`runId` 는 상세 응답의 `resource.runId`) |
 
 검색어, 상태, 외부 결과 필터, 쪽 위치, 고른 작업 요청이 `#requests?search=&state=&result=&offset=&receipt=` 에 남습니다. 운영 영역 안에서는 해시가 `#operations` 라 URL 에 남지 않습니다.
 
@@ -627,21 +627,22 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 |---|---|---|
 | 1 | 머리 | h3 «작업 요청 상세», 버튼 «작업 요청 상세 닫기» |
 | 2 | 읽기 실패 | alert «${error}», 앞서 읽은 상세가 있으면 « · 상세는 직전 값입니다.» |
-| 3 | 제목 | h4 «${externalOrderId} · ${상태 글자}» 와 서버 detail 문장. 상세 응답에 `rejection` 이 있으면(호스트가 거부한 REJECTED) detail 문장 대신 region «거부 사유»(`RejectionSummary.tsx`) 표시. 위에서 아래로: 굵게 «거부 사유» 와 «${reason}»(reason 이 null 이면 «사유 없음»); `sourceMissing` 이 있으면 «출발 자리 ${source} · 비어 있음»(observed null) 또는 «출발 자리 ${source} · ${observed} 있음»; 대체 위치(목록이 있으면 «대체 위치: A, B», 빈 목록이면 «대체 위치 없음», null 이면 `sourceMissing` 이 있을 때만 «대체 위치 조회 불가», 출발 결품이 아니면 줄 없음); 조치(`remedyWithheld` 면 «조치 제안 보류 · 사람이 먼저 진단», `FOUND` 면 «조치 제안 ${n}단계: a → b»(skillType 을 « → » 로 이음), `NONE` 이면 «조치 제안 없음 · ${REMEDY_CAUSE_LABEL}», remedy null 이면 줄 없음). 호스트 미배정은 서버 detail 문장(«호스트 미배정: …»)을 두고, 출발 결품으로 떨어진 기체가 하나라도 있을 때 detail 문장 아래에 region «기체별 출발 결품»(`RejectionSummary.tsx` 의 `UnassignedSourceMissing`) 표시. 기체마다 굵은 robotId, «출발 자리 ${source} · 비어 있음» 또는 «… · ${observed} 있음», 대체 위치 줄(거부 사유 구역과 같은 규칙: 목록, «대체 위치 없음», «대체 위치 조회 불가»). 출발 결품이 아닌 기체는 목록에 없고, 그런 기체가 없으면 구역도 없음 |
-| 4 | 자원 대기(필수 자원이 있을 때, region «작업 요청의 자원 대기») | h4 «필수 자원 ${stationId}», «${state} · ${reason}», «앞선 대기 작업 ${n}건 · 점유 작업 ${owner}»(없으면 «없음»), 링크 «공유 자원에서 점유·복구 확인» |
-| 5 | dl | «출처», «요청자»(payload 의 requestedBy, 없으면 «외부 시스템»), «작업 요청 ID», «내부 작업 ID», «호스트 조회»(«조회됨» 또는 «모름 · 호스트 조회 실패»), «실행 상태»(물리 상태, 없으면 «현재 실행 확인 안 됨»), «기체»(없으면 «확인 안 됨»), «적용 임무 버전»(번호, «코드 정의», «확인 안 됨») |
-| 6 | 일지 차단 | alert «일지 저장 실패로 호스트의 새 명령 진행이 차단되었습니다.» |
-| 7 | 불명 안내(RECEIVED·DISPATCHING·IN_DOUBT) | «작업 요청 처리 또는 전송 결과를 확정할 수 없습니다. 동일한 외부 주문이나 수동 작업은 자동으로 재제출하지 않습니다. 내부 작업 ID로 실행 이력을 확인하세요.» |
-| 8 | 미배정 안내(UNASSIGNED) | «미배정 작업 요청입니다. 전송 전 미배정은 아래에서 운영자 판단으로 재평가할 수 있습니다.» |
-| 9 | 실행 줄 | «실행 ID: ${id} · 호스트 인스턴스: ${id} · 조회 시각: ${at}»(값이 없으면 «확인 안 됨») |
-| 10 | 직전 관측(현재 실행이 없고 마지막으로 본 실행이 있을 때) | `details` summary «마지막으로 확인한 실행 · 직전 관측», 시각·인스턴스·JSON, «현재 호스트 상태를 의미하지 않습니다.» |
-| 11 | 미배정 재평가 | §3.2.3 |
-| 12 | 현장 확인 기록 | §3.2.4 |
-| 13 | 현장 확인 이력(region «현장 확인 이력») | 줄마다 «${createdAt} · ${actor} · ${관측 글자}», 사유, 접기 «확인 당시 관측» |
-| 14 | 재평가 판단 이력(region «재평가 판단 이력») | 줄마다 «${createdAt} · ${actor} · ${reason} · ${requestId}» |
-| 15 | 요청 시 배포(region «요청 시 배포») | h4 «요청 시 고정된 배포», JSON |
-| 16 | 원문 접기 둘 | «원본 요청·변환·제출 기록», «실행과 완료 근거» |
-| 17 | 외부 결과 | §3.2.5 |
+| 3 | 제목 | h4 «${externalOrderId} · ${상태 글자}» 와 서버 detail 문장. 상세 응답에 `rejection` 이 있으면(호스트가 거부한 REJECTED) detail 문장 대신 region «거부 사유»(`RejectionSummary.tsx`) 표시. 위에서 아래로: 굵게 «거부 사유» 와 «${reason}»(reason 이 null 이면 «사유 없음»); `sourceMissing` 이 있으면 «출발 자리 ${source} · 비어 있음»(observed null) 또는 «출발 자리 ${source} · ${observed} 있음»; `sourceUnobserved` 가 있으면 «출발 미관측 · 출발 자리 ${source} · 설비 응답 없음»(`occupied` null) 또는 «출발 미관측 · 출발 자리 ${source} · 있음 · 신원 모름»(`occupied` true), `material` 이 있으면 끝에 « · 확인할 자재 ${material}». 출발 미관측 거부에는 출발 자리 결품 줄과 대체 위치 줄이 없다; 대체 위치(목록이 있으면 «대체 위치: A, B», 빈 목록이면 «대체 위치 없음», null 이면 `sourceMissing` 이 있을 때만 «대체 위치 조회 불가», 출발 결품이 아니면 줄 없음); 조치(`remedyWithheld` 면 «조치 제안 보류 · 사람이 먼저 진단», `FOUND` 면 «조치 제안 ${n}단계: a → b»(skillType 을 « → » 로 이음), `NONE` 이면 «조치 제안 없음 · ${REMEDY_CAUSE_LABEL}», remedy null 이면 줄 없음). 호스트 미배정은 서버 detail 문장(«호스트 미배정: …»)을 두고, 출발 결품으로 떨어진 기체가 하나라도 있을 때 detail 문장 아래에 region «기체별 출발 결품»(`RejectionSummary.tsx` 의 `UnassignedSourceMissing`) 표시. 기체마다 굵은 robotId, «출발 자리 ${source} · 비어 있음» 또는 «… · ${observed} 있음», 대체 위치 줄(거부 사유 구역과 같은 규칙: 목록, «대체 위치 없음», «대체 위치 조회 불가»). 출발 결품이 아닌 기체는 목록에 없고, 그런 기체가 없으면 구역도 없음 |
+| 4 | 출발 미관측(상세 응답의 `pendingSources` 가 비지 않을 때, region «출발 미관측») | `SourceConfirmation.tsx`. h4 «출발 미관측 · 확인 필요», 안내 «결품이 아닙니다. 설비가 출발 자리의 자재를 확인해 주지 않았습니다. 사람이 출발 자리를 확인해 기록하기 전에는 다시 제출하지 않습니다.», 목록(출발 자리마다 출발 미관측 줄과 « · 기체 a, b»). 운영자 모드면: 출발 자리가 둘 이상일 때 select «확인할 출발 자리», 입력 «확인한 자재»(요구 자재로 시작), «확인 근거·담당자», 버튼 «출발 자리 확인 기록»(두 칸이 다 비지 않아야 켜짐. 보낸 뒤 실패하면 글자가 «같은 확인 다시 보내기» 가 되고 같은 확인 ID 로 다시 보냄. 4xx 면 새 ID), «확인 ID: …», 알림 status «출발 자리 확인 기록됨 · ${state}», 실패 alert «${detail} · 같은 확인 ID로 다시 확인하세요.». 엔지니어 모드면 «출발 자리 확인은 운영자 모드에서 기록합니다.». 이력이 있으면 그 안에 region «출발 자리 확인 이력»(h4 같은 이름, 줄마다 «${createdAt} · ${actor} · ${source} = ${identity}» 와 사유). 확인 대기가 없고 이력만 있으면 region «출발 자리 확인 이력» 만 보인다. |
+| 5 | 자원 대기(필수 자원이 있을 때, region «작업 요청의 자원 대기») | h4 «필수 자원 ${stationId}», «${state} · ${reason}», «앞선 대기 작업 ${n}건 · 점유 작업 ${owner}»(없으면 «없음»), 링크 «공유 자원에서 점유·복구 확인» |
+| 6 | dl | «출처», «요청자»(payload 의 requestedBy, 없으면 «외부 시스템»), «작업 요청 ID», «내부 작업 ID», «호스트 조회»(«조회됨» 또는 «모름 · 호스트 조회 실패»), «실행 상태»(물리 상태, 없으면 «현재 실행 확인 안 됨»), «기체»(없으면 «확인 안 됨»), «적용 임무 버전»(번호, «코드 정의», «확인 안 됨») |
+| 7 | 일지 차단 | alert «일지 저장 실패로 호스트의 새 명령 진행이 차단되었습니다.» |
+| 8 | 불명 안내(RECEIVED·DISPATCHING·IN_DOUBT) | «작업 요청 처리 또는 전송 결과를 확정할 수 없습니다. 동일한 외부 주문이나 수동 작업은 자동으로 재제출하지 않습니다. 내부 작업 ID로 실행 이력을 확인하세요.» |
+| 9 | 미배정 안내(UNASSIGNED, 출발 미관측 대기(`pendingSources`)가 있으면 이 안내를 숨긴다) | «미배정 작업 요청입니다. 전송 전 미배정은 아래에서 운영자 판단으로 재평가할 수 있습니다.» |
+| 10 | 실행 줄 | «실행 ID: ${id} · 호스트 인스턴스: ${id} · 조회 시각: ${at}»(값이 없으면 «확인 안 됨») |
+| 11 | 직전 관측(현재 실행이 없고 마지막으로 본 실행이 있을 때) | `details` summary «마지막으로 확인한 실행 · 직전 관측», 시각·인스턴스·JSON, «현재 호스트 상태를 의미하지 않습니다.» |
+| 12 | 미배정 재평가 | §3.2.3. 출발 미관측 대기가 있으면 이 구역(«미배정 재평가» 와 «새 제출은 차단됩니다…» 문장 포함)이 없다. |
+| 13 | 현장 확인 기록 | §3.2.4 |
+| 14 | 현장 확인 이력(region «현장 확인 이력») | 줄마다 «${createdAt} · ${actor} · ${관측 글자}», 사유, 접기 «확인 당시 관측» |
+| 15 | 재평가 판단 이력(region «재평가 판단 이력») | 줄마다 «${createdAt} · ${actor} · ${reason} · ${requestId}» |
+| 16 | 요청 시 배포(region «요청 시 배포») | h4 «요청 시 고정된 배포», JSON |
+| 17 | 원문 접기 둘 | «원본 요청·변환·제출 기록», «실행과 완료 근거» |
+| 18 | 외부 결과 | §3.2.5 |
 
 ![전송 결과 불명 작업 요청](img/09-requests-in-doubt.png)
 
@@ -653,7 +654,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 
 #### 3.2.3 미배정 재평가
 
-`RequestRecovery.tsx` 컴포넌트의 화면 갈래는 다음과 같습니다.
+상세 응답의 `pendingSources` 가 비지 않으면(출발 미관측 대기) `RequestRecovery.tsx` 를 그리지 않습니다. 그래서 아래 표의 «새 제출은 차단됩니다…» 문장도 보이지 않습니다. `RequestRecovery.tsx` 컴포넌트의 화면 갈래는 다음과 같습니다.
 
 | 조건 | 화면 |
 |---|---|
@@ -763,7 +764,7 @@ status에는 «${상태 글자} · ${reason}»이 표시됩니다.
 - REVIEW_REQUIRED 상태에서는 문장 «해제는 물리 완료 판정이 아닙니다. 로봇 작업·잔류 물체·설비 상태를 현장에서 확인한 뒤 판단하세요.»가 표시됩니다. 또한 체크 «현장 작업과 자원 해제 가능 여부를 확인했습니다»와 버튼 «현장 확인 후 자원 해제»(`CONFIRM_CLEAR`, 체크 전 비활성), «재실행 없이 관측 재개»(`RESUME_OBSERVATION`, 작업 요청이 연결된 작업만)를 제공합니다. 버튼 «현장 확인 후 자원 해제» 바로 아래에, 그 작업의 스테이션에 작업 번호 신호가 없을 때만 문장 «자원을 해제해도 이전 작업은 멈추지 않으며 해당 스테이션은 격리됩니다.»가 보입니다. 작업 번호 신호가 있는 스테이션에서는 이 문장이 없습니다.
 - 격리된 스테이션의 `WAITING_READY` 작업에서는 `role="note"` 문단 «설비가 비어 있고 이전 작업 로봇이 멈췄는지 현장에서 확인하세요. 설비 완료 신호가 꺼진 것을 확인한 뒤 판단하세요.», 칸 «운영자 판단 근거»(1000자), 체크 «설비·로봇 상태와 격리 해제 가능 여부를 확인했습니다», 버튼 «현장 확인 후 격리 해제»(`CONFIRM_STATION_IDLE`, 사유가 비었거나 체크 전이거나 조회 실패 중이면 비활성)를 제공합니다. 판단 뒤 선택 작업을 다시 조회하고 칸과 체크를 비웁니다. 이 폼이 보일 때 «현장 확인 후 자원 해제» 버튼은 없습니다.
 
-서버가 상태 줄과 «이유» 칸, 상태 이력에 내는 새 사유는 서버 문장 그대로 보입니다: `WAITING_READY`의 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다», «스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다», `REVIEW_REQUIRED`의 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다», 해제한 작업 이력의 «자원 해제에 따른 스테이션 격리», 격리 해제 뒤 이력의 «현장 확인 후 격리 해제: ${사유}». 설비 쪽 요구는 문서 [공유 스테이션 설비 연동 요구 사양](../station-equipment-requirements.md)에 있습니다.
+서버가 상태 줄과 «이유» 칸, 상태 이력에 내는 새 사유는 서버 문장 그대로 보입니다: `WAITING_READY`의 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다», «스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다», `REVIEW_REQUIRED`의 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다», «출발 미관측; 작업 요청 상세에서 출발 자리 확인을 기록하기 전에는 다시 제출하지 않고 점유를 유지합니다», 출발 자리 확인 뒤 이력(`RETRYING`)의 «출발 자리 확인 기록; 같은 작업 요청을 다시 제출합니다», 해제한 작업 이력의 «자원 해제에 따른 스테이션 격리», 격리 해제 뒤 이력의 «현장 확인 후 격리 해제: ${사유}». 설비 쪽 요구는 문서 [공유 스테이션 설비 연동 요구 사양](../station-equipment-requirements.md)에 있습니다.
 
 판단은 조회한 버전(`expectedRevision`)을 함께 보냅니다.
 
@@ -875,7 +876,7 @@ h3 «수동 작업 요청» 과 «요청 ID: ${uuid}» 가 표시됩니다.
 | 결과 있음 | «${what}: ${결과}»(결과는 «배정됨», «같은 작업 지시의 기존 실행», «거부됨», «미배정») |
 
 호스트 응답 없음 세 갈래에는 dl «작업 지시 id» 가 붙습니다.
-결과 있음에는 dl «작업 지시 id», «실행 id», «배정된 기체», «거부 사유»(있는 것만)와 목록 «기체별 미배정 사유», «실행 호스트가 후보에서 뺀 기체» 가 붙습니다. «기체별 미배정 사유» 목록에서는 출발 결품 기체의 «${robotId}: ${reason}» 아래에 출발 자리 줄과 대체 위치 줄이 붙고 다른 기체는 붙지 않습니다.
+결과 있음에는 dl «작업 지시 id», «실행 id», «배정된 기체», «거부 사유»(있는 것만)와 목록 «기체별 미배정 사유», «실행 호스트가 후보에서 뺀 기체» 가 붙습니다. «기체별 미배정 사유» 목록에서는 출발 결품 기체의 «${robotId}: ${reason}» 아래에 출발 자리 줄과 대체 위치 줄이 붙고 다른 기체는 붙지 않습니다. 출발 미관측으로 떨어진 기체의 «${robotId}: ${reason}» 아래에는 출발 미관측 줄 하나가 붙습니다(대체 위치 줄 없음). 결과가 REJECTED 이고 `outcome.sourceUnobserved` 가 있으면 dl 아래에 출발 미관측 줄이 붙습니다. 출발 미관측 줄 글자는 «출발 미관측 · 출발 자리 ${source} · 설비 응답 없음»(`occupied` null) 또는 «출발 미관측 · 출발 자리 ${source} · 있음 · 신원 모름»(`occupied` true), `material` 이 있으면 끝에 « · 확인할 자재 ${material}».
 제출한 작업 지시의 실행 행은 실행 목록에서 `tr.selected` 로 강조됩니다.
 작업 지시 구역과 배정 가능 구역에는 대표 그림이 없습니다.
 
@@ -1851,7 +1852,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 리터치는 끝났고 지금 UI 가 최종입니다. 이 장은 옛 설계서의 4장(디자이너 리터치 지침)을 대신해 화면을 고칠 때 무엇은 자유롭고 무엇은 시험과 함께 바꿔야 하는지 적습니다.
 
 시험 구성은 다음과 같습니다.
-- vitest 25개 파일(시험 234, `ui/src/**/*.test.tsx`)
+- vitest 25개 파일(시험 240, `ui/src/**/*.test.tsx`)
 - Playwright `ui/e2e/lifecycle.spec.ts`(설정 `playwright.config.ts`)
 - Playwright `ui/e2e/station.spec.ts`(설정 `playwright.station.config.ts`)
 
@@ -1924,6 +1925,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | region | «저장 결과의 완료 근거» | `WorkRequests.test.tsx`, `lifecycle.spec.ts` |
 | region | «거부 사유» | `WorkRequests.test.tsx` |
 | region | «기체별 출발 결품» | `WorkRequests.test.tsx` |
+| region | «출발 미관측»·«출발 자리 확인 이력» | `WorkRequests.test.tsx` |
 | region | «현장 확인 기록»·«현장 확인 이력» | `lifecycle.spec.ts` |
 | region | «공유 스테이션 운영»·«임무 필수 자원» | `station.spec.ts` |
 | region | «작업 지시»·«수동 작업 요청 추적» | `lifecycle.spec.ts` |
@@ -1980,7 +1982,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | form | «기체 선언», «리비전 제출», «바인딩», «빌드 선언», «제품 선언», «인스턴스 등록», «운영자 판단», «작업 지시 폼», «장애 주입 폼», «퇴역», «현장 설정 변경», «실행 취소», «기체 빈손 확인» | 영역별 vitest |
 | status | «제출 결과», «판단 결과», «신호 조작 결과», «임무 조작 결과», «장애 주입 결과», «계약 호출 결과», «호출 계약 처리 결과», «실행 취소 결과», «빈손 확인 결과» | 영역별 vitest |
 
-다음은 버튼과 링크에 기대는 글자입니다. 버튼 이름은 99가지가 시험에 나옵니다.
+다음은 버튼과 링크에 기대는 글자입니다. 버튼 이름은 101가지가 시험에 나옵니다.
 
 | 구분 | 글자 | 시험 파일 |
 |---|---|---|
@@ -1989,6 +1991,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | 버튼 | «호출 계약으로 작업 요청»·«이 입력으로 배정 가능 확인»·«동일 계약 작업 요청 확인» | `MissionInterfaces.test.tsx`, `lifecycle.spec.ts` |
 | 버튼 | «미배정 재평가» | `FollowupWorkspace.test.tsx`, `MissionResourceSettings.test.tsx` |
 | 버튼 | «현장 확인 기록 저장» | `RequestReview.test.tsx`, `lifecycle.spec.ts` |
+| 버튼 | «출발 자리 확인 기록» | `WorkRequests.test.tsx` |
 | 버튼 | «스테이션 등록»·«스테이션 작업 요청» | `StationWorkspace.test.tsx`, `station.spec.ts` |
 | 버튼 | «현장 확인 후 자원 해제»·«현장 확인 후 격리 해제»·«점유 작업 보기» | `StationWorkspace.test.tsx` |
 | 버튼 | «필수 자원 등록» | `MissionResourceSettings.test.tsx`, `station.spec.ts` |
@@ -2005,12 +2008,13 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | 링크 | «판정 근거 JSON» | `StationWorkspace.test.tsx` |
 | 링크 | «공유 자원에서 관측·복구» | `MissionResourceSettings.test.tsx` |
 
-다음은 입력 라벨에 기대는 글자입니다. 라벨은 73가지가 시험에 나옵니다.
+다음은 입력 라벨에 기대는 글자입니다. 라벨은 75가지가 시험에 나옵니다.
 
 | 구분 | 글자 | 시험 파일 |
 |---|---|---|
 | 라벨 | «외부 주문·출처·내부 ID 검색», «작업 요청 상태» | `WorkRequests.test.tsx` |
 | 라벨 | «현장 관측»·«확인 근거·담당자·인계 내용» | `RequestReview.test.tsx`, `lifecycle.spec.ts` |
+| 라벨 | «확인한 자재»·«확인 근거·담당자» | `WorkRequests.test.tsx` |
 | 라벨 | «재평가 판단 사유» | `FollowupWorkspace.test.tsx` |
 | 라벨 | «대상 호출 계약»·«사용할 스테이션»·«스테이션 ID»·«스테이션 이름» | `StationWorkspace.test.tsx`, `station.spec.ts` |
 | 라벨 | «준비 조건이 충족되면 실제 로봇 작업을 지시합니다» | `StationWorkspace.test.tsx`, `station.spec.ts` |

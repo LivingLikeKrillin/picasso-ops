@@ -71,6 +71,16 @@ class WorkRequestController(private val requests:WorkRequests,
    val accepted=requests.recover(id,actor,value)
    ResponseEntity.status(if(accepted.duplicate) 200 else 202).body(accepted)
   }}
+ /** A person's source confirmation on a host UNASSIGNED left source-unobserved; the same job order is submitted again ([WorkRequests.confirmSource]). */
+ @PostMapping("/api/work-requests/{id}/source-confirmations",consumes=[MediaType.APPLICATION_JSON_VALUE])
+ fun confirmSource(@PathVariable id:UUID,@RequestHeader(dev.picasso.ops.service.actor.Actor.MODE_HEADER,required=false) mode:String?,
+  @RequestHeader(dev.picasso.ops.service.actor.Actor.USER_HEADER,required=false) user:String?,@RequestBody(required=false) body:ByteArray?):ResponseEntity<Any> =
+  guarded(mode,user,dev.picasso.ops.service.actor.Mode.OPERATOR) {actor -> checked {
+   if(body==null || body.size>4096) throw RequestRejected("BAD_SOURCE_CONFIRMATION","출발 자리 확인은 4KiB 이하입니다")
+   val value=runCatching{json.readTree(body)}.getOrNull() ?: throw RequestRejected("BAD_SOURCE_CONFIRMATION","JSON 객체가 필요합니다")
+   val accepted=requests.confirmSource(id,actor,value)
+   ResponseEntity.status(if(accepted.duplicate) 200 else 202).body(accepted)
+  }}
  @PostMapping("/api/work-requests/{id}/reviews",consumes=[MediaType.APPLICATION_JSON_VALUE])
  fun review(@PathVariable id:UUID,@RequestHeader(dev.picasso.ops.service.actor.Actor.MODE_HEADER,required=false) mode:String?,
   @RequestHeader(dev.picasso.ops.service.actor.Actor.USER_HEADER,required=false) user:String?,@RequestBody(required=false) body:ByteArray?):ResponseEntity<Any> =
