@@ -357,6 +357,42 @@ InspectAsset 예:
 
 (예의 시각·id 값은 보기다. 근거 시험: `ExecutionControlTest` 여섯, 칸 순서는 거기서 대조.)
 
+### 5.5 실행의 `permitBlock` 칸(ADR 52)
+
+실행마다 끝에 `permitBlock`(`cancel` 뒤, 열한째 칸). 이 실행의 새 로봇 명령을 지금 막고 있는 작업 허가다. 없거나 현장이 대응을 선언하지 않았으면 null. 칸 4개 이 순서 `unitId`, `withheld`, `robots`, `since`. `withheld` 는 `START`·`REVISION_UPDATE`·`IN_DOUBT_LOOKUP`. `robots` 는 막은 기체만, 원소 칸 3개 `robotId`, `permit`(`PERMITTED`·`INHIBITED`·`UNKNOWN`), `reasons`. `reasons` 원소 칸 5개 `source`, `cause`, `subject`, `resumeBasis`, `observedAt`. `cause` 는 `REPORTED`·`EXPIRED`·`SESSION_CHANGED`·`SCOPE_UNKNOWN`·`NOT_COVERED`·`PORT_FAILED`. `source`·`observedAt` 은 `NOT_COVERED`·`PORT_FAILED` 면 null, `subject` 는 원천이 말하지 않았으면 null. `since` 는 같은 단위의 같은 종류가 처음 막힌 호스트 시각. 시각은 ISO-8601. 운영자 보류(`OPERATOR_HOLD`)·결함 막음(`jobResponse.blockedBy`)과 다른 칸이고 작업 응답에는 싣지 않는다. 근거 시험: `WorkPermitHostTest`, 칸 순서는 `HostRestoreTest` 의 `EXECUTION_FIELDS`.
+
+```json
+"permitBlock": {"unitId": "T1.travel", "withheld": "START", "robots": [{"robotId": "humanoid-01", "permit": "INHIBITED", "reasons": [{"source": "cell/guard_closed", "cause": "REPORTED", "subject": "guard_closed=false", "resumeBasis": "안전 계통이 guard_closed 을 true 으로 되돌릴 때", "observedAt": "2026-10-14T01:02:03.250Z"}]}], "since": "2026-10-14T01:02:03.500Z"}
+```
+
+```json
+{"robotId": "humanoid-01", "permit": "UNKNOWN", "reasons": [{"source": null, "cause": "NOT_COVERED", "subject": null, "resumeBasis": "이 기체를 덮는 허가 원천이 생길 때", "observedAt": null}]}
+```
+
+### 5.6 `GET /host/work-permits`(ADR 52)
+
+늘 200. 본문 칸 6개 이 순서 `declared`, `evaluatedAt`, `session`, `validFor`(ISO-8601 기간 문자열), `mappings`(원소 `{signal, permittedWhen, robots}`), `robots`(대응이 맡은 기체마다 원소 `{robotId, permit, reasons}`, 5.5 와 같은 모양, 통과한 기체도 실림). 선언하지 않았으면 `declared` false, `session`·`validFor` null, 두 배열은 빈 것. 판정은 발행 관문과 같은 규칙으로 같은 판독을 본다. 읽기만 하고 기체를 세우거나 풀지 않는다. 호스트 잠금을 잡지 않는다. 운영 서비스 스테이션 조정이 `tick` 마다 읽는다(운영 서비스 화면 경로는 없음). 근거 시험: `WorkPermitHostTest` 의 첫째·둘째 시험, 운영 서비스 `HostClientTest` 의 `작업 허가는 GET host work-permits 본문 그대로이고 200 아님은 모름이다`.
+
+```json
+{
+  "declared": true,
+  "evaluatedAt": "2026-10-14T01:02:04Z",
+  "session": "cell-band#1",
+  "validFor": "PT10S",
+  "mappings": [{"signal": "guard_closed", "permittedWhen": "true", "robots": ["humanoid-01", "quadruped-01"]}],
+  "robots": [
+    {"robotId": "humanoid-01", "permit": "INHIBITED", "reasons": [{"source": "cell/guard_closed", "cause": "REPORTED", "subject": "guard_closed=false", "resumeBasis": "안전 계통이 guard_closed 을 true 으로 되돌릴 때", "observedAt": "2026-10-14T01:02:03.750Z"}]},
+    {"robotId": "quadruped-01", "permit": "INHIBITED", "reasons": [{"source": "cell/guard_closed", "cause": "REPORTED", "subject": "guard_closed=false", "resumeBasis": "안전 계통이 guard_closed 을 true 으로 되돌릴 때", "observedAt": "2026-10-14T01:02:03.750Z"}]}
+  ]
+}
+```
+
+```json
+{"declared": false, "evaluatedAt": "2026-10-14T01:02:04Z", "session": null, "validFor": null, "mappings": [], "robots": []}
+```
+
+(예의 시각 값은 보기다.)
+
 ## 6. `GET /host/cell`
 
 응답 200 늘:
@@ -382,6 +418,7 @@ InspectAsset 예:
 | `POST /host/job-orders` | 결과 넷 전부 | `UNKNOWN_WORK_MASTER`·`BAD_REQUEST` | JSON 아님 |
 | `GET /host/executions` | 늘 | 없음 | 없음 |
 | `GET /host/cell` | 늘(`cell` null 가능) | 없음 | 없음 |
+| `GET /host/work-permits` | 늘(`declared` false 가능) | 없음 | 없음 |
 | `POST /host/executions/{executionId}/cancel` | 결과 넷 전부(5.2) | `BAD_REQUEST`(그 밖 409 `INSTANCE_MISMATCH`, 500 `RECORD_WRITE_FAILED`) | JSON 아님 |
 | `GET /host/robots/residual-holds` | 늘 | 없음 | 없음 |
 | `POST /host/robots/{robotId}/residual-holds/{markerId}/clear` | 해소함 | `BAD_REQUEST`(그 밖 404 `RESIDUAL_HOLD_NOT_FOUND`, 409 `RESIDUAL_HOLD_ALREADY_CLEARED`, 403 `APPROVER_REFUSED`(REST 로는 안 남), 500 `RECORD_WRITE_FAILED`) | JSON 아님 |
@@ -559,7 +596,7 @@ InspectAsset 예:
 
 ### 9.4 `GET /api/executions`
 
-모드 헤더 없이 된다. 호스트 `GET /host/executions` 의 200 본문(5절)을 **그대로** 넘긴다(해석·변형 없음).
+모드 헤더 없이 된다. 호스트 `GET /host/executions` 의 200 본문(5절)을 **그대로** 넘긴다(해석·변형 없음). 그래서 `permitBlock`(5.5)도 그대로 넘어간다(운영 서비스는 해석하지 않는다). 작업 요청 상세(`GET /api/work-requests/{id}`)의 `execution` 도 같은 실행 객체다. 근거 시험: `WorkRequestsTest` 의 `작업 허가로 막힌 실행은 작업 요청 상세의 실행에 막은 기체와 주체와 풀릴 근거를 그대로 싣고 작업 요청 상태를 바꾸지 않는다`, 통합 시험 `WorkPermitTest`.
 
 호스트가 안 닿으면(연결 실패, 5초 시간 초과, 200 아님, 객체 아님) **503**:
 

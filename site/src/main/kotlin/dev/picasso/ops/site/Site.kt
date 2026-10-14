@@ -67,6 +67,12 @@ class Site private constructor(
         if (target.isAfter(now)) advance(Duration.between(now, target))
     }
 
+    /**
+     * 현장 안전 계통이 안전 신호의 값을 바꾼 것을 흉내 낸다(셀 문 열림·닫힘, [SiteCell.actuateSafety]). 소프트웨어 쓰기 길은 여전히 안전
+     * 신호를 거부한다. 통합 시험이 작업 허가(ADR 52)를 볼 때 쓴다.
+     */
+    fun actuateSafety(name: String, value: String): SignalWrite = cell.actuateSafety(name, value)
+
     /** registry 만 멈춘다. 운영 서비스가 «모름» 을 보이는지 볼 때 쓴다(스펙 §3 S1a). 실행기는 집기 실패를 로그에 남기며 폴링을 이어 간다. */
     fun stopRegistry() = registry.close()
 

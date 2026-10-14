@@ -267,3 +267,50 @@ export const sourceMissingLabel = (missing: SourceMissing) =>
 /** 출발 미관측 한 줄. 결품 줄과 다른 말로 쓴다 — 설비가 말이 없었는지 «있다» 고만 했는지를 접지 않는다. */
 export const sourceUnobservedLabel = (unobserved: SourceUnobserved) =>
   `출발 미관측 · 출발 자리 ${unobserved.source} · ${unobserved.occupied === null ? '설비 응답 없음' : '있음 · 신원 모름'}${unobserved.material === null ? '' : ` · 확인할 자재 ${unobserved.material}`}`
+
+/**
+ * 작업 허가 막음(ADR 52)의 문구. 작업 허가는 현장 안전 신호를 정보로 비춘 값이다. picasso 는 이 값으로 새 로봇 명령만 내지 않고 기체를
+ * 세우지 않는다 — 기체를 세우는 것은 안전 계통이다. 운영자 보류·결함 막음과 다르게 운영자 판단이나 해제로 풀리지 않는다.
+ */
+export const PERMIT_BLOCK_TEXT = {
+  heading: '작업 허가 대기',
+  intro: '현장 안전 신호가 허가를 내지 않아 이 실행의 새 로봇 명령을 내지 않고 기다립니다. 실패나 운영자 보류가 아닙니다.',
+  notSafety:
+    '작업 허가는 안전 신호를 비춘 정보이며 기체를 세우는 것은 안전 계통입니다. 이미 나간 명령과 도는 단위의 취소는 이 대기와 상관없이 그대로입니다. 다만 미확정 단위의 취소는 재조회가 필요하여 허가가 돌아온 뒤에 나갑니다.',
+  notOperator: '운영자 판단이나 결함 해제로 풀리지 않습니다. 아래 풀릴 근거가 채워지면 다음 pump 에 명령을 냅니다.',
+  unit: '막힌 단위',
+  withheld: '내지 않은 명령',
+  since: '처음 막힌 시각',
+  robot: '기체',
+  permit: '허가',
+  cause: '까닭',
+  subject: '막는 주체',
+  resumeBasis: '풀릴 근거',
+  source: '원천',
+  observedAt: '관측 시각',
+  none: '없음',
+} as const
+
+/** 작업 허가 값. */
+export const WORK_PERMIT_LABEL: Record<string, string> = {
+  PERMITTED: '허가',
+  INHIBITED: '막음',
+  UNKNOWN: '모름(막음)',
+}
+
+/** 막힌 명령의 종류(picasso WithheldIssue). */
+export const WITHHELD_ISSUE_LABEL: Record<string, string> = {
+  START: '단위 출발',
+  REVISION_UPDATE: '개정 갱신',
+  IN_DOUBT_LOOKUP: '미확정 조회',
+}
+
+/** 허가 판정의 까닭(picasso PermitCause). */
+export const PERMIT_CAUSE_LABEL: Record<string, string> = {
+  REPORTED: '원천 보고',
+  EXPIRED: '관측 만료',
+  SESSION_CHANGED: '원천 세션 바뀜',
+  SCOPE_UNKNOWN: '대상 기체 모름',
+  NOT_COVERED: '허가 원천 없음',
+  PORT_FAILED: '허가를 읽지 못함',
+}

@@ -142,6 +142,16 @@ class HostClientTest {
     }
 
     @Test
+    fun `작업 허가는 GET host work-permits 본문 그대로이고 200 아님은 모름이다`() {
+        val body = """{"declared":true,"robots":[{"robotId":"r1","permit":"INHIBITED","reasons":[]}]}"""
+        val client = serve("/host/work-permits" to (200 to body))
+        assertEquals(json.readTree(body), assertIs<HostCall.Ok<*>>(client.workPermits()).value)
+        assertEquals("GET", seen.getValue("/host/work-permits").first)
+        stop()
+        assertEquals(HostCall.Silent("HTTP 503"), serve("/host/work-permits" to (503 to "")).workPermits())
+    }
+
+    @Test
     fun `현장 시간값 적용 상태는 GET host site-timings 본문 그대로이고 200 아님과 닿지 않음은 모름이다`() {
         val body = """{"applied":{"version":2,"evidenceBeforeSeconds":30},"readError":null}"""
         val client = serve("/host/site-timings" to (200 to body))

@@ -2,7 +2,7 @@
 
 이 문서는 외부 검토 요청에 따라 picasso-ops 가 현재 무엇을 보장하고 무엇을 보장하지 않는지, 그리고 해당 보장이 어떠한 배포 전제에서만 성립하는지를 한곳에 모아 설명합니다. 이 문서의 독자는 시연이나 배포를 준비하는 담당자와 검토자입니다. 본 문서는 기준 커밋 `511d5bc` 를 바탕으로 작성되었으며, 뒤이어 릴리스 조합, 배포 전제, 보장하는 것, 보장하지 않는 것, 더 읽을 곳을 차례로 다룹니다.
 
-이 문서는 기준 커밋 `511d5bc` 로 작성되었고 그 뒤 작업 번호 신호와 스테이션 격리 변경(PR #26)이 있었으며, 공유 스테이션 관련 항목(공유 스테이션 해제 조건, 늦은 완료 신호 차단 항목, 현장 확인 해제 항목, 설비 완료 신호의 인과 항목)과 그 시험 이름은 이 변경을 반영합니다. 그 뒤 운영자 실행 취소와 잔여 파지 표시 변경(PR #29)이 서브모듈을 `79e074d`로 옮겼고, «부분 완료·잔여 파지 기체의 배정 제외» 항목, «현장 확인 후 해제의 실행 중단 미보장» 항목, «잔여 파지 표시의 범위» 항목과 릴리스 조합의 picasso 행이 이 변경을 반영합니다.
+이 문서는 기준 커밋 `511d5bc` 로 작성되었고 그 뒤 작업 번호 신호와 스테이션 격리 변경(PR #26)이 있었으며, 공유 스테이션 관련 항목(공유 스테이션 해제 조건, 늦은 완료 신호 차단 항목, 현장 확인 해제 항목, 설비 완료 신호의 인과 항목)과 그 시험 이름은 이 변경을 반영합니다. 그 뒤 운영자 실행 취소와 잔여 파지 표시 변경(PR #29)이 서브모듈을 `79e074d`로 옮겼고, «부분 완료·잔여 파지 기체의 배정 제외» 항목, «현장 확인 후 해제의 실행 중단 미보장» 항목, «잔여 파지 표시의 범위» 항목과 릴리스 조합의 picasso 행이 이 변경을 반영합니다. 그 뒤 작업 허가 변경(브랜치 `feat/work-permit`)이 서브모듈을 `4d6d768`(picasso PR #96 머지, 2026-10-14)로 옮겼고, «작업 허가로 새 로봇 명령 보류» 항목, «안전» 항목, «작업 허가의 범위» 항목과 릴리스 조합의 picasso 행이 이 변경을 반영합니다.
 
 ## 릴리스 조합
 
@@ -11,9 +11,9 @@
 | 저장소 | 커밋 | 이 조합에서의 역할 |
 |---|---|---|
 | picasso-ops | `511d5bc` (main, PR #24 머지, 2026-10-13) | 이 문서가 설명하는 운영 계층 |
-| picasso(서브모듈) | `79e074d` (PR #91 머지, 2026-10-13) | 실행 호스트가 쓰는 미들웨어 라이브러리. 실행 호스트가 #91의 `PhysicalState.occupiesRobot`·`pumps`를 씀 |
+| picasso(서브모듈) | `4d6d768` (PR #96 머지, 2026-10-14) | 실행 호스트가 쓰는 미들웨어 라이브러리. 실행 호스트가 #91 의 `PhysicalState.occupiesRobot`·`pumps` 와 #96 의 `WorkPermitPort`·`PermitBlock`·`WorkPermit` 을 씀 |
 | picasso-narrator | `130fe67` (main) | 설명 계층. PR #1(`ops.station.evidence/1` 읽기, `receiver/station.py`)이 머지되어 있고(머지 커밋 `391af47`) 자체 CI(`.github/workflows/ci.yml`)가 `130fe67` 에서 통과함 |
-| picasso 내보내기 | 버전 6 | picasso 가 narrator 에 넘기는 내보내기 번들의 `manifest.schemaVersion` 은 `"6"` 입니다(`74e4d3d`·`79e074d`의 `handoff/narrator/run-1/manifest.json`). narrator 의 `BOUNDARY.md` 는 `"5"` 와 `"6"` 만 받고 모르는 버전이면 멈춥니다 |
+| picasso 내보내기 | 버전 6 | picasso 가 narrator 에 넘기는 내보내기 번들의 `manifest.schemaVersion` 은 `"6"` 입니다(`74e4d3d`·`4d6d768`의 `handoff/narrator/run-1/manifest.json`). narrator 의 `BOUNDARY.md` 는 `"5"` 와 `"6"` 만 받고 모르는 버전이면 멈춥니다 |
 
 시연이나 배포를 할 때는 이 네 값을 함께 밝혀야 합니다. 어느 하나라도 다르면 이 문서의 보장과 시험 기록은 그 조합에 대해 확인된 것이 아닙니다. narrator 의 설명은 Ops 상태를 바꾸지 않고(`explanationMayChangeState: false`), Ops 화면과 자동으로 이어져 있지 않습니다.
 
@@ -97,6 +97,12 @@
 - 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/cell/CellBand.kt` 의 `CellBandSignals.observe`, `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `SourceUnobservedView`, `host/HostClient.kt` 의 `HostSourceUnobserved`, `requests/WorkRequests.kt` 의 `pendingSources`, `ui/src/labels.ts` 의 `sourceUnobservedLabel`
 - 시험: 실행 호스트 시험 `SourceObservationHostTest` 의 `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`, `WorkRequestsTest` 의 `호스트 미배정의 출발 미관측은 결품과 따로 제출 기록과 미배정 칸에 남고 확인을 기다리는 출발 자리로 보인다`, `상위 시스템의 상태 조회는 출발 결품 거부의 대체 위치를 맨 위에 미배정은 기체마다 싣고 널과 빈 목록을 접지 않는다`, `대체 위치로 다시 보낸 새 작업 요청도 제출 때 다시 관문을 지나 그 자리마저 비었으면 새 대체 위치와 함께 출발 결품을 받고 그것도 다시 대체할 수 있다`, 화면 시험 `WorkRequests.test.tsx` 의 `출발 미관측은 결품과 다른 확인 대기로 보이고 사람의 출발 자리 확인을 기록하면 같은 작업 요청을 다시 낸다`, 실행 호스트 시험 `MissionHostTest` 의 `대체 위치로 고쳐 낸 작업 지시도 제출 때 셀을 다시 보아 그 자리가 비었으면 새 대체 위치와 함께 다시 출발 결품이다`, 통합 시험 `UpstreamReplacementTest` 의 `상위 시스템은 출발 결품의 대체 위치를 상태 조회로 읽고 앞선 외부 주문을 이은 새 외부 주문으로 고쳐 보내 실행이 서고 연결이 양쪽에 보인다`
 
+### 작업 허가로 새 로봇 명령 보류
+
+- 동작: 작업 허가는 현장 안전 신호를 기체 집합마다 비춘 정보 투영입니다(picasso ADR 52). 안전 기능이 아니며 기체를 세우는 것은 안전 계통이고, picasso 는 이 값으로 새 로봇 명령만 내지 않습니다(단위 출발, 개정 갱신, 미확정 조회). 이미 나간 명령, 취소, 관측은 막지 않습니다. 실행 호스트 설정 `host.work-permit.mapping`(작업 디렉터리 기준 JSON 파일 경로, `mission-host.properties` 기본값 빈 문자열)이 비면 선언하지 않은 현장이고 미들웨어에 허가 포트를 붙이지 않아 발행 거동이 오늘 그대로입니다. 경로가 있는데 파일을 못 읽거나 모양이 틀리면 기동이 실패합니다. 대응의 신호 하나가 원천 하나(`cell/<신호>`)이며, 값이 허가 값과 같으면 `PERMITTED`, 다르면 `INHIBITED`(막는 주체 `신호=값`, 풀릴 근거 «안전 계통이 <신호> 을 <허가 값> 으로 되돌릴 때»)입니다. 신호가 셀 대역에 없음, 신호 목록 없음, 안전 신호가 아님, 한 번도 못 읽음이면 `UNKNOWN`(까닭 `REPORTED`)입니다. 대응에 없는 기체는 `NOT_COVERED` 모름이라 새 명령이 막히므로 선언한 현장은 명부의 기체를 빠짐없이 넣어야 합니다. 막힌 실행의 단위는 `PENDING`이고 물리 상태는 운영자 보류로 바뀌지 않으며 인시던트와 작업 응답 없이 실행 목록 칸 `permitBlock` 에 보입니다. 운영자 `release`·보류 판단으로 풀리지 않으며 허가가 돌아오는 pump 에 명령을 냅니다. 내기 전에 막힌 실행의 운영자 취소는 허가를 기다리지 않고 `ABORTED` 로 끝납니다. 현장이 대응을 선언하면 `WAITING_READY` 에서 작업 번호를 쓰기 전에(작업 번호 쌍이 없는 스테이션은 작업 요청 제출 전에) 대응이 맡은 기체 전부의 허가를 봅니다(격리 확인 다음, 기한 확인 앞). 하나라도 `PERMITTED` 가 아니거나 허가를 못 읽으면 쓰지 않고 `WAITING_READY` 에 사유를 남기며 설비 준비 기한은 멈춥니다(격리와 같음). 허가가 돌아오면 «작업 허가 복귀; 설비 준비 기한을 다시 셉니다» 로 `WAITING_READY` 에 다시 들어가 기한을 다시 셉니다. 스테이션이 보는 기체는 대응이 맡은 기체 전부입니다(어느 기체에 보낼지는 제출 때 정해지므로).
+- 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/permit/CellWorkPermits.kt` 의 `CellWorkPermits`, `WorkPermitMap`, `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `pumpOnce`, `executions`, `workPermits`, `MissionHostApplication.missionHost`, `stations/StationCoordinator.kt` 의 `tick`, `permitHeld`, `stations/StationPort.kt` 의 `permitOf`, `OpsStationPort.permit`, `ui/src/components/PermitBlockNotice.tsx`.
+- 시험: 실행 호스트 시험 `WorkPermitHostTest` 의 `허가 대응을 선언하지 않으면 안전 신호가 막아도 포트를 붙이지 않고 오늘처럼 낸다`, `INHIBITED 면 새 명령을 내지 않고 기다리며 막은 기체와 주체와 풀릴 근거가 실행 목록에 보이고 PERMITTED 로 돌아오면 낸다`, `INHIBITED 여도 내기 전에 막힌 실행의 운영자 취소는 허가를 기다리지 않고 중단으로 끝난다`, `대응에 없는 기체는 어느 원천도 덮지 않아 NOT_COVERED 로 막힌다`, `셀 대역을 못 읽으면 원천 세션이 바뀌어 SESSION_CHANGED 로 막고 다시 읽히면 낸다`, 실행 호스트 시험 `CellWorkPermitsTest`(`mission-host/src/test/kotlin/dev/picasso/ops/host/permit/`) 여덟, `StationCoordinatorTest` 의 `작업 허가가 INHIBITED 면 작업 번호를 쓰지 않고 설비 준비 대기에 막은 기체와 주체와 풀릴 근거를 남기며 PERMITTED 가 되면 그때 쓴다`, `작업 허가가 UNKNOWN 이거나 읽히지 않아도 작업 번호를 쓰지 않고 까닭을 남긴다`, `작업 번호 신호가 없는 스테이션도 작업 허가가 막으면 작업 요청을 내지 않고 허가가 돌아오면 낸다`, 통합 시험 `WorkPermitTest` 의 `셀 문이 열리면 실행이 새 명령 없이 기다리며 막은 기체와 주체와 풀릴 근거가 실행 목록에 보이고 닫히면 끝까지 간다`.
+
 ## 보장하지 않는 것
 
 picasso-ops 가 보장하지 않는 항목은 다음과 같습니다.
@@ -107,7 +113,7 @@ picasso-ops 가 보장하지 않는 항목은 다음과 같습니다.
 
 ### 안전
 
-Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스테이션이 쓰는 일반 설비 신호는 인증된 안전 정지나 안전 PLC, 장비 쪽 인터록을 대신하지 않습니다. 스테이션 준비·완료 신호와 작업 번호 송신·반환 신호에는 안전 신호를 연결할 수 없고(작업 번호 신호도 안전 아닌 TEXT 신호여야 등록되고 등록 시 거부), 격리 해제 판단 역시 안전 기능이 아닙니다. 셀 대역은 안전 신호 `guard_closed` 쓰기를 거부합니다. 실행 호스트를 직접 부르는 길은 Ops 의 자원 조정을 지나지 않습니다.
+Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스테이션이 쓰는 일반 설비 신호는 인증된 안전 정지나 안전 PLC, 장비 쪽 인터록을 대신하지 않습니다. 스테이션 준비·완료 신호와 작업 번호 송신·반환 신호에는 안전 신호를 연결할 수 없고(작업 번호 신호도 안전 아닌 TEXT 신호여야 등록되고 등록 시 거부), 격리 해제 판단 역시 안전 기능이 아닙니다. 셀 대역은 안전 신호 `guard_closed` 쓰기를 거부합니다. 실행 호스트를 직접 부르는 길은 Ops 의 자원 조정을 지나지 않습니다. 작업 허가도 안전 기능이 아니며 현장 안전 신호를 기체 집합마다 비춘 정보 투영입니다(picasso ADR 52). 작업 허가가 열려 있어도 기체를 세우는 것은 안전 계통이고, 작업 허가가 닫혀도 이미 나간 명령은 안전 계통이 아니면 멈추지 않습니다. 작업 허가 값은 늦거나 틀릴 수 있습니다(관측은 250ms pump 주기, 유효 폭 `validFor`). 셀 대역의 HTTP 쓰기는 여전히 안전 신호를 거부합니다. 새 `Site.actuateSafety` 는 프로세스 안의 시험 대역용이고 HTTP 로 열지 않습니다. 근거: `site` 시험 `SiteCellTest` 의 `안전 계통 대역은 안전 신호의 값과 관측 시각을 바꾸고 일반 신호와 틀린 값은 거부하며 소프트웨어 쓰기는 여전히 403 이다`, 통합 시험 `WorkPermitTest`(소프트웨어 쓰기가 `REJECTED`·`SAFETY_SIGNAL_READ_ONLY` 임을 단언).
 
 ### 실제 하드웨어와 상용 연계
 
@@ -137,6 +143,16 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 - 화면의 현장 확인 체크박스는 서버가 집행하지 않습니다. 빈손 확인은 사람이 현장에서 본 것을 적는 기록이고 로봇 센서로 확인하지 않습니다.
 - 스킬이 취소를 받지 않으면(`CANCEL_UNSUPPORTED`) 미들웨어는 도는 단위를 끝까지 두고 다음 경계에서 멈춥니다. 호스트는 그 거부를 읽지 않아 화면에 보이지 않습니다.
 
+### 작업 허가의 범위
+
+- 대응에 없는 기체는 `NOT_COVERED` 모름이라 새 명령이 막힙니다(시험: `CellWorkPermitsTest` 의 `대응에 없는 기체는 NOT_COVERED UNKNOWN 이다`).
+- 세션은 실행 호스트가 정한 것이고 현장 재기동은 셀 대역 끊김으로만 알며, 끊김 없이(250ms 안에) 다시 뜬 현장은 같은 세션으로 읽힙니다(시험: `CellWorkPermitsTest` 의 `셀 대역을 못 읽으면 세션이 바뀌어 앞 세션의 PERMITTED 가 SESSION_CHANGED UNKNOWN 이 되고 다시 읽으면 새 세션으로 허가한다`).
+- 스테이션의 허가 확인과 작업 번호 쓰기 사이에 허가가 바뀌면 번호는 써지고 로봇 명령은 발행 관문이 막습니다(같은 판독을 두 번 읽지 않음).
+- 스테이션은 대응이 맡은 기체 전부로 판단합니다(한 기체만 막혀도 그 현장의 모든 스테이션이 기다림).
+- 허가 막음은 작업 응답, 결과 버전, 상위 결과(콜백)에 실리지 않습니다.
+- 플릿 경로 위임은 발행 관문을 지나지 않고, 재기동 뒤 다시 짓기의 재부착도 허가에 막히며, 막힌 미확정 단위의 취소는 허가가 돌아올 때까지 하위로 나가지 않습니다. 셋 다 picasso 한계 §15.219 그대로입니다.
+- 배정 판정은 허가를 보지 않습니다(막힌 기체에도 배정되고 실행이 `PENDING` 으로 기다립니다).
+
 ## 더 읽을 곳
 
 - [상세 참고 문서: 작업 요청과 결과 회신](reference.md#작업-요청과-결과-회신): 작업 요청 상태, 중복 방지, 정리, 결과 버전과 콜백
@@ -146,4 +162,5 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 - [운영 리허설 절차](runbook.md): 운영 리허설 절차 둘(C1 운영 중 호출 계약 배포 변경과 되돌림, D1 실행 호스트·운영 서비스 재기동과 재개), 단계마다 확인할 곳, 기대하는 결과, 다를 때 할 일, 근거 시험을 설명합니다.
 - [상세 참고 문서: 시험](reference.md#시험): 시험 수와 시험 구성
 - [화면 설계서](screens/screen-design.md): 화면에서 이 상태와 판단이 보이는 자리
-- [picasso 한계 레지스터](https://github.com/LivingLikeKrillin/picasso/blob/79e074d/docs/limits.md): 고정 커밋 `79e074d` 기준 picasso 의 오픈 항목과 한계
+- [picasso 한계 레지스터](https://github.com/LivingLikeKrillin/picasso/blob/4d6d768/docs/limits.md): 고정 커밋 `4d6d768` 기준 picasso 의 오픈 항목과 한계
+- [picasso ADR 52](https://github.com/LivingLikeKrillin/picasso/blob/4d6d768/docs/adr/0052-work-permit-is-a-projection.md): 작업 허가가 안전 계통 상태를 비춘 정보 투영이고 새 로봇 명령만 막는다는 결정(고정 커밋 `4d6d768` 기준)

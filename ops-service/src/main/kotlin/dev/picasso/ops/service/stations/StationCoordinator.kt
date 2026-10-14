@@ -67,6 +67,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  @Synchronized fun tick() {
   // Ops clock time of this read. Only a read taken after a run (re)entered RUNNING may speak for that run.
   val readAt=clock.instant();val signals=runCatching{port.read()}.getOrNull()
+  // Read outside every lock, like the signals. A permit that cannot be read is no permit.
+  val permit=runCatching{port.permit()}.getOrElse{StationPermit.Unreadable(it.toString())}
   for(station in stations()) {
    val next=tx.execute {
     lock(station.stationId)
@@ -79,6 +81,12 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
     if(run.state=="WAITING_READY") {
      // Quarantine pauses the readiness deadline: the run waits for the on-site decision, never times out into the next queued run.
      if(current.quarantinedBy!=null) {hold(run,QUARANTINED);return@execute null}
+     // Owner decision (ADR 52): the job number is never written, nor the work request sent, while the work permit of the robots this station
+     // may send is not PERMITTED. The readiness deadline is paused like a quarantine: a permit block is a wait, never a failure.
+     val held=permitHeld(permit)
+     if(held!=null) {hold(run,held.first,held.second);return@execute null}
+     // Back to PERMITTED: a new phase, the readiness deadline starts again. The next tick judges readiness.
+     if(run.reason.startsWith(PERMIT_HELD)) {transition(run,"WAITING_READY",PERMIT_RESUMED,context=permitContext(permit));return@execute null}
      if(expired(run,current)) {transition(run,"TIMED_OUT","설비 준비 시간 초과; 로봇 전송 전 자원 해제",release=true);return@execute null}
      if(signals?.flags?.get(current.readySignal)?.value==true && signals.flags[current.completeSignal]?.value==false) {
       // The job number is written outside the lock first; DISPATCHING is claimed only after the site holds it.
@@ -256,6 +264,19 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   }
  }
  private fun station(id:String)=stations().single{it.stationId==id}
+ /** The hold reason and its context when [permit] holds a station, else null. The reason carries no time: a changed reason is a new event. */
+ private fun permitHeld(permit:StationPermit):Pair<String,JsonNode>? = when(permit) {
+  StationPermit.Undeclared -> null
+  is StationPermit.Unreadable -> "$PERMIT_HELD: 작업 허가를 읽지 못했습니다" to json.createObjectNode().put("permitUnreadable",permit.cause)
+  is StationPermit.Read -> permit.blocking.takeIf{it.isNotEmpty()}?.let{blocking->
+   val robots=blocking.joinToString(", "){r->r.robotId+" "+r.permit+r.causes.filter{it!="REPORTED"}.joinToString(""){" $it"}+(r.subjects.takeIf{it.isNotEmpty()}?.joinToString(", ",prefix="(",postfix=")")?:"")}
+   "$PERMIT_HELD: $robots; 풀릴 근거: ${blocking.flatMap{it.resumeBasis}.distinct().joinToString(", ")}" to permitContext(permit)
+  }
+ }
+ private fun permitContext(permit:StationPermit):JsonNode = when(permit) {
+  is StationPermit.Read -> json.createObjectNode().set("workPermits",json.valueToTree(permit.robots))
+  else -> json.nullNode()
+ }
  /** Name → {value, observedAt} for BOOLEAN and TEXT signals of one read. */
  private fun snapshot(signals:StationSignals?):JsonNode=signals?.let{json.valueToTree<ObjectNode>(it.flags).setAll<JsonNode>(json.valueToTree<ObjectNode>(it.texts))} ?: json.nullNode()
  /** Keeps the state and its phase clock (a waiting deadline is not reset), records a changed reason once. */
@@ -307,5 +328,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   const val SOURCE_UNOBSERVED="출발 미관측; 작업 요청 상세에서 출발 자리 확인을 기록하기 전에는 다시 제출하지 않고 점유를 유지합니다"
   const val SOURCE_CONFIRMED="출발 자리 확인 기록; 같은 작업 요청을 다시 제출합니다"
   const val SOURCE_HELD="출발 자리 확인은 출발 미관측으로 점유를 유지한 확인 필요 작업에서만 기록합니다"
+  /** Prefix of a WAITING_READY hold on the work permit. Robots, their permit, cause, blocking subject and what lifts it follow. */
+  const val PERMIT_HELD="작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다"
+  const val PERMIT_RESUMED="작업 허가 복귀; 설비 준비 기한을 다시 셉니다"
  }
 }

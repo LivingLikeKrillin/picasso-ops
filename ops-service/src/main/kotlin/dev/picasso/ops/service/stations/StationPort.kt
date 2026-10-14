@@ -22,11 +22,28 @@ data class StationSignals(val flags: Map<String, StationSignal>, val texts: Map<
  * [detail] is the work request's own line; a rejected run carries it so the station history names the actual reason.
  * [sourceUnobserved]: the host's own UNASSIGNED left a source unobserved. Only a person's source confirmation sends it again.
  */
+/**
+ * One robot's work permit as the host judged it (ADR 52; same rule as the issuing gate). [permit] is PERMITTED, INHIBITED or UNKNOWN.
+ * [causes] are picasso PermitCause names, [subjects] what blocks, [resumeBasis] what lifts it.
+ */
+data class StationRobotPermit(val robotId: String, val permit: String, val causes: List<String>, val subjects: List<String>, val resumeBasis: List<String>)
+/**
+ * The work permit a station reads before its equipment is told to start. An information projection of the safety system, never a safety function.
+ * [Undeclared]: the site declared no permit mapping, stations behave as before. [Read]: every robot the mapping governs; a station may send any
+ * of them, so one robot not PERMITTED holds it. [Unreadable]: closed, holds.
+ */
+sealed interface StationPermit {
+ data object Undeclared : StationPermit
+ data class Read(val robots: List<StationRobotPermit>) : StationPermit { val blocking: List<StationRobotPermit> get() = robots.filter { it.permit != "PERMITTED" } }
+ data class Unreadable(val cause: String) : StationPermit
+}
 data class StationReceipt(val id: UUID, val state: String, val safeToRetry: Boolean, val updatedAt: String, val physicalState: String?, val snapshot: JsonNode?, val resultVersion: Int? = null, val detail: String? = null, val sourceUnobserved: Boolean = false)
 interface StationPort {
  fun validate(payload: JsonNode)
  fun signals(): Map<String, StationSignal>?
  fun read(): StationSignals? = signals()?.let{StationSignals(it)}
+ /** The host's work permit (ADR 52). Ports without a host keep today's behaviour. */
+ fun permit(): StationPermit = StationPermit.Undeclared
  /** Writes a TEXT command signal on the site. True only when the site holds the value. */
  fun write(name: String, value: String, actor: Actor): Boolean
  fun dispatch(id: UUID, payload: JsonNode, actor: Actor): StationReceipt
@@ -57,6 +74,7 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
   return StationSignals(plain.filter{it.path("kind").asText()=="BOOLEAN" && it.path("value").asText() in setOf("true","false")}.associate{it.path("name").asText() to StationSignal(it.path("value").asText()=="true",at(it))},
    plain.filter{it.path("kind").asText()=="TEXT"}.associate{it.path("name").asText() to StationText(it.path("value").asText(),at(it))})
  }
+ override fun permit():StationPermit = permitOf((host.workPermits() as? HostCall.Ok)?.value)
  /** Same path as an operator's signal write (host → site), logged; a lost response counts only when the requery shows the value. */
  override fun write(name:String,value:String,actor:Actor):Boolean {
   val outcome=(cell ?: return false).write(actor,name,value)
@@ -87,6 +105,18 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
   requests.recover(receipt.id,actor,body,runId)
   return mapped(receipt.id)
  }
+}
+/** Reads `GET /host/work-permits`. Anything unreadable is [StationPermit.Unreadable]: a permit not known is not a permit. */
+internal fun permitOf(body:JsonNode?):StationPermit {
+ val declared=body?.path("declared")?.takeIf{it.isBoolean} ?: return StationPermit.Unreadable("작업 허가를 읽지 못했다")
+ if(!declared.asBoolean())return StationPermit.Undeclared
+ val robots=body.path("robots").takeIf{it.isArray} ?: return StationPermit.Unreadable("작업 허가 본문에 robots 가 없다")
+ fun texts(node:JsonNode,key:String)=node.path("reasons").filter{it.path(key).isTextual}.map{it.path(key).asText()}.distinct()
+ return StationPermit.Read(robots.map{node->
+  val id=node.path("robotId").takeIf{it.isTextual}?.asText();val permit=node.path("permit").takeIf{it.isTextual}?.asText()
+  if(id==null || permit==null)return StationPermit.Unreadable("작업 허가 본문의 기체 줄을 읽지 못했다")
+  StationRobotPermit(id,permit,texts(node,"cause"),texts(node,"subject"),texts(node,"resumeBasis"))
+ })
 }
 /** REWORK of a resource-managed receipt goes through station coordination. Executions without one are forwarded unchanged. */
 class StationReworkGuard(private val requests:WorkRequests,private val stations:StationCoordinator):dev.picasso.ops.service.incidents.ReworkGuard {

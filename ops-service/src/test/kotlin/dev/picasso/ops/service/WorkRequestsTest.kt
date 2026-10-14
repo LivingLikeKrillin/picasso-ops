@@ -89,6 +89,25 @@ class WorkRequestsTest {
   assertEquals(confirmed.lastExecution,(stale["receipt"] as Receipt).lastExecution)
   assertEquals(1,bench.submitted.size)
  }
+ @Test fun `작업 허가로 막힌 실행은 작업 요청 상세의 실행에 막은 기체와 주체와 풀릴 근거를 그대로 싣고 작업 요청 상태를 바꾸지 않는다`() {
+  val row=service.receive("mes",body).receipt
+  val block=json.readTree("""{"unitId":"T1.travel","withheld":"START","robots":[{"robotId":"humanoid-01","permit":"INHIBITED","reasons":[{"source":"cell/guard_closed","cause":"REPORTED",
+   "subject":"guard_closed=false","resumeBasis":"안전 계통이 guard_closed 을 true 으로 되돌릴 때","observedAt":"2026-10-14T00:00:01Z"}]}],"since":"2026-10-14T00:00:00Z"}""")
+  bench.executions=HostCall.Ok(json.readTree("""{"instanceId":"mw-1","executions":[{"executionId":"exec-1","jobOrderId":"${row.jobOrderId}","workMasterId":"InspectAsset","missionVersion":null,
+   "robotId":"humanoid-01","physicalState":"RUNNING","units":[{"unitId":"T1.travel","skillType":"navigate","state":"PENDING","reached":"NONE"}],"jobResponse":null,"permitBlock":$block}]}"""))
+  val detail=service().detail(row.receiptId)
+  assertEquals(block,(detail["execution"] as com.fasterxml.jackson.databind.JsonNode)["permitBlock"])
+  assertEquals(row.state,(detail["receipt"] as Receipt).state)
+ }
+ @Test fun `스테이션 포트는 호스트의 작업 허가를 읽고 선언 없음과 못 읽음을 가른다`() {
+  val port=dev.picasso.ops.service.stations.OpsStationPort(service,interfaces,bench.host)
+  assertEquals(dev.picasso.ops.service.stations.StationPermit.Undeclared,port.permit())
+  bench.workPermits=HostCall.Ok(json.readTree("""{"declared":true,"robots":[{"robotId":"humanoid-01","permit":"INHIBITED","reasons":[{"source":"cell/guard_closed","cause":"REPORTED","subject":"guard_closed=false","resumeBasis":"b","observedAt":"t"}]}]}"""))
+  val read=assertIs<dev.picasso.ops.service.stations.StationPermit.Read>(port.permit())
+  assertEquals(listOf("humanoid-01"),read.blocking.map{it.robotId})
+  bench.workPermits=HostCall.Silent("offline")
+  assertIs<dev.picasso.ops.service.stations.StationPermit.Unreadable>(port.permit())
+ }
  @Test fun `접수 저장 실패 시 호스트는 호출하지 않는다`() {
   PostgresSupport.execute("ALTER TABLE ops.work_request ADD CONSTRAINT deny_receipt CHECK (false) NOT VALID")
   assertFails {service.receive("mes",body)};assertTrue(bench.submitted.isEmpty())

@@ -7,6 +7,7 @@ import dev.picasso.ops.host.HostEligibility
 import dev.picasso.ops.host.JournalWriteFailed
 import dev.picasso.ops.host.MissionHost
 import dev.picasso.ops.host.cell.CellSnapshot
+import dev.picasso.ops.host.permit.WorkPermitsView
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -49,6 +50,10 @@ class HostController(private val host: MissionHost, private val json: ObjectMapp
 
     @GetMapping("/host/cell")
     fun cell(): CellView = CellView(host.cell())
+
+    /** 작업 허가의 지금(ADR 52). 현장이 대응을 선언하지 않았으면 `declared` 가 거짓이다. 읽기만 한다. */
+    @GetMapping("/host/work-permits")
+    fun workPermits(): WorkPermitsView = host.workPermits()
 
     /**
      * 송신 기록(S4b 스펙 T6). 최근부터 많아야 [limit] 개(기본 50, 1~500). [jobOrderId] 를 주면 그 작업 지시만이다. limit 이 틀리거나

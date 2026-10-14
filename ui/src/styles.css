@@ -112,6 +112,9 @@ tr.duplicate { color: #64748b; background: #f8fafc; }
 .asserted { border: 1px solid #bfdbfe; border-left: 4px double var(--primary); padding: 16px; border-radius: 8px; background: #eff6ff; }
 .observed { margin-top: 20px; } .observed h4 { margin-bottom: 10px; }
 .restore { background: #fffbeb; border: 1px solid #fde68a; border-left: 3px solid #d97706; padding: 16px; margin: 16px 0; border-radius: 8px; font-size: 13px; }
+/* 작업 허가 대기(ADR 52). 운영자 보류·결함 막음과 다른 표시라 색을 나눈다. */
+.permit-block { background: #eff6ff; border: 1px solid #bfdbfe; border-left: 3px solid #2563eb; padding: 12px; margin: 8px 0; border-radius: 8px; font-size: 13px; }
+.permit-block h4 { margin: 0 0 6px; }
 .editor { display: flex; flex-direction: column; }
 .editor textarea, pre { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12px; line-height: 1.75; tab-size: 2; font-weight: 400; }
 .editor textarea { width: 100%; min-height: 400px; resize: vertical; background: #fbfcfe; }

@@ -1,6 +1,7 @@
 import type { CancelRecord, ExecutionsView, JobResponse, RestoreRow, Session } from '../api'
 import { EXECUTION_CONTROL_TEXT } from '../labels'
 import { CancelExecutionForm } from './ExecutionControls'
+import { PermitBlockNotice } from './PermitBlockNotice'
 
 /** 실행 호스트를 거친 읽기 하나. 못 읽으면 직전 값을 지우지 않고 [error] 로 불통을 표시한다. */
 export interface HostRead<T> {
@@ -27,6 +28,9 @@ interface Props {
  *
  * 운영자 실행 취소(P0-b2): 물리 상태 칸에 이 인스턴스에서 건 취소를 붙이고, 표 아래에 취소 폼을 둔다. 부분 완료(PARTIAL) 실행은
  * 취소해야 그 기체가 풀린다.
+ *
+ * 작업 허가 대기(ADR 52): 물리 상태 칸에 막은 기체·막는 주체·풀릴 근거를 따로 붙인다. 운영자 보류(물리 상태)·결함 막음(작업 응답)과
+ * 다른 표시이고 운영자 조작이 없다.
  */
 export function ExecutionList({ read, highlight, session, onCanceled }: Props) {
   const { value, error } = read
@@ -84,6 +88,7 @@ export function ExecutionList({ read, highlight, session, onCanceled }: Props) {
                 <td>
                   {execution.physicalState}
                   {execution.cancel != null && <CancelCell cancel={execution.cancel} />}
+                  {execution.permitBlock != null && <PermitBlockNotice block={execution.permitBlock} />}
                 </td>
                 <td>
                   <ul>

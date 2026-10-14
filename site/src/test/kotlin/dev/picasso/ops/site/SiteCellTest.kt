@@ -282,6 +282,24 @@ class SiteCellTest {
     }
 
     @Test
+    fun `안전 계통 대역은 안전 신호의 값과 관측 시각을 바꾸고 일반 신호와 틀린 값은 거부하며 소프트웨어 쓰기는 여전히 403 이다`() {
+        Bench().use { bench ->
+            bench.advance(Duration.ofSeconds(3))
+            val opened = bench.cell.actuateSafety(GUARD_CLOSED, "false")
+            assertEquals(SignalWrite.Written(CellSignal(GUARD_CLOSED, null, SignalKind.BOOLEAN, true, "false", bench.now())), opened)
+            assertEquals("false", bench.signal(GUARD_CLOSED).value)
+
+            assertEquals(SiteCell.NOT_SAFETY_SIGNAL, (bench.cell.actuateSafety(RACK_PRESENT, "true") as SignalWrite.Refused).error)
+            assertEquals(SiteCell.SIGNAL_VALUE_INVALID, (bench.cell.actuateSafety(GUARD_CLOSED, "open") as SignalWrite.Refused).error)
+            assertEquals(SiteCell.UNKNOWN_SIGNAL, (bench.cell.actuateSafety("door_b_closed", "true") as SignalWrite.Refused).error)
+            assertEquals("false", bench.signal(RACK_PRESENT).value)
+
+            assertEquals(403, bench.post(GUARD_CLOSED, """{"value":"true"}""").statusCode())
+            assertEquals("false", bench.signal(GUARD_CLOSED).value)
+        }
+    }
+
+    @Test
     fun `모르는 신호는 404 이고 TEXT 신호는 어떤 문자열이든 받는다`() {
         Bench().use { bench ->
             val unknown = bench.post("rack_ready", """{"value":"true"}""")

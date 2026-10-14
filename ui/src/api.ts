@@ -554,6 +554,38 @@ export interface Execution {
   restoredFrom?: { instanceId: string; executionId: string } | null
   /** 이 인스턴스에서 그 실행에 건 운영자 취소(P0-b2). 없거나 옛 호스트면 null 이거나 칸이 없다. */
   cancel?: CancelRecord | null
+  /**
+   * 이 실행의 새 로봇 명령을 지금 막고 있는 작업 허가(ADR 52). 막힌 것이 없거나 현장이 허가 대응을 선언하지 않았으면 null 이거나 칸이 없다.
+   * 운영자 보류(물리 상태 OPERATOR_HOLD)·결함 막음(작업 응답 blockedBy)과 다른 칸이다.
+   */
+  permitBlock?: PermitBlock | null
+}
+
+/** 작업 허가 값(ADR 52). UNKNOWN 은 막음으로 읽는다. */
+export type WorkPermitValue = 'PERMITTED' | 'INHIBITED' | 'UNKNOWN'
+
+/** 기체 하나에 대한 판단 하나. source·observedAt 은 실행 호스트가 정한 까닭(NOT_COVERED·PORT_FAILED)이면 null 이다. */
+export interface PermitReason {
+  source: string | null
+  cause: string
+  subject: string | null
+  resumeBasis: string
+  observedAt: string | null
+}
+
+/** 기체 하나의 허가와 그 까닭. */
+export interface RobotPermit {
+  robotId: string
+  permit: WorkPermitValue
+  reasons: PermitReason[]
+}
+
+/** 지금 막혀 있는 새 로봇 명령 하나. withheld 는 START·REVISION_UPDATE·IN_DOUBT_LOOKUP, since 는 처음 막힌 시각이다. */
+export interface PermitBlock {
+  unitId: string
+  withheld: string
+  robots: RobotPermit[]
+  since: string
 }
 
 /** 실행에 건 운영자 취소(P0-b2). `physicalState` 는 취소를 건 때의 물리 상태, `recordedAt` 은 실행 호스트가 적은 시각이다. */

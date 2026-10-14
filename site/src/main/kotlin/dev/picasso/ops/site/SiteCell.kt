@@ -207,6 +207,29 @@ class SiteCell(
      */
     fun write(name: String, value: String): SignalWrite = mimic.server.exclusive { writeLocked(name, value) }
 
+    /**
+     * **현장 안전 계통의 동작 대역**(ADR 32·52) — 셀 문을 열거나 닫는 것처럼 안전 계통이 안전 신호의 값을 바꾼 것을 흉내 낸다. 소프트웨어
+     * 쓰기([write], `POST /cell/signals/{name}`)는 안전 신호를 여전히 거부한다. 이 함수는 HTTP 로 열지 않고 이 프로세스 안의 시험과
+     * 현장 대역만 부른다.
+     *
+     * 안전 신호가 아니면 거부한다(일반 신호는 [write] 의 길이다). 판정 순서는 이름(404) → 안전 아님(400) → 값(400)이다. 관측 시각은 지금
+     * 가상 시각이다.
+     */
+    fun actuateSafety(name: String, value: String): SignalWrite = mimic.server.exclusive {
+        val current = snapshot.signals.firstOrNull { it.name == name }
+            ?: return@exclusive SignalWrite.Refused(404, UNKNOWN_SIGNAL, "셀 대역에 없는 신호다: $name")
+        if (!current.safety) return@exclusive SignalWrite.Refused(400, NOT_SAFETY_SIGNAL, "$name 은 안전 신호가 아니다. 일반 신호는 신호 쓰기로 바꾼다")
+        if (current.kind == SignalKind.BOOLEAN && value !in SignalFixture.BOOLEAN_VALUES) {
+            return@exclusive SignalWrite.Refused(400, SIGNAL_VALUE_INVALID, "BOOLEAN 신호 $name 은 true·false 만 받는다: '$value'")
+        }
+        replace(current.copy(value = value, observedAt = clock.now()))
+    }
+
+    private fun replace(written: CellSignal): SignalWrite {
+        snapshot = snapshot.copy(signals = snapshot.signals.map { if (it.name == written.name) written else it })
+        return SignalWrite.Written(written)
+    }
+
     private fun writeLocked(name: String, value: String): SignalWrite {
         val current = snapshot.signals.firstOrNull { it.name == name }
             ?: return SignalWrite.Refused(404, UNKNOWN_SIGNAL, "셀 대역에 없는 신호다: $name")
@@ -216,9 +239,7 @@ class SiteCell(
         if (current.kind == SignalKind.BOOLEAN && value !in SignalFixture.BOOLEAN_VALUES) {
             return SignalWrite.Refused(400, SIGNAL_VALUE_INVALID, "BOOLEAN 신호 $name 은 true·false 만 받는다: '$value'")
         }
-        val written = current.copy(value = value, observedAt = clock.now())
-        snapshot = snapshot.copy(signals = snapshot.signals.map { if (it.name == name) written else it })
-        return SignalWrite.Written(written)
+        return replace(current.copy(value = value, observedAt = clock.now()))
     }
 
     private fun handle(exchange: HttpExchange) = try {
@@ -308,6 +329,9 @@ class SiteCell(
         const val SIGNAL_VALUE_INVALID = "SIGNAL_VALUE_INVALID"
         const val BAD_REQUEST = "BAD_REQUEST"
         const val UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
+
+        /** [actuateSafety] 에 안전 신호가 아닌 이름을 준 것. HTTP 로 나가지 않는다. */
+        const val NOT_SAFETY_SIGNAL = "NOT_SAFETY_SIGNAL"
 
         private const val SIGNALS_PREFIX = "/cell/signals/"
 
