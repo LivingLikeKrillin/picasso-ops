@@ -343,6 +343,145 @@ class WorkRequestsTest {
   WorkResultDelivery(jdbc,service,"","","mes").deliver()
   assertEquals(0L,jdbc.sql("SELECT count(*) FROM ops.work_result_delivery").query(Long::class.java).single())
  }
+ // 결과 버전을 적는 자리에서 전달 행을 넣는다(부하 기준선 2026-10-14 핫스팟 2). 주기는 기동 뒤 한 번만 결과 전체를 훑는다.
+ private val closedUrl="http://127.0.0.1:9/results"
+ private fun queued(url:String=closedUrl,source:String="mes")=WorkRequests(jdbc,interfaces,operations,bench.host,TransactionTemplate(DataSourceTransactionManager(ds)),delivery=ResultDeliveryQueue(url,source))
+ private fun deliveries()=jdbc.sql("SELECT receipt_id,version,target_url,state FROM ops.work_result_delivery ORDER BY receipt_id,version")
+  .query{rs,_ -> listOf(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4))}.list()
+ private fun resultCount()=jdbc.sql("SELECT count(*) FROM ops.work_result").query(Long::class.java).single()
+ @Test fun `결과 버전을 적을 때 같은 자리에서 버전마다 전달 행 하나를 넣고 다른 출처와 꺼진 전달은 넣지 않는다`() {
+  val svc=queued()
+  val row=svc.receive("mes",body).receipt
+  observeResult(row.jobOrderId);svc.detail(row.receiptId);svc.detail(row.receiptId)
+  assertEquals(listOf(listOf(row.receiptId.toString(),"1",closedUrl,"PENDING")),deliveries())
+  observeResult(row.jobOrderId,2);svc.detail(row.receiptId)
+  assertEquals(listOf("1","2"),deliveries().map{it[1]})
+  val other=svc.receive("other-mes",body).receipt
+  observeResult(other.jobOrderId);svc.detail(other.receiptId)
+  assertEquals(1,svc.result(other.receiptId,"other-mes",1)["version"])
+  val off=WorkRequests(jdbc,interfaces,operations,bench.host,TransactionTemplate(DataSourceTransactionManager(ds)),delivery=ResultDeliveryQueue("","mes"))
+  val quiet=off.receive("mes",body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-OFF")).receipt
+  observeResult(quiet.jobOrderId);off.detail(quiet.receiptId)
+  assertEquals(4L,resultCount())
+  assertEquals(2,deliveries().size)
+  assertFailsWith<IllegalArgumentException>{ResultDeliveryQueue("https://example.com/results","mes")}
+ }
+ @Test fun `결과 버전과 전달 행은 한 트랜잭션이라 어느 쪽이 실패해도 둘 다 남지 않는다`() {
+  val row=service.receive("mes",body).receipt;val page=feed(row.jobOrderId)
+  val worker=WorkRequests(jdbc,interfaces,operations,object:dev.picasso.ops.service.host.HostReads by bench.host {override fun resultEvents(after:Long,limit:Int)=HostCall.Ok(page)},
+   TransactionTemplate(DataSourceTransactionManager(ds)),durableResults=true,delivery=ResultDeliveryQueue(closedUrl,"mes"))
+  // 둘째 결과 버전이 실패하면 첫 버전의 전달 행도 되돌아간다.
+  jdbc.sql("ALTER TABLE ops.work_result ADD CONSTRAINT refuse_second CHECK(response_id<>'r2')").update()
+  assertFailsWith<org.springframework.dao.DataAccessException>{worker.collectResults()}
+  assertEquals(0L,resultCount());assertEquals(emptyList(),deliveries())
+  jdbc.sql("ALTER TABLE ops.work_result DROP CONSTRAINT refuse_second").update()
+  // 둘째 전달 행이 실패하면 두 결과 버전도 되돌아간다.
+  jdbc.sql("ALTER TABLE ops.work_result_delivery ADD CONSTRAINT refuse_second CHECK(version<>2)").update()
+  assertFailsWith<org.springframework.dao.DataAccessException>{worker.collectResults()}
+  assertEquals(0L,resultCount());assertEquals(emptyList(),deliveries());assertEquals(0L,worker.cursorStatus()["sequence"])
+  jdbc.sql("ALTER TABLE ops.work_result_delivery DROP CONSTRAINT refuse_second").update()
+  assertEquals(2,worker.collectResults())
+  assertEquals(listOf("1","2"),deliveries().map{it[1]});assertEquals(2L,resultCount())
+ }
+ @Test fun `운영 서비스 빈은 전달 설정과 같은 callback 주소와 출처로 결과 버전을 적을 때 전달 행을 넣는다`() {
+  val row=service.receive("mes",body).receipt;val page=feed(row.jobOrderId)
+  val server=com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1",0),0)
+  server.createContext("/host/result-events") { exchange ->
+   val bytes=page.toString().toByteArray();exchange.responseHeaders.add("Content-Type","application/json")
+   exchange.sendResponseHeaders(200,bytes.size.toLong());exchange.responseBody.write(bytes);exchange.close()
+  };server.start()
+  try {
+   dev.picasso.ops.service.host.HostClient("http://127.0.0.1:${server.address.port}").use { host ->
+    val off=OpsApplication().workRequests(jdbc,interfaces,operations,host,ds,"","mes")
+    assertEquals(2,off.collectResults());assertEquals(emptyList(),deliveries())
+    jdbc.sql("DELETE FROM ops.work_result").update();jdbc.sql("UPDATE ops.result_cursor SET producer_id=NULL,sequence=0,high_watermark=0").update()
+    val bean=OpsApplication().workRequests(jdbc,interfaces,operations,host,ds,closedUrl,"mes")
+    assertEquals(2,bean.collectResults())
+    assertEquals(listOf(listOf(row.receiptId.toString(),"1",closedUrl,"PENDING"),listOf(row.receiptId.toString(),"2",closedUrl,"PENDING")),deliveries())
+   }
+  } finally {server.stop(0)}
+ }
+ @Test fun `전달 주기는 기동 뒤 첫 회차에만 전달 행 없는 예전 결과를 넣고 그 뒤 회차는 결과를 다시 훑지 않는다`() {
+  // 쓸 때 넣지 않은 결과: 예전 판에서 적었거나 전달이 꺼져 있을 때 적은 것.
+  val row=service.receive("mes",body).receipt;observeResult(row.jobOrderId);service.detail(row.receiptId)
+  val other=service.receive("other-mes",body).receipt;observeResult(other.jobOrderId);service.detail(other.receiptId)
+  assertEquals(2L,resultCount());assertEquals(emptyList(),deliveries())
+  val delivery=WorkResultDelivery(jdbc,service,closedUrl,"","mes")
+  delivery.deliver()
+  assertEquals(listOf(listOf(row.receiptId.toString(),"1",closedUrl,"RETRY")),deliveries())
+  observeResult(row.jobOrderId,2);service.detail(row.receiptId)
+  delivery.deliver()
+  assertEquals(listOf("1"),deliveries().map{it[1]})
+  val restarted=WorkResultDelivery(jdbc,service,closedUrl,"","mes")
+  restarted.deliver()
+  assertEquals(listOf("1","2"),deliveries().map{it[1]})
+  assertEquals(0,restarted.catchUp())
+ }
+ @Test fun `쓸 때 넣은 전달 행은 넣은 순서로 한 회차에 정한 수만큼 보내고 같은 키로 보내며 ACK와 분리한다`() {
+  val svc=queued()
+  val rows=(1..3).map{n->svc.receive("mes",body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-Q$n")).receipt
+   .also{observeResult(it.jobOrderId);svc.detail(it.receiptId)}}
+  assertEquals(3,deliveries().size)
+  val server=com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1",0),0)
+  val seen=java.util.Collections.synchronizedList(mutableListOf<String>())
+  server.createContext("/results") { exchange ->
+   seen+=exchange.requestHeaders.getFirst("Idempotency-Key");exchange.requestBody.readAllBytes()
+   exchange.sendResponseHeaders(204,-1);exchange.close()
+  };server.start()
+  try {
+   val url="http://127.0.0.1:${server.address.port}/results"
+   jdbc.sql("UPDATE ops.work_result_delivery SET target_url=:url").param("url",url).update()
+   assertFailsWith<IllegalArgumentException>{WorkResultDelivery(jdbc,svc,url,"","mes",0)}
+   val delivery=WorkResultDelivery(jdbc,svc,url,"","mes",2)
+   delivery.deliver()
+   assertEquals(rows.take(2).map{"${it.receiptId}/v1"},seen.toList())
+   delivery.deliver()
+   assertEquals(rows.map{"${it.receiptId}/v1"},seen.toList())
+   delivery.deliver();assertEquals(3,seen.size)
+   assertEquals(listOf("DELIVERED"),deliveries().map{it[3]}.distinct())
+   rows.forEach{assertNull(svc.result(it.receiptId,"mes",1)["acknowledgedAt"])}
+  } finally {server.stop(0)}
+ }
+ @Test fun `작업 요청 목록과 개요 집계는 빈 검색과 수신 미확인 필터에서도 바꾸기 전 질의와 같은 행과 수를 낸다`() {
+  val states=listOf("RECEIVED","WAITING_RESOURCE","DISPATCHING","ACCEPTED","REJECTED","UNASSIGNED","IN_DOUBT")
+  val sources=listOf("mes","ops:manual","other-mes")
+  // 결과 모양: 0 없음 · 1 v1 미확인 · 2 v1 확인 · 3 v1 확인+v2 미확인 · 4 v1 미확인+v2 확인 · 5 v1·v2 확인
+  for(g in 1..84) {
+   val id=UUID.nameUUIDFromBytes("eq-$g".toByteArray())
+   jdbc.sql("""INSERT INTO ops.work_request(receipt_id,source_system_id,external_order_id,payload_hash,payload,job_order_id,state,received_at,updated_at)
+     VALUES(:id,:source,:ext,'h','{}'::jsonb,:job,:state,timestamptz '2026-10-14 00:00:00+00'+(:g/2)*interval '1 second',now())""")
+    .param("id",id).param("source",sources[(g/6)%3]).param("ext","EXT-$g").param("job","JO-$g").param("state",states[g%7]).param("g",g).update()
+   val shape=g%6
+   fun result(v:Int,acked:Boolean)=jdbc.sql("""INSERT INTO ops.work_result(receipt_id,version,instance_id,execution_id,response_id,response_version,snapshot,result_hash,acknowledged_at)
+     VALUES(:id,:v,'i','e','r'||:v,1,'{}'::jsonb,'h',CASE WHEN :acked THEN now() END)""").param("id",id).param("v",v).param("acked",acked).update()
+   if(shape in 1..5) result(1,shape==2 || shape==3 || shape==5)
+   if(shape>=3) result(2,shape!=3)
+  }
+  // 출처는 결과 모양과 따로 돈다: 모양마다 상위 출처 행이 있어야 «최신이 확인된 이전 미확인 버전» 이 필터에 닿는다.
+  assertEquals(setOf(0,1,2,3,4,5),(1..84).filter{sources[(it/6)%3]!="ops:manual"}.map{it%6}.toSet())
+  fun before(search:String,state:String?,offset:Int,limit:Int,result:String?):Pair<Long,List<String>> {
+   val stateFilter=if(state=="NEEDS_CONFIRMATION") "state IN ('RECEIVED','DISPATCHING','IN_DOUBT')" else "(:state IS NULL OR state=:state)"
+   val resultFilter=if(result=="unacknowledged") " AND source_system_id NOT LIKE 'ops:%' AND (SELECT acknowledged_at IS NULL FROM ops.work_result WHERE receipt_id=ops.work_request.receipt_id ORDER BY version DESC LIMIT 1)" else ""
+   val where="$stateFilter AND (strpos(external_order_id,:search)>0 OR strpos(job_order_id,:search)>0 OR strpos(source_system_id,:search)>0)$resultFilter"
+   fun q(sql:String)=jdbc.sql(sql).param("search",search).let{if(state=="NEEDS_CONFIRMATION") it else it.param("state",state,java.sql.Types.VARCHAR)}
+   return q("SELECT count(*) FROM ops.work_request WHERE $where").query(Long::class.java).single() to
+    q("SELECT receipt_id FROM ops.work_request WHERE $where ORDER BY received_at DESC,receipt_id LIMIT :limit OFFSET :offset").param("limit",limit).param("offset",offset).query(String::class.java).list()
+  }
+  var compared=0
+  for(search in listOf("","EXT-1","JO-7","ops:","mes","none")) for(state in listOf(null,"ACCEPTED","IN_DOUBT","WAITING_RESOURCE","NEEDS_CONFIRMATION")) for(result in listOf(null,"unacknowledged")) for((offset,limit) in listOf(0 to 100,5 to 7,30 to 20)) {
+   val now=service.list(search,state,offset,limit,result)
+   @Suppress("UNCHECKED_CAST") val ids=(now["requests"] as List<Receipt>).map{it.receiptId.toString()}
+   assertEquals(before(search,state,offset,limit,result),now["total"] as Long to ids,"search=$search state=$state result=$result offset=$offset")
+   compared++
+  }
+  assertEquals(6*5*2*3,compared)
+  assertTrue(before("",null,0,100,"unacknowledged").first>0)
+  val pendingBefore=jdbc.sql("""SELECT count(*) FROM ops.work_request r JOIN LATERAL
+   (SELECT acknowledged_at FROM ops.work_result WHERE receipt_id=r.receipt_id ORDER BY version DESC LIMIT 1) v ON true
+   WHERE r.source_system_id NOT LIKE 'ops:%' AND v.acknowledged_at IS NULL""").query(Long::class.java).single()
+  assertEquals(pendingBefore,service.summary()["unacknowledgedResults"])
+  assertEquals(before("",null,0,100,"unacknowledged").first,pendingBefore)
+ }
 
  @Test fun `늦게 끝난 이전 호스트 조회는 최신 관측과 같은 작업 버전의 새 결과를 되돌리지 않는다`() {
   val row=service.receive("mes",body).receipt;observeResult(row.jobOrderId,1,"PARTIAL")

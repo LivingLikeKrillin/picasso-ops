@@ -63,7 +63,8 @@ fun unassignedDetail(outcome:dev.picasso.ops.service.host.HostSubmitOutcome?):St
 class WorkRequests(private val jdbc: JdbcClient, private val interfaces: MissionInterfaces,
  private val operations: JobOrderOperations, private val host: HostReads,
  private val transactions: org.springframework.transaction.support.TransactionTemplate,
- private val durableResults:Boolean=false) {
+ private val durableResults:Boolean=false,
+ private val delivery:ResultDeliveryQueue?=null) {
  private val json = ObjectMapper()
  private val kotlinJson = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
  val resources=dev.picasso.ops.service.stations.MissionResources(jdbc,transactions)
@@ -416,23 +417,29 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   .orElseThrow { RequestRejected("RECEIPT_NOT_FOUND","작업 요청을 찾을 수 없습니다",404) }
  fun list(search:String, state:String?, offset:Int, limit:Int, result:String?=null):Map<String,Any> {
   if(search.length>160 || offset<0 || limit !in 1..100 || state!=null && state !in STATES && state!="NEEDS_CONFIRMATION" || result!=null && result!="unacknowledged") throw RequestRejected("BAD_FILTER","조회 조건이 잘못되었습니다")
-  val stateFilter=if(state=="NEEDS_CONFIRMATION") "state IN ('RECEIVED','DISPATCHING','IN_DOUBT')" else "(:state IS NULL OR state=:state)"
-  val resultFilter=if(result=="unacknowledged") " AND source_system_id NOT LIKE 'ops:%' AND (SELECT acknowledged_at IS NULL FROM ops.work_result WHERE receipt_id=ops.work_request.receipt_id ORDER BY version DESC LIMIT 1)" else ""
-  val where="$stateFilter AND (strpos(external_order_id,:search)>0 OR strpos(job_order_id,:search)>0 OR strpos(source_system_id,:search)>0)$resultFilter"
-  fun query(sql:String):JdbcClient.StatementSpec {
-   val statement=jdbc.sql(sql).param("search",search)
-   return if(state=="NEEDS_CONFIRMATION") statement else statement.param("state",state,java.sql.Types.VARCHAR)
+  // Only the filters asked for: an empty search matches every row, and a fixed state predicate can use the state index.
+  val filters=buildList {
+   if(state=="NEEDS_CONFIRMATION") add("state IN ('RECEIVED','DISPATCHING','IN_DOUBT')") else if(state!=null) add("state=:state")
+   if(search.isNotEmpty()) add("(strpos(external_order_id,:search)>0 OR strpos(job_order_id,:search)>0 OR strpos(source_system_id,:search)>0)")
+   if(result=="unacknowledged") add("source_system_id NOT LIKE 'ops:%' AND EXISTS($UNACKNOWLEDGED_LATEST AND u.receipt_id=ops.work_request.receipt_id)")
   }
-  val count=query("SELECT count(*) FROM ops.work_request WHERE $where").query(Long::class.java).single()
-  val rows=query("SELECT * FROM ops.work_request WHERE $where ORDER BY received_at DESC,receipt_id LIMIT :limit OFFSET :offset")
+  val where=if(filters.isEmpty()) "" else " WHERE "+filters.joinToString(" AND ")
+  fun query(sql:String):JdbcClient.StatementSpec {
+   var statement=jdbc.sql(sql)
+   if(search.isNotEmpty()) statement=statement.param("search",search)
+   if(state!=null && state!="NEEDS_CONFIRMATION") statement=statement.param("state",state)
+   return statement
+  }
+  val count=query("SELECT count(*) FROM ops.work_request$where").query(Long::class.java).single()
+  val rows=query("SELECT * FROM ops.work_request$where ORDER BY received_at DESC,receipt_id LIMIT :limit OFFSET :offset")
    .param("limit",limit).param("offset",offset).query(::row).list()
   return mapOf("total" to count,"requests" to rows,"offset" to offset,"limit" to limit)
  }
  fun summary():Map<String,Any> {
   val counts=jdbc.sql("SELECT state,count(*) AS n FROM ops.work_request GROUP BY state").query { rs,_ -> rs.getString("state") to rs.getLong("n") }.list().toMap()
-  val pendingResults=jdbc.sql("""SELECT count(*) FROM ops.work_request r JOIN LATERAL
-   (SELECT acknowledged_at FROM ops.work_result WHERE receipt_id=r.receipt_id ORDER BY version DESC LIMIT 1) v ON true
-   WHERE r.source_system_id NOT LIKE 'ops:%' AND v.acknowledged_at IS NULL""").query(Long::class.java).single()
+  // At most one latest version per work request, so counting latest unacknowledged versions counts work requests.
+  val pendingResults=jdbc.sql("""SELECT count(*) FROM ops.work_request r WHERE r.source_system_id NOT LIKE 'ops:%'
+   AND EXISTS($UNACKNOWLEDGED_LATEST AND u.receipt_id=r.receipt_id)""").query(Long::class.java).single()
   return mapOf("states" to counts,"total" to counts.values.sum(),"unacknowledgedResults" to pendingResults,
    "latest" to jdbc.sql("SELECT * FROM ops.work_request ORDER BY received_at DESC,receipt_id LIMIT 5").query(::row).list(),
    "observedAt" to java.time.Instant.now().toString())
@@ -590,10 +597,13 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    val exists=jdbc.sql("SELECT count(*) FROM ops.work_result WHERE receipt_id=:id AND instance_id=:instance AND execution_id=:execution AND response_id=:responseId")
     .param("id",receipt.receiptId).param("instance",instance).param("execution",executionId).param("responseId",response["jobResponseId"].asText()).query(Long::class.java).single()>0
    if((durableResults || responseVersion>=seen) && !exists) {
-    jdbc.sql("""INSERT INTO ops.work_result(receipt_id,version,instance_id,execution_id,response_id,response_version,snapshot,result_hash)
-      SELECT :id,COALESCE(max(version),0)+1,:instance,:execution,:responseId,:response,CAST(:snapshot AS JSONB),:hash FROM ops.work_result WHERE receipt_id=:id""")
+    val version=jdbc.sql("""INSERT INTO ops.work_result(receipt_id,version,instance_id,execution_id,response_id,response_version,snapshot,result_hash)
+      SELECT :id,COALESCE(max(version),0)+1,:instance,:execution,:responseId,:response,CAST(:snapshot AS JSONB),:hash FROM ops.work_result WHERE receipt_id=:id
+      RETURNING version""")
      .param("id",receipt.receiptId).param("instance",instance).param("execution",executionId).param("response",responseVersion)
-     .param("responseId",response["jobResponseId"].asText()).param("snapshot",snapshot.toString()).param("hash",hash).update()
+     .param("responseId",response["jobResponseId"].asText()).param("snapshot",snapshot.toString()).param("hash",hash).query(Int::class.java).single()
+    // Queued with the version it delivers: a rolled-back result leaves no delivery row behind.
+    delivery?.enqueue(jdbc,receipt.receiptId,version,receipt.sourceSystemId)
    }
   }
  }
@@ -628,5 +638,11 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  companion object {
   /** Optional inbound field: the upstream's own earlier externalOrderId this order replaces. */
   const val REPLACES="replacesExternalOrderId"
+  /**
+   * A work request's latest result version that is not acknowledged, as `u`; the caller binds `u.receipt_id`. Reads only
+   * unacknowledged versions through the partial index `work_result_unacknowledged` (V20) instead of every work request's latest.
+   */
+  private const val UNACKNOWLEDGED_LATEST="SELECT 1 FROM ops.work_result u WHERE u.acknowledged_at IS NULL"+
+   " AND NOT EXISTS(SELECT 1 FROM ops.work_result n WHERE n.receipt_id=u.receipt_id AND n.version>u.version)"
   val STATES=setOf("WAITING_RESOURCE","RECEIVED","DISPATCHING","ACCEPTED","REJECTED","UNASSIGNED","IN_DOUBT") }
 }

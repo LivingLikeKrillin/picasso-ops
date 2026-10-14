@@ -49,7 +49,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | 구성 요소 | 역할 | 포트·바인딩 | 저장 |
 |---|---|---|---|
 | `ui/` | React·Vite·TypeScript 관리 화면, 운영 서비스만 호출, 메뉴 아홉(운영 개요, 작업 요청, 공유 자원, 운영, 로봇, 임무, 현장 설정, 이력, 검증 도구) | dev 5173, Playwright preview 4173 | 없음 |
-| `ops-service/` | 화면의 유일한 백엔드, 외부 주문 API(`/integration/v1/...`), 작업 요청 영속 저장·결과 버전·수신 확인·콜백 전달, 공유 스테이션 조정, registry·실행 호스트 REST 호출, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백(`server.address=127.0.0.1`) | 스키마 `ops`, 마이그레이션 V1~V19, 표 17개와 뷰 1개 |
+| `ops-service/` | 화면의 유일한 백엔드, 외부 주문 API(`/integration/v1/...`), 작업 요청 영속 저장·결과 버전·수신 확인·콜백 전달, 공유 스테이션 조정, registry·실행 호스트 REST 호출, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백(`server.address=127.0.0.1`) | 스키마 `ops`, 마이그레이션 V1~V20, 표 17개와 뷰 1개 |
 | `mission-host/` | picasso 미들웨어로 작업 지시 실행, 임무 정의 검증·모의 실행·활성화, 250ms 마다 셀 대역 읽기·pump, 현장이 작업 허가 대응을 선언하면 pump 마다 같은 셀 대역 스냅숏으로 작업 허가를 비춰 미들웨어 허가 포트에 넘김, `GET /host/work-permits` 로 지금의 작업 허가를 내줌, 내보낸 작업 응답을 결과 outbox 에 기록하고 `GET /host/result-events` 로 내줌, 호출자는 운영 서비스뿐 | `HOST_PORT=8785`, 루프백 | 스키마 `mission`, 마이그레이션 V1~V5, 표 13개 |
 | `site/` | registry·mimic·`site-runner`·셀 대역을 한 프로세스에서 구동 | 아래 세부 구성 요소 참조 | registry 마이그레이션을 런처가 실행 |
 | `registry` | 기체 원장, 어댑터·리비전·바인딩·명칭·생존 보고 | `REGISTRY_PORT=8781`, 루프백 | Postgres public |
@@ -71,6 +71,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - V17: 표를 새로 만들지 않고 `rf_station` 에 칸 넷(`job_signal`, `job_echo_signal`, `quarantined_by`, `quarantined_at`)과 제약 둘(`station_job_pair`, `station_quarantine_pair`, `job_signal`·`job_echo_signal` 은 각각 유일)을 더함
 - V18: `work_request_source_confirmation`(출발 자리 확인)을 만듦. 덧붙이기만 하고 행 트리거로 UPDATE·DELETE 를 막음. `confirmer_kind='PERSON'` 이며 `context` 에 사람이 확인한 출발 미관측 답(호스트 답)을 남김
 - V19: `work_request_supersession`(상위 시스템 대체 연결)을 만듦. `original_receipt_id` 가 기본 키(앞선 작업 요청 하나에 대체 하나), `replacement_receipt_id` 는 유일, 칸 `source_system_id`, `original_state`(`REJECTED`·`UNASSIGNED` 만), `created_at`. 두 id 가 같으면 거부함. 행 트리거(`ops.protect_interface_deployment`)로 UPDATE·DELETE 를 막음
+- V20: 표를 새로 만들지 않고 인덱스 둘(`work_result_unacknowledged`(`work_result(receipt_id, version)`, 부분 조건 `acknowledged_at IS NULL`), `work_request_state_received`(`work_request(state, received_at DESC, receipt_id)`))만 만듦. 파일 `V20__work_request_list_indexes.sql`. 쓰임: 수신 미확인 결과 찾기, 상태 필터·상태별 집계. 실행 계획 측정은 [docs/measurements/2026-10-14-load-after-delivery.md](measurements/2026-10-14-load-after-delivery.md)
 
 `mission` 스키마의 표는 다음과 같습니다.
 
@@ -102,7 +103,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - 서브모듈: `picasso 4d6d768` 커밋(picasso PR #96 머지, 2026-10-14)으로 고정된 읽기 전용 서브모듈입니다. 버전 카탈로그 `picasso/gradle/libs.versions.toml` 을 공유하며 picasso 라이브러리 측 수정은 picasso 저장소 PR 로 반영합니다. 고정 커밋은 picasso main `4d6d768` 와 같습니다. 실행 호스트가 #91 의 `PhysicalState.occupiesRobot`(판정)·`pumps`(취소 대상)와 #96 의 `WorkPermitPort`·`Middleware(permits)`·`Execution.permitBlock` 을 씁니다.
 - 환경 변수(`.env`): `SITE_ID`, `PICASSO_DB_URL`, `PICASSO_DB_USER`, `PICASSO_DB_PASSWORD`, `REGISTRY_PORT`, `OPS_PORT`, `MIMIC_GRPC_PORT`, `SITE_CELL_PORT`, `HOST_PORT`, `PICASSO_OPERATOR_TOKEN`, `PICASSO_INGEST_TOKEN`. 실제 값은 커밋된 `.env` 를 따릅니다.
 - `.env` 밖의 선택 환경 변수(운영 서비스): `PICASSO_INTEGRATION_TOKEN`(비면 외부 주문 API 꺼짐), `PICASSO_INTEGRATION_SOURCE`(기본 `mock-mes`), `PICASSO_LOCAL_CALLBACK_URL`(루프백 IP 리터럴 http 주소만, 비면 콜백 전달 꺼짐), `PICASSO_LOCAL_CALLBACK_TOKEN`
-- 운영 서비스 주기 속성(`ops-service.properties`): `ops.results.poll-ms=5000`(결과 수집과 멈춘 작업 요청 정리), `ops.requests.stale-seconds=300`, `ops.results.delivery-ms=2000`, 스테이션 워커 `ops.stations.poll-ms` 는 속성 파일에 없고 코드 기본값 2000
+- 운영 서비스 주기 속성(`ops-service.properties`): `ops.results.poll-ms=5000`(결과 수집과 멈춘 작업 요청 정리), `ops.requests.stale-seconds=300`, `ops.results.delivery-ms=2000`, `ops.results.delivery-batch`(콜백 전달 한 회차에 보내는 최대 수)는 속성 파일에는 없고 코드 기본값 10, 1~100 밖이면 기동 거부(운영 서비스가 뜨지 않음), 스테이션 워커 `ops.stations.poll-ms` 는 속성 파일에 없고 코드 기본값 2000
 - 기체 명부: `site/robots.json` 에 `humanoid-01`(HA-0001, `humanoid-a.json`)과 `quadruped-01`(QB-0001, `quadruped-b.json`)이 정의되어 있습니다.
 
 ## 운영 흐름 상세
@@ -190,7 +191,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - 운영 서비스 수집은 `ops.result_cursor` 의 순번 다음부터 100건씩 읽습니다. 순번이 이어지지 않거나 이벤트 하나라도 형식이 틀리면 그 쪽 전체를 저장하지 않고, 생산자 id 가 바뀌면 멈춥니다. 커밋 직전에 커서가 그대로인지 확인해 두 수집기가 같은 쪽을 두 번 저장하지 않게 합니다.
 - 결과 버전(`ops.work_result`)은 작업 요청마다 1부터 올라가는 버전이고, 한 버전은 호스트 인스턴스·실행·작업 응답 id 조합 하나입니다. 스냅숏을 키 정렬 JSON 으로 만든 SHA-256 을 `result_hash` 로 둡니다. 코드는 버전 행을 덧붙이기만 하고 `acknowledged_at` 만 한 번 채웁니다. 이 표에는 변경을 막는 DB 트리거가 없으므로 불변은 코드 관례입니다.
 - 외부 결과 API 는 `GET /integration/v1/job-orders/{id}/results/latest`, `GET .../results/{version}`, 수신 확인 `POST .../results/{version}/ack` 를 제공합니다. 본문은 정확히 `{"resultHash": "<64자리 16진>"}` 이고, 해시가 다르면 409 `RESULT_CONFLICT`, 같은 수신 확인을 다시 보내면 처음 기록한 `acknowledgedAt` 을 그대로 돌려줍니다. 다른 출처의 작업 요청은 404 입니다. 실행하지 않은 작업 요청(`REJECTED`·`UNASSIGNED`)에는 결과 버전이 없어 `results/latest` 가 404 `RESULT_NOT_READY` 이고 콜백(`WorkResultDelivery`)도 없습니다. 출발 결품의 대체 위치는 외부 조회 `GET /integration/v1/job-orders/{id}` 에서만 읽습니다.
-- 콜백 전달(`WorkResultDelivery`)은 `PICASSO_LOCAL_CALLBACK_URL` 이 있을 때만 켜지고 주소는 루프백 IP 리터럴 http 만 받습니다. `ops.results.delivery-ms`(2000ms)마다 설정 출처의 결과 버전을 `work_result_delivery` 에 넣고, 한 번에 최대 10건을 `FOR UPDATE SKIP LOCKED` 와 30초 임대로 집어 보냅니다. 본문은 `receiptId`·`version`·`resultHash`·`snapshot`, 헤더는 `Idempotency-Key: <작업 요청 id>/v<버전>` 입니다. 2xx 면 `DELIVERED`, 아니면 `RETRY` 이고 다음 시도까지 2의 min(시도 수, 8)제곱 초를 기다립니다(최대 256초, 코드의 300초 상한에는 닿지 않음). 시도 수 상한이나 영구 실패 상태가 없어 4xx 도 계속 다시 보냅니다. HTTP 성공은 전달 성공일 뿐 수신 확인이 아닙니다.
+- 콜백 전달(`WorkResultDelivery`)은 `PICASSO_LOCAL_CALLBACK_URL` 이 있을 때만 켜지고 주소는 루프백 IP 리터럴 http 만 받습니다. 전달 행은 2초 주기가 넣지 않습니다. 결과 버전을 적는 트랜잭션(`WorkRequests.captureResult`)이 같은 트랜잭션에서 `work_result_delivery` 행 하나를 넣습니다(`ON CONFLICT DO NOTHING`). 설정 출처(`ops.integration.source`)의 작업 요청만, 콜백 주소가 비면 넣지 않습니다. 결과 버전이 되돌려지면 전달 행도 없고, 전달 행을 못 넣으면 결과 버전도 되돌려집니다. 프로세스마다 첫 전달 회차에 한 번 따라잡기(`WorkResultDelivery.catchUp`)가 전달 행이 없는 설정 출처 결과 버전을 넣습니다(전달 행을 함께 넣기 전에 적은 결과, 전달이 꺼져 있을 때 적은 결과). 성공한 뒤로는 회차마다 결과 전체를 훑지 않습니다. 실패하면 다음 회차에 다시 시도합니다. `ops.results.delivery-ms`(2000ms)마다 도는 회차에서 최대 `ops.results.delivery-batch`(기본 10)건을 `FOR UPDATE SKIP LOCKED` 와 30초 임대로 집어 보냅니다. 본문은 `receiptId`·`version`·`resultHash`·`snapshot`, 헤더는 `Idempotency-Key: <작업 요청 id>/v<버전>` 입니다. 2xx 면 `DELIVERED`, 아니면 `RETRY` 이고 다음 시도까지 2의 min(시도 수, 8)제곱 초를 기다립니다(최대 256초, 코드의 300초 상한에는 닿지 않음). 시도 수 상한이나 영구 실패 상태가 없어 4xx 도 계속 다시 보냅니다. HTTP 성공은 전달 성공일 뿐 수신 확인이 아닙니다. 근거: `WorkRequestsTest` 의 `결과 버전을 적을 때 같은 자리에서 버전마다 전달 행 하나를 넣고 다른 출처와 꺼진 전달은 넣지 않는다`, `결과 버전과 전달 행은 한 트랜잭션이라 어느 쪽이 실패해도 둘 다 남지 않는다`, `전달 주기는 기동 뒤 첫 회차에만 전달 행 없는 예전 결과를 넣고 그 뒤 회차는 결과를 다시 훑지 않는다`, `쓸 때 넣은 전달 행은 넣은 순서로 한 회차에 정한 수만큼 보내고 같은 키로 보내며 ACK와 분리한다`.
 
 ## 공유 스테이션 조정
 
@@ -417,14 +418,14 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-14에 `feat/work-permit` 브랜치(작업 허가 변경)의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-14 `feat/work-permit` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 26개 파일 245개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-15에 `perf/delivery-and-requests` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 이 브랜치에서 손대지 않아 2026-10-14 `feat/work-permit` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 26개 파일 245개 통과를 확인한 기록을 그대로 씁니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 414(407 에서 7 늘어남: `StationCoordinatorTest` 4, `WorkRequestsTest` 2, `HostClientTest` 1) | 로컬 시험 결과 XML 414건, 실패 0 |
+| `ops-service` | 420(414 에서 6 늘어남, 모두 `WorkRequestsTest`) | 로컬 시험 결과 XML 420건, 실패 0 |
 | `mission-host` | 120 | 로컬 시험 결과 XML 120건 실패 0(107 에서 13 늘어남: `WorkPermitHostTest` 5, `CellWorkPermitsTest` 8) |
 | `site` | 39(38 에서 1 늘어남: `SiteCellTest` 1) | 로컬 시험 결과 XML 39건, 실패 0 |
-| `e2e` | 72(시험 클래스 18개, 새 `WorkPermitTest` 1) | 로컬 시험 결과 XML 72건, 실패 0 |
+| `e2e` | 72(시험 클래스 18개 그대로, 이 브랜치에서는 `SkeletonTest` 의 마이그레이션 기대값만 `(1..19)` 에서 `(1..20)` 으로 바뀜) | 로컬 시험 결과 XML 72건, 실패 0 |
 | `ui`(vitest) | 245(시험 파일 26개, 새 `PermitBlockNotice.test.tsx` 3건) | 2026-10-14 로컬 실행 |
 | `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | 2026-10-14 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 

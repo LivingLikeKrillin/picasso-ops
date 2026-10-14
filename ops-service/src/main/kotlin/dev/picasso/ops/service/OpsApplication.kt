@@ -175,9 +175,13 @@ open class OpsApplication {
         @Suppress("UNUSED_PARAMETER") migrated: OpsSchemaMigrated): dev.picasso.ops.service.interfaces.MissionInterfaces =
         dev.picasso.ops.service.interfaces.MissionInterfaces(jdbc, TransactionTemplate(DataSourceTransactionManager(dataSource)), log)
 
+    /** 결과 버전을 적는 트랜잭션에서 전달 행도 넣는다. 주소·출처는 `WorkResultDelivery` 와 같은 속성이다. */
     @Bean
-    open fun workRequests(jdbc: JdbcClient, interfaces: dev.picasso.ops.service.interfaces.MissionInterfaces, operations: JobOrderOperations, host: HostClient, dataSource: DataSource): dev.picasso.ops.service.requests.WorkRequests =
-        dev.picasso.ops.service.requests.WorkRequests(jdbc, interfaces, operations, host, TransactionTemplate(DataSourceTransactionManager(dataSource)), durableResults=true)
+    open fun workRequests(jdbc: JdbcClient, interfaces: dev.picasso.ops.service.interfaces.MissionInterfaces, operations: JobOrderOperations, host: HostClient, dataSource: DataSource,
+        @Value("\${ops.integration.callback-url:}") callbackUrl: String,
+        @Value("\${ops.integration.source:mock-mes}") source: String): dev.picasso.ops.service.requests.WorkRequests =
+        dev.picasso.ops.service.requests.WorkRequests(jdbc, interfaces, operations, host, TransactionTemplate(DataSourceTransactionManager(dataSource)), durableResults=true,
+            delivery=dev.picasso.ops.service.requests.ResultDeliveryQueue(callbackUrl, source))
 
     @Bean
     open fun stationCoordinator(jdbc:JdbcClient, dataSource:DataSource, requests:dev.picasso.ops.service.requests.WorkRequests,

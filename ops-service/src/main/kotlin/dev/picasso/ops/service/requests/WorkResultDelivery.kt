@@ -18,26 +18,33 @@ class WorkResultDelivery(private val jdbc:JdbcClient,
  @Suppress("UNUSED_PARAMETER") requests:WorkRequests,
  @Value("\${ops.integration.callback-url:}") private val target:String,
  @Value("\${ops.integration.callback-token:}") private val token:String,
- @Value("\${ops.integration.source:mock-mes}") private val source:String) {
+ @Value("\${ops.integration.source:mock-mes}") private val source:String,
+ @Value("\${ops.results.delivery-batch:10}") private val batch:Int=10) {
  private val json=ObjectMapper()
  private val client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).followRedirects(HttpClient.Redirect.NEVER).build()
- init { if(target.isNotBlank()) checkTarget(target) }
- private fun checkTarget(value:String):URI {
-  val uri=URI.create(value)
-  require(uri.userInfo==null && uri.fragment==null && uri.scheme=="http" && uri.host in setOf("127.0.0.1","[::1]")) {"이 PoC callback은 이 컴퓨터의 IP 리터럴 루프백 HTTP 주소만 허용합니다"}
-  return uri
+ /** Set after this process's one catch-up succeeds; later result versions are queued where they are written ([ResultDeliveryQueue]). */
+ @Volatile private var caughtUp=false
+ init {
+  if(target.isNotBlank()) checkTarget(target)
+  require(batch in 1..100) {"ops.results.delivery-batch 는 1~100 입니다"}
  }
  @Scheduled(fixedDelayString="\${ops.results.delivery-ms:2000}",initialDelayString="\${ops.results.delivery-ms:2000}")
  fun deliver() {
   if(target.isBlank())return
   try {
-   jdbc.sql("""INSERT INTO ops.work_result_delivery(receipt_id,version,target_url)
-    SELECT r.receipt_id,v.version,:target FROM ops.work_result v JOIN ops.work_request r USING(receipt_id)
-    WHERE r.source_system_id=:source ON CONFLICT(receipt_id,version) DO NOTHING""")
-    .param("target",target).param("source",source).update()
-   repeat(10) { if(!deliverOne())return }
+   if(!caughtUp) { catchUp(); caughtUp=true }
+   repeat(batch) { if(!deliverOne())return }
   } catch(e:Exception) {org.slf4j.LoggerFactory.getLogger(javaClass).warn("로컬 결과 전달 큐 처리 실패: {}",e.javaClass.simpleName)}
  }
+ /**
+  * Once per process, before its first send: queue result versions of [source] that have no delivery row yet. They were written
+  * before write-time queueing existed, while delivery was off, or by a writer without this target. Returns the rows queued.
+  */
+ fun catchUp():Int = jdbc.sql("""INSERT INTO ops.work_result_delivery(receipt_id,version,target_url)
+    SELECT r.receipt_id,v.version,:target FROM ops.work_result v JOIN ops.work_request r USING(receipt_id)
+    WHERE r.source_system_id=:source AND NOT EXISTS(SELECT 1 FROM ops.work_result_delivery d WHERE d.receipt_id=v.receipt_id AND d.version=v.version)
+    ON CONFLICT(receipt_id,version) DO NOTHING""")
+  .param("target",target).param("source",source).update()
  /** Claim commits before local I/O. A crashed sender's lease expires. */
  fun deliverOne():Boolean {
   val claim=UUID.randomUUID()
@@ -70,4 +77,24 @@ class WorkResultDelivery(private val jdbc:JdbcClient,
   return true
  }
  private data class Delivery(val id:UUID,val version:Int,val target:String,val attempts:Int)
+ companion object {
+  fun checkTarget(value:String):URI {
+   val uri=URI.create(value)
+   require(uri.userInfo==null && uri.fragment==null && uri.scheme=="http" && uri.host in setOf("127.0.0.1","[::1]")) {"이 PoC callback은 이 컴퓨터의 IP 리터럴 루프백 HTTP 주소만 허용합니다"}
+   return uri
+  }
+ }
+}
+
+/**
+ * Queues a result version for the local callback in the transaction that writes it, so no round scans every result.
+ * Same properties as [WorkResultDelivery]: a blank [target] queues nothing, and only results of [source] are queued.
+ */
+class ResultDeliveryQueue(val target:String, val source:String) {
+ init { if(target.isNotBlank()) WorkResultDelivery.checkTarget(target) }
+ fun enqueue(jdbc:JdbcClient, receipt:UUID, version:Int, receiptSource:String) {
+  if(target.isBlank() || receiptSource!=source)return
+  jdbc.sql("INSERT INTO ops.work_result_delivery(receipt_id,version,target_url) VALUES(:id,:version,:target) ON CONFLICT(receipt_id,version) DO NOTHING")
+   .param("id",receipt).param("version",version).param("target",target).update()
+ }
 }

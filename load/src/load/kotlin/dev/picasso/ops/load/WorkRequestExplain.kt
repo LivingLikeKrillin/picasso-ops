@@ -16,35 +16,42 @@ object WorkRequestExplain {
 
     data class Q(val name: String, val sql: String)
 
+    /** `WorkRequests.list` 의 WHERE 를 값으로 펼친 것. 요청한 조건만 붙고 조건이 없으면 빈 문자열이다. */
     private fun where(state: String?, search: String, unacknowledged: Boolean = false, needsConfirmation: Boolean = false): String {
-        val stateFilter = if (needsConfirmation) "state IN ('RECEIVED','DISPATCHING','IN_DOUBT')" else if (state == null) "(NULL IS NULL OR state=NULL)" else "('$state' IS NULL OR state='$state')"
-        val s = "'$search'"
-        val result = if (unacknowledged) " AND source_system_id NOT LIKE 'ops:%' AND (SELECT acknowledged_at IS NULL FROM ops.work_result WHERE receipt_id=ops.work_request.receipt_id ORDER BY version DESC LIMIT 1)" else ""
-        return "$stateFilter AND (strpos(external_order_id,$s)>0 OR strpos(job_order_id,$s)>0 OR strpos(source_system_id,$s)>0)$result"
+        val filters = buildList {
+            if (needsConfirmation) add("state IN ('RECEIVED','DISPATCHING','IN_DOUBT')") else if (state != null) add("state='$state'")
+            if (search.isNotEmpty()) add("(strpos(external_order_id,'$search')>0 OR strpos(job_order_id,'$search')>0 OR strpos(source_system_id,'$search')>0)")
+            if (unacknowledged) add("source_system_id NOT LIKE 'ops:%' AND EXISTS($UNACKNOWLEDGED_LATEST AND u.receipt_id=ops.work_request.receipt_id)")
+        }
+        return if (filters.isEmpty()) "" else " WHERE " + filters.joinToString(" AND ")
     }
+
+    /** `WorkRequests.UNACKNOWLEDGED_LATEST` 와 같은 문자열. */
+    private const val UNACKNOWLEDGED_LATEST = "SELECT 1 FROM ops.work_result u WHERE u.acknowledged_at IS NULL" +
+        " AND NOT EXISTS(SELECT 1 FROM ops.work_result n WHERE n.receipt_id=u.receipt_id AND n.version>u.version)"
 
     private fun queries(n: Int): List<Q> = buildList {
         val w = where(null, "")
-        add(Q("list 기본 count", "SELECT count(*) FROM ops.work_request WHERE $w"))
-        add(Q("list 기본 1쪽(50)", "SELECT * FROM ops.work_request WHERE $w ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
-        add(Q("list 깊은 쪽(OFFSET ${n / 2})", "SELECT * FROM ops.work_request WHERE $w ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET ${n / 2}"))
+        add(Q("list 기본 count", "SELECT count(*) FROM ops.work_request$w"))
+        add(Q("list 기본 1쪽(50)", "SELECT * FROM ops.work_request$w ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
+        add(Q("list 깊은 쪽(OFFSET ${n / 2})", "SELECT * FROM ops.work_request$w ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET ${n / 2}"))
         val ws = where(null, "EXT-${n / 3}")
-        add(Q("list 검색 count", "SELECT count(*) FROM ops.work_request WHERE $ws"))
-        add(Q("list 검색 1쪽", "SELECT * FROM ops.work_request WHERE $ws ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
+        add(Q("list 검색 count", "SELECT count(*) FROM ops.work_request$ws"))
+        add(Q("list 검색 1쪽", "SELECT * FROM ops.work_request$ws ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
         val wr = where("IN_DOUBT", "")
-        add(Q("list 상태 IN_DOUBT count", "SELECT count(*) FROM ops.work_request WHERE $wr"))
-        add(Q("list 상태 IN_DOUBT 1쪽", "SELECT * FROM ops.work_request WHERE $wr ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
+        add(Q("list 상태 IN_DOUBT count", "SELECT count(*) FROM ops.work_request$wr"))
+        add(Q("list 상태 IN_DOUBT 1쪽", "SELECT * FROM ops.work_request$wr ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
         val wn = where(null, "", needsConfirmation = true)
-        add(Q("list NEEDS_CONFIRMATION 1쪽", "SELECT * FROM ops.work_request WHERE $wn ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
+        add(Q("list NEEDS_CONFIRMATION 1쪽", "SELECT * FROM ops.work_request$wn ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
         val wu = where(null, "", unacknowledged = true)
-        add(Q("list 미ACK count", "SELECT count(*) FROM ops.work_request WHERE $wu"))
-        add(Q("list 미ACK 1쪽", "SELECT * FROM ops.work_request WHERE $wu ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
+        add(Q("list 미ACK count", "SELECT count(*) FROM ops.work_request$wu"))
+        add(Q("list 미ACK 1쪽", "SELECT * FROM ops.work_request$wu ORDER BY received_at DESC,receipt_id LIMIT 50 OFFSET 0"))
         add(Q("summary 상태별", "SELECT state,count(*) AS n FROM ops.work_request GROUP BY state"))
         add(
             Q(
                 "summary 미ACK 결과",
-                """SELECT count(*) FROM ops.work_request r JOIN LATERAL (SELECT acknowledged_at FROM ops.work_result WHERE receipt_id=r.receipt_id ORDER BY version DESC LIMIT 1) v ON true
-                   WHERE r.source_system_id NOT LIKE 'ops:%' AND v.acknowledged_at IS NULL""",
+                """SELECT count(*) FROM ops.work_request r WHERE r.source_system_id NOT LIKE 'ops:%'
+                   AND EXISTS($UNACKNOWLEDGED_LATEST AND u.receipt_id=r.receipt_id)""",
             ),
         )
         add(Q("summary 최근 5", "SELECT * FROM ops.work_request ORDER BY received_at DESC,receipt_id LIMIT 5"))
@@ -55,7 +62,7 @@ object WorkRequestExplain {
     fun run(report: Report, scales: List<Int>) {
         report.line("## 핫스팟 5 — `work_request` 목록·검색 (`WorkRequests.list`·`summary`)")
         report.line()
-        report.line("인덱스(V6): PK(receipt_id), UNIQUE(job_order_id), UNIQUE(source_system_id,external_order_id), work_request_received(received_at DESC,receipt_id). VACUUM ANALYZE 뒤 같은 질의를 3번 돌려 마지막 것을 적는다.")
+        report.line("인덱스: V6 PK(receipt_id), UNIQUE(job_order_id), UNIQUE(source_system_id,external_order_id), work_request_received(received_at DESC,receipt_id) · V20 work_request_state_received(state,received_at DESC,receipt_id), work_result_unacknowledged(receipt_id,version) WHERE acknowledged_at IS NULL. VACUUM ANALYZE 뒤 같은 질의를 3번 돌려 마지막 것을 적는다.")
         report.line()
         val summary = mutableListOf<List<String>>()
         val plans = mutableListOf<Triple<Int, String, List<String>>>()

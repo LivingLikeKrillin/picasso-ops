@@ -57,9 +57,9 @@
 
 ### 결과 버전 관리와 수신 확인
 
-- 동작: 실행 호스트는 송신 처분 작업 응답을 빈 번호 없는 순번으로 outbox 에 남기고, 운영 서비스는 커서로 이어 읽어 작업 요청마다 결과 버전을 덧붙입니다. 한 쪽 안에서 하나라도 틀리면 그 쪽 전체를 저장하지 않습니다. 결과 버전은 코드가 덧붙이기만 하고 `acknowledged_at` 만 한 번 채웁니다. 이것은 DB 트리거가 아니라 코드 관례입니다. 수신 확인은 버전과 `resultHash` 가 모두 맞아야 하고 다르면 409 `RESULT_CONFLICT` 입니다. 콜백 HTTP 성공은 수신 확인이 아닙니다.
-- 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/store/HostRecords.kt` 의 `appendResult`, `requests/WorkRequests.kt` 의 `collectEvents`, `captureResult`, `acknowledge`, `requests/WorkResultDelivery.kt`
-- 시험: `WorkRequestsTest` 의 `결과 재조회는 같은 불변 버전이며 호스트 단절과 저장소 재생성 후에도 조회한다`, `ACK는 버전과 해시에 묶이고 재작업의 최신 결과는 별도로 확인한다`, `외부 결과 API는 인증과 정확한 ACK 본문을 요구한다`, `durable cursor resumes after restart and never lets detail reorder backlog`, `invalid event and database failure roll back the whole page and cursor`, `concurrent durable collectors commit one set of versions`, `로컬 callback은 실패를 재전송하고 같은 버전 키와 내용을 유지하며 ACK와 분리한다`
+- 동작: 실행 호스트는 송신 처분 작업 응답을 빈 번호 없는 순번으로 outbox 에 남기고, 운영 서비스는 커서로 이어 읽어 작업 요청마다 결과 버전을 덧붙입니다. 한 쪽 안에서 하나라도 틀리면 그 쪽 전체를 저장하지 않습니다. 결과 버전은 코드가 덧붙이기만 하고 `acknowledged_at` 만 한 번 채웁니다. 이것은 DB 트리거가 아니라 코드 관례입니다. 수신 확인은 버전과 `resultHash` 가 모두 맞아야 하고 다르면 409 `RESULT_CONFLICT` 입니다. 콜백 HTTP 성공은 수신 확인이 아닙니다. 결과 버전과 그 콜백 전달 행(`ops.work_result_delivery`)은 한 트랜잭션에서 적습니다(콜백 주소가 있고 설정 출처의 작업 요청일 때). 어느 쪽이 실패해도 둘 다 남지 않아 적힌 결과 버전에 전달 행이 빠지지 않습니다(전달 행을 함께 넣기 전에 적은 결과와 전달이 꺼져 있을 때 적은 결과는 프로세스 기동 뒤 첫 전달 회차의 따라잡기가 넣습니다).
+- 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/store/HostRecords.kt` 의 `appendResult`, `requests/WorkRequests.kt` 의 `collectEvents`, `captureResult`, `acknowledge`, `requests/WorkResultDelivery.kt` 의 `ResultDeliveryQueue`, `catchUp`
+- 시험: `WorkRequestsTest` 의 `결과 재조회는 같은 불변 버전이며 호스트 단절과 저장소 재생성 후에도 조회한다`, `ACK는 버전과 해시에 묶이고 재작업의 최신 결과는 별도로 확인한다`, `외부 결과 API는 인증과 정확한 ACK 본문을 요구한다`, `durable cursor resumes after restart and never lets detail reorder backlog`, `invalid event and database failure roll back the whole page and cursor`, `concurrent durable collectors commit one set of versions`, `로컬 callback은 실패를 재전송하고 같은 버전 키와 내용을 유지하며 ACK와 분리한다`, `결과 버전과 전달 행은 한 트랜잭션이라 어느 쪽이 실패해도 둘 다 남지 않는다`, `전달 주기는 기동 뒤 첫 회차에만 전달 행 없는 예전 결과를 넣고 그 뒤 회차는 결과를 다시 훑지 않는다`
 
 ### 공유 스테이션 해제 조건
 
@@ -121,7 +121,7 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 
 ### 여러 인스턴스
 
-같은 DB 에 운영 서비스 여럿을 띄우는 구성은 지원하지 않고 검증하지 않았습니다(«배포 전제» 참고). 결과 수집 커서와 콜백 전달에는 동시 실행을 견디는 장치가 일부 있지만 스테이션 조정은 프로세스 하나를 전제합니다.
+같은 DB 에 운영 서비스 여럿을 띄우는 구성은 지원하지 않고 검증하지 않았습니다(«배포 전제» 참고). 결과 수집 커서와 콜백 전달에는 동시 실행을 견디는 장치가 일부 있지만 스테이션 조정은 프로세스 하나를 전제합니다. 콜백 주소 설정이 다른 운영 서비스가 같은 DB 에 결과 버전을 적으면, 그 결과의 전달 행은 주소를 가진 프로세스가 다시 기동해 따라잡기를 할 때까지 생기지 않습니다(전에는 2초 주기가 넣었습니다). 지금 구성은 활성 운영 서비스가 하나라 해당하지 않습니다.
 
 ### 설비 완료 신호의 인과
 
