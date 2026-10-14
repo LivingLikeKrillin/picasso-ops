@@ -17,6 +17,7 @@ import dev.picasso.middleware.IncidentBundle
 import dev.picasso.middleware.InspectAsset
 import dev.picasso.middleware.JobOrder
 import dev.picasso.middleware.JobResponse
+import dev.picasso.middleware.JudgmentRecordWire
 import dev.picasso.middleware.Middleware
 import dev.picasso.middleware.OperatorDecision
 import dev.picasso.middleware.PhysicalState
@@ -389,6 +390,20 @@ class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeExc
  * 한다. 받은 작업 지시는 실행 일지에 적고 기동 때 [start] 가 다시 짓는다. 인시던트와 판단은 사본으로 남는다. 미들웨어 아웃박스는
  * ack 한 응답도 들고 있어 계속 자라는 것은 그대로 한계다(S3a 스펙 §12).
  *
+ * ## 판단 기록(picasso 한계 §15.221 · 판단 기록 영속)
+ *
+ * 미들웨어의 판단 기록(`Middleware.judgmentRecord`)을 `mission.execution_judgment_record` 에 덧붙인다. 받는 때는 수락 직후, pump 뒤
+ * 기록(판정·검증 결과·정착, 송신 기록과 한 트랜잭션), 운영자 판단 직후다. 직전에 적은 글자와 같으면 적지 않는다. 기동 복원은 그
+ * 작업 지시의 가장 최근 기록을 `resume` 에 넘긴다. 못 읽는 기록과 picasso 가 거부한 기록(`RESUME_RECORD_MISMATCH`)은 GAVE_UP 으로
+ * 보고하고 기록 없이 다시 짓지 않는다. 이 호스트는 결함 감수(`release`)와 조치 승인(`approveRemedy`)을 부르지 않으므로 그 두 칸은
+ * 이 호스트가 지은 실행에서 늘 비어 있다. 기록이 들고 오면 그대로 넘긴다.
+ *
+ * ## 인스턴스와 심장박동(HA 설계 기록 §8 단계 0)
+ *
+ * [heartbeat] 주기마다 `mission.host_instance` 의 자기 행을 DB 시각으로 고치고, 닫을 때 멈춤을 적는다. 기동 복원은 그 행을 든
+ * 인스턴스(바로 앞 RESTORED 이벤트의 인스턴스, 없으면 받은 인스턴스)가 이 인스턴스이거나 심장박동이 끊긴 행만 다시 짓는다. 살아 있는
+ * 다른 인스턴스가 든 행은 DEFERRED([HELD_BY_LIVE_INSTANCE])로 미루고 그 기체를 판정에서 빼며, pump 마다 다시 보아 만료되면 다시 짓는다.
+ *
  * @param robots 하위 포트. 판정의 케이퍼빌리티도 이것으로 묻는다(`PicassoClient` 가 세대별로 캐시한다). 그 캐시는 잠금 밖에서
  *   안전하지 않으므로 케이퍼빌리티는 늘 [lock] 아래에서 묻는다.
  * @param catalog 임무 카탈로그(S3b 스펙 T1). 미들웨어에 넘긴 것과 같은 참조로 스킬 적합을 판정한다. 기동 때 DB 의 활성 버전으로
@@ -419,6 +434,7 @@ class MissionHost(
     private val store: MissionStore,
     private val json: ObjectMapper,
     private val permits: CellWorkPermits? = null,
+    private val heartbeat: HostHeartbeat = HostHeartbeat.DEFAULT,
 ) : AutoCloseable {
 
     private val lock = ReentrantLock(true)
@@ -472,25 +488,52 @@ class MissionHost(
     /** 이 인스턴스에서 건 운영자 취소. 실행 id 에서. 이전 인스턴스의 취소는 그 인스턴스의 실행 id 라 싣지 않는다. */
     private val cancels = mutableMapOf<String, CancelRow>()
 
-    /** 미룬 행. [order]·[mission] 은 복원 때 한 번 읽은 것이고 다시 시도할 때 그대로 쓴다. */
-    private class Deferred(val row: JournalRow, val order: JobOrder, val mission: ActiveMission, val index: Int)
+    /**
+     * 이 인스턴스가 작업 지시마다 마지막으로 적은(또는 복원에 넘긴) 판단 기록 글자. 같은 글자는 다시 적지 않는다. 적기가 실패하면
+     * 갱신하지 않으므로 다음 pump 가 다시 적는다.
+     */
+    private val recorded = mutableMapOf<String, String>()
+
+    /**
+     * 미룬 행. [order]·[mission] 은 복원 때 한 번 읽은 것이고 다시 시도할 때 그대로 쓴다. [heldBy] 는 이 행을 든 다른 인스턴스가
+     * 살아 있어 미룬 동안 그 인스턴스다. 그 심장박동이 끊긴 것을 보면 `null` 로 두고 보통의 다시 시도로 넘어간다.
+     */
+    private class Deferred(val row: JournalRow, val order: JobOrder, val mission: ActiveMission, val index: Int, var heldBy: String? = null)
 
     private val pumper = Executors.newSingleThreadScheduledExecutor { Thread(it, "mission-host-pump").apply { isDaemon = true } }
+
+    /** 심장박동은 pump 와 다른 스레드다. 호스트 잠금을 잡지 않으므로 pump 나 제출이 오래 걸려도 늦지 않는다. */
+    private val beater = Executors.newSingleThreadScheduledExecutor { Thread(it, "mission-host-heartbeat").apply { isDaemon = true } }
 
     val instanceId: String = middleware.instanceId
 
     /**
-     * 실행을 복원하고 pump 를 시작한다. [MissionHostApplication] 이 빈을 만들 때 부른다. 복원이 빈 생성 안에서 끝나므로 웹 서버가
-     * 열리기 전에 판정이 도는 실행을 안다(S4b 스펙 T3). 복원 중 DB 가 실패하면 예외가 나가 기동이 멈춘다.
+     * 인스턴스 행을 넣고, 실행을 복원하고, pump 와 심장박동을 시작한다. [MissionHostApplication] 이 빈을 만들 때 부른다. 복원이 빈 생성
+     * 안에서 끝나므로 웹 서버가 열리기 전에 판정이 도는 실행을 안다(S4b 스펙 T3). 인스턴스 행이나 복원에서 DB 가 실패하면 예외가 나가
+     * 기동이 멈춘다.
      */
     fun start(period: Duration = PUMP_PERIOD): MissionHost = apply {
+        records.beat(instanceId, heartbeat.expiry)
         restore()
+        beater.scheduleWithFixedDelay(::beatOnce, heartbeat.period.toMillis(), heartbeat.period.toMillis(), TimeUnit.MILLISECONDS)
         pumper.scheduleWithFixedDelay(::pumpOnce, 0, period.toMillis(), TimeUnit.MILLISECONDS)
+    }
+
+    /** 심장박동 한 번. 실패는 삼키고 다음 주기에 다시 한다. 만료 폭 안에 다시 적지 못하면 다른 인스턴스가 이 인스턴스를 끊긴 것으로 읽는다. */
+    private fun beatOnce() {
+        try {
+            records.beat(instanceId, heartbeat.expiry)
+        } catch (e: Exception) {
+            log.warn("심장박동 실패: {}", e.toString())
+        }
     }
 
     /**
      * 기동 복원(S4b 스펙 T3, §6.3). 정착도 포기도 없는 일지 행을 받은 순서대로 다시 짓는다. 결과는 일지 이벤트로 남고 복원 보고에
      * 실린다. 그 뒤 포기한 행(이전 기동의 것 포함)을 판정 제외 목록으로, 미해소 잔여 파지 표시를 판정이 읽을 사본으로 읽는다.
+     *
+     * 단계 0 범위(HA 설계 기록 §7): 행을 든 인스턴스가 이 인스턴스이거나 심장박동이 끊긴 행만 지금 다시 짓는다. 살아 있는 다른
+     * 인스턴스가 든 행은 DEFERRED 로 미룬다([restoreRow]).
      */
     private fun restore() = lock.withLock {
         restoredAt = clock.now()
@@ -519,14 +562,31 @@ class MissionHost(
             settleRestore(row, index, previous, RestoreResult.GAVE_UP, null, e.message ?: e.toString())
             return
         }
-        attempt(Deferred(row, prepared.first, prepared.second, index), previous, first = true)
+        val waiting = Deferred(row, prepared.first, prepared.second, index)
+        // 행을 든 인스턴스는 바로 앞 RESTORED 의 인스턴스, 없으면 받은 인스턴스다([previous]). 살아 있으면 가져가지 않는다.
+        val holder = previous.instanceId
+        if (holder != instanceId && records.instanceLive(holder)) {
+            waiting.heldBy = holder
+            deferred += waiting
+            settleRestore(row, index, previous, RestoreResult.DEFERRED, null, "$HELD_BY_LIVE_INSTANCE: instance=$holder")
+            return
+        }
+        attempt(waiting, previous, first = true)
     }
 
-    /** 미룬 행을 다시 시도한다(T3). pump 가 미들웨어 pump 전에 잠금 아래에서 부른다. 이벤트를 못 적으면 다음 pump 에 다시 한다. */
+    /**
+     * 미룬 행을 다시 시도한다(T3). pump 가 미들웨어 pump 전에 잠금 아래에서 부른다. 이벤트를 못 적으면 다음 pump 에 다시 한다.
+     * 다른 인스턴스가 들어 미룬 행은 그 인스턴스의 심장박동이 끊길 때까지 시도하지 않는다.
+     */
     private fun retryDeferred() {
         deferred.toList().forEach { waiting ->
             val previous = restoreRows[waiting.index].let { RestoredFromView(it.previousInstanceId, it.previousExecutionId) }
             try {
+                val holder = waiting.heldBy
+                if (holder != null) {
+                    if (records.instanceLive(holder)) return@forEach
+                    waiting.heldBy = null
+                }
                 attempt(waiting, previous, first = false)
             } catch (e: Exception) {
                 log.warn("미룬 복원 다시 시도 실패: {} {}", waiting.row.jobOrderId, e.toString())
@@ -540,6 +600,9 @@ class MissionHost(
             if (first) {
                 deferred += waiting
                 settleRestore(waiting.row, waiting.index, previous, result, null, reason)
+            } else if (restoreRows[waiting.index].reason != reason) {
+                // 미룬 까닭이 바뀌었다(다른 인스턴스의 만료 → 스냅숏). 이벤트는 미룬 기동마다 한 번이라 보고 행만 고친다.
+                restoreRows[waiting.index] = restoreRows[waiting.index].copy(reason = reason)
             }
             return
         }
@@ -568,20 +631,38 @@ class MissionHost(
      * GAVE_UP 이다. Idempotent 는 이번 기동에서 이미 다시 지은 행을 또 부른 경우(앞선 이벤트 쓰기가 실패한 다시 시도)뿐이고
      * 그 실행으로 RESTORED 다.
      *
+     * 그 작업 지시의 가장 최근 판단 기록을 시도마다 읽어 넘긴다(미루는 동안 앞 인스턴스가 더 적었을 수 있다). 기록을 못 읽으면
+     * `resume` 을 부르지 않고 GAVE_UP([RECORD_UNREADABLE]) 이다. 기록 없이 다시 지으면 읽지 못한 판단이 조용히 «없었다» 가 된다.
+     * picasso 가 기록을 거부하면(`RESUME_RECORD_MISMATCH`) 그 문장 뒤에 기록 행 번호를 붙여 GAVE_UP 이다.
+     *
      * @return 결과, RESTORED 의 실행 id, DEFERRED·GAVE_UP 의 사유
      */
-    private fun resumed(waiting: Deferred): Triple<RestoreResult, String?, String?> =
-        when (val submission = middleware.resume(waiting.order, waiting.row.robotId, waiting.mission)) {
-            is Middleware.Submission.Accepted -> Triple(RestoreResult.RESTORED, submission.execution.executionId, null)
+    private fun resumed(waiting: Deferred): Triple<RestoreResult, String?, String?> {
+        val stored = records.latestJudgmentRecord(waiting.row.jobOrderId)
+        val record = stored?.let {
+            try {
+                JudgmentRecordWire.decode(it.record)
+            } catch (e: Exception) {
+                return Triple(RestoreResult.GAVE_UP, null, "$RECORD_UNREADABLE: record=${it.recordId}, ${e.message}")
+            }
+        }
+        return when (val submission = middleware.resume(waiting.order, waiting.row.robotId, waiting.mission, record)) {
+            is Middleware.Submission.Accepted -> {
+                stored?.let { recorded[waiting.row.jobOrderId] = it.record }
+                Triple(RestoreResult.RESTORED, submission.execution.executionId, null)
+            }
             is Middleware.Submission.Idempotent -> Triple(RestoreResult.RESTORED, submission.execution.executionId, null)
             is Middleware.Submission.Rejected ->
                 if (submission.reason.startsWith(Middleware.RESUME_SNAPSHOT_UNREADABLE)) {
                     Triple(RestoreResult.DEFERRED, null, submission.reason)
+                } else if (stored != null && submission.reason.startsWith(Middleware.RESUME_RECORD_MISMATCH)) {
+                    Triple(RestoreResult.GAVE_UP, null, "${submission.reason} (record=${stored.recordId})")
                 } else {
                     Triple(RestoreResult.GAVE_UP, null, submission.reason)
                 }
             is Unassigned -> Triple(RestoreResult.GAVE_UP, null, "배정되지 않았다: ${submission.refusals}")
         }
+    }
 
     private fun restoreView(): RestoreView? = restoredAt?.let { RestoreView(it, restoreRows.toList()) }
 
@@ -660,7 +741,10 @@ class MissionHost(
         }
         when (val submission = assigned) {
             is Middleware.Submission.Accepted -> {
-                if (!existed) journal(submission.execution)
+                if (!existed) {
+                    journal(submission.execution)
+                    persistRecord(submission.execution.executionId)
+                }
                 SubmitOutcome(
                     SubmitResult.ACCEPTED, submission.execution.executionId, submission.execution.robotId, null, emptyList(), excluded,
                 )
@@ -825,7 +909,8 @@ class MissionHost(
             it.physicalState.isSettled && it.physicalState != PhysicalState.PARTIAL &&
                 it.order.jobOrderId in journaled && it.order.jobOrderId !in settledRecorded
         }
-        if (pending.isEmpty() && fresh.isEmpty() && resolved.isEmpty() && settled.isEmpty()) return
+        val judgments = changedRecords()
+        if (pending.isEmpty() && fresh.isEmpty() && resolved.isEmpty() && settled.isEmpty() && judgments.isEmpty()) return
 
         val held = heldIncidents(incidents)
         val copies = fresh.map { it to json.writeValueAsString(IncidentViews.detail(instanceId, it, it.incidentId in held, unitStateOf(it))) }
@@ -833,6 +918,8 @@ class MissionHost(
         try {
             records.inTransaction {
                 marked.clear()
+                // 판단 기록을 송신 기록과 같이 커밋한다. 상위가 받은 응답의 판정은 기록에도 있다.
+                judgments.forEach { (execution, text) -> writeRecord(execution, text) }
                 pending.forEach(::logResponse)
                 copies.forEach { (bundle, detail) ->
                     records.copyIncident(instanceId, bundle.incidentId, bundle.executionId, bundle.jobOrderId, bundle.unitId, detail)
@@ -859,10 +946,42 @@ class MissionHost(
             return
         }
         copiedIncidents = incidents.size
+        judgments.forEach { (execution, text) -> recorded[execution.order.jobOrderId] = text }
         copiedResolutions += resolved.map { it.incidentId }
         settledRecorded += settled.map { it.order.jobOrderId }
         openHolds += marked
         pending.forEach { middleware.ack(it.jobResponseId) }
+    }
+
+    /**
+     * 적을 판단 기록. 일지에 있고 정착 이벤트를 아직 적지 않은 실행 가운데 글자가 이 인스턴스가 마지막으로 적은 것과 다른 것이다.
+     * 정착하는 pump 의 실행도 든다(마지막 판정이 그 pump 에서 섰다).
+     */
+    private fun changedRecords(): List<Pair<Middleware.Execution, String>> =
+        middleware.executions()
+            .filter { it.order.jobOrderId in journaled && it.order.jobOrderId !in settledRecorded }
+            .mapNotNull { execution ->
+                middleware.judgmentRecord(execution.executionId)?.let(JudgmentRecordWire::encode)
+                    ?.takeIf { it != recorded[execution.order.jobOrderId] }
+                    ?.let { execution to it }
+            }
+
+    private fun writeRecord(execution: Middleware.Execution, text: String) {
+        records.judgmentRecord(execution.order.jobOrderId, instanceId, execution.executionId, JudgmentRecordWire.SCHEMA_VERSION, text)
+    }
+
+    /**
+     * 판단 기록 하나를 지금 적는다(수락 직후, 운영자 판단 직후). 못 적으면 경고만 남긴다 — 그 판단은 이미 미들웨어에 섰고, 다음 pump 뒤
+     * 기록이 같은 글자를 다시 적는다(그 pump 가 성공하기 전에 프로세스가 죽으면 그 판단은 넘어오지 않는다).
+     */
+    private fun persistRecord(executionId: String) {
+        val changed = changedRecords().firstOrNull { it.first.executionId == executionId } ?: return
+        try {
+            writeRecord(changed.first, changed.second)
+            recorded[changed.first.order.jobOrderId] = changed.second
+        } catch (e: Exception) {
+            log.warn("판단 기록을 적지 못했다, 다음 pump 에 다시 한다: {} {}", executionId, e.toString())
+        }
     }
 
     private fun logResponse(response: JobResponse) {
@@ -897,7 +1016,10 @@ class MissionHost(
                 it.executionId == executionId && it.unitId == unitId && it.resolution == null
             }?.incidentId
             when (val outcome = middleware.resolve(executionId, unitId, decision, approver)) {
-                ResolveOutcome.Resolved -> ResolveView(RESOLVED, null, target, requestId)
+                ResolveOutcome.Resolved -> {
+                    persistRecord(executionId)
+                    ResolveView(RESOLVED, null, target, requestId)
+                }
                 ResolveOutcome.NotHeld -> ResolveView(NOT_HELD, null, null, requestId)
                 is ResolveOutcome.Refused -> ResolveView(REFUSED, outcome.reason, null, requestId)
             }
@@ -1084,9 +1206,20 @@ class MissionHost(
         connection = response.connection,
     )
 
+    /**
+     * pump 와 심장박동을 멈추고 멈춤을 적는다. 다음 기동은 이 인스턴스의 행을 만료를 기다리지 않고 가져간다. 멈춤을 못 적으면(DB
+     * 실패) 다음 기동은 만료 폭만큼 그 행을 미룬다.
+     */
     override fun close() {
         pumper.shutdownNow()
+        beater.shutdownNow()
         pumper.awaitTermination(2, TimeUnit.SECONDS)
+        beater.awaitTermination(2, TimeUnit.SECONDS)
+        try {
+            records.stopInstance(instanceId)
+        } catch (e: Exception) {
+            log.warn("인스턴스 멈춤을 적지 못했다: {}", e.toString())
+        }
     }
 
     companion object {
@@ -1097,6 +1230,15 @@ class MissionHost(
 
         /** 현장 시간값 미적용 동안 판정이 기체마다 더하는 이유(S3c 스펙 T8). 화면에 그대로 보인다. */
         const val UNAPPLIED_REASON = "현장 시간값 미적용: 실행 호스트가 현장 설정을 아직 읽지 못했다"
+
+        /**
+         * 살아 있는 다른 인스턴스가 든 일지 행을 미룬 DEFERRED 사유의 앞부분(HA 설계 기록 §7 단계 0). 뒤에 `: instance=<id>` 가 붙는다.
+         * 그 인스턴스의 심장박동이 끊기면 pump 가 다시 짓는다.
+         */
+        const val HELD_BY_LIVE_INSTANCE = "살아 있는 다른 인스턴스가 든 실행이라 다시 짓지 않는다"
+
+        /** 판단 기록을 못 읽은 GAVE_UP 사유의 앞부분. 뒤에 `: record=<기록 행 번호>, <picasso 의 읽기 거부 문장>` 이 붙는다. */
+        const val RECORD_UNREADABLE = "판단 기록을 읽지 못해 다시 짓지 않는다"
 
         /** 다시 짓지 못한 실행이 있는 기체에 판정이 더하는 이유의 앞부분(S4b 스펙 T4). 뒤에 작업 지시 id 가 붙는다. */
         const val UNRESTORED_REASON = "복원 못 한 실행이 있다"

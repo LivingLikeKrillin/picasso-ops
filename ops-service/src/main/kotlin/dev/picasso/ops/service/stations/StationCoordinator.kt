@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import dev.picasso.ops.service.actor.Actor
 import dev.picasso.ops.service.actor.Mode
+import dev.picasso.ops.service.instance.OpsInstance
 import dev.picasso.ops.service.requests.RequestRejected
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.transaction.support.TransactionTemplate
@@ -17,9 +18,14 @@ import java.util.UUID
  * [quarantinedBy]: a dispatched run released on site confirmation at a station without the pair. Its execution may still raise the completion signal.
  */
 data class RfStation(val stationId:String,val name:String,val readySignal:String,val completeSignal:String,val timeoutSeconds:Int,val owner:UUID?,val createdBy:String,val createdAt:String,val jobSignal:String?=null,val jobEchoSignal:String?=null,val quarantinedBy:UUID?=null,val quarantinedAt:String?=null)
-data class StationRun(val runId:UUID,val stationId:String,val payload:JsonNode,val actor:String,val state:String,val reason:String,val receiptId:UUID?,val attempt:Int,val revision:Int,val createdAt:Instant,val phaseAt:Instant,val dispatchedAt:Instant?,val resultBaseline:Int?=null,val baselineReviewOnly:Boolean=false)
-/** Durable station arbitration. Database locks cover decisions, never network calls. */
-class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionTemplate,private val port:StationPort,private val clock:Clock=Clock.systemUTC()) {
+/** [instanceId]: the ops instance that last wrote the run's state (HA design record §8 stage 0). Null for runs written before V21. */
+data class StationRun(val runId:UUID,val stationId:String,val payload:JsonNode,val actor:String,val state:String,val reason:String,val receiptId:UUID?,val attempt:Int,val revision:Int,val createdAt:Instant,val phaseAt:Instant,val dispatchedAt:Instant?,val resultBaseline:Int?=null,val baselineReviewOnly:Boolean=false,val instanceId:String?=null)
+/**
+ * Durable station arbitration. Database locks cover decisions, never network calls.
+ * [instance]: this process (HA design record §8 stage 0). Every state write records its id; a RETRYING/REWORKING claim left by another
+ * instance is taken only once that instance's heartbeat expired. One coordinator per instance: the claim-in-flight argument is this monitor.
+ */
+class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionTemplate,private val port:StationPort,private val clock:Clock=Clock.systemUTC(),private val instance:OpsInstance=OpsInstance(jdbc)) {
  private val json=ObjectMapper().findAndRegisterModules().disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
  fun stations():List<RfStation> = jdbc.sql("SELECT * FROM ops.rf_station ORDER BY station_id").query {r,_->RfStation(r.getString("station_id"),r.getString("name"),r.getString("ready_signal"),r.getString("complete_signal"),r.getInt("timeout_seconds"),r.getObject("owner",UUID::class.java),r.getString("created_by"),r.getString("created_at"),r.getString("job_signal"),r.getString("job_echo_signal"),r.getObject("quarantined_by",UUID::class.java),r.getString("quarantined_at"))}.list()
  fun runs():List<StationRun> = jdbc.sql("SELECT * FROM ops.station_run ORDER BY created_at DESC,run_id LIMIT 100").query(::row).list()
@@ -59,7 +65,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   port.validate(p)
   return tx.execute {
    lock(station)
-   val count=jdbc.sql("INSERT INTO ops.station_run(run_id,station_id,payload,actor,state,reason,created_at,phase_at) VALUES(:id,:station,CAST(:payload AS JSONB),:actor,'QUEUED','공유 자원 순서를 기다립니다',:at,:at) ON CONFLICT DO NOTHING").param("id",id).param("station",station).param("payload",p.toString()).param("actor",actor.header()).param("at",java.sql.Timestamp.from(clock.instant())).update()
+   val count=jdbc.sql("INSERT INTO ops.station_run(run_id,station_id,payload,actor,state,reason,created_at,phase_at,instance_id) VALUES(:id,:station,CAST(:payload AS JSONB),:actor,'QUEUED','공유 자원 순서를 기다립니다',:at,:at,:instance) ON CONFLICT DO NOTHING").param("id",id).param("station",station).param("payload",p.toString()).param("actor",actor.header()).param("at",java.sql.Timestamp.from(clock.instant())).param("instance",instance.instanceId).update()
    if(count==0) replay(id,p,actor) else {val run=get(id);event(run,"대기열 등록",actor.header());run}
   }!!
  }
@@ -95,9 +101,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
       return@execute get(run.runId)
      }
     }
-    if(run.state=="RETRYING") transition(run,"REVIEW_REQUIRED","재평가 중 프로세스 중단; 실행 관측과 현장 확인 필요")
-    // rework() holds this monitor across its host call, so REWORKING seen here was left by a stopped process.
-    if(run.state=="REWORKING") transition(run,"REVIEW_REQUIRED","재작업 전달 중 프로세스 중단; 반영 여부는 실행 관측과 현장 확인 필요")
+    // observe(), rework() and confirmSource() hold this monitor across their host call, so a claim seen here is not in flight in this instance.
+    if(run.state in LEFTOVER_STOPPED.keys) leftover(run)
     if(run.state in setOf("RUNNING","WAITING_ROBOT") && expired(run,current)) transition(run,"REVIEW_REQUIRED","작업 시간 초과; 물리 상태 확인 전 점유를 유지합니다")
     null
    }
@@ -109,6 +114,19 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
    if(run.state=="DISPATCHING" && dispatch==null) dispatch(run)
    if(run.state in setOf("RUNNING","WAITING_ROBOT")) observe(run,station,signals,readAt)
   }
+ }
+ /**
+  * A RETRYING/REWORKING claim found by tick (HA design record §7, §8 stage 0). Left by this instance it is a failed cleanup: the claim and
+  * its host call run under this monitor. Left by another instance it is a stopped process only once that instance's heartbeat expired or
+  * it recorded its stop; a live instance's claim is left alone. Either way review keeps the station and sends nothing.
+  */
+ private fun leftover(run:StationRun) {
+  val reason=when {
+   run.instanceId==instance.instanceId -> LEFTOVER_OWN.getValue(run.state)
+   instance.isLive(run.instanceId) -> return
+   else -> LEFTOVER_STOPPED.getValue(run.state)
+  }
+  transition(run,"REVIEW_REQUIRED",reason,context=json.createObjectNode().put("claimedBy",run.instanceId))
  }
  /** Writes the run token to the job-number signal outside locks. A failed write keeps WAITING_READY and the next tick writes again. */
  private fun numbered(run:StationRun,signals:StationSignals?):StationRun? {
@@ -282,7 +300,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  /** Keeps the state and its phase clock (a waiting deadline is not reset), records a changed reason once. */
  private fun hold(run:StationRun,reason:String,context:JsonNode?=null) {
   if(run.reason==reason)return
-  jdbc.sql("UPDATE ops.station_run SET reason=:reason,revision=revision+1 WHERE run_id=:id").param("reason",reason).param("id",run.runId).update()
+  jdbc.sql("UPDATE ops.station_run SET reason=:reason,revision=revision+1,instance_id=:instance WHERE run_id=:id").param("reason",reason).param("instance",instance.instanceId).param("id",run.runId).update()
   event(get(run.runId),reason,"system/station",context)
  }
  private fun expired(run:StationRun,station:RfStation)=!clock.instant().isBefore(run.phaseAt.plusSeconds(station.timeoutSeconds.toLong()))
@@ -290,8 +308,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  private fun transition(run:StationRun,state:String,reason:String,release:Boolean=false,dispatch:Boolean=false,by:String="system/station",context:JsonNode?=null,baseline:Boolean=state=="RUNNING",reviewOnly:Boolean=false) {
   jdbc.sql("""UPDATE ops.station_run SET state=:state,reason=:reason,revision=revision+1,phase_at=:at,dispatched_at=CASE WHEN :dispatch THEN :at ELSE dispatched_at END,
    result_baseline=CASE WHEN :baseline THEN (SELECT COALESCE(max(v.version),0) FROM ops.work_result v WHERE v.receipt_id=station_run.receipt_id) ELSE result_baseline END,
-   baseline_review_only=CASE WHEN :baseline THEN :reviewOnly ELSE baseline_review_only END WHERE run_id=:id""")
-   .param("state",state).param("reason",reason).param("at",java.sql.Timestamp.from(clock.instant())).param("dispatch",dispatch).param("baseline",baseline).param("reviewOnly",reviewOnly).param("id",run.runId).update()
+   baseline_review_only=CASE WHEN :baseline THEN :reviewOnly ELSE baseline_review_only END,instance_id=:instance WHERE run_id=:id""")
+   .param("state",state).param("reason",reason).param("at",java.sql.Timestamp.from(clock.instant())).param("dispatch",dispatch).param("baseline",baseline).param("reviewOnly",reviewOnly).param("instance",instance.instanceId).param("id",run.runId).update()
   if(release)jdbc.sql("UPDATE ops.rf_station SET owner=NULL WHERE station_id=:station AND owner=:id").param("station",run.stationId).param("id",run.runId).update()
   if(state in setOf("TIMED_OUT","CANCELLED","REJECTED") && run.receiptId!=null)
    jdbc.sql("UPDATE ops.work_request SET state='REJECTED',detail=:reason,updated_at=clock_timestamp() WHERE receipt_id=:id AND state='WAITING_RESOURCE'").param("id",run.receiptId).param("reason",reason).update()
@@ -307,7 +325,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  private fun event(run:StationRun,reason:String,by:String,context:JsonNode?=null) {jdbc.sql("INSERT INTO ops.station_event(run_id,state,reason,actor,context,recorded_at) VALUES(:id,:state,:reason,:actor,CAST(:context AS JSONB),:at)").param("id",run.runId).param("state",run.state).param("reason",reason).param("actor",by).param("context",(context?:json.nullNode()).toString()).param("at",java.sql.Timestamp.from(clock.instant())).update()}
  private fun lock(station:String) {jdbc.sql("SELECT station_id FROM ops.rf_station WHERE station_id=:id FOR UPDATE").param("id",station).query(String::class.java).optional().orElseThrow{RequestRejected("STATION_NOT_FOUND","스테이션이 없습니다",404)}}
  private fun actor(run:StationRun)=Actor(Mode.OPERATOR,run.actor.substringAfter('/'))
- private fun row(r:java.sql.ResultSet,@Suppress("UNUSED_PARAMETER") i:Int)=StationRun(r.getObject("run_id",UUID::class.java),r.getString("station_id"),json.readTree(r.getString("payload")),r.getString("actor"),r.getString("state"),r.getString("reason"),r.getObject("receipt_id",UUID::class.java),r.getInt("attempt"),r.getInt("revision"),r.getTimestamp("created_at").toInstant(),r.getTimestamp("phase_at").toInstant(),r.getTimestamp("dispatched_at")?.toInstant(),r.getObject("result_baseline") as Int?,r.getBoolean("baseline_review_only"))
+ private fun row(r:java.sql.ResultSet,@Suppress("UNUSED_PARAMETER") i:Int)=StationRun(r.getObject("run_id",UUID::class.java),r.getString("station_id"),json.readTree(r.getString("payload")),r.getString("actor"),r.getString("state"),r.getString("reason"),r.getObject("receipt_id",UUID::class.java),r.getInt("attempt"),r.getInt("revision"),r.getTimestamp("created_at").toInstant(),r.getTimestamp("phase_at").toInstant(),r.getTimestamp("dispatched_at")?.toInstant(),r.getObject("result_baseline") as Int?,r.getBoolean("baseline_review_only"),r.getString("instance_id"))
  private fun exact(p:JsonNode,fields:Set<String>) {if(!p.isObject || p.fieldNames().asSequence().toSet()!=fields)reject("요청 필드를 확인하세요")}
  private fun text(p:JsonNode,key:String,max:Int)=p[key]?.takeIf{it.isTextual && it.asText().isNotBlank() && it.asText().length<=max}?.asText() ?: reject("$key 문자열이 필요합니다")
  private fun uuid(s:String)=runCatching{UUID.fromString(s)}.getOrNull()?.takeIf{it.toString()==s} ?: reject("정규 UUID가 필요합니다")
@@ -331,5 +349,9 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   /** Prefix of a WAITING_READY hold on the work permit. Robots, their permit, cause, blocking subject and what lifts it follow. */
   const val PERMIT_HELD="작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다"
   const val PERMIT_RESUMED="작업 허가 복귀; 설비 준비 기한을 다시 셉니다"
+  /** Reasons for a claim left by another instance that stopped or whose heartbeat expired. */
+  val LEFTOVER_STOPPED=mapOf("RETRYING" to "재평가 중 프로세스 중단; 실행 관측과 현장 확인 필요","REWORKING" to "재작업 전달 중 프로세스 중단; 반영 여부는 실행 관측과 현장 확인 필요")
+  /** Reasons for a claim this instance failed to clear after its host call. */
+  val LEFTOVER_OWN=mapOf("RETRYING" to "재평가 뒤 상태 정리 실패; 실행 관측과 현장 확인 필요","REWORKING" to "재작업 전달 뒤 상태 정리 실패; 반영 여부는 실행 관측과 현장 확인 필요")
  }
 }

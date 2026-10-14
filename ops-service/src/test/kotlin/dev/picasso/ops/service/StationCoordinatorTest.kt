@@ -14,6 +14,7 @@ import dev.picasso.ops.service.log.OperationLog
 import dev.picasso.ops.service.log.OperationResult
 import dev.picasso.ops.service.requests.WorkRequests
 import dev.picasso.ops.service.stations.*
+import dev.picasso.ops.service.instance.OpsInstance
 import dev.picasso.ops.service.store.OpsSchema
 import dev.picasso.registry.PostgresSupport
 import org.springframework.jdbc.core.simple.JdbcClient
@@ -151,6 +152,57 @@ class StationCoordinatorTest {
  }
  @Test fun `재평가 중 재기동은 자동 재전송 없이 현장 확인으로 넘긴다`() {
   val run=enqueue();service.tick();jdbc.sql("UPDATE ops.station_run SET state='RETRYING' WHERE run_id=:id").param("id",run.runId).update();coordinator().tick();assertEquals("REVIEW_REQUIRED",service.get(run.runId).state);assertEquals(1,port.sends)
+ }
+ /** A started instance that does not beat again within a test: its row expires only when the test moves expires_at. */
+ private fun instance()=OpsInstance(jdbc,Duration.ofHours(1),Duration.ofHours(3)).start()
+ private fun expire(i:OpsInstance){jdbc.sql("UPDATE ops.service_instance SET expires_at=clock_timestamp()-interval '1 second' WHERE instance_id=:id").param("id",i.instanceId).update()}
+ /** The claim another process committed before its host call: the state and the instance that wrote it. */
+ private fun claim(run:StationRun,state:String,by:OpsInstance){jdbc.sql("UPDATE ops.station_run SET state=:state,instance_id=:by WHERE run_id=:id").param("state",state).param("by",by.instanceId).param("id",run.runId).update()}
+ private fun lastSeen(i:OpsInstance)=jdbc.sql("SELECT last_seen_at,expires_at,stopped_at FROM ops.service_instance WHERE instance_id=:id").param("id",i.instanceId).query{r,_->Triple(r.getTimestamp(1).toInstant(),r.getTimestamp(2).toInstant(),r.getTimestamp(3)?.toInstant())}.single()
+ /** [state] claimed by a live instance stays; once [end] makes that instance not live, another instance's tick takes it for review. */
+ private fun leftOver(state:String,end:(OpsInstance)->Unit) {
+  val a=instance();val b=instance()
+  try {
+   val ca=StationCoordinator(jdbc,tx,port,clock,a);val cb=StationCoordinator(jdbc,tx,port,clock,b)
+   val run=ca.enqueue(operator,json.readTree("""{"requestId":"${UUID.randomUUID()}","stationId":"inspection-1","interfaceId":"inspect","interfaceVersion":1,"expectedDeploymentVersion":1,"input":{"assets":[]}}"""))
+   assertEquals(a.instanceId,run.instanceId)
+   ca.tick();assertEquals("RUNNING" to a.instanceId,ca.get(run.runId).let{it.state to it.instanceId})
+   claim(run,state,a)
+   cb.tick();cb.tick()
+   assertEquals(state to a.instanceId,cb.get(run.runId).let{it.state to it.instanceId},"살아 있는 다른 인스턴스의 점유를 넘겼다")
+   end(a);cb.tick()
+   val after=cb.get(run.runId)
+   assertEquals(listOf("REVIEW_REQUIRED",StationCoordinator.LEFTOVER_STOPPED.getValue(state),b.instanceId),listOf(after.state,after.reason,after.instanceId))
+   assertEquals(a.instanceId,(cb.events(run.runId).last()["context"] as JsonNode)["claimedBy"].asText())
+   assertEquals(run.runId,cb.stations().single().owner);assertEquals(1,port.sends)
+  } finally {a.close();b.close()}
+ }
+ @Test fun `재평가 점유를 남긴 다른 인스턴스가 살아 있으면 넘기지 않고 그 심장박동이 만료되면 확인 필요로 넘긴다`()=leftOver("RETRYING",::expire)
+ @Test fun `재작업 점유를 남긴 다른 인스턴스가 살아 있으면 넘기지 않고 그 인스턴스가 멈춤을 적으면 확인 필요로 넘긴다`()=leftOver("REWORKING"){it.close()}
+ @Test fun `이 인스턴스가 남긴 재평가 점유는 진행 중일 수 없으므로 정리 실패로 확인 필요로 넘긴다`() {
+  val a=instance()
+  try {
+   val c=StationCoordinator(jdbc,tx,port,clock,a);val run=enqueue();c.tick();claim(run,"RETRYING",a);c.tick()
+   val after=c.get(run.runId)
+   assertEquals(listOf("REVIEW_REQUIRED",StationCoordinator.LEFTOVER_OWN.getValue("RETRYING")),listOf(after.state,after.reason));assertEquals(1,port.sends)
+  } finally {a.close()}
+ }
+ @Test fun `심장박동은 기동 때 행을 넣고 주기마다 DB 시각으로 고쳐 만료 폭이 지나도 살아 있으며 닫으면 멈춤을 적는다`() {
+  val a=OpsInstance(jdbc,Duration.ofMillis(100),Duration.ofMillis(300)).start();val b=instance()
+  try {
+   assertTrue(a.isLive(a.instanceId));assertTrue(b.isLive(a.instanceId))
+   val (seen,expires,_)=lastSeen(a);assertEquals(Duration.ofMillis(300),Duration.between(seen,expires))
+   val run=enqueue();coordinator().tick();claim(run,"RETRYING",a)
+   // Three expiry widths: only the heartbeat keeps the claim held.
+   Thread.sleep(900)
+   assertTrue(lastSeen(a).first.isAfter(seen),"심장박동이 행을 고치지 않았다")
+   StationCoordinator(jdbc,tx,port,clock,b).tick();assertEquals("RETRYING",service.get(run.runId).state)
+  } finally {a.close();b.close()}
+  val stopped=lastSeen(a);assertNotNull(stopped.third);assertFalse(a.isLive(a.instanceId))
+  Thread.sleep(300);assertEquals(stopped,lastSeen(a),"멈춘 인스턴스의 행을 되살렸다")
+  assertFalse(a.isLive(null));assertFalse(a.isLive("ops-unknown"))
+  assertFailsWith<IllegalArgumentException>{OpsInstance(jdbc,Duration.ofSeconds(5),Duration.ofSeconds(14))}
+  assertFailsWith<IllegalArgumentException>{OpsInstance(jdbc,Duration.ZERO,Duration.ofSeconds(30))}
  }
  @Test fun `확인 이벤트는 DB에서 수정 삭제 통째 비우기를 금지한다`() {
   val run=enqueue();assertFails{jdbc.sql("UPDATE ops.station_event SET reason='changed' WHERE run_id=:id").param("id",run.runId).update()};assertFails{jdbc.sql("DELETE FROM ops.station_event").update()};assertFails{jdbc.sql("TRUNCATE ops.station_event").update()}

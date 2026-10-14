@@ -34,6 +34,8 @@ class HostRestoreTest {
             assertEquals("ACCEPTED", accepted["result"].asText(), accepted.toString())
             val before = bench.host.instanceId
             bench.driveUnits("exec-1") { it["T1.travel"] == "DONE" && it["T1"] == "RUNNING" }
+            // mimic 은 RPC 마다 접수한 태스크를 집어 든다(ACCEPTED → RUNNING). 앞 인스턴스의 pump 가 그 RPC 를 낸 뒤에 읽는다.
+            bench.idlePumps()
             val tasksBefore = bench.tasks(HUMANOID)
             assertEquals(setOf("JO-1#T1.travel", "JO-1#T1"), tasksBefore.keys)
 

@@ -183,10 +183,23 @@ open class OpsApplication {
         dev.picasso.ops.service.requests.WorkRequests(jdbc, interfaces, operations, host, TransactionTemplate(DataSourceTransactionManager(dataSource)), durableResults=true,
             delivery=dev.picasso.ops.service.requests.ResultDeliveryQueue(callbackUrl, source))
 
+    /**
+     * 이 프로세스의 신원과 심장박동(HA 설계 기록 §8 단계 0). 스테이션 조정기가 남은 상태의 주인이 살아 있는지 묻는다. 닫을 때 멈춤을
+     * 적는다. 만료가 주기의 세 배보다 짧으면 기동이 멈춘다.
+     */
+    @Bean(destroyMethod = "close")
+    open fun opsInstance(
+        jdbc: JdbcClient,
+        @Value("\${ops.instance.heartbeat-period}") period: java.time.Duration,
+        @Value("\${ops.instance.heartbeat-expiry}") expiry: java.time.Duration,
+        @Suppress("UNUSED_PARAMETER") migrated: OpsSchemaMigrated,
+    ): dev.picasso.ops.service.instance.OpsInstance = dev.picasso.ops.service.instance.OpsInstance(jdbc, period, expiry).start()
+
     @Bean
     open fun stationCoordinator(jdbc:JdbcClient, dataSource:DataSource, requests:dev.picasso.ops.service.requests.WorkRequests,
-        interfaces:dev.picasso.ops.service.interfaces.MissionInterfaces, host:HostClient, cell:CellSignalOperations, clock:Clock):dev.picasso.ops.service.stations.StationCoordinator =
-        dev.picasso.ops.service.stations.StationCoordinator(jdbc,TransactionTemplate(DataSourceTransactionManager(dataSource)),dev.picasso.ops.service.stations.OpsStationPort(requests,interfaces,host,cell),clock)
+        interfaces:dev.picasso.ops.service.interfaces.MissionInterfaces, host:HostClient, cell:CellSignalOperations, clock:Clock,
+        instance:dev.picasso.ops.service.instance.OpsInstance):dev.picasso.ops.service.stations.StationCoordinator =
+        dev.picasso.ops.service.stations.StationCoordinator(jdbc,TransactionTemplate(DataSourceTransactionManager(dataSource)),dev.picasso.ops.service.stations.OpsStationPort(requests,interfaces,host,cell),clock,instance)
 
     companion object {
         /** 설정 파일 이름을 `ops-service` 로 둔다. 같은 JVM 의 registry `application.properties` 와 가리지 않게(스펙 §7.1). */

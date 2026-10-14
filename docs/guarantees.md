@@ -11,9 +11,9 @@
 | 저장소 | 커밋 | 이 조합에서의 역할 |
 |---|---|---|
 | picasso-ops | `511d5bc` (main, PR #24 머지, 2026-10-13) | 이 문서가 설명하는 운영 계층 |
-| picasso(서브모듈) | `4d6d768` (PR #96 머지, 2026-10-14) | 실행 호스트가 쓰는 미들웨어 라이브러리. 실행 호스트가 #91 의 `PhysicalState.occupiesRobot`·`pumps` 와 #96 의 `WorkPermitPort`·`PermitBlock`·`WorkPermit` 을 씀 |
+| picasso(서브모듈) | `8ec3534` (PR #100 머지, 2026-10-15) | 실행 호스트가 쓰는 미들웨어 라이브러리. 실행 호스트가 #91 의 `PhysicalState.occupiesRobot`·`pumps`, #96 의 `WorkPermitPort`·`PermitBlock`·`WorkPermit`, #98 의 `Middleware.judgmentRecord`·`Middleware.resume(…, record)`·`JudgmentRecordWire` 를 씀 |
 | picasso-narrator | `130fe67` (main) | 설명 계층. PR #1(`ops.station.evidence/1` 읽기, `receiver/station.py`)이 머지되어 있고(머지 커밋 `391af47`) 자체 CI(`.github/workflows/ci.yml`)가 `130fe67` 에서 통과함 |
-| picasso 내보내기 | 버전 6 | picasso 가 narrator 에 넘기는 내보내기 번들의 `manifest.schemaVersion` 은 `"6"` 입니다(`74e4d3d`·`4d6d768`의 `handoff/narrator/run-1/manifest.json`). narrator 의 `BOUNDARY.md` 는 `"5"` 와 `"6"` 만 받고 모르는 버전이면 멈춥니다 |
+| picasso 내보내기 | 버전 6 | picasso 가 narrator 에 넘기는 내보내기 번들의 `manifest.schemaVersion` 은 `"6"` 입니다(`74e4d3d`·`8ec3534`의 `handoff/narrator/run-1/manifest.json`). narrator 의 `BOUNDARY.md` 는 `"5"` 와 `"6"` 만 받고 모르는 버전이면 멈춥니다 |
 
 시연이나 배포를 할 때는 이 네 값을 함께 밝혀야 합니다. 어느 하나라도 다르면 이 문서의 보장과 시험 기록은 그 조합에 대해 확인된 것이 아닙니다. narrator 의 설명은 Ops 상태를 바꾸지 않고(`explanationMayChangeState: false`), Ops 화면과 자동으로 이어져 있지 않습니다.
 
@@ -21,7 +21,9 @@
 
 이 문서에서 설명하는 보장은 다음 배포 전제에서만 유효합니다.
 
-- 운영 서비스 한 프로세스: 같은 DB 에 활성 운영 서비스는 하나여야 합니다. 스테이션 조정기의 `tick` 과 `rework` 는 JVM 의 `@Synchronized` 와 DB 행 잠금·advisory 잠금으로 직렬화됩니다. `tick` 이 `RETRYING`·`REWORKING` 상태를 만나면 앞 프로세스가 멈췄다고 읽고 `REVIEW_REQUIRED` 로 넘기는데, 이 판단은 조정기가 하나일 때만 맞습니다. 같은 DB 에 운영 서비스 둘을 띄우는 구성은 지원하지 않고 검증하지도 않았습니다. (코드: `ops-service/src/main/kotlin/dev/picasso/ops/service/stations/StationCoordinator.kt`)
+- 운영 서비스 한 프로세스: 같은 DB 에 활성 운영 서비스는 하나여야 합니다. 스테이션 조정기의 `tick` 과 `rework` 는 JVM 의 `@Synchronized` 와 DB 행 잠금·advisory 잠금으로 직렬화됩니다. 운영 서비스 프로세스마다 인스턴스 id(`ops-<UUID>`, 프로세스마다 새로)가 있고, 기동 때 `ops.service_instance` 에 자기 행을 넣어 주기마다 DB 시각으로 심장박동을 고치며, 정상 종료 때 멈춤(`stopped_at`)을 적습니다. 스테이션 작업 상태를 쓰는 모든 문장이 `ops.station_run.instance_id` 에 그 프로세스의 인스턴스 id 를 적습니다. `tick` 이 남은 `RETRYING`·`REWORKING` 을 만나면 이 인스턴스가 남긴 것이면 «정리 실패» 사유(예: «재평가 뒤 상태 정리 실패; 실행 관측과 현장 확인 필요»)로 `REVIEW_REQUIRED` 로 넘깁니다. 다른 인스턴스가 남긴 것이면 그 인스턴스의 심장박동이 만료됐거나 그 인스턴스가 멈춤을 적었을 때만 «프로세스 중단» 사유(예: «재평가 중 프로세스 중단; 실행 관측과 현장 확인 필요»)로 넘기고, 살아 있으면 건드리지 않습니다. 그래서 같은 DB 에 둘째 프로세스가 떠도 살아 있는 첫째의 점유를 빼앗지 않습니다. 그래도 대기열 점유(`owner`), `DISPATCHING` 재조회, 설비 쓰기에는 인스턴스 조건이 없고, 리스·세대·펜싱이 없어 같은 DB 에 운영 서비스 둘 이상을 띄우는 구성은 여전히 지원하지 않고 검증하지도 않았습니다. (코드: `ops-service/src/main/kotlin/dev/picasso/ops/service/stations/StationCoordinator.kt` 의 `tick`, `leftover`, `ops-service/src/main/kotlin/dev/picasso/ops/service/instance/OpsInstance.kt`, `ops-service/src/main/resources/db/ops/V21__service_instance_heartbeat.sql`)
+- 실행 호스트 한 프로세스: 같은 DB 에 활성 실행 호스트는 하나여야 합니다. 실행 호스트도 인스턴스(미들웨어 `instanceId`)마다 `mission.host_instance` 에 같은 방식으로 심장박동을 적습니다. 기동 복원은 행을 든 인스턴스(그 작업 지시의 마지막 `RESTORED` 이벤트의 인스턴스, 없으면 받은 인스턴스)가 자기이거나 그 심장박동이 끊긴 행만 다시 짓습니다. 살아 있는 다른 인스턴스가 든 행은 `DEFERRED`(사유 `살아 있는 다른 인스턴스가 든 실행이라 다시 짓지 않는다: instance=<id>`)로 미루고 그 기체를 판정에서 뺍니다. 그 인스턴스가 만료되면 pump 가 다시 짓습니다. 이것은 둘째 호스트가 첫째의 실행을 빼앗지 않게 할 뿐입니다. 둘째 호스트의 새 제출·판정·pump 는 막지 않습니다(유휴 판정은 자기 메모리의 실행만 봅니다). 같은 DB 에 둘을 띄우는 구성은 지원하지 않고 검증하지 않았습니다. (코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `restoreRow`, `retryDeferred`, `mission-host/src/main/kotlin/dev/picasso/ops/host/store/HostRecords.kt` 의 `beat`, `stopInstance`, `instanceLive`, `mission-host/src/main/resources/db/mission/V7__host_instance_heartbeat.sql`)
+- 비정상 종료 뒤 재기동: 정상 종료(Spring 컨텍스트 닫힘)는 멈춤(`stopped_at`)을 적어 다음 기동이 곧바로 이어 받습니다. 비정상 종료(SIGKILL, 전원 차단)는 멈춤을 못 적습니다. 다음 기동은 앞 인스턴스가 든 행을 심장박동 만료까지(기본 30초) `DEFERRED` 로 두고 그동안 그 기체를 배정에서 뺍니다. 운영 서비스가 남긴 `RETRYING`·`REWORKING` 점유도 만료까지 그대로입니다. 만료 폭(주기 5초, 만료 30초)은 실측 없이 잡은 값이고 리스가 아닙니다. 만료 뒤 깨어난 프로세스(긴 GC 정지 등)를 막지 않습니다. 비정상 종료 자체를 재는 시험은 없습니다(Playwright `lifecycle.spec.ts` 13단계의 SIGKILL 재기동은 정착한 실행만 있어 미룸이 드러나지 않습니다).
 - 격리된 PoC 망: 운영 서비스, 실행 호스트, registry, 셀 대역은 `127.0.0.1` 에만 바인딩되고 mimic gRPC 는 모든 인터페이스에 열립니다. 실행 호스트 REST 와 셀 대역에는 인증이 없습니다. «이 기계 밖에서 쓰지 않는다»는 `.env` 첫 줄 주석의 전제를 따릅니다.
 - 모드 헤더는 인증이 아님: 화면 API 의 `X-Ops-Mode`·`X-Ops-User` 헤더는 역할과 사용자 이름을 고르는 값입니다. API 에 닿을 수 있는 사람은 누구나 이 헤더를 붙일 수 있습니다.
 - 외부 주문 토큰 하나: 외부 주문 API 는 공유 Bearer 토큰 하나(`PICASSO_INTEGRATION_TOKEN`)와 설정 출처 하나로 상위 시스템을 식별합니다. 테넌트별 권한 체계(IAM)가 아닙니다. 토큰이 비면 API 가 꺼집니다.
@@ -103,6 +105,12 @@
 - 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/permit/CellWorkPermits.kt` 의 `CellWorkPermits`, `WorkPermitMap`, `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `pumpOnce`, `executions`, `workPermits`, `MissionHostApplication.missionHost`, `stations/StationCoordinator.kt` 의 `tick`, `permitHeld`, `stations/StationPort.kt` 의 `permitOf`, `OpsStationPort.permit`, `ui/src/components/PermitBlockNotice.tsx`.
 - 시험: 실행 호스트 시험 `WorkPermitHostTest` 의 `허가 대응을 선언하지 않으면 안전 신호가 막아도 포트를 붙이지 않고 오늘처럼 낸다`, `INHIBITED 면 새 명령을 내지 않고 기다리며 막은 기체와 주체와 풀릴 근거가 실행 목록에 보이고 PERMITTED 로 돌아오면 낸다`, `INHIBITED 여도 내기 전에 막힌 실행의 운영자 취소는 허가를 기다리지 않고 중단으로 끝난다`, `대응에 없는 기체는 어느 원천도 덮지 않아 NOT_COVERED 로 막힌다`, `셀 대역을 못 읽으면 원천 세션이 바뀌어 SESSION_CHANGED 로 막고 다시 읽히면 낸다`, 실행 호스트 시험 `CellWorkPermitsTest`(`mission-host/src/test/kotlin/dev/picasso/ops/host/permit/`) 여덟, `StationCoordinatorTest` 의 `작업 허가가 INHIBITED 면 작업 번호를 쓰지 않고 설비 준비 대기에 막은 기체와 주체와 풀릴 근거를 남기며 PERMITTED 가 되면 그때 쓴다`, `작업 허가가 UNKNOWN 이거나 읽히지 않아도 작업 번호를 쓰지 않고 까닭을 남긴다`, `작업 번호 신호가 없는 스테이션도 작업 허가가 막으면 작업 요청을 내지 않고 허가가 돌아오면 낸다`, 통합 시험 `WorkPermitTest` 의 `셀 문이 열리면 실행이 새 명령 없이 기다리며 막은 기체와 주체와 풀릴 근거가 실행 목록에 보이고 닫히면 끝까지 간다`.
 
+### 판단 기록으로 재기동 넘기기
+
+- 동작: 실행 호스트는 picasso 판단 기록(`Middleware.judgmentRecord`)을 받아 `mission.execution_judgment_record` 에 덧붙입니다. 받는 때는 수락 직후, pump 뒤 기록(송신 기록과 한 트랜잭션), 운영자 판단 직후입니다. 직전에 적은 것과 같은 글자는 적지 않습니다. 표는 변경·삭제·통째 비우기를 막습니다. 재기동 때 그 작업 지시의 가장 최근 기록을 `resume` 에 넘깁니다. 그래서 운영자 판단(완료 확인·재작업), 운영자 보류 판정, 앞선 단위의 판정과 근거 등급, 설비 대기 기한의 시작, 근거 윈도우의 요청 시각, 검증 대기 창이 재기동을 넘어옵니다. 못 읽는 기록과 picasso 가 거부한 기록(`RESUME_RECORD_MISMATCH`)은 `GAVE_UP` 으로 보고하고 기록 없이 다시 짓지 않습니다. 넘어온 운영자 보류는 picasso `resume` 이 새 인스턴스에 인시던트로 다시 엽니다(picasso PR #100). 그 인시던트의 근거 윈도우에는 인시던트 시각의 `RESUME_HOLD_REOPENED` 줄이 있습니다. 인시던트 시각(`at`)은 다시 연 시각이고 처음 보류가 선 시각이 아닙니다. 화면의 보통 판단 경로(인시던트 상세에서 판단)로 풀리고 판단은 그 인시던트에 붙습니다. 다른 판정(완료·미확인·실패·중단)으로 넘어온 단위는 인시던트를 열지 않습니다.
+- 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `submitCurrent`, `recordAfterPump`, `changedRecords`, `persistRecord`, `resolve`, `resumed`, `mission-host/src/main/kotlin/dev/picasso/ops/host/store/HostRecords.kt` 의 `judgmentRecord`, `latestJudgmentRecord`, `mission-host/src/main/resources/db/mission/V6__execution_judgment_record.sql`, picasso(`8ec3534`) `Middleware.judgmentRecord`, `Middleware.resume`, `JudgmentRecordWire`
+- 시험: 실행 호스트 시험 `JudgmentRecordHostTest` 의 `판단 기록은 수락 직후와 판정 뒤와 운영자 판단 직후에 적고 바뀌지 않으면 더 적지 않으며 정착하는 pump 가 마지막 판정을 적는다`, `운영자가 확인한 로봇 단위의 보류는 재기동 뒤 다시 묻지 않고 확인한 근거 등급 그대로다`, `재작업 판단 뒤 재기동해도 설비 대기 기한은 재기동 때가 아니라 재작업으로 다시 기다리기 시작한 때부터 이어 잰다`, `감수한 결함을 실은 기록으로 다시 지으면 그 결함이 다음 단위를 다시 막지 않는다`, `승인 소모를 실은 기록으로 다시 지으면 승인한 조치 열이 계획 앞에 다시 선다`, `판단 기록을 읽지 못하면 기록 없이 다시 짓지 않고 기록 행 번호와 함께 포기로 보고한다`, `다른 버전의 작업 지시에 선 기록이면 picasso 의 RESUME_RECORD_MISMATCH 거부를 기록 행 번호와 함께 포기로 보고한다`, `판단 기록 표는 고칠 수도 지울 수도 통째로 비울 수도 없다`, 통합 시험 `RestartRecoveryTest` 의 `단계 1 도는 실행이 있을 때 다시 띄우면 같은 작업 지시가 새 인스턴스에서 끝난 단위는 끝난 대로 도는 단위는 도는 대로 다시 서고 판단 기록으로 앞선 단위의 근거 등급이 넘어와 도달 근거 등급이 E2 이다`, `단계 4 운영자 보류에 선 실행을 두 번 다시 띄우면 기한을 다시 기다리지 않고 보류 그대로 서고 새 인스턴스가 다시 연 인시던트로 판단하며 그 보류 응답이 매번 재기동 중복으로 적히고 송신은 한 번뿐이며 같은 인스턴스에서 재작업 뒤 다시 선 보류는 송신이다`, `단계 5 설비 대기 보류를 재작업으로 판단한 뒤 다시 띄우면 대기가 재작업 때 시작한 기한을 이어 재고 그 보류 응답은 재기동 중복이며 옛 인시던트와 그 판단은 earlier 에만 있다`
+
 ## 보장하지 않는 것
 
 picasso-ops 가 보장하지 않는 항목은 다음과 같습니다.
@@ -121,7 +129,7 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 
 ### 여러 인스턴스
 
-같은 DB 에 운영 서비스 여럿을 띄우는 구성은 지원하지 않고 검증하지 않았습니다(«배포 전제» 참고). 결과 수집 커서와 콜백 전달에는 동시 실행을 견디는 장치가 일부 있지만 스테이션 조정은 프로세스 하나를 전제합니다. 콜백 주소 설정이 다른 운영 서비스가 같은 DB 에 결과 버전을 적으면, 그 결과의 전달 행은 주소를 가진 프로세스가 다시 기동해 따라잡기를 할 때까지 생기지 않습니다(전에는 2초 주기가 넣었습니다). 지금 구성은 활성 운영 서비스가 하나라 해당하지 않습니다.
+같은 DB 에 운영 서비스 여럿을 띄우는 구성도, 실행 호스트 여럿을 띄우는 구성도 지원하지 않고 검증하지 않았습니다(«배포 전제» 참고). 단계 0 자리(인스턴스 id 와 심장박동)가 생겼습니다. 그 자리가 막는 것은 둘뿐입니다: 살아 있는 다른 인스턴스가 남긴 `RETRYING`·`REWORKING` 을 앞 프로세스 중단으로 읽는 것, 살아 있는 다른 실행 호스트가 든 일지 행을 다시 짓는 것. 리더 선출·리스·세대·펜싱은 없습니다(근거: HA 설계 기록 `docs/superpowers/specs/2026-10-14-ha-authority-design.md` §8, §11). 결과 수집 커서와 콜백 전달에는 동시 실행을 견디는 장치가 일부 있지만 스테이션 조정은 프로세스 하나를 전제합니다. 콜백 주소 설정이 다른 운영 서비스가 같은 DB 에 결과 버전을 적으면, 그 결과의 전달 행은 주소를 가진 프로세스가 다시 기동해 따라잡기를 할 때까지 생기지 않습니다(전에는 2초 주기가 넣었습니다). 지금 구성은 활성 운영 서비스가 하나라 해당하지 않습니다.
 
 ### 설비 완료 신호의 인과
 
@@ -153,6 +161,14 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 - 플릿 경로 위임은 발행 관문을 지나지 않고, 재기동 뒤 다시 짓기의 재부착도 허가에 막히며, 막힌 미확정 단위의 취소는 허가가 돌아올 때까지 하위로 나가지 않습니다. 셋 다 picasso 한계 §15.219 그대로입니다.
 - 배정 판정은 허가를 보지 않습니다(막힌 기체에도 배정되고 실행이 `PENDING` 으로 기다립니다).
 
+### 판단 기록의 범위
+
+- 운영자 판단 직후 기록 쓰기가 실패하면 경고 로그만 남기고 다음 pump 뒤 기록이 다시 적습니다. 그 pump 기록이 성공하기 전에 프로세스가 죽으면 그 판단은 넘어오지 않습니다.
+- 이 실행 호스트는 결함 감수(`release`)와 조치 승인(`approveRemedy`)을 부르지 않으므로(REST 없음) 기록의 그 칸은 늘 비어 있습니다. 기록에 있으면 넘깁니다.
+- 다시 연 인시던트는 결함 원문·파지 관측이 비어 있습니다(새 인스턴스가 관측하지 않았습니다). 현장 상태는 사람이 직접 봅니다.
+- 판단 기록 표(V6) 이전에 받은 일지 행(기록 없음)은 옛 거동으로 다시 짓습니다: 앞선 단위는 근거 등급 E0, 설비 대기 기한은 재기동 때부터 다시 잽니다.
+- 인시던트 사본의 판단 행은 여전히 pump 뒤에 적습니다. 판단 자체는 판단 기록으로 넘어옵니다.
+
 ## 더 읽을 곳
 
 - [상세 참고 문서: 작업 요청과 결과 회신](reference.md#작업-요청과-결과-회신): 작업 요청 상태, 중복 방지, 정리, 결과 버전과 콜백
@@ -162,5 +178,5 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 - [운영 리허설 절차](runbook.md): 운영 리허설 절차 둘(C1 운영 중 호출 계약 배포 변경과 되돌림, D1 실행 호스트·운영 서비스 재기동과 재개), 단계마다 확인할 곳, 기대하는 결과, 다를 때 할 일, 근거 시험을 설명합니다.
 - [상세 참고 문서: 시험](reference.md#시험): 시험 수와 시험 구성
 - [화면 설계서](screens/screen-design.md): 화면에서 이 상태와 판단이 보이는 자리
-- [picasso 한계 레지스터](https://github.com/LivingLikeKrillin/picasso/blob/4d6d768/docs/limits.md): 고정 커밋 `4d6d768` 기준 picasso 의 오픈 항목과 한계
-- [picasso ADR 52](https://github.com/LivingLikeKrillin/picasso/blob/4d6d768/docs/adr/0052-work-permit-is-a-projection.md): 작업 허가가 안전 계통 상태를 비춘 정보 투영이고 새 로봇 명령만 막는다는 결정(고정 커밋 `4d6d768` 기준)
+- [picasso 한계 레지스터](https://github.com/LivingLikeKrillin/picasso/blob/8ec3534/docs/limits.md): 고정 커밋 `8ec3534` 기준 picasso 의 오픈 항목과 한계
+- [picasso ADR 52](https://github.com/LivingLikeKrillin/picasso/blob/8ec3534/docs/adr/0052-work-permit-is-a-projection.md): 작업 허가가 안전 계통 상태를 비춘 정보 투영이고 새 로봇 명령만 막는다는 결정(고정 커밋 `8ec3534` 기준)

@@ -105,6 +105,9 @@ open class MissionHostApplication {
      * [permitMapping] 은 현장이 선언한 작업 허가 대응 파일의 경로다(`host.work-permit.mapping`, ADR 52). 비어 있으면 선언하지 않은 현장이고
      * 미들웨어에 허가 포트를 붙이지 않는다. 경로가 있는데 파일을 못 읽거나 모양이 틀리면 기동이 멈춘다 — 선언한 현장을 조용히 선언 안 한
      * 현장으로 띄우지 않는다.
+     *
+     * [heartbeatPeriod]·[heartbeatExpiry] 는 인스턴스 심장박동이다(`host.instance.heartbeat-period`·`-expiry`, HA 설계 기록 §8 단계 0).
+     * 만료가 주기의 세 배보다 짧으면 기동이 멈춘다([HostHeartbeat]).
      */
     @Bean(destroyMethod = "close")
     open fun missionHost(
@@ -117,7 +120,12 @@ open class MissionHostApplication {
         store: MissionStore,
         json: ObjectMapper,
         @Value("\${host.work-permit.mapping}") permitMapping: String,
-    ): MissionHost = MissionHost(robots, cellBand, clock, catalog, timings, records, store, json, workPermits(permitMapping, clock)).start()
+        @Value("\${host.instance.heartbeat-period}") heartbeatPeriod: Duration,
+        @Value("\${host.instance.heartbeat-expiry}") heartbeatExpiry: Duration,
+    ): MissionHost = MissionHost(
+        robots, cellBand, clock, catalog, timings, records, store, json, workPermits(permitMapping, clock),
+        HostHeartbeat(heartbeatPeriod, heartbeatExpiry),
+    ).start()
 
     /**
      * 모의 실행기(S3b 스펙 §6.4). 프로파일과 스키마 경로는 작업 디렉터리 기준으로 푼다. `:mission-host:run` 은 저장소 루트에서
