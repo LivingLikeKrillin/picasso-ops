@@ -37,13 +37,6 @@
 | 분할 배포 | §3.3, §11 |
 | 부하 측정 결과 | §10 |
 
----|---|---|
-| 리더 선출 구현 | 리더 선출 알고리즘과 폴링 루프 구현은 설계 범위 밖입니다 | §8 |
-| 리스 행 DDL 및 마이그레이션 | 실제 DB 스키마 생성 및 Flyway 마이그레이션은 구현 시점에 작성합니다 | §8 |
-| 세대 비교 및 검증 로직 | 애플리케이션 계층 세대 비교 코드 구현은 포함하지 않습니다 | §8 |
-| DB failover 자동화 | 저장소 자동 승격 및 네트워크 페일오버 스크립트 작성은 인프라 영역입니다 | §9 |
-| 분할 배포 인프라 | 자원군 분할 시의 라우팅 인프라는 단계 2 과제입니다 | §10 |
-| 부하 측정 결과 | 인스턴스 경합 및 지연 시간 실측 하네스 결과는 추후 측정합니다 | §11 |
 
 ## 2. 결정 기록
 
@@ -259,10 +252,10 @@ PostgreSQL 세션 레벨 advisory 잠금(`pg_advisory_lock`)을 장시간 프로
 
 이 작업은 그룹 2 P0 뒤에 측정 하네스와 함께 진행합니다.
 - 스테이션 `tick`(2초 주기, `StationController.kt` 의 `ops.stations.poll-ms:2000` 설정): 스테이션마다 전체 스테이션 목록을 다시 읽어 O(스테이션²) 부하가 생깁니다(`StationCoordinator.kt` 의 `stations().single{…}`). 활성 스테이션마다 호스트를 조회하는 부하도 있습니다.
-- 콜백 전달(2초 주기, `WorkResultDelivery.kt`): 결과 전체를 대상으로 `INSERT…SELECT` 를 수행합니다.
+- 콜백 전달(2초 주기, `WorkResultDelivery.kt`): 고쳤습니다(브랜치 `perf/delivery-and-requests`). 결과 버전을 적는 트랜잭션이 전달 행을 넣고, 정상 회차는 집기 질의 1문장만 돕니다. 결과 100,000 에서 정상 회차 p50 1.10 ms(첫째 실행 1.74 ms), 기준선 1768 ms입니다([기준선](../../measurements/2026-10-14-load-baseline.md), [after](../../measurements/2026-10-14-load-after-delivery.md)). 결과 전체를 훑는 것은 프로세스 기동 뒤 한 번(따라잡기)이며, 빠진 행 없음 p50 55.1 ms(첫째 92.6 ms), 전달 행 없는 예전 결과 100,000 행 3,988 ms(첫째 8,037 ms)입니다.
 - 실행 호스트 pump(250ms 주기, `MissionHost.kt` 의 `PUMP_PERIOD`): 기동 뒤 인시던트 전체와 실행 전체를 훑습니다.
 - 미들웨어 아웃박스 누적: `ack` 를 받은 응답도 들고 있어 계속 자랍니다(`MissionHost.kt` KDoc, S3a 스펙 §12 한계).
-- `work_request` 인덱스 부하: 인덱스가 `(received_at DESC, receipt_id)` 하나뿐이며 EXPLAIN 분석은 아직 하지 않았습니다.
+- `work_request` 인덱스 부하: 일부 고쳤습니다. 기준선 인덱스는 기본 키, 유일 제약 둘(`job_order_id`, `(source_system_id, external_order_id)`), `work_request_received(received_at DESC, receipt_id)` 넷이었습니다(유일 제약이 아닌 인덱스는 하나뿐). EXPLAIN 은 [기준선 문서](../../measurements/2026-10-14-load-baseline.md)와 [after 문서](../../measurements/2026-10-14-load-after-delivery.md)에 있습니다. V20 이 인덱스 둘(`work_request_state_received`, `work_result_unacknowledged`)을 더해 상태 필터·상태별 집계·`sweepStale` 이 상태 인덱스를 쓰고, 수신 미확인 목록·집계가 100,000 행에서 p50 318→58.4 ms, 352→78.2 ms(`summary()`)입니다. 남은 것 둘: 검색어가 있는 목록(`strpos` 세 칸, 100,000 행 p50 133 ms(첫째 198 ms), 기준선 135 ms, 인덱스를 못 씀), 수신 미확인 집계가 여전히 `work_request` 를 순차로 훑습니다.
 - 순서: 이들 핫스팟을 먼저 고친 뒤 로봇 수를 늘려 가며 측정합니다. 단일 활성으로 버티지 못하는 수치가 나올 때 단계 2 분할을 엽니다.
 
 ## 11. 지금 하지 않는 것
