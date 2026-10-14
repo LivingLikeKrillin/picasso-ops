@@ -48,6 +48,11 @@ interface StationPort {
  fun write(name: String, value: String, actor: Actor): Boolean
  fun dispatch(id: UUID, payload: JsonNode, actor: Actor): StationReceipt
  fun receipt(id: UUID): StationReceipt
+ /**
+  * Runs one tick's observations. A port may share one host read across the [receipt] calls inside [block]; a write it sends there is
+  * followed by a new read (HA design record §10). Calls outside [block] read the host themselves.
+  */
+ fun <T> observing(block: () -> T): T = block()
  fun retryForRun(receipt:StationReceipt,attempt:UUID,actor:Actor,runId:UUID):StationReceipt=retry(receipt,attempt,actor)
  fun retry(receipt: StationReceipt, attempt: UUID, actor: Actor): StationReceipt
  /** Reads a source confirmation body before the run is claimed; throws the work request's refusal. */
@@ -80,30 +85,43 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
   val outcome=(cell ?: return false).write(actor,name,value)
   return outcome.result==OperationResult.SUCCEEDED || outcome.confirmation==OperationResult.CONFIRMED_APPLIED
  }
+ /** One tick's `GET /host/executions` read, taken at the first receipt that needs it. Per thread: decisions run on request threads. */
+ private val round=ThreadLocal<Array<WorkRequests.ExecutionsRead?>?>()
+ override fun <T> observing(block:()->T):T {
+  round.set(arrayOfNulls(1))
+  try {return block()} finally {round.remove()}
+ }
+ private fun executions():WorkRequests.ExecutionsRead {
+  val shared=round.get() ?: return requests.readExecutions()
+  return shared[0] ?: requests.readExecutions().also{shared[0]=it}
+ }
+ /** A host write changes the executions, sent or not: the next receipt in this tick reads them again. */
+ private fun sent(write:()->UUID):StationReceipt {
+  val id=try {write()} finally {round.get()?.set(0,null)}
+  return mapped(id)
+ }
  override fun dispatch(id:UUID,payload:JsonNode,actor:Actor):StationReceipt {
-  if(payload["receiptId"]!=null)return mapped(requests.dispatchQueued(UUID.fromString(payload["receiptId"].asText()),actor).receipt.receiptId)
+  if(payload["receiptId"]!=null)return sent{requests.dispatchQueued(UUID.fromString(payload["receiptId"].asText()),actor).receipt.receiptId}
   val body=json.createObjectNode().put("requestId",id.toString()).put("expectedDeploymentVersion",payload["expectedDeploymentVersion"].asInt())
   body.set<JsonNode>("input",payload["input"])
-  return mapped(requests.receiveInterface(actor,payload["interfaceId"].asText(),payload["interfaceVersion"].asInt(),body,id).receipt.receiptId)
+  return sent{requests.receiveInterface(actor,payload["interfaceId"].asText(),payload["interfaceVersion"].asInt(),body,id).receipt.receiptId}
  }
  override fun receipt(id:UUID)=mapped(id)
  private fun mapped(id:UUID):StationReceipt {
   val receipt=requests.get(id)
   // Use stored result evidence. A missing current host execution never means the work did not start.
-  val stored=runCatching{requests.result(id,receipt.sourceSystemId)}.getOrNull();val saved=stored?.get("snapshot") as? JsonNode
+  val stored=runCatching{requests.stationResult(receipt,executions())}.getOrNull();val saved=stored?.get("snapshot") as? JsonNode
   return StationReceipt(id,receipt.state,receipt.state=="UNASSIGNED" && receipt.submission==null && receipt.lastExecution==null,receipt.updatedAt,saved?.path("jobResponse")?.path("physicalState")?.takeIf{it.isTextual}?.asText(),saved,stored?.get("version") as? Int,receipt.detail,
    requests.pendingSources(receipt).isNotEmpty())
  }
  override fun checkSourceConfirmation(payload:JsonNode) {requests.sourceConfirmationRequest(payload)}
  override fun confirmSourceForRun(receipt:StationReceipt,actor:Actor,payload:JsonNode,runId:UUID):StationReceipt {
-  requests.confirmSource(receipt.id,actor,payload,runId)
-  return mapped(receipt.id)
+  return sent{requests.confirmSource(receipt.id,actor,payload,runId);receipt.id}
  }
  override fun retry(receipt:StationReceipt,attempt:UUID,actor:Actor):StationReceipt=error("자원 작업 ID가 필요합니다")
  override fun retryForRun(receipt:StationReceipt,attempt:UUID,actor:Actor,runId:UUID):StationReceipt {
   val body=json.createObjectNode().put("requestId",attempt.toString()).put("expectedUpdatedAt",receipt.updatedAt).put("reason","공유 스테이션의 전송 전 미배정 재평가")
-  requests.recover(receipt.id,actor,body,runId)
-  return mapped(receipt.id)
+  return sent{requests.recover(receipt.id,actor,body,runId);receipt.id}
  }
 }
 /** Reads `GET /host/work-permits`. Anything unreadable is [StationPermit.Unreadable]: a permit not known is not a permit. */

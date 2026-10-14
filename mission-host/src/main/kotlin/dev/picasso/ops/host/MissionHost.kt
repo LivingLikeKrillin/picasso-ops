@@ -799,7 +799,7 @@ class MissionHost(
     )
 
     fun executions(): ExecutionsView = lock.withLock {
-        val responses = middleware.responses()
+        val responses = latestResponses(middleware.responses())
         ExecutionsView(
             instanceId = middleware.instanceId,
             pumpedAt = pumpedAt,
@@ -812,7 +812,7 @@ class MissionHost(
                     robotId = execution.robotId,
                     physicalState = execution.physicalState.name,
                     units = execution.units.map { UnitView(it.unitId, it.skillType, it.state.name, it.reached.name) },
-                    jobResponse = responses.lastOrNull { it.executionId == execution.executionId }?.let(::view),
+                    jobResponse = responses[execution.executionId]?.let(::view),
                     restoredFrom = restoredFrom[execution.executionId],
                     cancel = cancels[execution.executionId]?.let(CancelRecordView::of),
                     permitBlock = execution.permitBlock?.let(PermitBlockView::of),
@@ -1268,6 +1268,12 @@ class MissionHost(
             units.filter { it.route == Route.ROBOT }
                 .lastOrNull { it.hold.kind != HoldKind.HOLD_KIND_UNSPECIFIED }
                 ?.takeIf { it.hold.kind == HoldKind.HOLD_KIND_HOLDING }
+
+        /**
+         * 실행 id → 아웃박스에서 그 실행의 마지막 응답. `GET /host/executions` 가 실행마다 아웃박스를 다시 훑지 않게 한 번에 모은다
+         * (HA 설계 기록 §10). 같은 실행의 응답이 여럿이면 뒤에 적힌 것이 남는다.
+         */
+        internal fun latestResponses(responses: List<JobResponse>): Map<String, JobResponse> = responses.associateBy { it.executionId }
 
         /** 운영자 판단의 결과 이름. picasso `ResolveOutcome` 의 이름 그대로다(S4a 스펙 T6). */
         const val RESOLVED = "Resolved"
