@@ -2,6 +2,8 @@
 
 S4b 설계 스펙(`docs/superpowers/specs/2026-10-09-s4b-restart-recovery-design.md`)의 실행 호스트와 운영 서비스가 실제로 내고 받는 모양이다. 화면, 통합 시험과 Playwright 는 이것에 맞춘다. 코드 주석의 «S4b 계약 H1» 이나 «S4b JSON 계약 O3» 같은 표기는 이 문서의 절(H·O·C·E)을 가리킨다. picasso 쪽 API 는 `74e4d3d`(P6, `Middleware.resume`)이며 첫 절은 그 위에서 호스트가 기대는 것만 적는다.
 
+HA 단계 0(picasso `8ec3534`)에서 `Middleware.resume` 에 판단 기록 인자(`record`)가 더해졌고 실행 호스트가 그것을 넘긴다. 그래서 아래 «P6 Middleware.resume › 넘어오지 않는 것» 은 기록 없이 다시 지을 때의 거동이다. H1·H2·H8·E3 의 판단 기록·다른 인스턴스 관련 문장은 HA 단계 0 에서 고쳤다.
+
 ## P6 Middleware.resume
 
 picasso `74e4d3d`(P6 머지, 앞 기준 `195c1ee`) 의 API 입니다. 계약 proto, 계약 버전 0.9.0, 내보내기 버전 6 은 바뀌지 않습니다.
@@ -133,9 +135,9 @@ picasso 서브모듈 `74e4d3d` 위의 실행 호스트가 실제로 내고 받�
 | `executionId` | 문자열 또는 `null` | `RESTORED` 일 때 새 실행 id(새 인스턴스의 셈이라 대개 `exec-1` 부터). 그 밖에는 `null` |
 | `reason` | 문자열 또는 `null` | `DEFERRED`·`GAVE_UP` 의 사유. `RESTORED` 면 `null` |
 
-- `DEFERRED` 는 기체 스냅숏을 못 읽은 것이고 사유는 picasso 의 문장 그대로 `기체 스냅숏을 못 읽어 다시 짓지 않는다: robot=<robotId>, ...` 로 시작합니다. pump 마다(250ms) 다시 시도하며, 읽히면 **그 행이 그 자리에서** `RESTORED`(실행 id 있음, 사유 `null`)로 바뀝니다. 다른 거부로 바뀌면 `GAVE_UP` 이 됩니다.
-- `GAVE_UP` 사유: 임무 버전 행이 없으면 `임무 버전 행이 없다: <workMasterId> 버전 <n>`, 저장된 정의를 못 읽으면 `저장된 임무 버전 ... 을 읽지 못했다: ...`, 그 밖에는 picasso `resume` 의 거부 문장 그대로(예 `요구 근거 등급 E2 은 InspectAsset 의 최고 등급 E0 를 넘는다 — 확인 수단이 없다`).
-- 다시 지은 실행은 단위가 모두 대기(로봇·플릿 단위는 `PENDING`, 앞서 통과한 설비 대기는 `DONE`·`E0`)에서 시작하고, 첫 pump 들이 기체를 다시 관측해 끝난 단위는 `DONE`, 도는 단위는 `RUNNING` 으로 세웁니다. 호스트 시험에서는 가상 시계를 밀지 않고 시험 상한 5초(실제 시간, pump 250ms) 안에 섰습니다.
+- `DEFERRED` 는 기체 스냅숏을 못 읽었거나 살아 있는 다른 인스턴스가 든 실행인 것이고, 사유는 `살아 있는 다른 인스턴스가 든 실행이라 다시 짓지 않는다: instance=<id>` 또는 picasso 의 문장 그대로 `기체 스냅숏을 못 읽어 다시 짓지 않는다: robot=<robotId>, ...` 로 시작합니다. `previousInstanceId` 는 행을 든 인스턴스이기도 합니다(살아 있는지 보는 대상). 그 인스턴스가 만료되면 pump 가 다시 시도하며, 다시 시도가 스냅숏으로 미뤄지면 보고 행의 사유만 스냅숏 문장으로 바뀌고 일지 이벤트는 더 적지 않습니다. 스냅숏 사유면 pump 마다(250ms) 다시 시도하며, 읽히면 그 행이 그 자리에서 `RESTORED`(실행 id 있음, 사유 `null`)로 바뀝니다. 다른 거부로 바뀌면 `GAVE_UP` 이 됩니다.
+- `GAVE_UP` 사유: 임무 버전 행이 없으면 `임무 버전 행이 없다: <workMasterId> 버전 <n>`, 저장된 정의를 못 읽으면 `저장된 임무 버전 ... 을 읽지 못했다: ...`, 판단 기록을 읽지 못하면 `판단 기록을 읽지 못해 다시 짓지 않는다: record=<id>, <picasso 문장>`, 판단 기록이 이 작업 지시의 것이 아니면 `<picasso RESUME_RECORD_MISMATCH 문장> (record=<id>)`(앞머리 `판단 기록이 이 작업 지시의 것이 아니어서 다시 짓지 않는다`), 그 밖에는 picasso `resume` 의 거부 문장 그대로(예 `요구 근거 등급 E2 은 InspectAsset 의 최고 등급 E0 를 넘는다 — 확인 수단이 없다`).
+- 다시 지은 실행은 판단 기록이 있으면 판정 있는 단위는 기록의 상태·근거 등급 그대로 서고 다시 돌리지 않습니다(통합 시험 단계 1: 대기 DONE E2, S01 DONE E2). 기록이 없으면 단위가 모두 대기(로봇·플릿 단위는 `PENDING`, 앞서 통과한 설비 대기는 `DONE`·`E0`)에서 시작하고, 첫 pump 들이 기체를 다시 관측해 끝난 단위는 `DONE`, 도는 단위는 `RUNNING` 으로 세웁니다. 호스트 시험에서는 가상 시계를 밀지 않고 시험 상한 5초(실제 시간, pump 250ms) 안에 섰습니다.
 
 ### H2. 판정(`POST /host/eligibility`, 제출의 `excluded`)의 더해진 이유
 
@@ -147,7 +149,7 @@ picasso 서브모듈 `74e4d3d` 위의 실행 호스트가 실제로 내고 받�
 
 - 이 이유만 있을 때 `runningExecutionId` 는 `null` 입니다(호스트가 모르는 고아 태스크라 실행 id 가 없다).
 - `GAVE_UP` 행은 판정 때만 그 기체 스냅숏을 한 번 읽습니다. 고아 태스크가 종료 상태(용어집의 넷: `SUCCEEDED`, `FAILED`, `CANCELLED`, `CANCELLED_RECOVERY_FAILED`)이거나 없으면 풀리고, 사람을 기다리는 `RETRIABLE`·`NEEDS_INTERVENTION` 은 종료하지 않은 상태라 계속 뺍니다(호스트 시험 `HostRestoreTest` 의 NEEDS_INTERVENTION 고아 태스크). 풀리면 그 인스턴스에서는 다시 빼지 않습니다. 이전 기동에서 포기한 행도 다음 기동에서 다시 같은 검사를 받습니다(다시 짓지는 않음).
-- `DEFERRED` 행은 `RESTORED` 가 될 때까지 늘 뺍니다. 그 뒤로는 다시 지은 실행이 `도는 실행이 있다: exec-N` 으로 뺍니다.
+- `DEFERRED` 행은 `RESTORED` 가 될 때까지 늘 뺍니다. 다른 인스턴스로 미룬 `DEFERRED` 행도 같은 문장 `복원 못 한 실행이 있다: <jobOrderId>` 로 그 기체를 뺍니다(근거: `HostInstanceTest` 의 `살아 있는 다른 인스턴스가 든 일지 행은 다시 짓지 않고 미루며 그 기체를 판정에서 빼고 그 심장박동이 끊기면 다시 짓는다`). 그 뒤로는 다시 지은 실행이 `도는 실행이 있다: exec-N` 으로 뺍니다.
 
 ### H3. `GET /host/incidents` 의 `earlier`
 
@@ -261,13 +263,17 @@ picasso 서브모듈 `74e4d3d` 위의 실행 호스트가 실제로 내고 받�
 | `detail` | TEXT NULL | `DEFERRED`·`GAVE_UP` 사유, `SETTLED` 의 물리 상태. `RESTORED` 만 NULL(CHECK) |
 | `recorded_at` | TIMESTAMPTZ | |
 
-다시 짓기 대상 = `SETTLED`·`GAVE_UP` 이벤트가 없는 일지 행. `DEFERRED` 는 미룬 기동마다 한 번 적고(다시 시도마다 적지 않음) 결과가 바뀌면 `RESTORED` 나 `GAVE_UP` 을 하나 더 적습니다. `SETTLED` 는 물리 상태가 `PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`ABORTED` 가 된 실행에 한 번(`PARTIAL` 은 미들웨어가 계속 돌리므로 적지 않음).
+다시 짓기 대상 = `SETTLED`·`GAVE_UP` 이벤트가 없는 일지 행. `DEFERRED` 는 미룬 기동마다 한 번 적고(다시 시도마다 적지 않음, 미룬 까닭이 만료 뒤 스냅숏으로 바뀌어도 이벤트를 더 적지 않음) 결과가 바뀌면 `RESTORED` 나 `GAVE_UP` 을 하나 더 적습니다. `DEFERRED` 의 `detail` 에 다른 인스턴스 사유(`살아 있는 다른 인스턴스가 든 실행이라 다시 짓지 않는다: instance=<id>`)도 옵니다. `SETTLED` 는 물리 상태가 `PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`ABORTED` 가 된 실행에 한 번(`PARTIAL` 은 미들웨어가 계속 돌리므로 적지 않음).
 
 `job_response_log`: `log_id` identity PK, `instance_id`, `job_response_id`(UNIQUE(`instance_id`, `job_response_id`)), `job_order_id`, `execution_id`, `version`, `physical_state`, `required_evidence`, `reached_evidence`, `completed_units`·`unverified_units`·`incomplete_units`·`in_doubt_units`·`blocked_by`(JSONB 정렬 배열), `operator_required`, `residual_hold`, `disposition`(`SENT`·`RESTART_DUPLICATE`), `recorded_at`.
 
 `incident_copy`: `copy_id` identity UNIQUE(적은 순서), PK(`instance_id`, `incident_id`), `execution_id`, `job_order_id`, `unit_id`, `detail`(**JSON**, JSONB 아님. 상세 본문 글자 그대로라 키 순서 보존), `recorded_at`.
 
 `incident_copy_resolution`: PK·FK(`instance_id`, `incident_id`) → `incident_copy`, `decision`, `decided_at`(호스트 시계), `wall_clock_at`(실제 시각), `decided_by_id`, `decided_by_kind`, `recorded_at`.
+
+HA 단계 0 에서 더해진 V6 `execution_judgment_record`(`V6__execution_judgment_record.sql`): `record_id` identity PK, `job_order_id`(FK → `execution_journal`), `instance_id`, `execution_id`, `wire_version`(`JudgmentRecordWire.SCHEMA_VERSION`, 지금 `"1"`), `record`(TEXT, 받은 글자 그대로. JSON 이 아님), `recorded_at`. 변경·삭제·통째 비우기 금지. 수락 직후, pump 뒤 기록, 운영자 판단 직후 직전 글자와 다를 때만 한 행.
+
+HA 단계 0 에서 더해진 V7 `host_instance`(`V7__host_instance_heartbeat.sql`): `instance_id` PK, `started_at`, `last_seen_at`, `expires_at`, `stopped_at`(NULL 가능), CHECK(`expires_at >= last_seen_at OR stopped_at IS NOT NULL`). 인스턴스마다 한 행이고 그 인스턴스만 고침. 덧붙이기 전용이 아님. 시각은 DB `clock_timestamp()`.
 
 ### H9. e2e·화면이 기댈 사실
 
@@ -461,11 +467,11 @@ e2e 가 실제로 기대는 것입니다. 스펙 §3 의 여섯을 `e2e/.../Rest
 
 | 단계 | 단언 |
 |---|---|
-| 1 | 재기동 전 단위 (대기 DONE E2, S01 DONE E2, S02 RUNNING). 재기동 뒤 `restore.rows` 한 행 = (작업 지시, humanoid-01, 이전 인스턴스, 이전 실행 id, RESTORED, 새 실행 id, `reason` null). 실행 목록에 그 실행 하나, `restoredFrom` = `{이전 인스턴스, 이전 실행 id}`, `missionVersion` 1. 시계를 밀지 않고 (대기 DONE E0, S01 DONE E0, S02 RUNNING). 끝까지 밀면 PHYSICALLY_DONE, (E0, E0, S02 E2), 작업 응답 도달 E0·요구 E2. 송신 기록은 새 인스턴스의 PHYSICALLY_DONE 하나가 SENT(재기동 전에는 응답이 없었다) |
+| 1 | 재기동 전 단위 (대기 DONE E2, S01 DONE E2, S02 RUNNING). 재기동 뒤 `restore.rows` 한 행 = (작업 지시, humanoid-01, 이전 인스턴스, 이전 실행 id, RESTORED, 새 실행 id, `reason` null). 실행 목록에 그 실행 하나, `restoredFrom` = `{이전 인스턴스, 이전 실행 id}`, `missionVersion` 1. 재기동 뒤 시계를 밀지 않고 (대기 DONE E2, S01 DONE E2, S02 RUNNING). 끝까지 밀면 PHYSICALLY_DONE, (E2, E2, E2), 작업 응답 도달 E2·요구 E2. 송신 기록 행의 도달 근거도 E2. 송신 기록은 새 인스턴스의 PHYSICALLY_DONE 하나가 SENT(재기동 전에는 응답이 없었다) |
 | 2 | 재기동 전(T1.travel DONE, T1 RUNNING) 기체 태스크 = 그 작업 지시의 둘. 재기동 뒤 시계를 밀지 않고 단위가 (DONE, RUNNING, PENDING, PENDING) 로 선 때: 태스크 id 집합이 같고, 태스크마다 재기동 전 로그가 그대로 앞에 있으며 `ACCEPTED` 가 한 번. 끝까지 가면 태스크 넷, 이 기체의 모든 태스크(단계 1 포함)가 `ACCEPTED` 를 한 번만 지났고 `@r` 태스크가 없다 |
 | 3 | 받은 때 버전 1, 활성화 뒤 지금 활성은 `DATA` 2. 재기동 뒤 그 작업 지시 RESTORED, 다시 지은 실행의 `missionVersion` 1 이고 단위가 (rack-arrival, S03)(버전 2 라면 S03 하나). 끝까지 가면 PHYSICALLY_DONE·버전 1 |
-| 4 | 첫 인스턴스의 보류 응답 SENT. 재기동마다: RESTORED(둘째 재기동은 `previousInstanceId` 가 둘째 인스턴스), 대기가 RUNNING·실행 RUNNING 으로 서고 재기동 뒤 15초에는 아직 RUNNING, 보류는 재기동 뒤 20초 이상에서 서며 그 응답이 새 인스턴스의 RESTART_DUPLICATE. 두 번 재기동 뒤 송신 기록 = (셋째 RESTART_DUPLICATE, 둘째 RESTART_DUPLICATE, 첫째 SENT), SENT 한 번, 세 행의 내용 키가 같다. 이어 셋째 인스턴스에서 상세의 `instanceId` 로 재작업하고 다시 보류가 서면 그 응답은 같은 내용이어도 셋째의 SENT(새로 일어난 일) |
-| 5 | 단계 4 끝의 보류(셋째 인스턴스의 둘째 보류)를 상세의 `instanceId` 를 실어 재작업 → SUCCEEDED·Resolved. 10초 밀어 대기 RUNNING(이 pump 들이 판단 행을 적음). 재기동 뒤 대기 RUNNING, 재기동 뒤 15초(재작업 뒤 25초)에도 RUNNING, 보류는 재기동 뒤 20초 이상이고 그 응답은 새 인스턴스의 RESTART_DUPLICATE(상위가 마지막으로 받은 것이 단계 4 끝의 SENT). 지금 인스턴스의 `incidents` 에는 그 작업 지시의 새 보류 하나(미해결·보류 중)뿐이고 판단 든 줄이 없다. `earlier` 에 그 작업 지시의 넷이 최근 것부터, 첫 줄이 재작업한 인스턴스·인시던트이고 판단 (REWORK, kim, PERSON), 둘째 줄(셋째 인스턴스의 첫 보류)도 REWORK, 넷 다 `held` false·`SIGNAL_DEADLINE`, 나머지 둘은 판단 없음. `earlier` 에 지금 인스턴스 줄이 없다 |
+| 4 | 첫 인스턴스의 보류 응답 SENT. 재기동마다: RESTORED(둘째 재기동은 `previousInstanceId` 가 둘째 인스턴스), 시계를 밀지 않고 대기 OPERATOR_HOLD·S04 PENDING·실행 OPERATOR_HOLD 로 선다(기한을 다시 기다리지 않음). 새 인스턴스의 목록에 그 작업 지시의 보류 중 인시던트가 있고 상세의 `instanceId` 가 새 인스턴스, 단위가 대기이며, 근거 윈도우에 인시던트 시각과 같은 시각의 `RESUME_HOLD_REOPENED` 줄이 있다(다시 연 인시던트). 그 보류 응답이 새 인스턴스의 RESTART_DUPLICATE. 두 번 재기동 뒤 송신 기록 = (셋째 RESTART_DUPLICATE, 둘째 RESTART_DUPLICATE, 첫째 SENT), SENT 한 번, 세 행의 내용 키가 같다. 이어 셋째 인스턴스에서 다시 연 인시던트 상세의 `instanceId`·실행·단위로 재작업 → SUCCEEDED·Resolved, 응답 `answer.incidentId` 가 그 인시던트, 그 인시던트 판단 REWORK·`held` false. 다시 보류가 서면 그 응답은 같은 내용이어도 셋째의 SENT(새로 일어난 일) |
+| 5 | 단계 4 끝의 보류(셋째 인스턴스의 둘째 보류)를 상세의 `instanceId` 를 실어 재작업 → SUCCEEDED·Resolved. 시계를 밀기 전에 대기가 RUNNING 으로 다시 기다리기 시작하기를 기다린다. 10초 밀어 대기 RUNNING(이 pump 들이 판단 행을 적음). 재기동 뒤 대기 RUNNING, 재기동 뒤 5초(재작업 뒤 15초)에도 RUNNING, 보류는 재기동 뒤 20초 전에 선다(기한을 판단 기록의 재작업 때 대기 시작부터 이어 잼). 그 응답은 새 인스턴스의 RESTART_DUPLICATE(상위가 마지막으로 받은 것이 단계 4 끝의 SENT). 지금 인스턴스의 `incidents` 에는 그 작업 지시의 새 보류 하나(미해결·보류 중)뿐이고 판단 든 줄이 없으며, 그 보류는 다시 연 것이 아니다(인시던트 시각의 `RESUME_HOLD_REOPENED` 줄 없음). `earlier` 에 그 작업 지시의 넷이 최근 것부터 인스턴스 (셋째, 셋째, 둘째, 첫째): 셋째의 재작업 뒤 기한 보류(첫 줄, 재작업한 인스턴스·인시던트, 판단 (REWORK, kim, PERSON)), 셋째가 다시 연 보류(REWORK), 둘째가 다시 연 보류(판단 없음), 첫째의 기한 보류(판단 없음). 넷 다 `held` false·`SIGNAL_DEADLINE`. 다시 연 것 여부 (아님, 다시 연 것, 다시 연 것, 아님). `earlier` 에 지금 인스턴스 줄이 없다 |
 | 6 | `GET /api/incidents/{id}?instanceId=<이전>` 이 사본(그 인스턴스, 작업 지시, 판단 REWORK, `held` false, `unitState` null). 이전 인스턴스를 실은 판단 → 200, `result` REJECTED, `outcome`·`answer`·`confirmation` null, `rejection` (409, INSTANCE_MISMATCH, detail 에 두 인스턴스). 조작 기록 첫 RESOLVE 행 REJECTED·사유, `request.instanceId` 가 보낸 값, `targetResponse` 409 INSTANCE_MISMATCH. 대기는 여전히 OPERATOR_HOLD. 지금 인스턴스로 CONFIRM_DONE → Resolved, 끝까지 가면 PHYSICALLY_DONE, (대기 DONE E0, S04 DONE E2) |
 
 ### E4. 시험 쪽에 더한 것

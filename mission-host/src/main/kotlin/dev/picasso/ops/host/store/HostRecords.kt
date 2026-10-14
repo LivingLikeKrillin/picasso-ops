@@ -115,8 +115,25 @@ data class ResidualHoldRow(
 data class ResidualHoldClearingRow(val markerId: Long, val approverId: String, val approverKind: String, val reason: String, val clearedAt: Instant)
 
 /**
+ * 판단 기록 한 행(V6, picasso 한계 §15.221 · 판단 기록 영속). [record] 는 picasso `JudgmentRecordWire` 의 글자 그대로다.
+ *
+ * @param wireVersion 적을 때의 `JudgmentRecordWire.SCHEMA_VERSION`
+ * @param instanceId·executionId 적은 인스턴스와 그때의 실행 id
+ */
+data class JudgmentRecordRow(
+    val recordId: Long,
+    val jobOrderId: String,
+    val instanceId: String,
+    val executionId: String,
+    val wireVersion: String,
+    val record: String,
+    val recordedAt: Instant,
+)
+
+/**
  * 실행 호스트의 기록(S4b 스펙 §6.1). 실행 일지와 그 이벤트, 송신 기록, 인시던트 사본과 판단의 다섯 표다. 덧붙이기와 읽기만 있다.
- * P0-b2 의 V5 가 운영자 실행 취소, 잔여 파지 표시와 그 해소의 세 표를 더한다.
+ * P0-b2 의 V5 가 운영자 실행 취소, 잔여 파지 표시와 그 해소의 세 표를 더한다. HA 단계 0 의 V6 이 판단 기록(덧붙이기만)을, V7 이
+ * 인스턴스 심장박동(인스턴스마다 한 행, 그 인스턴스만 고침)을 더한다.
  *
  * pump 뒤 기록은 [inTransaction] 하나로 묶는다(§6.2). 그 밖의 호출은 문장 하나가 한 트랜잭션이다. 호스트 잠금 아래에서 부를 수
  * 있고, 연결을 쥔 채 호스트 잠금을 기다리는 길은 없다(S3b 와 같은 잠금 순서).
@@ -459,6 +476,91 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             .query { rs, _ -> clearingRow(rs) }
             .single()
 
+    // ── 판단 기록(V6)
+
+    fun judgmentRecord(jobOrderId: String, instanceId: String, executionId: String, wireVersion: String, record: String): JudgmentRecordRow =
+        jdbc.sql(
+            """
+            INSERT INTO mission.execution_judgment_record (job_order_id, instance_id, execution_id, wire_version, record)
+            VALUES (:jobOrderId, :instanceId, :executionId, :wireVersion, :record)
+            RETURNING $RECORD_COLUMNS
+            """.trimIndent(),
+        )
+            .param("jobOrderId", jobOrderId)
+            .param("instanceId", instanceId)
+            .param("executionId", executionId)
+            .param("wireVersion", wireVersion)
+            .param("record", record)
+            .query { rs, _ -> recordRow(rs) }
+            .single()
+
+    /** 그 작업 지시의 가장 최근 판단 기록(인스턴스 무관). 없으면 `null` 이다. 기동 복원이 `resume` 에 넘긴다. */
+    fun latestJudgmentRecord(jobOrderId: String): JudgmentRecordRow? =
+        jdbc.sql("SELECT $RECORD_COLUMNS FROM mission.execution_judgment_record WHERE job_order_id = :jobOrderId ORDER BY record_id DESC LIMIT 1")
+            .param("jobOrderId", jobOrderId)
+            .query { rs, _ -> recordRow(rs) }
+            .optional()
+            .orElse(null)
+
+    /** 그 작업 지시의 판단 기록 전부. 적은 순서다. */
+    fun judgmentRecords(jobOrderId: String): List<JudgmentRecordRow> =
+        jdbc.sql("SELECT $RECORD_COLUMNS FROM mission.execution_judgment_record WHERE job_order_id = :jobOrderId ORDER BY record_id")
+            .param("jobOrderId", jobOrderId)
+            .query { rs, _ -> recordRow(rs) }
+            .list()
+
+    // ── 인스턴스와 심장박동(V7). 시각은 모두 DB 시각이다.
+
+    /** 이 인스턴스의 행을 넣거나(기동) 고친다(심장박동). 이미 멈춤을 적은 행은 되살리지 않는다. */
+    fun beat(instanceId: String, expiry: java.time.Duration) {
+        jdbc.sql(
+            """
+            INSERT INTO mission.host_instance (instance_id, started_at, last_seen_at, expires_at)
+            SELECT :instanceId, t.now, t.now, t.now + :ms * interval '1 millisecond' FROM (SELECT clock_timestamp() AS now) t
+            ON CONFLICT (instance_id) DO UPDATE
+                SET last_seen_at = EXCLUDED.last_seen_at, expires_at = EXCLUDED.expires_at
+                WHERE mission.host_instance.stopped_at IS NULL
+            """.trimIndent(),
+        )
+            .param("instanceId", instanceId)
+            .param("ms", expiry.toMillis())
+            .update()
+    }
+
+    /** 정상 종료. 멈춤을 적고 만료를 지금으로 당긴다. 다음 기동이 만료를 기다리지 않는다. */
+    fun stopInstance(instanceId: String) {
+        jdbc.sql(
+            """
+            UPDATE mission.host_instance SET stopped_at = clock_timestamp(), expires_at = least(expires_at, clock_timestamp())
+            WHERE instance_id = :instanceId AND stopped_at IS NULL
+            """.trimIndent(),
+        )
+            .param("instanceId", instanceId)
+            .update()
+    }
+
+    /** 그 인스턴스가 지금(DB 시각) 살아 있는가. 행이 없으면 거짓이다(이 표 이전의 인스턴스와 모르는 인스턴스). */
+    fun instanceLive(instanceId: String): Boolean =
+        jdbc.sql(
+            """
+            SELECT EXISTS (SELECT 1 FROM mission.host_instance
+                           WHERE instance_id = :instanceId AND stopped_at IS NULL AND expires_at > clock_timestamp())
+            """.trimIndent(),
+        )
+            .param("instanceId", instanceId)
+            .query(Boolean::class.java)
+            .single()
+
+    private fun recordRow(rs: ResultSet) = JudgmentRecordRow(
+        recordId = rs.getLong("record_id"),
+        jobOrderId = rs.getString("job_order_id"),
+        instanceId = rs.getString("instance_id"),
+        executionId = rs.getString("execution_id"),
+        wireVersion = rs.getString("wire_version"),
+        record = rs.getString("record"),
+        recordedAt = instant(rs, "recorded_at"),
+    )
+
     private fun cancelRow(rs: ResultSet) = CancelRow(
         cancelId = rs.getLong("cancel_id"),
         instanceId = rs.getString("instance_id"),
@@ -561,6 +663,7 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             "cancel_id, instance_id, execution_id, job_order_id, physical_state, approver_id, approver_kind, reason, recorded_at"
         const val HOLD_COLUMNS = "marker_id, robot_id, job_order_id, execution_id, instance_id, unit_id, object_ref, recorded_at"
         const val CLEARING_COLUMNS = "marker_id, approver_id, approver_kind, reason, cleared_at"
+        const val RECORD_COLUMNS = "record_id, job_order_id, instance_id, execution_id, wire_version, record, recorded_at"
         const val COPY_SELECT =
             "SELECT c.copy_id, c.instance_id, c.incident_id, c.detail, r.decision, r.decided_at, r.wall_clock_at, r.decided_by_id, r.decided_by_kind " +
                 "FROM mission.incident_copy c LEFT JOIN mission.incident_copy_resolution r " +

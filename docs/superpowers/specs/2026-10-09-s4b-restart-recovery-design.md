@@ -4,6 +4,7 @@
 - 범위: picasso-ops 의 S4b 와 그 선행 picasso PR P6(`Middleware.resume`). P6 은 picasso PR #86 으로 머지됐습니다(`74e4d3d`)
 - 요청·응답 JSON 의 정확한 모양과 스파이크가 정한 세부: S4b JSON 계약 `docs/superpowers/specs/2026-10-09-s4b-json-contract.md`(스파이크에서 정함)
 - 근거 문서: picasso 운영 관리 화면 설계 제안 `picasso/docs/superpowers/specs/2026-10-07-ops-console-lifecycle-design.md`(서브모듈) §10, S3a·S3b·S3c·S4a 스펙, picasso `docs/contract.md` §3(멱등 담보), `docs/orchestration.md` §8, picasso ADR 9·ADR 46·ADR 48, picasso-ops `8ed1b91`, picasso `195c1ee`
+- 갱신(2026-10-15, HA 단계 0): HA 단계 0 이 본문의 옛 결정(«입증하지 않는 것» 표의 «운영자 판단의 자동 재적용» 행, T8 의 «운영자 판단, 설비 대기의 기한 시작 시각, 근거 윈도우의 요청 시각은 다시 짓기 뒤 새 인스턴스의 값입니다. 판단을 자동으로 다시 넣지 않습니다», §11 의 «판단은 자동으로 다시 넣지 않습니다(T8).» 와 그 아래 기한·E0 두 항목)을 대체했습니다. 실행 호스트가 picasso 판단 기록을 `mission.execution_judgment_record` 에 영속하고 다시 지을 때 `resume` 에 넘깁니다. 그래서 운영자 판단, 운영자 보류, 앞선 단위의 판정과 근거 등급, 설비 대기의 기한 시작, 근거 윈도우의 요청 시각이 넘어오고, 넘어온 보류는 새 인스턴스의 인시던트로 다시 열립니다(picasso PR #100). 기록 없는 일지 행만 이 문서의 거동입니다. T8 의 `instanceId` 검사와 409 `INSTANCE_MISMATCH` 는 그대로입니다. 근거: 통합 시험 `RestartRecoveryTest` 단계 1·4·5, `JudgmentRecordHostTest`, 운영 보장 명세(`docs/guarantees.md`)의 판단 기록 절.
 
 ## 1. 목적과 범위
 
