@@ -37,8 +37,14 @@
 - 조작: 출발 자리에 가서 자재를 눈이나 바코드로 확인합니다. «작업 요청 상세» 의 구역 «출발 미관측» 에서 «확인한 자재»(요구 자재가 미리 채워져 있고, 다르면 실제로 본 것을 적는다)와 «확인 근거·담당자» 를 적고 «출발 자리 확인 기록» 을 누릅니다.
 - 확인할 곳: API 는 `POST /api/work-requests/{id}/source-confirmations`(본문 `requestId`·`source`·`identity`·`reason`·`expectedUpdatedAt`), 공유 자원 작업은 `POST /api/stations/runs/{id}/source-confirmations`. 이력은 구역 «출발 자리 확인 이력» 과 API `sourceConfirmations`.
 - 기대하는 결과: 같은 작업 지시가 다시 나가 `ACCEPTED` 가 됩니다. 다른 출발 자리가 남으면 다시 «출발 미관측» 입니다.
-- 다르면: 다른 자재를 적으면 출발 결품(구역 «기체별 출발 결품»)이 되고 대체 위치 선택은 상위 시스템 몫입니다. 출발 자리가 비었다고 설비가 말하면 사람의 확인이 그 관측을 뒤집지 않아 출발 결품입니다. 공유 자원 작업은 스테이션의 준비 신호가 true 이고 완료 신호가 false 여야 하며 아니면 409 입니다.
+- 다르면: 다른 자재를 적으면 출발 결품(구역 «기체별 출발 결품»)이 되고 대체 위치 선택은 상위 시스템 몫입니다. 운영 화면에는 대체 위치로 다시 내는 조작이 없습니다. 상위 시스템이 외부 주문 상태 조회(`GET /integration/v1/job-orders/{id}`)로 대체 위치를 읽고 `replacesExternalOrderId` 를 단 새 주문을 냅니다. 출발 자리가 비었다고 설비가 말하면 사람의 확인이 그 관측을 뒤집지 않아 출발 결품입니다. 공유 자원 작업은 스테이션의 준비 신호가 true 이고 완료 신호가 false 여야 하며 아니면 409 입니다.
 - 근거 시험: 통합 시험 `SourceObservationTest` 의 `출발 미관측은 확인 대기로 보류되고 사람의 출발 자리 확인을 기록하면 같은 작업 지시가 관문을 지나 실행이 선다`, `WorkRequestsTest` 의 `출발 자리 확인은 사람과 시각과 신원을 덧붙이기로 남기고 같은 작업 지시를 확인과 함께 다시 제출한다`, `출발 미관측이 아닌 자리와 낡은 조회와 운영자가 아닌 행위자의 확인은 기록하지 않고 다시 제출하지 않는다`, `확인 뒤 배정 가능한 기체가 없으면 전송 전 미배정이 되어 확인 대기로 남지 않고 재평가가 확인을 싣는다`, `확인 뒤 다른 출발 자리가 남으면 다시 확인 대기이고 다음 제출은 쌓인 확인을 자리마다 하나씩 싣는다`, 실행 호스트 시험 `SourceObservationHostTest` 의 `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`.
+
+### 상위 시스템이 대신 보낸 작업 요청 읽기
+- 조작: «작업 요청 상세» 의 구역 «상위 시스템이 대신 보낸 작업 요청»(앞선 작업 요청 쪽) 또는 «상위 시스템이 대신한 앞선 작업 요청»(새 작업 요청 쪽)에서 «${외부 주문} · ${상태} · 연결 ${시각}» 을 읽고 «${외부 주문} 작업 요청 열기» 로 상대 작업 요청으로 옮깁니다.
+- 확인할 곳: API `GET /api/work-requests/{id}` 의 `replaces`·`supersededBy`, 상위 시스템은 `GET /integration/v1/job-orders/{id}` 의 같은 칸.
+- 기대하는 결과: 앞선 작업 요청은 상태가 그대로(거부·미배정)이고 안내 «이 작업 요청은 다시 제출하지 않습니다. 상태와 기록은 그대로입니다.» 가 보입니다. 미배정 재평가 구역과 출발 미관측 확인 양식이 없습니다(출발 자리 확인 이력은 있으면 보입니다). API 로 재평가·확인을 보내면 409 `ORIGINAL_REPLACED` 입니다.
+- 근거 시험: 화면 시험 `WorkRequests.test.tsx` 의 `상위 시스템이 대신 보낸 작업 요청은 앞선 작업 요청에서 연결로 보이고 재평가를 내지 않으며 그 작업 요청으로 옮겨 가 앞선 작업 요청을 보인다`, `출발 미관측이 남은 앞선 작업 요청도 상위 시스템이 대신 보냈으면 출발 자리 확인을 받지 않는다`, `WorkRequestsTest` 의 `상위 시스템이 대체한 앞선 작업 요청은 미배정 재평가와 출발 자리 확인으로 다시 제출하지 않는다`, 통합 시험 `UpstreamReplacementTest` 의 `상위 시스템은 출발 결품의 대체 위치를 상태 조회로 읽고 앞선 외부 주문을 이은 새 외부 주문으로 고쳐 보내 실행이 서고 연결이 양쪽에 보인다`.
 
 ### C1-3 새 배포 v2 = Y 적용
 - 조작: 엔지니어 모드에서 «배포할 임무 버전» 으로 Y 를 고르고 «배포 판단 사유» 를 적어 «새 실행 배포 적용» 을 누릅니다.
@@ -159,7 +165,7 @@
 ### D1 에서 확인하는 기록
 | 기록 | 화면 | API | 알 수 있는 것 |
 |---|---|---|---|
-| 작업 요청 상태와 상세 | 작업 요청 → «작업 요청 상세», 구역 «거부 사유», 구역 «기체별 출발 결품», 구역 «출발 미관측», 구역 «출발 자리 확인 이력» | `GET /api/work-requests/{id}` | `receipt.state`·`detail`, `hostRead`, `journalBlocked`, `executionInstanceId`, `reviews`, `recoveries`, `resource`, `rejection`(호스트가 거부한 `REJECTED` 만, 그 밖 null), `unassigned`(호스트가 낸 `UNASSIGNED` 만, 그 밖 null), `pendingSources`, `sourceConfirmations`, `unassigned.refusals[].sourceUnobserved`, `rejection.sourceUnobserved` |
+| 작업 요청 상태와 상세 | 작업 요청 → «작업 요청 상세», 구역 «거부 사유», 구역 «기체별 출발 결품», 구역 «출발 미관측», 구역 «출발 자리 확인 이력», 구역 «상위 시스템이 대신 보낸 작업 요청», 구역 «상위 시스템이 대신한 앞선 작업 요청» | `GET /api/work-requests/{id}` | `receipt.state`·`detail`, `hostRead`, `journalBlocked`, `executionInstanceId`, `reviews`, `recoveries`, `resource`, `rejection`(호스트가 거부한 `REJECTED` 만, 그 밖 null), `unassigned`(호스트가 낸 `UNASSIGNED` 만, 그 밖 null), `pendingSources`, `sourceConfirmations`, `unassigned.refusals[].sourceUnobserved`, `rejection.sourceUnobserved`, `replaces`, `supersededBy` |
 | 실행 목록과 복원 보고 | 운영 → «실행» | `GET /api/executions` | 지금 인스턴스, 다시 지은 실행과 이전 인스턴스, `journalBlockedExecutionIds`, `restore`, `executions[].cancel`(이 인스턴스에서 건 운영자 취소: 승인자, 사유, 건 때 물리 상태, 기록 시각, 없으면 null). 화면은 물리 상태 칸 뒤 «(취소 요청: <승인자>, <사유>)». |
 | 잔여 파지 표시 | 운영 → «배정 가능» 아래 «잔여 파지 확인» | `GET /api/robots/residual-holds` | 미해소 표시(`markerId`, `robotId`, `jobOrderId`, `executionId`, `instanceId`, `unitId`, `objectRef`, `recordedAt`). 해소한 표시는 목록에서 빠지고 해소 기록(승인자·사유·시각)은 호스트 표 `mission.robot_residual_hold_clearing` 과 조작 기록 `CONFIRM_ROBOT_EMPTY` 행에 있음. |
 | 작업 응답 송신 기록 | 운영 → «작업 응답 송신 기록» | `GET /api/job-responses?jobOrderId=` | `SENT` 와 `RESTART_DUPLICATE` 처분 |

@@ -42,6 +42,11 @@ data class SourceConfirmationRequest(val requestId:UUID, val source:String, val 
  * and sourceMissing have the [WorkRequestRejection] shape and are null unless that robot's source was missing; null and an empty list stay apart.
  */
 data class WorkRequestUnassignment(val refusals:List<dev.picasso.ops.service.host.HostRefusal>)
+/**
+ * The other side of an upstream supersession, as read now: the upstream sent a new work request in place of an earlier one of its own
+ * that ended without executing. [externalOrderId] is the upstream's own identifier; [state] is that work request's current state.
+ */
+data class WorkRequestLink(val receiptId:UUID, val externalOrderId:String, val state:String, val linkedAt:String)
 /** Detail text for a host rejection: the host's own reason, so the stale pre-dispatch line never stands in for it. */
 fun rejectedDetail(outcome:dev.picasso.ops.service.host.HostSubmitOutcome?):String =
  "호스트 제출 거부: ${outcome?.rejectionReason?.takeIf{it.isNotBlank()} ?: "사유 없음"}".take(2000)
@@ -65,12 +70,19 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  fun receive(source: String, payload: JsonNode): ReceiptAccepted {
   val external = payload["externalOrderId"]?.takeIf { it.isTextual }?.asText()
    ?.takeIf { it.isNotBlank() && it.length <= 160 } ?: throw RequestRejected("BAD_ORDER_ID", "externalOrderId는 1~160자 문자열입니다")
-  if (!payload.isObject || payload.fieldNames().asSequence().toSet() != setOf("externalOrderId","interfaceId","interfaceVersion","input") ||
+  val envelope=setOf("externalOrderId","interfaceId","interfaceVersion","input")
+  val fields=if(payload.isObject) payload.fieldNames().asSequence().toSet() else emptySet()
+  if (!payload.isObject || (fields != envelope && fields != envelope+REPLACES) ||
       payload["interfaceId"]?.isTextual != true || payload["interfaceId"].asText().length !in 1..64 ||
       payload["interfaceVersion"]?.isIntegralNumber != true || !payload["interfaceVersion"].canConvertToInt() || payload["interfaceVersion"].asInt() < 1 ||
       payload["input"]?.isObject != true) throw RequestRejected("BAD_ENVELOPE", "계약 식별자·양의 정수 버전·input 객체가 필요합니다")
+  // The upstream names its own earlier order this one replaces. Same source only: the caller's identity scopes the lookup.
+  val replaces=payload[REPLACES]?.let { node ->
+   node.takeIf{it.isTextual}?.asText()?.takeIf{it.isNotBlank() && it.length<=160 && it!=external}
+    ?: throw RequestRejected("BAD_REPLACES","$REPLACES 는 이 요청과 다른 1~160자 외부 주문 ID입니다")
+  }
   val interfaceId=payload["interfaceId"].asText(); val version=payload["interfaceVersion"].asInt()
-  return receivePrepared(source,external,payload,Actor(Mode.OPERATOR,source),"$interfaceId/v$version",payload["input"]) {
+  return receivePrepared(source,external,payload,Actor(Mode.OPERATOR,source),"$interfaceId/v$version",payload["input"],replaces=replaces) {
    interfaces.draft(interfaceId,version,payload["input"],true)
   }
  }
@@ -108,16 +120,17 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   }
  }
  private fun receivePrepared(source:String, external:String, payload:JsonNode, actor:Actor,
-  interfaceRef:String?, interfaceInput:JsonNode?, stationRunId:UUID?=null, draftSupplier:()->dev.picasso.ops.service.joborders.JobOrderDraft):ReceiptAccepted {
+  interfaceRef:String?, interfaceInput:JsonNode?, stationRunId:UUID?=null, replaces:String?=null, draftSupplier:()->dev.picasso.ops.service.joborders.JobOrderDraft):ReceiptAccepted {
   check(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
    "작업 요청은 호스트 호출 전에 독립 커밋되어야 합니다"
   }
   val hash = MessageDigest.getInstance("SHA-256").digest(canonical(payload).toString().toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
   val id = UUID.randomUUID()
   val jobId = "JO-$id"
-  val inserted = jdbc.sql("""INSERT INTO ops.work_request(receipt_id,source_system_id,external_order_id,payload_hash,payload,job_order_id,state)
+  val insert = { jdbc.sql("""INSERT INTO ops.work_request(receipt_id,source_system_id,external_order_id,payload_hash,payload,job_order_id,state)
    VALUES(:id,:source,:external,:hash,CAST(:payload AS JSONB),:job,'RECEIVED') ON CONFLICT(source_system_id,external_order_id) DO NOTHING""")
-   .param("id",id).param("source",source).param("external",external).param("hash",hash).param("payload",payload.toString()).param("job",jobId).update()
+   .param("id",id).param("source",source).param("external",external).param("hash",hash).param("payload",payload.toString()).param("job",jobId).update() }
+  val inserted = if(replaces==null) insert() else supersede(source,external,replaces,id,insert)
   if (inserted == 0) {
    val old = jdbc.sql("SELECT receipt_id,payload_hash FROM ops.work_request WHERE source_system_id=:source AND external_order_id=:external")
     .param("source",source).param("external",external).query { rs, _ -> rs.getObject(1,UUID::class.java) to rs.getString(2) }.single()
@@ -145,6 +158,45 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   if(!queued && jdbc.sql("UPDATE ops.work_request SET state='DISPATCHING',detail='공통 작업 요청 검증 완료',updated_at=clock_timestamp() WHERE receipt_id=:id AND state='RECEIVED'").param("id",id).update()==1)
    dispatch(id,actor,draft,interfaceRef,interfaceInput,jobId)
   return ReceiptAccepted(get(id),false)
+ }
+ /**
+  * Commits the new receipt and its supersession of the upstream's earlier order [replaces] together, under that order's row lock.
+  * The earlier order must be the same source's, closed without executing: REJECTED or UNASSIGNED, no execution observed, no result
+  * version, and no station run still open. Each side is linked at most once. A replay of the same new order returns 0 and is answered
+  * by the caller's duplicate check, never judged again. A refusal records nothing, so the upstream can resend with the same id.
+  * The earlier order's state, detail and submission are never written here.
+  */
+ private fun supersede(source:String,external:String,replaces:String,id:UUID,insert:()->Int):Int = transactions.execute {
+  val original=jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE source_system_id=:source AND external_order_id=:replaces FOR UPDATE")
+   .param("source",source).param("replaces",replaces).query(UUID::class.java).optional().orElse(null)
+  if(jdbc.sql("SELECT count(*) FROM ops.work_request WHERE source_system_id=:source AND external_order_id=:external")
+   .param("source",source).param("external",external).query(Long::class.java).single()>0) return@execute 0
+  original ?: throw RequestRejected("ORIGINAL_NOT_FOUND","대체할 앞선 작업 요청을 이 출처에서 찾을 수 없습니다",409)
+  val receipt=get(original)
+  val ran=receipt.lastExecution!=null || jdbc.sql("SELECT count(*) FROM ops.work_result WHERE receipt_id=:id").param("id",original).query(Long::class.java).single()>0
+  val station=jdbc.sql("SELECT count(*) FROM ops.station_run WHERE receipt_id=:id AND state NOT IN ('COMPLETED','TIMED_OUT','REJECTED','MANUALLY_CLEARED','CANCELLED')")
+   .param("id",original).query(Long::class.java).single()>0
+  if(receipt.state !in setOf("REJECTED","UNASSIGNED") || ran || station)
+   throw RequestRejected("ORIGINAL_NOT_REPLACEABLE","실행 없이 끝난(거부·미배정) 앞선 작업 요청만 대체할 수 있습니다",409)
+  if(link(original,"original_receipt_id","replacement_receipt_id")!=null)
+   throw RequestRejected("ORIGINAL_ALREADY_REPLACED","앞선 작업 요청은 이미 다른 작업 요청으로 대체되었습니다",409)
+  val inserted=insert()
+  if(inserted==1) jdbc.sql("""INSERT INTO ops.work_request_supersession(original_receipt_id,replacement_receipt_id,source_system_id,original_state)
+   VALUES(:original,:id,:source,:state)""").param("original",original).param("id",id).param("source",source).param("state",receipt.state).update()
+  inserted
+ }!!
+ /** The other side of this receipt's supersession: [self] names this receipt's column, [other] the column read back. */
+ private fun link(id:UUID,self:String,other:String):WorkRequestLink? =
+  jdbc.sql("""SELECT r.receipt_id,r.external_order_id,r.state,s.created_at FROM ops.work_request_supersession s
+   JOIN ops.work_request r ON r.receipt_id=s.$other WHERE s.$self=:id""").param("id",id)
+   .query{rs,_ -> WorkRequestLink(rs.getObject(1,UUID::class.java),rs.getString(2),rs.getString(3),rs.getString(4))}.optional().orElse(null)
+ /** The upstream's later work request that replaces this one, or null. */
+ fun supersededBy(id:UUID):WorkRequestLink? = link(id,"original_receipt_id","replacement_receipt_id")
+ /** The upstream's earlier work request this one replaces, or null. */
+ fun replaces(id:UUID):WorkRequestLink? = link(id,"replacement_receipt_id","original_receipt_id")
+ /** A superseded work request is never submitted again by ops: the upstream already chose what replaces it. */
+ private fun refuseIfSuperseded(id:UUID) {
+  if(supersededBy(id)!=null) throw RequestRejected("ORIGINAL_REPLACED","상위 시스템이 새 작업 요청으로 대체했습니다. 이 작업 요청은 다시 제출하지 않습니다",409)
  }
  /** Close receipts a stopped process left behind. WAITING_RESOURCE belongs to station coordination. */
  fun sweepStale(olderThan:java.time.Duration):Int {
@@ -219,6 +271,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
     if(old!=listOf(id.toString(),actor.header(),reason,expected)) throw RequestRejected("RECOVERY_CONFLICT","재평가 요청 ID가 다른 판단에 사용되었습니다",409)
     return@execute false
    }
+   refuseIfSuperseded(id)
    val receipt=get(id)
    if(receipt.requiredStationId!=null) {
     if(stationRunId==null)throw RequestRejected("RESOURCE_MANAGED","자원 관리 작업은 공유 자원 화면에서 관측·복구합니다",409)
@@ -291,6 +344,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
      throw RequestRejected("SOURCE_CONFIRMATION_CONFLICT","확인 요청 ID가 다른 확인에 사용되었습니다",409)
     return@execute false
    }
+   refuseIfSuperseded(id)
    val receipt=get(id)
    if(receipt.requiredStationId!=null) {
     if(stationRunId==null)throw RequestRejected("RESOURCE_MANAGED","자원 관리 작업은 공유 자원 작업으로 출발 자리 확인을 기록합니다",409)
@@ -490,6 +544,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
     .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"actor" to rs.getString(2),"observation" to rs.getString(3),"reason" to rs.getString(4),"createdAt" to rs.getString(5),"context" to json.readTree(rs.getString(6)))}.list(),
    "recoveries" to jdbc.sql("SELECT attempt_id,actor,reason,created_at FROM ops.work_request_recovery WHERE receipt_id=:id ORDER BY created_at")
     .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"actor" to rs.getString(2),"reason" to rs.getString(3),"createdAt" to rs.getString(4))}.list(),
+   "replaces" to replaces(id),"supersededBy" to supersededBy(id),
    "pendingSources" to pendingSources(receipt),
    "sourceConfirmations" to jdbc.sql("SELECT request_id,source,identity,actor,reason,created_at,context FROM ops.work_request_source_confirmation WHERE receipt_id=:id ORDER BY created_at,request_id")
     .param("id",id).query {rs,_ -> mapOf("requestId" to rs.getString(1),"source" to rs.getString(2),"identity" to rs.getString(3),"actor" to rs.getString(4),"reason" to rs.getString(5),"createdAt" to rs.getString(6),"context" to json.readTree(rs.getString(7)))}.list())
@@ -570,5 +625,8 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   node.isArray -> json.createArrayNode().apply { node.forEach { add(canonical(it)) } }
   else -> node
  }
- companion object { val STATES=setOf("WAITING_RESOURCE","RECEIVED","DISPATCHING","ACCEPTED","REJECTED","UNASSIGNED","IN_DOUBT") }
+ companion object {
+  /** Optional inbound field: the upstream's own earlier externalOrderId this order replaces. */
+  const val REPLACES="replacesExternalOrderId"
+  val STATES=setOf("WAITING_RESOURCE","RECEIVED","DISPATCHING","ACCEPTED","REJECTED","UNASSIGNED","IN_DOUBT") }
 }

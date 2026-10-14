@@ -19,8 +19,8 @@
 
 | 경로 | 의미 |
 |---|---|
-| POST /integration/v1/job-orders | Bearer 인증 후 접수. 최초 202, 동일 요청 재접수 200, 내용 충돌 409 |
-| GET /integration/v1/job-orders/{receiptId} | 같은 호출 주체의 접수·현재 실행·직전 관측 조회 |
+| POST /integration/v1/job-orders | Bearer 인증 후 접수. 최초 202, 동일 요청 재접수 200, 내용 충돌 409. 본문에 선택 칸 `replacesExternalOrderId` 를 실을 수 있다(같은 출처의 앞선 외부 주문을 대신하는 새 주문). 대체 관련 오류는 400 `BAD_REPLACES` 와 409 `ORIGINAL_NOT_FOUND`·`ORIGINAL_NOT_REPLACEABLE`·`ORIGINAL_ALREADY_REPLACED` 이다(자세한 것은 표 아래 문단). |
+| GET /integration/v1/job-orders/{receiptId} | 같은 호출 주체의 접수·현재 실행·직전 관측 조회. 응답에 호스트 거부 사유 `rejection`, 호스트 미배정의 기체별 사유 `unassigned`, 대체 연결 `replaces`·`supersededBy` 도 싣는다(자세한 것은 아래 문단). |
 | GET /api/work-requests?search=&state=&offset=0&limit=20 | 로컬 Ops 조회. 검색은 출처·외부 주문·내부 ID의 문자열 포함 검색. limit 1~100 |
 | GET /api/work-requests/{receiptId} | 로컬 Ops 접수 상세 |
 
@@ -33,9 +33,25 @@
 }
 ```
 
+대체 주문의 예다. 이 계약에서 입력의 출발 자리는 `presentation` 이며, 앞선 주문 `MES-SUPPLY-1` 은 `presentation` 이 빈 출발 자리 `RACK-204.S04` 여서 출발 결품이 되었고, 상태 조회의 대체 위치로 `SEQ-IN-02.BIN-A` 가 왔다. 상위 시스템이 대체 위치를 골라 입력의 출발 자리를 고친 새 주문을 `replacesExternalOrderId` 와 함께 내며, 운영 서비스는 앞선 주문을 고치지 않는다.
+
+```json
+{
+  "externalOrderId": "MES-SUPPLY-2",
+  "replacesExternalOrderId": "MES-SUPPLY-1",
+  "interfaceId": "sequenced-supply",
+  "interfaceVersion": 1,
+  "input": { "slots": ["RACK-204.S01"], "material": "ENGINE-COVER-A", "presentation": "SEQ-IN-02.BIN-A" }
+}
+```
+
 POST 성공 본문은 `{ receipt, duplicate }`이며 Location은 외부 조회 주소다. **202는 접수 저장을 의미하며 배정·물리 완료를 뜻하지 않는다.** 정상 형식의 업무 요청은 검증 거절이어도 REJECTED 접수로 남는다. 형식 자체가 잘못된 요청은 400이며 접수하지 않는다. 본문은 64KiB 이하 JSON 객체다.
 
+선택 칸 `replacesExternalOrderId`는 같은 출처의 앞선 `externalOrderId`이고 1~160자 문자열이며 자기 자신(이 요청의 `externalOrderId`)일 수 없다. 본문 칸 집합은 기존 넷이거나 그 넷에 이 칸을 더한 것이다. 그 밖의 칸 집합은 그대로 400 `BAD_ENVELOPE`이다. 문자열이 아니거나 빈 값이거나 161자 이상이거나 자기 자신이면 400 `BAD_REPLACES`다. 이 출처에 그 주문이 없으면 409 `ORIGINAL_NOT_FOUND`이며 다른 출처의 주문도 같은 답이다. 앞선 작업 요청이 `REJECTED`·`UNASSIGNED`가 아니거나, 실행 관측(`lastExecution`)이나 결과 버전이 있거나, 스테이션 작업이 아직 끝나지 않았다면(`COMPLETED`·`TIMED_OUT`·`REJECTED`·`MANUALLY_CLEARED`·`CANCELLED` 밖) 409 `ORIGINAL_NOT_REPLACEABLE`이다. 이미 다른 작업 요청이 그 주문을 대체했으면 409 `ORIGINAL_ALREADY_REPLACED`다. 이 거부들은 작업 요청을 남기지 않는다. 그래서 같은 새 `externalOrderId`로 고쳐 다시 보낼 수 있다. 같은 새 주문의 재전송은 연결 판정 없이 200 중복이다. 연결 칸은 본문 해시에 들어가므로 같은 ID에 연결 칸만 빼거나 바꾸면 409 `ORDER_CONFLICT`다.
+
 접수 상태와 물리 상태를 분리한다. ACCEPTED 접수는 호스트 수락을 뜻한다. 물리 완료는 상세 execution.physicalState와 완료 근거를 별도로 해석한다. hostRead가 UNAVAILABLE면 현재 상태를 모른다. 연결 실패뿐 아니라 instanceId·executions 형식이 잘못된 응답도 모름으로 처리한다. receipt.lastExecution은 저장된 이전 관측이며 현재 상태로 대체하지 않는다.
+
+외부 조회 `GET /integration/v1/job-orders/{receiptId}`의 본문은 운영 화면 상세(`GET /api/work-requests/{receiptId}`)와 같은 맵이다. `rejection{reason, remedy, remedyWithheld, alternativeLocations, sourceMissing, sourceUnobserved}`는 호스트가 거부한 `REJECTED`에만 있고 그 밖에는 null이다. `unassigned{refusals[{robotId, reason, alternativeLocations, sourceMissing, sourceUnobserved}]}`는 호스트가 낸 `UNASSIGNED`에만 있고 그 밖에는 null이다. `alternativeLocations`의 `[]`(그 자재를 든 다른 자리 없음)와 null(셀 무응답 또는 출발 결품 아님)은 JSON에서도 접히지 않는다(널 칸을 빼지 않는다). 칸 `replaces`, `supersededBy`는 늘 있다. 각각 `{receiptId, externalOrderId, state, linkedAt}`이거나 null이다. `state`는 읽는 때의 상대 작업 요청 상태다. `replaces`는 이 작업 요청이 대신한 앞선 작업 요청, `supersededBy`는 이 작업 요청을 대신한 새 작업 요청이다.
 
 ## 설정과 권한
 

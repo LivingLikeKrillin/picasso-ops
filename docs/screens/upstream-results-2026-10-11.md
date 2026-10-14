@@ -20,7 +20,7 @@ Ops가 접수 상세 또는 최신 결과를 조회할 때, 호스트의 jobResp
 
 | 경로 | 의미 |
 |---|---|
-| GET /integration/v1/job-orders/{receiptId}/results/latest | 현재 호스트를 관측한 뒤 저장된 최신 결과 반환. 호스트 단절 시 기존 저장 결과 유지 |
+| GET /integration/v1/job-orders/{receiptId}/results/latest | 현재 호스트를 관측한 뒤 저장된 최신 결과 반환. 호스트 단절 시 기존 저장 결과 유지. 실행하지 않은 작업 요청(`REJECTED`·`UNASSIGNED`)에는 결과 버전이 없어 404 `RESULT_NOT_READY` 이고 콜백(`WorkResultDelivery`)도 없다. 출발 결품의 대체 위치는 상태 조회 `GET /integration/v1/job-orders/{receiptId}` 에서만 읽는다. |
 | GET /integration/v1/job-orders/{receiptId}/results/{version} | 해당 저장 버전만 조회. 호스트 호출 없음 |
 | POST /integration/v1/job-orders/{receiptId}/results/{version}/ack | 정확한 버전·해시의 수신 확인. 같은 ACK는 같은 최초 시각을 반환 |
 

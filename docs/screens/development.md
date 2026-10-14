@@ -184,7 +184,7 @@ PR #23은 층 이름 통일입니다.
 | SourceConfirmation, SourceConfirmationHistory | 출발 미관측 확인 대기 구역과 운영자의 출발 자리 확인 기록, 출발 자리 확인 이력 | 작업 요청 |
 | StationWorkspace | 공유 스테이션 점유·작업 요청·작업 근거 | 공유 자원 |
 | StoredResultSummary | 저장 결과의 완료 근거 | 작업 요청, 검증 도구 |
-| WorkRequests | 통합 작업 요청 목록과 상세 | 작업 요청, 운영 |
+| WorkRequests, UpstreamLink | 통합 작업 요청 목록과 상세, 상위 시스템 대체 연결 구역 둘(`UpstreamLink` 는 `WorkRequests.tsx` 안에 있고 새 파일은 없음) | 작업 요청, 운영 |
 
 PR #18에서 새로 생긴 컴포넌트는 다음 14개입니다.
 - OverviewArea

@@ -1051,4 +1051,178 @@ class WorkRequestsTest {
   } finally {server.stop(0)}
   assertNull(service.result(row.receiptId,"mes",1)["acknowledgedAt"]);assertNull(service.result(row.receiptId,"mes",2)["acknowledgedAt"])
  }
+ // 상위 시스템(Mock MES)이 보는 것: 외부 주문 API 의 본문을 스프링 기본 설정처럼 JSON 으로 옮긴다(널 칸을 빼지 않는다).
+ private val upstream get()=WorkRequestController(service,"secret","mes")
+ private val wire=com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+ private fun order(external:String,replaces:Any?=null,location:String="bay-7"):com.fasterxml.jackson.databind.node.ObjectNode =
+  (json.readTree("""{"externalOrderId":"$external","interfaceId":"asset-check","interfaceVersion":1,"input":{"assets":[{"id":"T1","location":"$location"}]}}""") as com.fasterxml.jackson.databind.node.ObjectNode)
+   .also{if(replaces!=null)it.set<com.fasterxml.jackson.databind.JsonNode>(WorkRequests.REPLACES,json.valueToTree(replaces))}
+ private fun post(order:com.fasterxml.jackson.databind.JsonNode):Pair<Int,com.fasterxml.jackson.databind.JsonNode> =
+  upstream.receive("Bearer secret",order.toString().toByteArray()).let{it.statusCode.value() to wire.valueToTree(it.body)}
+ private fun posted(order:com.fasterxml.jackson.databind.JsonNode,state:String):UUID {
+  val (code,body)=post(order);assertEquals(202,code,body.toString());assertEquals(state,body["receipt"]["state"].asText(),body.toString())
+  return UUID.fromString(body["receipt"]["receiptId"].asText())
+ }
+ private fun status(id:UUID):com.fasterxml.jackson.databind.JsonNode =
+  upstream.external("Bearer secret",id).let{assertEquals(200,it.statusCode.value());wire.valueToTree(it.body)}
+ private fun refused(order:com.fasterxml.jackson.databind.JsonNode):Pair<Int,String> = post(order).let{(code,body)->code to body["error"].asText()}
+ private fun shortage(robot:String,alternatives:String,source:String=sourceA)=
+  """{"robotId":"$robot","reason":"출발 자리 $source 에 ENGINE-COVER-A 이 없다 — 비었다","alternativeLocations":$alternatives,"sourceMissing":{"material":"ENGINE-COVER-A","source":"$source","observed":null}}"""
+ private fun rejectedShortage(alternatives:String)=rejectedBy("출발 자리 $sourceA 에 ENGINE-COVER-A 이 없다",
+  ""","remedy":null,"remedyWithheld":false,"alternativeLocations":$alternatives,"sourceMissing":{"material":"ENGINE-COVER-A","source":"$sourceA","observed":null}""")
+ private fun rows(external:String)=jdbc.sql("SELECT count(*) FROM ops.work_request WHERE external_order_id=:e").param("e",external).query(Long::class.java).single()
+ private fun links()=jdbc.sql("SELECT count(*) FROM ops.work_request_supersession").query(Long::class.java).single()
+
+ @Test fun `상위 시스템의 상태 조회는 출발 결품 거부의 대체 위치를 맨 위에 미배정은 기체마다 싣고 널과 빈 목록을 접지 않는다`() {
+  fun rejection(external:String,alternatives:String):com.fasterxml.jackson.databind.JsonNode {
+   bench.answer=HostWrite.Answered(200,rejectedShortage(alternatives))
+   val seen=status(posted(order(external),"REJECTED"))
+   assertTrue(seen.has("unassigned") && seen["unassigned"].isNull,seen.toString())
+   return seen["rejection"]
+  }
+  val listed=rejection("ORDER-S1","[\"SEQ-IN-03.BIN-B\"]")
+  assertEquals(listOf("SEQ-IN-03.BIN-B"),listed["alternativeLocations"].map{it.asText()},listed.toString())
+  assertEquals(listOf(sourceA,"ENGINE-COVER-A"),listOf(listed["sourceMissing"]["source"].asText(),listed["sourceMissing"]["material"].asText()))
+  assertTrue(listed["sourceMissing"].has("observed") && listed["sourceMissing"]["observed"].isNull,listed.toString())
+  // 빈 목록: 그 자재를 든 다른 자리가 없다. 널: 셀이 답하지 않았다. 상위 시스템에도 둘이 따로 간다.
+  val none=rejection("ORDER-S2","[]")
+  assertTrue(none["alternativeLocations"].let{it.isArray && it.isEmpty},none.toString())
+  val silent=rejection("ORDER-S3","null")
+  assertTrue(silent.has("alternativeLocations") && silent["alternativeLocations"].isNull,silent.toString());assertTrue(silent["sourceMissing"].isObject,silent.toString())
+  // 미배정은 기체마다 싣고 맨 위 거부 칸은 비었다.
+  bench.answer=HostWrite.Answered(200,unassignedBy(shortage("humanoid-01","[\"SEQ-IN-03.BIN-B\"]"),shortage("humanoid-02","[]"),shortage("humanoid-03","null"),
+   """{"robotId":"humanoid-04","reason":"자재 선언과 배정이 어긋난다"}"""))
+  val id=posted(order("ORDER-S4"),"UNASSIGNED");val seen=status(id)
+  assertTrue(seen.has("rejection") && seen["rejection"].isNull,seen.toString())
+  val refusals=seen["unassigned"]["refusals"]
+  assertEquals(listOf("humanoid-01","humanoid-02","humanoid-03","humanoid-04"),refusals.map{it["robotId"].asText()})
+  assertEquals(listOf("SEQ-IN-03.BIN-B"),refusals[0]["alternativeLocations"].map{it.asText()});assertEquals(sourceA,refusals[0]["sourceMissing"]["source"].asText())
+  assertTrue(refusals[1]["alternativeLocations"].let{it.isArray && it.isEmpty},refusals.toString())
+  assertTrue(refusals[2].has("alternativeLocations") && refusals[2]["alternativeLocations"].isNull && refusals[2]["sourceMissing"].isObject,refusals.toString())
+  assertTrue(refusals[3]["alternativeLocations"].isNull && refusals[3]["sourceMissing"].isNull,refusals.toString())
+  // 연결 칸은 늘 있고 대체가 없으면 널이다.
+  assertTrue(seen.has("replaces") && seen["replaces"].isNull && seen.has("supersededBy") && seen["supersededBy"].isNull,seen.toString())
+  // 실행하지 않은 작업 요청에는 결과 버전이 없다. 결과 API 는 404 이고 대체 위치는 상태 조회에서 읽는다.
+  val latest=upstream.latestResult("Bearer secret",id)
+  assertEquals(404,latest.statusCode.value());assertEquals("RESULT_NOT_READY",(latest.body as dev.picasso.ops.service.web.PreRejection).error)
+ }
+ @Test fun `상위 시스템이 앞선 작업 요청 대신 보낸 새 작업 요청은 받아 양쪽에 연결을 보이고 앞선 작업 요청의 상태와 기록은 그대로다`() {
+  bench.answer=HostWrite.Answered(200,unassignedBy(shortage("humanoid-01","[\"SEQ-IN-03.BIN-B\"]")))
+  val a=posted(order("ORDER-A"),"UNASSIGNED")
+  fun stored()=jdbc.sql("SELECT state,detail,submission::text,updated_at::text,payload::text,normalized_order::text FROM ops.work_request WHERE receipt_id=:id")
+   .param("id",a).query{rs,_->(1..6).map{rs.getString(it)}}.single()
+  val before=stored()
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val b=posted(order("ORDER-B","ORDER-A","SEQ-IN-03.BIN-B"),"ACCEPTED")
+  assertEquals(2,bench.submitted.size);assertEquals(service.get(b).jobOrderId,bench.submitted[1].first["jobOrderId"].asText())
+  val original=status(a);val replacement=status(b)
+  assertEquals(listOf(b.toString(),"ORDER-B","ACCEPTED"),listOf("receiptId","externalOrderId","state").map{original["supersededBy"][it].asText()},original.toString())
+  assertTrue(original["replaces"].isNull,original.toString())
+  assertEquals(listOf(a.toString(),"ORDER-A","UNASSIGNED"),listOf("receiptId","externalOrderId","state").map{replacement["replaces"][it].asText()},replacement.toString())
+  assertTrue(replacement["supersededBy"].isNull,replacement.toString())
+  assertEquals(original["supersededBy"]["linkedAt"],replacement["replaces"]["linkedAt"])
+  // 앞선 작업 요청은 고치지 않는다: 상태, 문장, 제출 기록(대체 위치 포함), 입력이 그대로다.
+  assertEquals(before,stored())
+  assertEquals(listOf("SEQ-IN-03.BIN-B"),original["unassigned"]["refusals"][0]["alternativeLocations"].map{it.asText()})
+  // 운영 화면 상세도 같은 칸이다.
+  assertEquals(b,(service.detail(a)["supersededBy"] as WorkRequestLink).receiptId);assertEquals(a,(service.detail(b)["replaces"] as WorkRequestLink).receiptId)
+  // 같은 새 작업 요청을 다시 보내면 기존 것을 돌려주고 다시 내지 않으며, 연결을 뺀 같은 ID 는 다른 본문이다.
+  val (again,replay)=post(order("ORDER-B","ORDER-A","SEQ-IN-03.BIN-B"))
+  assertEquals(200,again);assertTrue(replay["duplicate"].asBoolean());assertEquals(b.toString(),replay["receipt"]["receiptId"].asText())
+  assertEquals(409 to "ORDER_CONFLICT",refused(order("ORDER-B",location="SEQ-IN-03.BIN-B")))
+  assertEquals(2,bench.submitted.size);assertEquals(1L,links())
+  // 덧붙이기만 한다.
+  assertFails{jdbc.sql("UPDATE ops.work_request_supersession SET original_state='REJECTED'").update()}
+  assertFails{jdbc.sql("DELETE FROM ops.work_request_supersession").update()}
+ }
+ @Test fun `잘못되거나 없거나 다른 출처이거나 실행 없이 끝나지 않은 앞선 작업 요청을 잇는 새 작업 요청은 접수하지 않고 오류 코드로 거절한다`() {
+  val quiet=bench.executions
+  bench.answer=HostWrite.Answered(200,rejectedShortage("[\"SEQ-IN-03.BIN-B\"]"))
+  posted(order("ORDER-A"),"REJECTED")
+  // 형식: 자기 자신, 빈 값, 161자, 문자열이 아닌 값. 모르는 칸은 그대로 봉투 오류다.
+  assertEquals(400 to "BAD_REPLACES",refused(order("ORDER-X","ORDER-X")))
+  assertEquals(400 to "BAD_REPLACES",refused(order("ORDER-X"," ")))
+  assertEquals(400 to "BAD_REPLACES",refused(order("ORDER-X","R".repeat(161))))
+  assertEquals(400 to "BAD_REPLACES",refused(order("ORDER-X",5)))
+  assertEquals(400 to "BAD_ENVELOPE",refused(order("ORDER-X").put("replaces","ORDER-A")))
+  // 없는 주문과 다른 출처의 주문은 같은 답이다. 다른 출처가 그 ID 를 가졌는지 드러내지 않는다.
+  assertEquals(409 to "ORIGINAL_NOT_FOUND",refused(order("ORDER-X","NOPE")))
+  assertEquals("REJECTED",service.receive("other-mes",order("ORDER-OTHER")).receipt.state)
+  assertEquals(409 to "ORIGINAL_NOT_FOUND",refused(order("ORDER-X","ORDER-OTHER")))
+  // 실행 없이 끝나지 않은 앞선 작업 요청: 수락, 결과 불명, 실행이 관측된 미배정, 결과 버전이 있는 거부.
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID));posted(order("ORDER-ACC"),"ACCEPTED")
+  assertEquals(409 to "ORIGINAL_NOT_REPLACEABLE",refused(order("ORDER-X","ORDER-ACC")))
+  bench.answer=HostWrite.NoResponse("timeout");bench.executions=HostCall.Silent("offline");posted(order("ORDER-DOUBT"),"IN_DOUBT");bench.executions=quiet
+  assertEquals(409 to "ORIGINAL_NOT_REPLACEABLE",refused(order("ORDER-X","ORDER-DOUBT")))
+  bench.answer=HostWrite.Answered(200,unassignedBy(shortage("humanoid-01","[]")));val ran=posted(order("ORDER-RAN"),"UNASSIGNED")
+  jdbc.sql("""UPDATE ops.work_request SET last_execution='{"executionId":"exec-1"}' WHERE receipt_id=:id""").param("id",ran).update()
+  assertEquals(409 to "ORIGINAL_NOT_REPLACEABLE",refused(order("ORDER-X","ORDER-RAN")))
+  bench.answer=HostWrite.Answered(200,rejectedShortage("[]"));val result=posted(order("ORDER-RESULT"),"REJECTED");settled(result,"PHYSICALLY_DONE")
+  assertEquals(409 to "ORIGINAL_NOT_REPLACEABLE",refused(order("ORDER-X","ORDER-RESULT")))
+  // 이미 대체된 앞선 작업 요청은 다시 대체하지 않는다.
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  posted(order("ORDER-B","ORDER-A"),"ACCEPTED")
+  assertEquals(409 to "ORIGINAL_ALREADY_REPLACED",refused(order("ORDER-C","ORDER-A")))
+  // 거절은 아무것도 남기지 않으므로 같은 새 ID 를 고쳐 다시 보낼 수 있다.
+  assertEquals(0L,rows("ORDER-X"));assertEquals(0L,rows("ORDER-C"));assertEquals(1L,links())
+  val submitted=bench.submitted.size
+  bench.answer=HostWrite.Answered(200,rejectedShortage("[]"));posted(order("ORDER-D"),"REJECTED")
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  posted(order("ORDER-X","ORDER-D"),"ACCEPTED");assertEquals(2L,links());assertEquals(submitted+2,bench.submitted.size)
+ }
+ @Test fun `상위 시스템이 대체한 앞선 작업 요청은 미배정 재평가와 출발 자리 확인으로 다시 제출하지 않는다`() {
+  val kim=Actor(Mode.OPERATOR,"kim");val judge=bench.judge
+  bench.judge={ids->HostCall.Ok(ids.map{JobOrderBench.missing(it,"inspect")})}
+  val early=posted(order("ORDER-E"),"UNASSIGNED");assertNull(service.get(early).submission)
+  bench.judge=judge
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val held=posted(order("ORDER-H"),"UNASSIGNED");assertEquals(1,service.pendingSources(service.get(held)).size)
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  posted(order("ORDER-E2","ORDER-E"),"ACCEPTED");posted(order("ORDER-H2","ORDER-H"),"ACCEPTED")
+  val submitted=bench.submitted.size
+  val recovery=json.readTree("""{"requestId":"${UUID.randomUUID()}","reason":"기체 복귀","expectedUpdatedAt":"${service.get(early).updatedAt}"}""")
+  assertEquals("ORIGINAL_REPLACED",assertFailsWith<RequestRejected>{service.recover(early,kim,recovery)}.code)
+  assertEquals("ORIGINAL_REPLACED",assertFailsWith<RequestRejected>{service.confirmSource(held,kim,confirmation(service.get(held)))}.code)
+  assertEquals(submitted,bench.submitted.size)
+  assertEquals("UNASSIGNED",service.get(early).state);assertEquals("UNASSIGNED",service.get(held).state)
+  assertEquals(0L,jdbc.sql("SELECT count(*) FROM ops.work_request_recovery").query(Long::class.java).single())
+  assertEquals(0L,jdbc.sql("SELECT count(*) FROM ops.work_request_source_confirmation").query(Long::class.java).single())
+ }
+ @Test fun `대체 위치로 다시 보낸 새 작업 요청도 제출 때 다시 관문을 지나 그 자리마저 비었으면 새 대체 위치와 함께 출발 결품을 받고 그것도 다시 대체할 수 있다`() {
+  bench.answer=HostWrite.Answered(200,unassignedBy(shortage("humanoid-01","[\"SEQ-IN-03.BIN-B\"]")))
+  val a=posted(order("ORDER-A"),"UNASSIGNED")
+  // 그사이 대체 위치가 비었다. 운영 서비스는 미리 거르지 않고 실행 호스트의 제출 관문이 다시 본다.
+  bench.answer=HostWrite.Answered(200,unassignedBy(shortage("humanoid-01","[\"SEQ-IN-04.BIN-C\"]","SEQ-IN-03.BIN-B")))
+  val b=posted(order("ORDER-B","ORDER-A","SEQ-IN-03.BIN-B"),"UNASSIGNED")
+  assertEquals(2,bench.submitted.size)
+  val second=status(b)
+  assertEquals("SEQ-IN-03.BIN-B",second["unassigned"]["refusals"][0]["sourceMissing"]["source"].asText())
+  assertEquals(listOf("SEQ-IN-04.BIN-C"),second["unassigned"]["refusals"][0]["alternativeLocations"].map{it.asText()})
+  assertEquals("ORDER-A",second["replaces"]["externalOrderId"].asText())
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val c=posted(order("ORDER-C","ORDER-B","SEQ-IN-04.BIN-C"),"ACCEPTED")
+  val middle=status(b)
+  assertEquals(listOf("ORDER-A","ORDER-C"),listOf(middle["replaces"]["externalOrderId"].asText(),middle["supersededBy"]["externalOrderId"].asText()))
+  assertEquals(c.toString(),middle["supersededBy"]["receiptId"].asText());assertEquals("ORDER-B",status(a)["supersededBy"]["externalOrderId"].asText())
+ }
+ @Test fun `같은 앞선 작업 요청을 잇는 동시 새 작업 요청은 하나만 받는다`() {
+  bench.answer=HostWrite.Answered(200,rejectedShortage("[\"SEQ-IN-03.BIN-B\"]"));posted(order("ORDER-A"),"REJECTED")
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val gate=CountDownLatch(1)
+  val answers=Executors.newFixedThreadPool(6).use { pool ->
+   val jobs=(1..6).map{n->pool.submit<Pair<Int,String>>{gate.await();post(order("ORDER-N$n","ORDER-A")).let{(code,body)->code to (body["error"]?.asText() ?: "")}}}
+   gate.countDown();jobs.map{it.get(20,TimeUnit.SECONDS)}
+  }
+  assertEquals(1,answers.count{it.first==202},answers.toString())
+  assertEquals(5,answers.count{it==(409 to "ORIGINAL_ALREADY_REPLACED")},answers.toString())
+  assertEquals(2,bench.submitted.size);assertEquals(1L,links())
+  assertEquals(1L,jdbc.sql("SELECT count(*) FROM ops.work_request WHERE external_order_id LIKE 'ORDER-N%'").query(Long::class.java).single())
+ }
+ @Test fun `공유 자원 작업이 끝나지 않은 앞선 작업 요청은 대체하지 않는다`() {
+  resource();ready(true);bench.judge={ids->HostCall.Ok(ids.map{JobOrderBench.missing(it,"inspect")})}
+  val a=posted(order("ORDER-A"),"WAITING_RESOURCE");coordinator().tick()
+  assertEquals("UNASSIGNED",service.get(a).state);assertEquals("WAITING_ROBOT",coordinator().get(a).state)
+  assertEquals(409 to "ORIGINAL_NOT_REPLACEABLE",refused(order("ORDER-B","ORDER-A")))
+  assertEquals(0L,rows("ORDER-B"));assertEquals(0L,links())
+ }
 }
