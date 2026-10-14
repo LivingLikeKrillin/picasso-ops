@@ -29,3 +29,5 @@ include("site")
 include("ops-service")
 include("mission-host")
 include("e2e")
+// 부하 측정 하네스. 소스 세트가 `load` 라 `build` 가 컴파일도 실행도 하지 않는다(load/build.gradle.kts).
+include("load")
