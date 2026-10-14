@@ -11,9 +11,9 @@
 | 저장소 | 커밋 | 이 조합에서의 역할 |
 |---|---|---|
 | picasso-ops | `511d5bc` (main, PR #24 머지, 2026-10-13) | 이 문서가 설명하는 운영 계층 |
-| picasso(서브모듈) | `8ec3534` (PR #100 머지, 2026-10-15) | 실행 호스트가 쓰는 미들웨어 라이브러리. 실행 호스트가 #91 의 `PhysicalState.occupiesRobot`·`pumps`, #96 의 `WorkPermitPort`·`PermitBlock`·`WorkPermit`, #98 의 `Middleware.judgmentRecord`·`Middleware.resume(…, record)`·`JudgmentRecordWire` 를 씀 |
+| picasso(서브모듈) | `faa8ccc` (PR #101 머지, 2026-10-15) | 실행 호스트가 쓰는 미들웨어 라이브러리. 실행 호스트가 #91 의 `PhysicalState.occupiesRobot`·`pumps`, #96 의 `WorkPermitPort`·`PermitBlock`·`WorkPermit`, #98 의 `Middleware.judgmentRecord`·`Middleware.resume(…, record)`·`JudgmentRecordWire` 를 씀 |
 | picasso-narrator | `130fe67` (main) | 설명 계층. PR #1(`ops.station.evidence/1` 읽기, `receiver/station.py`)이 머지되어 있고(머지 커밋 `391af47`) 자체 CI(`.github/workflows/ci.yml`)가 `130fe67` 에서 통과함 |
-| picasso 내보내기 | 버전 6 | picasso 가 narrator 에 넘기는 내보내기 번들의 `manifest.schemaVersion` 은 `"6"` 입니다(`74e4d3d`·`8ec3534`의 `handoff/narrator/run-1/manifest.json`). narrator 의 `BOUNDARY.md` 는 `"5"` 와 `"6"` 만 받고 모르는 버전이면 멈춥니다 |
+| picasso 내보내기 | 버전 6 | picasso 가 narrator 에 넘기는 내보내기 번들의 `manifest.schemaVersion` 은 `"6"` 입니다(`74e4d3d`·`faa8ccc`의 `handoff/narrator/run-1/manifest.json`). narrator 의 `BOUNDARY.md` 는 `"5"` 와 `"6"` 만 받고 모르는 버전이면 멈춥니다 |
 
 시연이나 배포를 할 때는 이 네 값을 함께 밝혀야 합니다. 어느 하나라도 다르면 이 문서의 보장과 시험 기록은 그 조합에 대해 확인된 것이 아닙니다. narrator 의 설명은 Ops 상태를 바꾸지 않고(`explanationMayChangeState: false`), Ops 화면과 자동으로 이어져 있지 않습니다.
 
@@ -108,7 +108,7 @@
 ### 판단 기록으로 재기동 넘기기
 
 - 동작: 실행 호스트는 picasso 판단 기록(`Middleware.judgmentRecord`)을 받아 `mission.execution_judgment_record` 에 덧붙입니다. 받는 때는 수락 직후, pump 뒤 기록(송신 기록과 한 트랜잭션), 운영자 판단 직후입니다. 직전에 적은 것과 같은 글자는 적지 않습니다. 표는 변경·삭제·통째 비우기를 막습니다. 재기동 때 그 작업 지시의 가장 최근 기록을 `resume` 에 넘깁니다. 그래서 운영자 판단(완료 확인·재작업), 운영자 보류 판정, 앞선 단위의 판정과 근거 등급, 설비 대기 기한의 시작, 근거 윈도우의 요청 시각, 검증 대기 창이 재기동을 넘어옵니다. 못 읽는 기록과 picasso 가 거부한 기록(`RESUME_RECORD_MISMATCH`)은 `GAVE_UP` 으로 보고하고 기록 없이 다시 짓지 않습니다. 넘어온 운영자 보류는 picasso `resume` 이 새 인스턴스에 인시던트로 다시 엽니다(picasso PR #100). 그 인시던트의 근거 윈도우에는 인시던트 시각의 `RESUME_HOLD_REOPENED` 줄이 있습니다. 인시던트 시각(`at`)은 다시 연 시각이고 처음 보류가 선 시각이 아닙니다. 화면의 보통 판단 경로(인시던트 상세에서 판단)로 풀리고 판단은 그 인시던트에 붙습니다. 다른 판정(완료·미확인·실패·중단)으로 넘어온 단위는 인시던트를 열지 않습니다.
-- 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `submitCurrent`, `recordAfterPump`, `changedRecords`, `persistRecord`, `resolve`, `resumed`, `mission-host/src/main/kotlin/dev/picasso/ops/host/store/HostRecords.kt` 의 `judgmentRecord`, `latestJudgmentRecord`, `mission-host/src/main/resources/db/mission/V6__execution_judgment_record.sql`, picasso(`8ec3534`) `Middleware.judgmentRecord`, `Middleware.resume`, `JudgmentRecordWire`
+- 코드: `mission-host/src/main/kotlin/dev/picasso/ops/host/MissionHost.kt` 의 `submitCurrent`, `recordAfterPump`, `changedRecords`, `persistRecord`, `resolve`, `resumed`, `mission-host/src/main/kotlin/dev/picasso/ops/host/store/HostRecords.kt` 의 `judgmentRecord`, `latestJudgmentRecord`, `mission-host/src/main/resources/db/mission/V6__execution_judgment_record.sql`, picasso(`faa8ccc`) `Middleware.judgmentRecord`, `Middleware.resume`, `JudgmentRecordWire`
 - 시험: 실행 호스트 시험 `JudgmentRecordHostTest` 의 `판단 기록은 수락 직후와 판정 뒤와 운영자 판단 직후에 적고 바뀌지 않으면 더 적지 않으며 정착하는 pump 가 마지막 판정을 적는다`, `운영자가 확인한 로봇 단위의 보류는 재기동 뒤 다시 묻지 않고 확인한 근거 등급 그대로다`, `재작업 판단 뒤 재기동해도 설비 대기 기한은 재기동 때가 아니라 재작업으로 다시 기다리기 시작한 때부터 이어 잰다`, `감수한 결함을 실은 기록으로 다시 지으면 그 결함이 다음 단위를 다시 막지 않는다`, `승인 소모를 실은 기록으로 다시 지으면 승인한 조치 열이 계획 앞에 다시 선다`, `판단 기록을 읽지 못하면 기록 없이 다시 짓지 않고 기록 행 번호와 함께 포기로 보고한다`, `다른 버전의 작업 지시에 선 기록이면 picasso 의 RESUME_RECORD_MISMATCH 거부를 기록 행 번호와 함께 포기로 보고한다`, `판단 기록 표는 고칠 수도 지울 수도 통째로 비울 수도 없다`, 통합 시험 `RestartRecoveryTest` 의 `단계 1 도는 실행이 있을 때 다시 띄우면 같은 작업 지시가 새 인스턴스에서 끝난 단위는 끝난 대로 도는 단위는 도는 대로 다시 서고 판단 기록으로 앞선 단위의 근거 등급이 넘어와 도달 근거 등급이 E2 이다`, `단계 4 운영자 보류에 선 실행을 두 번 다시 띄우면 기한을 다시 기다리지 않고 보류 그대로 서고 새 인스턴스가 다시 연 인시던트로 판단하며 그 보류 응답이 매번 재기동 중복으로 적히고 송신은 한 번뿐이며 같은 인스턴스에서 재작업 뒤 다시 선 보류는 송신이다`, `단계 5 설비 대기 보류를 재작업으로 판단한 뒤 다시 띄우면 대기가 재작업 때 시작한 기한을 이어 재고 그 보류 응답은 재기동 중복이며 옛 인시던트와 그 판단은 earlier 에만 있다`
 
 ## 보장하지 않는 것
@@ -178,5 +178,5 @@ Ops 의 보류, 재작업, 현장 확인 후 해제, 격리 해제 판단과 스
 - [운영 리허설 절차](runbook.md): 운영 리허설 절차 둘(C1 운영 중 호출 계약 배포 변경과 되돌림, D1 실행 호스트·운영 서비스 재기동과 재개), 단계마다 확인할 곳, 기대하는 결과, 다를 때 할 일, 근거 시험을 설명합니다.
 - [상세 참고 문서: 시험](reference.md#시험): 시험 수와 시험 구성
 - [화면 설계서](screens/screen-design.md): 화면에서 이 상태와 판단이 보이는 자리
-- [picasso 한계 레지스터](https://github.com/LivingLikeKrillin/picasso/blob/8ec3534/docs/limits.md): 고정 커밋 `8ec3534` 기준 picasso 의 오픈 항목과 한계
-- [picasso ADR 52](https://github.com/LivingLikeKrillin/picasso/blob/8ec3534/docs/adr/0052-work-permit-is-a-projection.md): 작업 허가가 안전 계통 상태를 비춘 정보 투영이고 새 로봇 명령만 막는다는 결정(고정 커밋 `8ec3534` 기준)
+- [picasso 한계 레지스터](https://github.com/LivingLikeKrillin/picasso/blob/faa8ccc/docs/limits.md): 고정 커밋 `faa8ccc` 기준 picasso 의 오픈 항목과 한계
+- [picasso ADR 52](https://github.com/LivingLikeKrillin/picasso/blob/faa8ccc/docs/adr/0052-work-permit-is-a-projection.md): 작업 허가가 안전 계통 상태를 비춘 정보 투영이고 새 로봇 명령만 막는다는 결정(고정 커밋 `faa8ccc` 기준)
