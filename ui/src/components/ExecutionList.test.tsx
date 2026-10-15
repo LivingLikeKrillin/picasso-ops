@@ -151,6 +151,34 @@ describe('실행 목록 — 활성과 최근 정착, 이력은 페이지', () =>
     expect(firstCells(screen.getByRole('table', { name: '실행 목록' }))).toEqual(['exec-3'])
   })
 
+  it('다시 정착한 작업 지시의 정착 이력은 줄마다 작업 지시 버전을 보이고 앞 줄에 이후 다시 정착 표시를 붙인다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.executions = executionsView({ executions: [] })
+    const response = (version: number) => ({
+      jobResponseId: `resp-${version}`, version, physicalState: 'FAILED', requiredEvidence: 'E0', reachedEvidence: 'E0', completedUnits: [],
+      unverifiedUnits: [], incompleteUnits: { T1: 'SKILL_EXECUTION_FAILED' }, inDoubtUnits: [], operatorRequired: false,
+      residualHold: 'HOLD_KIND_EMPTY', blockedBy: [], connection: 'CONNECTION_STATE_ONLINE',
+    })
+    fake.recent = {
+      settled: [
+        settledRow(execution(7, { physicalState: 'FAILED', jobResponse: response(2) }), 21),
+        settledRow(execution(7, { physicalState: 'FAILED', jobResponse: response(1) }), 20, { superseded: true }),
+        settledRow(execution(3, { units: [] }), 9, { snapshot: false }),
+      ],
+      nextBefore: null,
+      olderTotal: 0,
+    }
+    open()
+    const table = await within(screen.getByRole('region', { name: '실행' })).findByRole('table', { name: '실행 목록' })
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(firstCells(table)).toEqual(['exec-7', 'exec-7', 'exec-3'])
+    expect(rows[0]).toHaveTextContent(`FAILED (${TEXT.settledAt('s21')}) (${TEXT.orderVersion(2)})`)
+    expect(rows[0]).not.toHaveTextContent(TEXT.superseded)
+    expect(rows[1]).toHaveTextContent(`FAILED (${TEXT.settledAt('s20')}) (${TEXT.orderVersion(1)}) (${TEXT.superseded})`)
+    // 작업 응답이 없는 줄(본문 없는 정착 기록)은 버전을 말하지 않는다.
+    expect(rows[2]).not.toHaveTextContent('작업 지시 버전')
+  })
+
   it('운영 개요는 실행 수만 읽고 실행 목록을 읽지 않는다', async () => {
     const fake = installFakeOps(emptyList)
     fake.executions = executionsView({

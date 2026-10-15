@@ -48,6 +48,7 @@ data class JournalEvent(
  * @param physicalState 정착 때의 물리 상태(이벤트의 detail)
  * @param snapshot 정착 때의 실행 본문 JSON 글자(`ExecutionView`). V8 전에 적힌 행은 `null` 이다
  * @param robotId·workMasterId·missionVersion 일지 행의 것(받은 때). 재할당 뒤의 기체는 [snapshot] 에 있다
+ * @param superseded 같은 작업 지시의 정착 이벤트가 이 행 뒤에 또 있다(개정판이나 운영자 판단으로 다시 돌아 다시 정착했다)
  */
 data class SettledRow(
     val eventId: Long,
@@ -60,7 +61,11 @@ data class SettledRow(
     val robotId: String,
     val workMasterId: String,
     val missionVersion: Int?,
+    val superseded: Boolean = false,
 )
+
+/** 이 인스턴스가 적은 정착 이벤트 하나의 본문([HostRecords.settledSnapshots]). [snapshot] 은 `ExecutionView` JSON 글자다. */
+data class SettledSnapshotRow(val eventId: Long, val jobOrderId: String, val executionId: String, val physicalState: String, val snapshot: String)
 
 /** 정착 이력 한 페이지([HostRecords.settledHistory]). [nextBefore] 가 `null` 이면 [olderTotal] 은 0 이다. */
 data class SettledHistory(val rows: List<SettledRow>, val nextBefore: Long?, val olderTotal: Int)
@@ -260,7 +265,9 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
         jdbc.sql(
             """
             SELECT e.event_id, e.job_order_id, e.instance_id, e.execution_id, e.detail, e.recorded_at, e.snapshot::text AS snapshot,
-                   j.robot_id, j.work_master_id, j.mission_version
+                   j.robot_id, j.work_master_id, j.mission_version,
+                   EXISTS (SELECT 1 FROM mission.execution_journal_event n
+                           WHERE n.job_order_id = e.job_order_id AND n.kind = 'SETTLED' AND n.event_id > e.event_id) AS superseded
             FROM mission.execution_journal_event e JOIN mission.execution_journal j ON j.job_order_id = e.job_order_id
             WHERE e.kind = 'SETTLED' AND (CAST(:before AS BIGINT) IS NULL OR e.event_id < :before)
             ORDER BY e.event_id DESC
@@ -281,9 +288,39 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
                     robotId = rs.getString("robot_id"),
                     workMasterId = rs.getString("work_master_id"),
                     missionVersion = rs.getObject("mission_version") as Int?,
+                    superseded = rs.getBoolean("superseded"),
                 )
             }
             .list()
+
+    /**
+     * [instanceId] 가 적은 정착 이벤트 가운데 실행마다 가장 최근 것의 본문(picasso `Middleware.forget` 뒤의 실행 목록). [jobOrderIds]·
+     * [executionIds] 가 둘 다 `null` 이면 그 인스턴스의 실행 전부이고, 하나라도 주면 그 작업 지시나 실행 id 에 드는 것(합집합)이다. 본문 없는
+     * 행(V8 전)은 싣지 않는다. 실행 id 순이다.
+     */
+    fun settledSnapshots(instanceId: String, jobOrderIds: Set<String>? = null, executionIds: Set<String>? = null): List<SettledSnapshotRow> {
+        val narrowed = jobOrderIds != null || executionIds != null
+        val jobs = jobOrderIds.orEmpty()
+        val executions = executionIds.orEmpty()
+        if (narrowed && jobs.isEmpty() && executions.isEmpty()) return emptyList()
+        val filter = if (!narrowed) "" else listOfNotNull(
+            "e.job_order_id IN (:jobs)".takeIf { jobs.isNotEmpty() },
+            "e.execution_id IN (:executions)".takeIf { executions.isNotEmpty() },
+        ).joinToString(" OR ", prefix = "AND (", postfix = ")")
+        var statement = jdbc.sql(
+            """
+            SELECT DISTINCT ON (e.execution_id) e.event_id, e.job_order_id, e.execution_id, e.detail, e.snapshot::text AS snapshot
+            FROM mission.execution_journal_event e
+            WHERE e.kind = 'SETTLED' AND e.instance_id = :instanceId AND e.snapshot IS NOT NULL $filter
+            ORDER BY e.execution_id, e.event_id DESC
+            """.trimIndent(),
+        ).param("instanceId", instanceId)
+        if (jobs.isNotEmpty()) statement = statement.param("jobs", jobs)
+        if (executions.isNotEmpty()) statement = statement.param("executions", executions)
+        return statement.query { rs, _ ->
+            SettledSnapshotRow(rs.getLong("event_id"), rs.getString("job_order_id"), rs.getString("execution_id"), rs.getString("detail"), rs.getString("snapshot"))
+        }.list()
+    }
 
     /**
      * 정착 이력 한 페이지. [settledPage] 의 행과, 더 오래된 행이 남으면 다음 커서(이 페이지의 가장 오래된 정착 차례)와 그보다 앞의 행 수다.

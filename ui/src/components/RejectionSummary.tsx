@@ -1,4 +1,4 @@
-import { REMEDY_CAUSE_LABEL, alternativesLabel, sourceMissingLabel, sourceUnobservedLabel } from '../labels'
+import { FORGOTTEN_JOB_ORDER_TEXT, REMEDY_CAUSE_LABEL, alternativesLabel, sourceMissingLabel, sourceUnobservedLabel } from '../labels'
 import type { SourceMissing, SourceUnobserved, UnassignedRefusal } from '../api'
 /** The host's own rejection of a work request (ops `rejection`). Null alternatives are not an empty list. */
 export interface WorkRejection {
@@ -9,6 +9,8 @@ export interface WorkRejection {
  sourceMissing: SourceMissing | null
  /** 출발 미관측(결품이 아니다). 칸이 없던 서버 본문은 undefined 다. */
  sourceUnobserved?: SourceUnobserved | null
+ /** 이미 끝나 놓은 작업 지시라 받지 않았다. 칸이 없던 서버 본문은 undefined 다. */
+ forgottenJobOrder?: boolean
 }
 function remedy(rejection: WorkRejection) {
  if(rejection.remedyWithheld) return '조치 제안 보류 · 사람이 먼저 진단'
@@ -19,6 +21,7 @@ function remedy(rejection: WorkRejection) {
 export function RejectionSummary({ rejection }: { rejection: WorkRejection }) {
  const missing = rejection.sourceMissing; const other = alternativesLabel(rejection); const fix = remedy(rejection)
  return <section aria-label="거부 사유"><p><strong>거부 사유</strong> {rejection.reason ?? '사유 없음'}</p>
+  {rejection.forgottenJobOrder === true && <p>{FORGOTTEN_JOB_ORDER_TEXT}</p>}
   {missing && <p>{sourceMissingLabel(missing)}</p>}
   {rejection.sourceUnobserved && <p>{sourceUnobservedLabel(rejection.sourceUnobserved)}</p>}
   {other && <p>{other}</p>}{fix && <p>{fix}</p>}</section>

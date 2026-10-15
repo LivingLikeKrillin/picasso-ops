@@ -28,7 +28,7 @@ class HostJournalTest {
     private val settled = setOf("PHYSICALLY_DONE", "FAILED", "UNVERIFIED", "ABORTED", "PARTIAL")
 
     @Test
-    fun `새 실행의 ACCEPTED 는 응답 전에 일지 행을 적고 UNASSIGNED 와 IDEMPOTENT 는 적지 않으며 정착하면 정착 이벤트를 하나 적는다`() {
+    fun `새 실행의 ACCEPTED 는 응답 전에 일지 행을 적고 UNASSIGNED 와 놓은 작업 지시의 REJECTED 는 적지 않으며 정착하면 정착 이벤트를 하나 적는다`() {
         HostBench().use { bench ->
             val accepted = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7"), "candidates", HUMANOID)).body!!
             assertEquals("ACCEPTED", accepted["result"].asText(), accepted.toString())
@@ -50,7 +50,8 @@ class HostJournalTest {
             assertEquals(listOf(listOf("SETTLED", bench.host.instanceId, "exec-1", "PHYSICALLY_DONE")), events("JO-1"))
 
             val again = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7"), "candidates", HUMANOID)).body!!
-            assertEquals("IDEMPOTENT", again["result"].asText(), again.toString())
+            assertEquals("REJECTED", again["result"].asText(), again.toString())
+            assertTrue(again["forgottenJobOrder"].asBoolean(), again.toString())
             bench.idlePumps()
             assertEquals(listOf("JO-1"), journal().map { it["job_order_id"] })
             assertEquals(1, events("JO-1").size)

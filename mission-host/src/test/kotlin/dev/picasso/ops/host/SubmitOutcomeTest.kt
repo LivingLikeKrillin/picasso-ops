@@ -51,6 +51,18 @@ class SubmitOutcomeTest {
     }
 
     @Test
+    fun `picasso 가 놓은 작업 지시로 거부하면 놓은 작업 지시 칸이 참이고 그 밖의 거부는 거짓이다`() {
+        val forgotten = body(SubmitOutcome.rejected(
+            Middleware.Submission.Rejected("${Middleware.FORGOTTEN_JOB_ORDER}: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE — 다시 할 일은 새 작업 지시 id 로 낸다"),
+            null, emptyList(),
+        ))
+        assertEquals(listOf("REJECTED", "true"), listOf(forgotten["result"].asText(), forgotten["forgottenJobOrder"].asText()), forgotten.toString())
+        assertTrue(forgotten["rejectionReason"].asText().startsWith(Middleware.FORGOTTEN_JOB_ORDER))
+        val other = body(SubmitOutcome.rejected(Middleware.Submission.Rejected("요구 근거 등급이 넘는다"), null, emptyList()))
+        assertFalse(other["forgottenJobOrder"].asBoolean(), other.toString())
+    }
+
+    @Test
     fun `미배정의 기체별 사유는 출발 결품일 때만 대체 자리와 그 자리를 싣고 널과 빈 목록을 접지 않는다`() {
         fun refusal(missing: RemedyOutcome.SourceMissing?) = json.readTree(json.writeValueAsString(Refusal.of("humanoid-01", "출발 자리 비었다", missing)))
 

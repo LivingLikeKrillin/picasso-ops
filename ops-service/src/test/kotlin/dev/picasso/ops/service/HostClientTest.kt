@@ -14,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /** 실행 호스트 REST 클라이언트(S3a 스펙 §8). 호스트는 JDK HttpServer 대역이다. */
 class HostClientTest {
@@ -112,6 +113,15 @@ class HostClientTest {
         assertEquals(null, outcome.refusals[0].sourceMissing)
         assertEquals(null, outcome.refusals[2].sourceUnobserved)
         assertEquals(null, outcome.sourceUnobserved)
+    }
+
+    @Test
+    fun `놓은 작업 지시 거부는 그 칸을 읽고 칸이 없던 본문은 거짓이다`() {
+        val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+        val type = dev.picasso.ops.service.host.HostSubmitOutcome::class.java
+        val forgotten = mapper.readValue("""{"result":"REJECTED","rejectionReason":"이미 끝나 놓은 작업 지시라 다시 받지 않는다: JO-1","forgottenJobOrder":true}""", type)
+        assertTrue(forgotten.forgottenJobOrder)
+        assertFalse(mapper.readValue("""{"result":"REJECTED","rejectionReason":"r"}""", type).forgottenJobOrder)
     }
 
     @Test

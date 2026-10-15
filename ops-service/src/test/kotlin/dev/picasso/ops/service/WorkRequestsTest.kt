@@ -766,6 +766,19 @@ class WorkRequestsTest {
   bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",missing)))
   assertEquals(emptyList<Any>(),service.detail(service.receive("mes",order(3)).receipt.receiptId)["pendingSources"])
  }
+ @Test fun `이미 끝나 놓은 작업 지시라는 호스트 거부는 거부 칸에 그 표시로 남고 다른 거부는 표시가 없다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-F$n")
+  bench.answer=HostWrite.Answered(200,rejectedBy("이미 끝나 놓은 작업 지시라 다시 받지 않는다: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE",""","forgottenJobOrder":true"""))
+  val forgotten=service.receive("mes",order(1)).receipt
+  assertEquals("REJECTED",forgotten.state)
+  assertTrue(forgotten.submission!!["outcome"]["forgottenJobOrder"].asBoolean(),forgotten.submission.toString())
+  val rejection=service.detail(forgotten.receiptId)["rejection"] as WorkRequestRejection
+  assertTrue(rejection.forgottenJobOrder,rejection.toString())
+  assertTrue(rejection.reason!!.startsWith("이미 끝나 놓은 작업 지시"),rejection.toString())
+  // 칸이 없던 호스트 본문과 다른 거부는 거짓이다.
+  bench.answer=HostWrite.Answered(200,rejectedBy("요구 근거 등급이 넘는다"))
+  assertEquals(false,(service.detail(service.receive("mes",order(2)).receipt.receiptId)["rejection"] as WorkRequestRejection).forgottenJobOrder)
+ }
  @Test fun `출발 자리 확인은 사람과 시각과 신원을 덧붙이기로 남기고 같은 작업 지시를 확인과 함께 다시 제출한다`() {
   bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
   val row=service.receive("mes",body).receipt;assertEquals("UNASSIGNED",row.state)

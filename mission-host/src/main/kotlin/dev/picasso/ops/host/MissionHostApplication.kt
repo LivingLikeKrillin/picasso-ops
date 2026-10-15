@@ -108,6 +108,9 @@ open class MissionHostApplication {
      *
      * [heartbeatPeriod]·[heartbeatExpiry] 는 인스턴스 심장박동이다(`host.instance.heartbeat-period`·`-expiry`, HA 설계 기록 §8 단계 0).
      * 만료가 주기의 세 배보다 짧으면 기동이 멈춘다([HostHeartbeat]).
+     *
+     * [revisableRetention] 은 `FAILED`·`UNVERIFIED` 로 정착한 실행을 picasso 메모리에서 놓기 전에 두는 폭이다(`host.settled.revisable-retention`,
+     * [MissionHost.DEFAULT_REVISABLE_RETENTION]). 음수면 기동이 멈춘다.
      */
     @Bean(destroyMethod = "close")
     open fun missionHost(
@@ -122,9 +125,10 @@ open class MissionHostApplication {
         @Value("\${host.work-permit.mapping}") permitMapping: String,
         @Value("\${host.instance.heartbeat-period}") heartbeatPeriod: Duration,
         @Value("\${host.instance.heartbeat-expiry}") heartbeatExpiry: Duration,
+        @Value("\${host.settled.revisable-retention}") revisableRetention: Duration,
     ): MissionHost = MissionHost(
         robots, cellBand, clock, catalog, timings, records, store, json, workPermits(permitMapping, clock),
-        HostHeartbeat(heartbeatPeriod, heartbeatExpiry),
+        HostHeartbeat(heartbeatPeriod, heartbeatExpiry), revisableRetention,
     ).start()
 
     /**

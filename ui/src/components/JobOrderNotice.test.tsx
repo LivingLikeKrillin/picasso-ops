@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import type { UnassignedRefusal } from '../api'
+import { FORGOTTEN_JOB_ORDER_TEXT } from '../labels'
 import { JobOrderNotice } from './JobOrderNotice'
 
 const missing = { material: 'ENGINE-COVER-A', source: 'SEQ-IN-02.BIN-A', observed: null }
@@ -54,4 +55,21 @@ it('출발 미관측 거부의 제출 결과는 거부 사유 아래에 출발 �
       sourceUnobserved: { material: 'ENGINE-COVER-A', source: 'SEQ-IN-02.BIN-A', occupied: true } },
   } }} />)
   expect(screen.getByText('출발 미관측 · 출발 자리 SEQ-IN-02.BIN-A · 있음 · 신원 모름 · 확인할 자재 ENGINE-COVER-A')).toBeVisible()
+})
+
+it('이미 끝나 놓은 작업 지시라는 거부는 거부 사유와 함께 새 작업 지시로 내라는 안내를 보이고 다른 거부는 보이지 않는다', () => {
+  const reason = '이미 끝나 놓은 작업 지시라 다시 받지 않는다: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE'
+  const { unmount } = render(<JobOrderNotice what="InspectAsset 작업 지시" sent={{ kind: 'outcome', outcome: {
+    requestId: 'q1', jobOrderId: 'JO-1', result: 'REJECTED', confirmation: null,
+    outcome: { result: 'REJECTED', executionId: null, robotId: null, rejectionReason: reason, refusals: [], excluded: [], forgottenJobOrder: true },
+  } }} />)
+  const notice = screen.getByRole('status', { name: '제출 결과' })
+  expect(notice).toHaveTextContent(reason)
+  expect(within(notice).getByText(FORGOTTEN_JOB_ORDER_TEXT)).toBeVisible()
+  unmount()
+  render(<JobOrderNotice what="InspectAsset 작업 지시" sent={{ kind: 'outcome', outcome: {
+    requestId: 'q2', jobOrderId: 'JO-2', result: 'REJECTED', confirmation: null,
+    outcome: { result: 'REJECTED', executionId: null, robotId: null, rejectionReason: '요구 근거 등급이 넘는다', refusals: [], excluded: [] },
+  } }} />)
+  expect(screen.queryByText(FORGOTTEN_JOB_ORDER_TEXT)).not.toBeInTheDocument()
 })

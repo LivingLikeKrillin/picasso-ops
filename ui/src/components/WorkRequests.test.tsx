@@ -1,6 +1,7 @@
 import { render, screen, within, waitFor, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
+import { FORGOTTEN_JOB_ORDER_TEXT } from '../labels'
 import { WorkRequests } from './WorkRequests'
 const session={mode:'operator' as const,user:'kim'}
 const receipt={receiptId:'r1',sourceSystemId:'mock-mes',externalOrderId:'MES-204',jobOrderId:'JO-204',state:'UNASSIGNED',detail:'기체가 바쁩니다',payload:{input:{}},normalizedOrder:null,submission:null,receivedAt:'t1',updatedAt:'t1'}
@@ -84,6 +85,13 @@ it('호스트 거부는 제출 전 상세 대신 거부 사유와 대체 위치�
  expect(within(shown).getByText('대체 위치: SEQ-IN-03.BIN-B, SEQ-IN-04.BIN-C')).toBeVisible()
  expect(within(shown).getByText('출발 자리 SEQ-IN-02.BIN-A · 비어 있음')).toBeVisible()
  expect(screen.queryByText('공통 작업 요청 검증 완료')).not.toBeInTheDocument()
+})
+it('이미 끝나 놓은 작업 지시라는 호스트 거부는 거부 사유에 새 작업으로 내라는 안내를 붙이고 다른 거부는 붙이지 않는다',async()=>{
+ const forgotten=await rejectedDetail({reason:'이미 끝나 놓은 작업 지시라 다시 받지 않는다: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE',remedy:null,remedyWithheld:false,alternativeLocations:null,sourceMissing:null,forgottenJobOrder:true})
+ expect(within(forgotten).getByText(FORGOTTEN_JOB_ORDER_TEXT)).toBeVisible()
+ cleanup()
+ const other=await rejectedDetail({reason:'요구 근거 등급이 넘는다',remedy:null,remedyWithheld:false,alternativeLocations:null,sourceMissing:null,forgottenJobOrder:false})
+ expect(within(other).queryByText(FORGOTTEN_JOB_ORDER_TEXT)).not.toBeInTheDocument()
 })
 it('대체 위치 조회 불가와 대체 위치 없음을 구분한다',async()=>{
  const silent=await rejectedDetail({reason:'출발 자리 비었다',remedy:null,remedyWithheld:false,alternativeLocations:null,sourceMissing:missing})

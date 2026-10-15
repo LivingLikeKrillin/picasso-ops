@@ -212,7 +212,7 @@ PrepareSequencedRack 의 E2 가 서는 순서는 이렇습니다. `pick_place` �
 - 도는 실행: 그 기체의 실행 중 `physicalState` 가 정착하지 않은 것입니다.
 - 실행 목록의 칸: 실행 id, 작업 지시 id, WorkMaster, 임무 버전(null 이면 코드 정의), 기체, 물리 상태, 단위 목록(단위 id, 스킬, 상태, 근거 등급), 작업 응답(그 실행의 마지막 작업 응답과 그 칸들, 없으면 null).
 - WorkMaster 는 InspectAsset·PrepareSequencedRack 만 받습니다. 그 밖은 400 입니다.
-- IDEMPOTENT 는 운영 서비스가 매번 새 id 를 만들어 실제로는 나오지 않습니다. 매핑은 두고, 호스트 시험에서 InspectAsset 실행이 끝난 뒤 같은 id 를 다시 내 확인합니다.
+- IDEMPOTENT 는 운영 서비스가 매번 새 id 를 만들어 실제로는 나오지 않습니다. 매핑은 두고, IDEMPOTENT 는 두는 폭 안의 `FAILED` 실행에 같은 버전을 다시 내 확인합니다(`ForgetSettledTest` 의 `FAILED 는 두는 폭 동안 메모리에 남아 같은 판은 IDEMPOTENT 이고 폭이 지나면 놓아 같은 작업 지시는 판과 무관하게 놓은 작업 지시로 거부한다`). 끝난 InspectAsset(`PHYSICALLY_DONE`)은 바로 놓으므로 같은 id 를 다시 내면 REJECTED(`forgottenJobOrder`)가 되며, 이는 `MissionHostTest` 의 `끝난 InspectAsset 를 같은 id 로 다시 내면 놓은 작업 지시로 REJECTED 이고 실행에 마지막 작업 응답이 붙는다` 로 확인합니다.
 
 ### 7.7 작업 응답 아웃박스
 
@@ -286,7 +286,7 @@ PrepareSequencedRack 의 E2 가 서는 순서는 이렇습니다. `pick_place` �
 |---|---|---|
 | 스트림 이어 붙이기, 팔로워 잠금, 엔진 직렬화 | P4(picasso, §5.5) | §5.5 의 7건 |
 | `advanceTo` 가 앞으로만 밈, 셀 대역이 `pick_place` 성공 뒤 슬롯을 채우고 같은 태스크를 두 번 채우지 않음, `holding` 이 제시 자리만, `GET /cell` 형식 | site | 관측 시각을 EPOCH 로, 이미 본 태스크 재처리 |
-| 스킬 모자람·도는 실행 판정, 제출 결과 네 가지 매핑(IDEMPOTENT 는 같은 id 재제출), 실행 목록의 임무 버전 null, WorkMaster 400 | mission-host | 스킬 적합 반전, 도는 실행 무시 |
+| 스킬 모자람·도는 실행 판정, 제출 결과 네 가지 매핑(IDEMPOTENT 는 두는 폭 안 `FAILED` 실행의 같은 버전 재제출, 끝난 실행 재제출은 REJECTED), 실행 목록의 임무 버전 null, WorkMaster 400 | mission-host | 스킬 적합 반전, 도는 실행 무시 |
 | 배정 가능 네 칸 합성, registry 불통이면 «모름», 운영자 모드 403, 후보 없음 400 `NO_ELIGIBLE_ROBOT`, 조작 기록 result 매핑과 재조회, 호스트 불통 NO_RESPONSE | 운영 서비스 | registry 불통을 신선으로 접기, 운영자 모드 검사 제거, result 매핑 뒤바꾸기 |
 | InspectAsset 끝까지, PrepareSequencedRack 이 셀 대역으로 E2, 배정 불가 기체가 후보에서 빠짐 | 통합(e2e 모듈의 한 JVM 스택에 호스트를 더함) | 셀 대역 채우기 끄기(UNVERIFIED 로 끝나는지), 호스트의 스킬 적합 판정을 늘 적합으로 |
 | 운영자 모드로 작업 지시를 내면 실행 목록에 «코드 정의» 행 | Playwright | 없음(통합 시험이 맡음) |
