@@ -499,6 +499,8 @@ export interface HostSubmitOutcome {
   excluded: HostEligibility[]
   /** 출발 미관측 REJECTED 일 때만 있다. 칸이 없던 호스트 본문은 undefined 다. */
   sourceUnobserved?: SourceUnobserved | null
+  /** 이미 끝나 놓은 작업 지시라 받지 않은 REJECTED 면 참이다. 칸이 없던 호스트 본문은 undefined 다. */
+  forgottenJobOrder?: boolean
 }
 
 /**
@@ -626,6 +628,8 @@ export interface ExecutionsView {
 /**
  * 정착 이력 한 줄(HA 설계 기록 §10). 실행 호스트가 정착을 적을 때 함께 적은 실행 본문이다. `settleSeq` 가 정착 차례이고 커서다.
  * `instanceId` 는 정착을 적은 인스턴스다(재기동 전의 것일 수 있다). `snapshot` 이 거짓이면 이력 기록 전에 정착한 실행이라 단위·작업 응답이 없다.
+ * 실행 호스트는 정착할 때마다 한 줄을 적으므로 다시 돈 작업 지시는 줄이 여럿이고, `superseded` 가 참이면 그 뒤에 다시 정착한 줄이다
+ * (칸이 없던 호스트 본문은 undefined 다).
  */
 export interface SettledExecution {
   settleSeq: number
@@ -633,6 +637,7 @@ export interface SettledExecution {
   settledAt: string
   snapshot: boolean
   execution: Execution
+  superseded?: boolean
 }
 
 /** 정착 이력 한 페이지(`GET /api/executions?before=`). `nextBefore` 가 null 이면 더 오래된 이력이 없다. */

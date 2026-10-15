@@ -138,7 +138,7 @@ class MissionHostTest {
     }
 
     @Test
-    fun `끝난 InspectAsset 를 같은 id 로 다시 내면 IDEMPOTENT 이고 실행에 마지막 작업 응답이 붙는다`() {
+    fun `끝난 InspectAsset 를 같은 id 로 다시 내면 놓은 작업 지시로 REJECTED 이고 실행에 마지막 작업 응답이 붙는다`() {
         HostBench().use { bench ->
             val order = request(inspect("JO-1", "T1" to "bay-7"), "candidates", HUMANOID)
             val accepted = bench.post("/host/job-orders", order).body!!
@@ -155,10 +155,12 @@ class MissionHostTest {
             assertEquals("E0", response["reachedEvidence"].asText())
             assertEquals(listOf("T1.travel", "T1"), response["completedUnits"].map { it.asText() })
 
+            // 정착을 적은 뒤 picasso 메모리에서 놓았다(Middleware.forget). 같은 작업 지시 id 는 판과 무관하게 받지 않는다.
             val again = bench.post("/host/job-orders", order).body!!
-            assertEquals("IDEMPOTENT", again["result"].asText(), again.toString())
-            assertEquals(executionId, again["executionId"].asText())
-            assertEquals(HUMANOID, again["robotId"].asText())
+            assertEquals("REJECTED", again["result"].asText(), again.toString())
+            assertTrue(again["forgottenJobOrder"].asBoolean(), again.toString())
+            assertTrue(again["rejectionReason"].asText().startsWith(dev.picasso.middleware.Middleware.FORGOTTEN_JOB_ORDER), again.toString())
+            assertTrue(again["executionId"].isNull && again["robotId"].isNull, again.toString())
             assertEquals(1, bench.get("/host/executions")["executions"].size())
         }
     }

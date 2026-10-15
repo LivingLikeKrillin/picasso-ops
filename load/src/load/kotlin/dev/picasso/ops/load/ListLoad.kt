@@ -9,6 +9,8 @@ import java.time.Duration
  * 실행 목록 크기(HA 설계 기록 §10) — 정착한 실행이 쌓인 호스트의 `GET /host/executions` 와 스테이션 tick.
  *
  * 기체 50 세트에 [PumpLoad] 와 같은 주기(기체마다 InspectAsset 하나, 가상 시계 5초 밀기마다 pump 2회)로 실행을 검사점까지 쌓는다.
+ * 실행 E 는 낸 작업 지시 수(정착한 실행 수)다. 정착한 실행은 picasso 메모리에서 놓이므로 인자 없는 목록과 좁힌 목록은 그 실행을 정착
+ * 기록(DB)에서 읽는다. 검사점마다 호스트 메모리 크기(`MissionHost.footprint`)를 적는다.
  * 검사점마다 전체 목록, 작업 지시 id 하나·50개로 고른 목록을 각 10회 읽고, 화면 읽기(운영 서비스의 인자 없는 목록·`recent=20`·`summary`·
  * 이전 실행 한 페이지)를 각 10회 읽고, 스테이션 50 활성 tick 을 잰다. 고르는 인자를 모르는
  * 호스트는 인자를 버리고 전체 목록을 준다(그대로 적는다).
@@ -23,6 +25,7 @@ object ListLoad {
         val gets = mutableListOf<List<String>>()
         val ticks = mutableListOf<List<String>>()
         val screens = mutableListOf<List<String>>()
+        val memory = mutableListOf<List<String>>()
         LoadStack(robots = 50).use { stack ->
             report.floor(stack, "세트(기체 50)")
             val host = stack.missionHost
@@ -30,7 +33,7 @@ object ListLoad {
             val middleware = MissionHost::class.java.getDeclaredField("middleware").apply { isAccessible = true }.get(host) as Middleware
             var order = 0
             for (target in checkpoints) {
-                while (middleware.executions().size < target) {
+                while (order < target) {
                     stack.robotIds.forEach { robot ->
                         order++
                         val reply = stack.hostPost(
@@ -50,7 +53,9 @@ object ListLoad {
                     host.pumpOnce()
                 }
                 repeat(3) { host.pumpOnce() }
-                val size = middleware.executions().size
+                val size = order
+                val footprint = host.footprint()
+                memory += listOf("$size", "${footprint.executions}", "${footprint.responses}", footprint.maps())
                 val one = listOf("JO-${size / 2}")
                 val fifty = (1..50).map { "JO-${it * (size / 50)}" }
                 gets += listOf("$size", "전체") + read(stack, "/host/executions")
@@ -67,6 +72,8 @@ object ListLoad {
                 ticks += StationTickLoad.measure(stack, stations, listOf("active"), rounds, " (호스트 실행 $size)") { host.pumpOnce() }.first
             }
         }
+        report.table(listOf("실행 E(정착)", "메모리 실행", "아웃박스(responses)", "호스트 맵(정착 표시/일지/판단 기록/복원/취소)"), memory)
+        report.line()
         report.table(listOf("실행 E", "읽기", "p50 ms", "p95 ms", "max ms", "응답 bytes", "응답 실행 수"), gets)
         report.line()
         report.line("화면 읽기(운영 서비스 `/api` 아래 경로를 거침), 각 10회. 실행 수는 남은 실행 + 정착 이력 줄이다.")

@@ -15,6 +15,8 @@ import java.time.Instant
  * @param snapshot [execution] 이 정착 때 적은 본문이면 참. 이력 기록(V8) 전에 정착한 실행은 거짓이고, 그때 [execution] 은 일지 행으로
  *   지은 것이라 단위가 비고 작업 응답·취소가 `null` 이며 기체는 받은 때의 것이다
  * @param execution `GET /host/executions` 의 실행 한 줄과 같은 모양
+ * @param superseded 같은 작업 지시가 이 정착 뒤에 다시 정착했다(개정판이나 운영자 판단으로 다시 돌았다). 그 작업 지시의 마지막 정착은 거짓이다.
+ *   실행 호스트는 정착할 때마다 한 줄을 적으므로 한 작업 지시가 여러 줄일 수 있다
  */
 data class SettledExecutionView(
     val settleSeq: Long,
@@ -22,6 +24,7 @@ data class SettledExecutionView(
     val settledAt: Instant,
     val snapshot: Boolean,
     val execution: JsonNode,
+    val superseded: Boolean = false,
 )
 
 /**
@@ -87,8 +90,9 @@ object ExecutionPages {
         state.pumps || units.any { it == UnitState.OPERATOR_HOLD || it == UnitState.IN_DOUBT } || journalBlocked
 
     /**
-     * 남은 실행: 화면이 미들웨어 메모리에서 읽는 실행. 활성이거나, 정착했으나 정착 기록([settledRecorded] 가 거짓)이 아직 커밋되지 않은
-     * 실행이다. 정착을 적은 실행은 정착 이력에서 읽으므로 메모리에서 사라져도 화면에서 빠지지 않는다.
+     * 남은 실행: 화면이 미들웨어 메모리에서 읽는 실행. 활성이거나, 정착했으나 지금의 정착 기록([settledRecorded] 가 거짓)이 아직 커밋되지
+     * 않은 실행이다. 다시 돌아 다시 정착한 실행은 그 정착을 적기 전까지 남은 실행이다. 정착을 적은 실행은 정착 이력에서 읽으므로 메모리에서
+     * 사라져도(picasso `Middleware.forget`) 화면에서 빠지지 않는다.
      */
     fun live(active: Boolean, settledRecorded: Boolean): Boolean = active || !settledRecorded
 }

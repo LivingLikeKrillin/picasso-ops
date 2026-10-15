@@ -205,6 +205,10 @@ export const CANCEL_RESULT_LABEL: Record<CancelResult, string> = {
 export const EXECUTION_LIST_TEXT = {
   scope: (recent: number) => `진행 중이거나 판단이 필요한 실행과 최근 정착한 실행 ${recent}건을 표시합니다. 그보다 오래된 실행은 이전 실행에서 확인합니다.`,
   settledAt: (at: string) => `정착 ${at}`,
+  /** 정착 이력 줄의 작업 지시 버전(그 정착을 알린 작업 응답의 버전). 한 작업 지시가 다시 정착하면 줄이 여럿이다. */
+  orderVersion: (version: number) => `작업 지시 버전 ${version}`,
+  /** 같은 작업 지시가 이 정착 뒤에 다시 정착한 줄. */
+  superseded: '이후 다시 정착',
   otherInstance: (instanceId: string) => `이전 인스턴스 ${instanceId}`,
   noSnapshot: '정착 기록에 단위·작업 응답이 없습니다',
   historyHeading: '이전 실행',
@@ -215,6 +219,9 @@ export const EXECUTION_LIST_TEXT = {
   historyError: (error: string) => `이전 실행을 읽지 못했습니다: ${error}`,
   historyReset: '정착 기록이 크게 바뀌어 이전 실행을 다시 읽어야 합니다',
 } as const
+
+/** 이미 끝나 놓은 작업 지시를 실행 호스트가 거부했을 때의 안내(picasso `FORGOTTEN_JOB_ORDER`). */
+export const FORGOTTEN_JOB_ORDER_TEXT = '이미 끝나 놓은 작업 지시입니다. 같은 작업 지시는 다시 받지 않으므로 다시 할 일은 새 작업 지시로 냅니다.'
 
 /** 운영자 실행 취소와 잔여 파지 확인 문구(P0-b2). */
 export const EXECUTION_CONTROL_TEXT = {

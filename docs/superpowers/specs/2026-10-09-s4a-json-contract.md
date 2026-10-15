@@ -162,7 +162,7 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 | `incidentId`, `executionId`, `jobOrderId`, `robotId`, `unitId`, `at` | | 목록과 같다 |
 | `wallClockAt` | 시각 | 봉인한 실제 시각 |
 | `failureClass`, `route`, `unresolved`, `resolution`, `held`, `confirmedWithoutEvidence` | | 목록과 같다(`resolution` 모양 포함) |
-| `unitState` | 문자열 또는 `null` | 그 단위의 **지금** 상태(`PENDING`, `IN_DOUBT`, `RUNNING`, `VERIFYING`, `OPERATOR_HOLD`, `DONE`, `UNVERIFIED`, `FAILED`, `ABORTED`). 실행이 없으면 `null` |
+| `unitState` | 문자열 또는 `null` | 그 단위의 **지금** 상태(`PENDING`, `IN_DOUBT`, `RUNNING`, `VERIFYING`, `OPERATOR_HOLD`, `DONE`, `UNVERIFIED`, `FAILED`, `ABORTED`). 이 인스턴스가 놓은 실행은 마지막 정착 본문의 그 단위 상태이다(더는 바뀌지 않는다). 실행과 정착 본문이 모두 없을 때만 `null`이다. 근거: `ForgetSettledTest` 의 `FAILED 는 두는 폭 동안 메모리에 남아 같은 판은 IDEMPOTENT 이고 폭이 지나면 놓아 같은 작업 지시는 판과 무관하게 놓은 작업 지시로 거부한다`(인시던트 상세 `unitState` 가 `FAILED`) |
 | `fault` | 결함 객체 또는 `null` | 이 단위를 실패로 만든 결함의 전부(아래) |
 | `blockedBy` | 결함 객체의 배열 | 봉인 때 실행 전체를 막던 결함. 없으면 빈 배열 |
 | `requiredEvidence` | 문자열 | 작업 지시가 요구한 근거 등급 `E0`~`E3` |

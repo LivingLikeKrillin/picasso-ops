@@ -13,6 +13,7 @@ import dev.picasso.middleware.ActiveMission
 import dev.picasso.middleware.Approver
 import dev.picasso.middleware.ApproverKind
 import dev.picasso.middleware.ExecutionUnit
+import dev.picasso.middleware.ForgetOutcome
 import dev.picasso.middleware.IncidentBundle
 import dev.picasso.middleware.InspectAsset
 import dev.picasso.middleware.JobOrder
@@ -145,6 +146,9 @@ data class Refusal(
  *   옮긴다. 아니면 `null` 이다.
  * @param sourceUnobserved 이 거부가 출발 미관측이면 그 자리와 설비가 말한 것(picasso `Submission.Rejected.sourceUnobserved`). 아니면
  *   `null` 이다. 조치 탐색 기록에는 적히지 않으므로 거부 값에서 바로 옮긴다. 출발 결품이 아니므로 그때 [alternativeLocations] 는 `null` 이다.
+ * @param forgottenJobOrder 이미 끝나 놓은 작업 지시라 받지 않은 REJECTED 다. 사유가 picasso `Middleware.FORGOTTEN_JOB_ORDER` 로 시작한다.
+ *   이 인스턴스가 picasso 메모리에서 놓은 실행이면 picasso 가, 재기동 뒤라 picasso 가 모르는 정착한 작업 지시면 실행 일지가 거부한다
+ *   ([MissionHost.submit]). 다시 해도 같다 — 다시 할 일은 새 작업 지시 id 로 낸다. 그 밖에는 거짓이다
  */
 data class SubmitOutcome(
     val result: SubmitResult,
@@ -158,6 +162,7 @@ data class SubmitOutcome(
     val alternativeLocations: List<String>? = null,
     val sourceMissing: SourceMissingView? = null,
     val sourceUnobserved: SourceUnobservedView? = null,
+    val forgottenJobOrder: Boolean = false,
 ) {
     companion object {
         /**
@@ -171,6 +176,7 @@ data class SubmitOutcome(
             alternativeLocations = rejected.alternativeLocations,
             sourceMissing = (noted as? RemedyOutcome.SourceMissing)?.let { SourceMissingView(it.material, it.source, it.observed) },
             sourceUnobserved = rejected.sourceUnobserved?.let(SourceUnobservedView::of),
+            forgottenJobOrder = rejected.reason.startsWith(Middleware.FORGOTTEN_JOB_ORDER),
         )
     }
 }
@@ -360,6 +366,20 @@ data class JobResponsesView(val instanceId: String, val total: Int, val response
 class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeException("실행 일지를 적지 못했다: $executionId", cause)
 
 /**
+ * 호스트 메모리의 크기([MissionHost.footprint]). [executions]·[responses] 는 미들웨어의 실행 표와 아웃박스이고, 나머지는 실행이나 작업 지시마다
+ * 드는 호스트 쪽 맵이다.
+ */
+data class HostFootprint(
+    val executions: Int,
+    val responses: Int,
+    val settleMarks: Int,
+    val journaled: Int,
+    val recorded: Int,
+    val restoredFrom: Int,
+    val cancels: Int,
+)
+
+/**
  * 미들웨어 실행 호스트(S3a 스펙 §7).
  *
  * ## 잠금 하나
@@ -388,8 +408,19 @@ class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeExc
  * ## 작업 응답과 재기동(S4b 스펙)
  *
  * 상위 시스템이 없어 송신 기록(`mission.job_response_log`)이 전선 자리를 대신한다. pump 뒤 같은 잠금 안에서 응답을 적고 `ack`
- * 한다. 받은 작업 지시는 실행 일지에 적고 기동 때 [start] 가 다시 짓는다. 인시던트와 판단은 사본으로 남는다. 미들웨어 아웃박스는
- * ack 한 응답도 들고 있어 계속 자라는 것은 그대로 한계다(S3a 스펙 §12).
+ * 한다. 받은 작업 지시는 실행 일지에 적고 기동 때 [start] 가 다시 짓는다. 인시던트와 판단은 사본으로 남는다.
+ *
+ * 정착 이벤트는 정착마다 하나다. 개정판이나 운영자 판단으로 다시 돈 실행이 다시 정착하면 그 정착을 또 적는다. 정착 하나는 그 정착을
+ * 알린 작업 응답(그 실행의 마지막 작업 응답)으로 가린다 — picasso 는 정착하지 않은 상태에서 정착한 상태로 옮길 때마다 작업 응답을 낸다.
+ * 같은 판에서도 다시 정착할 수 있으므로(정착한 실행의 보류 단위를 운영자가 판단) 판으로 가리지 않는다.
+ *
+ * ## 놓기(picasso `Middleware.forget`, 한계 §15.224 · 놓기 소비자)
+ *
+ * pump 뒤 기록이 커밋되고 응답을 `ack` 한 뒤, 지금의 정착을 적었고 활성이 아닌([ExecutionPages.active]) 실행을 picasso 메모리에서 놓는다.
+ * `PHYSICALLY_DONE`·`ABORTED` 는 곧 놓고, 개정판을 받을 수 있는 `FAILED`·`UNVERIFIED` 는 [revisableRetention] 동안 두었다가 놓는다 —
+ * 놓은 작업 지시는 picasso 가 판과 무관하게 받지 않는다(`FORGOTTEN_JOB_ORDER`). 놓으면 그 실행의 호스트 쪽 맵도 지운다. 실행과
+ * 아웃박스는 활성 실행과 두는 실행만큼만 남는다. 놓은 실행은 인자 없는 목록과 좁힌 목록이 정착 이벤트의 본문으로 싣는다([executions]).
+ * 재기동 뒤에는 picasso 가 놓은 작업 지시를 모르므로 실행 일지가 같은 작업 지시 id 의 새 실행을 막는다([submit]).
  *
  * ## 판단 기록(picasso 한계 §15.221 · 판단 기록 영속)
  *
@@ -411,6 +442,8 @@ class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeExc
  *   세운 것을 받는다.
  * @param siteTimings 현장 시간값(S3c 스펙 §7.1). 미들웨어에 그대로 넘긴다. `null` 을 주는 동안은 미적용이라 작업 지시를 받지 않는다.
  *   모의 실행의 별도 미들웨어에는 주지 않는다(T10).
+ * @param revisableRetention `FAILED`·`UNVERIFIED` 로 정착한 실행을 정착 기록 뒤 picasso 메모리에 두는 폭(호스트 시계,
+ *   `host.settled.revisable-retention`). 그 안에서는 같은 작업 지시 id 의 개정판을 받는다. 지나면 놓고 그 작업 지시는 다시 받지 않는다
  *
  * ## 미적용(S3c 스펙 T8)
  *
@@ -436,7 +469,11 @@ class MissionHost(
     private val json: ObjectMapper,
     private val permits: CellWorkPermits? = null,
     private val heartbeat: HostHeartbeat = HostHeartbeat.DEFAULT,
+    private val revisableRetention: Duration = DEFAULT_REVISABLE_RETENTION,
 ) : AutoCloseable {
+    init {
+        require(!revisableRetention.isNegative) { "개정판을 받을 실행을 두는 폭은 음수가 아니어야 한다: $revisableRetention" }
+    }
 
     private val lock = ReentrantLock(true)
     private val signals = CellBandSignals()
@@ -450,11 +487,20 @@ class MissionHost(
 
     // ── S4b 기록. 모두 호스트 잠금 아래에서만 읽고 쓴다.
 
-    /** 이 인스턴스에서 일지 행이 있는 실행의 작업 지시 id(제출로 적었거나 다시 지은 것). 정착 이벤트는 이것만 적는다. */
+    /**
+     * 이 인스턴스에서 일지 행이 있는 실행의 작업 지시 id(제출로 적었거나 다시 지은 것). 정착 이벤트는 이것만 적는다. 놓은 실행의 것은 지운다
+     * (같은 작업 지시 id 의 새 실행은 picasso 와 실행 일지가 막는다).
+     */
     private val journaled = mutableSetOf<String>()
 
-    /** 이 인스턴스가 정착 이벤트를 적은 작업 지시 id. */
-    private val settledRecorded = mutableSetOf<String>()
+    /**
+     * 이 인스턴스가 실행마다 마지막으로 적은 정착(실행 id 에서). [SettleMark.responseId] 가 그 실행의 마지막 작업 응답과 같고 실행이 정착해
+     * 있으면 지금의 정착을 적은 것이다([settleRecorded]). 다시 돌아 다시 정착하면 마지막 작업 응답이 바뀌어 또 적는다. 놓으면 지운다.
+     */
+    private val settleMarks = mutableMapOf<String, SettleMark>()
+
+    /** 적은 정착 하나. [at] 은 기록을 커밋한 뒤의 호스트 시각이고 개정판을 받을 실행을 두는 폭을 여기서 잰다. */
+    private data class SettleMark(val responseId: String?, val at: Instant)
 
     /** 사본을 적은 인시던트 수. 미들웨어의 인시던트 목록은 덧붙이기만 하므로 이 색인 뒤가 새로 봉인된 것이다. */
     private var copiedIncidents = 0
@@ -468,7 +514,7 @@ class MissionHost(
     /** 이번 기동의 복원 보고 행. 일지의 받은 순서이고, DEFERRED 행은 결과가 바뀌면 그 자리에서 갈린다. */
     private val restoreRows = mutableListOf<RestoreRowView>()
 
-    /** 다시 지은 실행 id 에서 바로 앞 인스턴스의 실행으로. */
+    /** 다시 지은 실행 id 에서 바로 앞 인스턴스의 실행으로. 놓은 실행의 것은 지운다(정착 이벤트의 본문이 든다). */
     private val restoredFrom = mutableMapOf<String, RestoredFromView>()
 
     /** 기체 스냅숏을 못 읽어 미룬 일지 행(T3). pump 마다 다시 시도하고 그동안 그 기체를 판정에서 뺀다(T4). */
@@ -486,12 +532,15 @@ class MissionHost(
      */
     private val openHolds = mutableListOf<ResidualHoldRow>()
 
-    /** 이 인스턴스에서 건 운영자 취소. 실행 id 에서. 이전 인스턴스의 취소는 그 인스턴스의 실행 id 라 싣지 않는다. */
+    /**
+     * 이 인스턴스에서 건 운영자 취소. 실행 id 에서. 이전 인스턴스의 취소는 그 인스턴스의 실행 id 라 싣지 않는다. 놓은 실행의 것은 지운다
+     * (정착 이벤트의 본문과 `execution_cancel` 표에 남는다).
+     */
     private val cancels = mutableMapOf<String, CancelRow>()
 
     /**
      * 이 인스턴스가 작업 지시마다 마지막으로 적은(또는 복원에 넘긴) 판단 기록 글자. 같은 글자는 다시 적지 않는다. 적기가 실패하면
-     * 갱신하지 않으므로 다음 pump 가 다시 적는다.
+     * 갱신하지 않으므로 다음 pump 가 다시 적는다. 놓은 실행의 것은 지운다.
      */
     private val recorded = mutableMapOf<String, String>()
 
@@ -723,6 +772,10 @@ class MissionHost(
      *
      * [confirmations] 는 사람이 기록한 출발 자리 확인이다. 이 `assign` 한 번 동안만 셀 포트의 관측이 되고([CellBandSignals.observe])
      * 끝나면 비운다. 호스트는 저장하지 않는다 — 다음 제출이나 재배정은 확인을 다시 싣지 않으면 설비의 답만 본다.
+     *
+     * 미들웨어에 그 작업 지시의 실행이 없는데 실행 일지에 그 작업 지시가 있으면 `assign` 을 부르지 않고 REJECTED 다([journalRefusal]).
+     * 일지의 키가 작업 지시 id 라 새 실행을 받으면 일지 쓰기가 실패해 호스트 전체가 막히고, 정착한 작업 지시면 이미 끝난 일이 또 돈다.
+     * picasso 의 놓은 작업 지시 표시는 메모리라 재기동 뒤에는 없으므로 이 확인이 재기동 전후를 같게 한다.
      */
     fun submit(order:JobOrder,candidates:List<String>,missionVersion:String?=null,confirmations:List<SourceConfirmation> = emptyList()):SubmitOutcome = lock.withLock {
         catalog.withMission(order.workMasterId,selectedMission(order.workMasterId,missionVersion)) { submitCurrent(order,candidates,confirmations) }
@@ -733,6 +786,14 @@ class MissionHost(
         val judged = candidates.distinct().map { judge(order, it, applied) }
         val excluded = judged.filter { !it.passed }
         val existed = middleware.executions().any { it.order.jobOrderId == order.jobOrderId }
+        if (!existed) {
+            journalRefusal(order.jobOrderId)?.let { reason ->
+                return@withLock SubmitOutcome(
+                    SubmitResult.REJECTED, null, null, reason, emptyList(), excluded,
+                    forgottenJobOrder = reason.startsWith(Middleware.FORGOTTEN_JOB_ORDER),
+                )
+            }
+        }
         val searched = middleware.remedySearches().size
         signals.confirmations = confirmations.associateBy { it.source }
         val assigned = try {
@@ -769,6 +830,19 @@ class MissionHost(
         }
     }
 
+    /**
+     * 미들웨어에 실행이 없는 작업 지시가 실행 일지에 이미 있으면 거부 사유, 없으면 `null`. 정착을 적은 작업 지시(이 인스턴스가 놓았거나
+     * 재기동 전에 정착한 것)는 picasso 의 [Middleware.FORGOTTEN_JOB_ORDER] 로 시작해 picasso 의 거부와 같은 뜻으로 읽힌다. 정착을 적지
+     * 않은 일지 행(미뤘거나 포기한 것)은 [JOURNALED_JOB_ORDER] 로 시작한다.
+     */
+    private fun journalRefusal(jobOrderId: String): String? {
+        val row = records.journalRow(jobOrderId) ?: return null
+        val settled = records.events(jobOrderId).lastOrNull { it.kind == JournalEventKind.SETTLED }
+            ?: return "$JOURNALED_JOB_ORDER: $jobOrderId · ${row.instanceId} ${row.executionId}"
+        return "${Middleware.FORGOTTEN_JOB_ORDER}: $jobOrderId · ${settled.instanceId} ${settled.executionId} · ${settled.detail} " +
+            "(실행 일지). 다시 할 일은 새 작업 지시 ID로 낸다"
+    }
+
     /** 새 실행의 일지 행을 적는다. 작업 지시는 picasso `JobOrder` 의 칸 그대로의 JSON 이다. */
     private fun journal(execution: Middleware.Execution) {
         val order = execution.order
@@ -799,15 +873,34 @@ class MissionHost(
         ),
     )
 
-    fun executions(): ExecutionsView = lock.withLock { view(middleware.executions()) }
+    /**
+     * 이 인스턴스의 실행 전부(생성 순). 미들웨어 메모리에 있는 실행은 메모리에서, 이 인스턴스가 놓은 실행은 그 실행의 가장 최근 정착 이벤트
+     * 본문에서 싣는다([withForgotten]). 놓기 전의 목록과 같은 줄이다.
+     */
+    fun executions(): ExecutionsView = withForgotten(lock.withLock { view(middleware.executions()) }, null, null)
 
     /**
      * [executions] 를 작업 지시 id 가 [jobOrderIds] 에 들거나 실행 id 가 [executionIds] 에 드는 실행으로 좁힌 것(HA 설계 기록 §10).
-     * 모양과 칸은 같고 실행과 일지 막힘 목록만 고른 실행으로 줄어든다. 같은 잠금 아래의 전체 목록에서 그 실행만 남긴 것과 같다.
-     * 정착한 실행이 쌓여도 응답은 고른 실행 수만큼이다. 미들웨어의 실행과 아웃박스는 여전히 한 번씩 훑는다(메모리 안).
+     * 모양과 칸은 같고 실행과 일지 막힘 목록만 고른 실행으로 줄어든다. 같은 순간의 전체 목록에서 그 실행만 남긴 것과 같다.
+     * 응답은 고른 실행 수만큼이다. 놓은 실행은 고른 것만 정착 이벤트에서 읽는다.
      */
-    fun executions(jobOrderIds: Set<String>, executionIds: Set<String>): ExecutionsView = lock.withLock {
-        view(middleware.executions().filter { it.order.jobOrderId in jobOrderIds || it.executionId in executionIds })
+    fun executions(jobOrderIds: Set<String>, executionIds: Set<String>): ExecutionsView = withForgotten(
+        lock.withLock { view(middleware.executions().filter { it.order.jobOrderId in jobOrderIds || it.executionId in executionIds }) },
+        jobOrderIds, executionIds,
+    )
+
+    /**
+     * [live] 에 이 인스턴스가 놓은 실행을 더한다. [live] 를 호스트 잠금 아래에서 먼저 읽고 DB 를 잠금 밖에서 뒤에 읽는다. 놓기는 정착
+     * 기록이 커밋된 뒤라, 메모리에서 빠진 실행은 DB 에 있다. 두 쪽에 다 있으면 메모리의 것이다. 놓은 실행의 줄은 정착할 때 적은 본문
+     * 그대로다(놓은 뒤에는 그 실행이 바뀌지 않는다). 일지 막힘은 메모리의 실행만이다(놓은 실행은 일지에 있다).
+     */
+    private fun withForgotten(live: ExecutionsView, jobOrderIds: Set<String>?, executionIds: Set<String>?): ExecutionsView {
+        val present = live.executions.mapTo(HashSet()) { it.executionId }
+        val gone = records.settledSnapshots(instanceId, jobOrderIds, executionIds)
+            .filter { it.executionId !in present }
+            .map { json.readValue<ExecutionView>(it.snapshot) }
+        if (gone.isEmpty()) return live
+        return live.copy(executions = (live.executions + gone).sortedBy { creationOrder(it.executionId) })
     }
 
     /**
@@ -819,7 +912,10 @@ class MissionHost(
      */
     fun executionsRecent(recent: Int): ExecutionPageView {
         require(recent in 1..ExecutionPages.MAX) { "recent 는 1~${ExecutionPages.MAX} 다: $recent" }
-        val live = lock.withLock { view(middleware.executions().filter(::live)) }
+        val live = lock.withLock {
+            val latest = latestResponses(middleware.responses())
+            view(middleware.executions().filter { live(it, latest) })
+        }
         val page = settledPage(null, recent)
         return ExecutionPageView(
             instanceId = live.instanceId,
@@ -841,7 +937,8 @@ class MissionHost(
 
     /** 남은 실행의 수만(HA 설계 기록 §10). 실행 본문과 작업 응답을 옮기지 않는다. */
     fun executionSummary(): ExecutionSummaryView = lock.withLock {
-        val live = middleware.executions().filter(::live)
+        val latest = latestResponses(middleware.responses())
+        val live = middleware.executions().filter { live(it, latest) }
         val states = PhysicalState.entries.associateTo(linkedMapOf()) { it.name to 0 }
         live.forEach { states[it.physicalState.name] = states.getValue(it.physicalState.name) + 1 }
         ExecutionSummaryView(
@@ -853,13 +950,22 @@ class MissionHost(
         )
     }
 
-    /** [ExecutionPages.live]. 호스트 잠금 아래에서 부른다. */
-    private fun live(execution: Middleware.Execution): Boolean {
-        val journalBlocked = execution.order.jobOrderId !in journaled
-        return ExecutionPages.live(
-            ExecutionPages.active(execution.physicalState, execution.units.map { it.state }, journalBlocked),
-            execution.order.jobOrderId in settledRecorded,
-        )
+    /** [ExecutionPages.live]. [latest] 는 [latestResponses] 다. 호스트 잠금 아래에서 부른다. */
+    private fun live(execution: Middleware.Execution, latest: Map<String, JobResponse>): Boolean =
+        ExecutionPages.live(active(execution), settleRecorded(execution, latest))
+
+    /** [ExecutionPages.active]. 호스트 잠금 아래에서 부른다. */
+    private fun active(execution: Middleware.Execution): Boolean =
+        ExecutionPages.active(execution.physicalState, execution.units.map { it.state }, execution.order.jobOrderId !in journaled)
+
+    /**
+     * 이 실행의 지금의 정착을 적었는가. 실행이 정착해 있고(`PARTIAL` 은 아니다) 마지막으로 적은 정착의 작업 응답이 그 실행의 마지막 작업
+     * 응답이다. 다시 돌면 정착하지 않은 상태라 거짓이고, 다시 정착하면 새 작업 응답이 나 또 거짓이다. [latest] 는 [latestResponses] 다.
+     */
+    private fun settleRecorded(execution: Middleware.Execution, latest: Map<String, JobResponse>): Boolean {
+        if (execution.physicalState.pumps) return false
+        val mark = settleMarks[execution.executionId] ?: return false
+        return mark.responseId == latest[execution.executionId]?.jobResponseId
     }
 
     private fun settledPage(before: Long?, limit: Int): SettledPageView =
@@ -877,6 +983,7 @@ class MissionHost(
                 units = emptyList(), jobResponse = null, restoredFrom = null,
             ),
         ),
+        superseded = row.superseded,
     )
 
     /** [chosen] 실행의 목록 본문. 호스트 잠금 아래에서 부른다. */
@@ -940,8 +1047,15 @@ class MissionHost(
 
     private fun liveDetail(incidentId: String): IncidentDetailView? {
         val bundle = middleware.incident(incidentId) ?: return null
-        return IncidentViews.detail(middleware.instanceId, bundle, incidentId in heldIncidents(middleware.incidents()), unitStateOf(bundle))
+        val unitState = unitStateOf(bundle) ?: forgottenUnitState(bundle)
+        return IncidentViews.detail(middleware.instanceId, bundle, incidentId in heldIncidents(middleware.incidents()), unitState)
     }
+
+    /** 이 인스턴스가 놓은 실행의 인시던트면 그 단위의 마지막 정착 때 상태(놓은 뒤에는 바뀌지 않는다). 없으면 `null` 이다. */
+    private fun forgottenUnitState(bundle: IncidentBundle): String? =
+        records.settledSnapshots(instanceId, executionIds = setOf(bundle.executionId)).singleOrNull()
+            ?.let { json.readValue<ExecutionView>(it.snapshot) }
+            ?.units?.firstOrNull { it.unitId == bundle.unitId }?.state
 
     private fun unitStateOf(bundle: IncidentBundle): String? =
         middleware.executions().firstOrNull { it.executionId == bundle.executionId }
@@ -972,12 +1086,14 @@ class MissionHost(
 
     /**
      * pump 뒤 기록(S4b 스펙 §6.2, T6·T7). 같은 잠금 안에서 한 트랜잭션으로 송신 기록, 새로 봉인된 인시던트의 사본, 아직 판단 행이
-     * 없는 판단, 아직 정착 이벤트가 없는 정착한 실행을 적는다. 트랜잭션이 실패하면 아무것도 `ack` 하지 않고 다음 pump 에 다시 한다.
+     * 없는 판단, 지금의 정착을 아직 적지 않은 정착한 실행([settleRecorded])을 적는다. 트랜잭션이 실패하면 아무것도 `ack` 하지 않고
+     * 놓지도 않으며 다음 pump 에 다시 한다. 커밋하고 `ack` 한 뒤 놓을 실행을 놓는다([forgetSettled]).
      *
      * 송신 기록: 새 인스턴스가 그 작업 지시에 대해 처음 내는 응답이 그 작업 지시의 가장 최근 송신 행(인스턴스 무관)과 내용 키가
      * 같으면 재기동 중복으로 적고 송신하지 않는다. 그 밖에는 송신으로 적는다. 어느 쪽이든 적은 뒤 `ack` 한다.
      *
-     * 정착은 pump 가 더 돌리지 않는 상태다(`PARTIAL` 은 미들웨어가 계속 돌리므로 정착으로 적지 않는다).
+     * 정착은 pump 가 더 돌리지 않는 상태다(`PARTIAL` 은 미들웨어가 계속 돌리므로 정착으로 적지 않는다). 다시 돌아 다시 정착한 실행은
+     * 그 정착을 또 적는다(정착 이벤트가 정착마다 하나다).
      *
      * 잔여 파지 표시(P0-b2): 정착 이벤트를 적는 실행 가운데 [residualHoldUnit] 이 단위를 내는 것은 같은 트랜잭션에서 표시를 적는다.
      * 작업 지시마다 하나라 이미 있으면 적지 않는다. 판정이 읽는 사본은 커밋된 뒤에만 늘린다.
@@ -987,12 +1103,15 @@ class MissionHost(
         val incidents = middleware.incidents()
         val fresh = incidents.drop(copiedIncidents)
         val resolved = incidents.filter { it.resolution != null && it.incidentId !in copiedResolutions }
+        val latest = latestResponses(middleware.responses())
         val settled = middleware.executions().filter {
-            it.physicalState.isSettled && it.physicalState != PhysicalState.PARTIAL &&
-                it.order.jobOrderId in journaled && it.order.jobOrderId !in settledRecorded
+            !it.physicalState.pumps && it.order.jobOrderId in journaled && !settleRecorded(it, latest)
         }
-        val judgments = changedRecords()
-        if (pending.isEmpty() && fresh.isEmpty() && resolved.isEmpty() && settled.isEmpty() && judgments.isEmpty()) return
+        val judgments = changedRecords(latest)
+        if (pending.isEmpty() && fresh.isEmpty() && resolved.isEmpty() && settled.isEmpty() && judgments.isEmpty()) {
+            forgetSettled(latest)
+            return
+        }
 
         val held = heldIncidents(incidents)
         // 정착 이력(HA 설계 기록 §10): 정착 이벤트에 그때의 실행 본문을 같이 적는다. 화면은 정착 실행을 메모리가 아니라 이것에서 읽는다.
@@ -1032,18 +1151,61 @@ class MissionHost(
         copiedIncidents = incidents.size
         judgments.forEach { (execution, text) -> recorded[execution.order.jobOrderId] = text }
         copiedResolutions += resolved.map { it.incidentId }
-        settledRecorded += settled.map { it.order.jobOrderId }
+        val committedAt = clock.now()
+        settled.forEach { settleMarks[it.executionId] = SettleMark(latest[it.executionId]?.jobResponseId, committedAt) }
         openHolds += marked
         pending.forEach { middleware.ack(it.jobResponseId) }
+        forgetSettled(latest)
     }
 
     /**
-     * 적을 판단 기록. 일지에 있고 정착 이벤트를 아직 적지 않은 실행 가운데 글자가 이 인스턴스가 마지막으로 적은 것과 다른 것이다.
-     * 정착하는 pump 의 실행도 든다(마지막 판정이 그 pump 에서 섰다).
+     * 놓을 실행을 picasso 메모리에서 놓는다(`Middleware.forget`). pump 뒤 기록이 커밋되고 응답을 `ack` 한 뒤에만 부른다. 놓을 실행은 지금의
+     * 정착을 적었고([settleRecorded], 그 정착의 본문·판단 기록·송신 기록이 같은 트랜잭션으로 커밋됐다) 활성이 아니며([active]: 보류·불확실
+     * 단위가 남은 실행은 사람의 판단을 기다린다), `FAILED`·`UNVERIFIED` 면 정착을 적은 지 [revisableRetention] 이 지난 실행이다.
+     *
+     * - `Forgotten`: 그 실행의 호스트 쪽 맵을 지운다([dropForgotten]).
+     * - `Refused`: 남기고 다음 pump 에 다시 한다(확인되지 않은 통보 따위).
+     * - `Unknown`: 이미 없다. 아무것도 안 한다.
+     *
+     * [latest] 는 이번 pump 뒤 기록이 읽은 [latestResponses] 다. 그 뒤 놓기 전까지 새 작업 응답은 나지 않는다(같은 잠금 안이다).
      */
-    private fun changedRecords(): List<Pair<Middleware.Execution, String>> =
+    private fun forgetSettled(latest: Map<String, JobResponse>) {
+        val now = clock.now()
+        middleware.executions().filter { forgettable(it, latest, now) }.forEach { execution ->
+            when (val outcome = forget(execution.executionId)) {
+                ForgetOutcome.Forgotten -> dropForgotten(execution)
+                is ForgetOutcome.Refused -> log.warn("실행을 놓지 못했다, 다음 pump 에 다시 한다: {} {}", execution.executionId, outcome.reason)
+                ForgetOutcome.Unknown -> Unit
+            }
+        }
+    }
+
+    private fun forgettable(execution: Middleware.Execution, latest: Map<String, JobResponse>, now: Instant): Boolean {
+        if (!settleRecorded(execution, latest) || active(execution)) return false
+        return forgetDue(execution.physicalState, settleMarks.getValue(execution.executionId).at, now, revisableRetention)
+    }
+
+    /** picasso `Middleware.forget` 를 부르는 자리. 시험이 거절과 모름을 주입하려고 바꾼다. 호스트 잠금 아래에서 부른다. */
+    @Volatile
+    internal var forget: (String) -> ForgetOutcome = { middleware.forget(it) }
+
+    /** 놓은 실행의 호스트 쪽 맵을 지운다. 재기동에 넘길 것은 모두 DB 에 있다(일지·정착 본문·판단 기록·취소·잔여 파지 표시). */
+    private fun dropForgotten(execution: Middleware.Execution) {
+        val jobOrderId = execution.order.jobOrderId
+        settleMarks.remove(execution.executionId)
+        restoredFrom.remove(execution.executionId)
+        cancels.remove(execution.executionId)
+        recorded.remove(jobOrderId)
+        journaled.remove(jobOrderId)
+    }
+
+    /**
+     * 적을 판단 기록. 일지에 있고 지금의 정착을 아직 적지 않은 실행 가운데 글자가 이 인스턴스가 마지막으로 적은 것과 다른 것이다.
+     * 정착하는 pump 의 실행도 든다(마지막 판정이 그 pump 에서 섰다). 다시 돈 실행은 다시 든다. [latest] 는 [latestResponses] 다.
+     */
+    private fun changedRecords(latest: Map<String, JobResponse> = latestResponses(middleware.responses())): List<Pair<Middleware.Execution, String>> =
         middleware.executions()
-            .filter { it.order.jobOrderId in journaled && it.order.jobOrderId !in settledRecorded }
+            .filter { it.order.jobOrderId in journaled && !settleRecorded(it, latest) }
             .mapNotNull { execution ->
                 middleware.judgmentRecord(execution.executionId)?.let(JudgmentRecordWire::encode)
                     ?.takeIf { it != recorded[execution.order.jobOrderId] }
@@ -1115,7 +1277,8 @@ class MissionHost(
      * 응답, 잔여 파지 표시)이다.
      *
      * 받는 실행은 물리 상태가 `pumps` 인 것(정착하지 않았거나 부분 완료 `PARTIAL`)뿐이다. 이미 취소를 건 실행(`CANCELING`, 또는 이
-     * 인스턴스의 취소 행이 있음)과 실행 일지에 없는 실행은 NOT_CANCELABLE 이다. 승인자는 사람이어야 한다(ADR 47 과 같은 규칙).
+     * 인스턴스의 취소 행이 있음)과 실행 일지에 없는 실행은 NOT_CANCELABLE 이다. 이 인스턴스가 정착을 적고 놓은 실행도 정착한 실행이라
+     * NOT_CANCELABLE 이다(상태는 마지막 정착 이벤트의 것). 승인자는 사람이어야 한다(ADR 47 과 같은 규칙).
      * picasso 의 `cancel` 은 승인자를 받지 않으므로 이 판정은 호스트가 한다.
      */
     fun cancel(executionId: String, approver: Approver, reason: String, requestId: String?): CancelView = lock.withLock {
@@ -1123,7 +1286,9 @@ class MissionHost(
             return@withLock CancelView(CancelResult.REFUSED, executionId, null, "$AGENT_CANCEL_REFUSED: ${approver.id}", requestId)
         }
         val execution = middleware.executions().firstOrNull { it.executionId == executionId }
-            ?: return@withLock CancelView(CancelResult.NOT_FOUND, executionId, null, "그 실행이 지금 인스턴스에 없다", requestId)
+            ?: return@withLock records.settledSnapshots(instanceId, executionIds = setOf(executionId)).singleOrNull()
+                ?.let { CancelView(CancelResult.NOT_CANCELABLE, executionId, it.physicalState, "정착한 실행은 취소하지 않는다: ${it.physicalState}", requestId) }
+                ?: CancelView(CancelResult.NOT_FOUND, executionId, null, "그 실행이 지금 인스턴스에 없다", requestId)
         val state = execution.physicalState
         val refusal = when {
             !state.pumps -> "정착한 실행은 취소하지 않는다: ${state.name}"
@@ -1136,6 +1301,22 @@ class MissionHost(
         cancels[executionId] = row
         check(middleware.cancel(executionId)) { "미들웨어가 취소를 받지 않았다: $executionId ${state.name}" }
         CancelView(CancelResult.CANCELED, executionId, state.name, null, requestId)
+    }
+
+    /**
+     * 호스트 메모리의 크기(놓기, 한계 §15.224 · 놓기 소비자). 미들웨어의 실행·아웃박스와 실행마다 드는 호스트 쪽 맵의 크기다. 놓기가
+     * 돌면 활성 실행과 개정판을 받으려고 두는 실행만큼이다. 시험과 부하 하네스가 읽는다.
+     */
+    fun footprint(): HostFootprint = lock.withLock {
+        HostFootprint(
+            executions = middleware.executions().size,
+            responses = middleware.responses().size,
+            settleMarks = settleMarks.size,
+            journaled = journaled.size,
+            recorded = recorded.size,
+            restoredFrom = restoredFrom.size,
+            cancels = cancels.size,
+        )
     }
 
     /** 미해소 잔여 파지 표시(P0-b2). 적은 순서다. */
@@ -1312,6 +1493,34 @@ class MissionHost(
 
         /** pump 주기(T5). 셀 대역이 채운 슬롯을 E2 마감(15초)보다 훨씬 짧게 다시 읽는다. */
         val PUMP_PERIOD: Duration = Duration.ofMillis(250)
+
+        /**
+         * `FAILED`·`UNVERIFIED` 로 정착한 실행을 놓기 전에 두는 폭의 기본값(`host.settled.revisable-retention`). 그 안에서는 같은 작업 지시 id
+         * 의 개정판을 받는다. 운영 서비스는 작업 지시 id 를 다시 쓰지 않으므로 개정판은 호스트 REST 를 직접 부르는 쪽만 낸다.
+         */
+        val DEFAULT_REVISABLE_RETENTION: Duration = Duration.ofMinutes(5)
+
+        /** 개정판으로 다시 돌 수 있어 [DEFAULT_REVISABLE_RETENTION] 동안 두는 정착 상태. `PARTIAL` 은 구동이 계속 돌려 놓지 않는다. */
+        private val REVISABLE = setOf(PhysicalState.FAILED, PhysicalState.UNVERIFIED)
+
+        /**
+         * 미들웨어에 실행이 없는데 실행 일지에 정착 없이 있는 작업 지시를 다시 낸 REJECTED 사유의 앞부분(미뤘거나 포기한 일지 행).
+         * 뒤에 `: 작업 지시 id · 받은 인스턴스 실행 id` 가 붙는다.
+         */
+        const val JOURNALED_JOB_ORDER = "실행 일지에 이미 있는 작업 지시라 새 실행을 짓지 않는다"
+
+        /**
+         * 정착을 [recordedAt] 에 적은 [state] 의 실행을 [now] 에 놓을 때가 되었는가. `PHYSICALLY_DONE`·`ABORTED` 는 곧이고, `FAILED`·`UNVERIFIED` 는
+         * [retention] 이 지난 뒤다. 구동이 아직 돌리는 상태(`PARTIAL` 포함)는 놓지 않는다.
+         */
+        internal fun forgetDue(state: PhysicalState, recordedAt: Instant, now: Instant, retention: Duration): Boolean = when {
+            state.pumps -> false
+            state in REVISABLE -> !now.isBefore(recordedAt.plus(retention))
+            else -> true
+        }
+
+        /** 실행 id 의 생성 차례. picasso 는 `exec-N` 의 N 을 인스턴스 안에서 늘리기만 하고 다시 쓰지 않는다(`Middleware.forget`). */
+        internal fun creationOrder(executionId: String): Long = executionId.substringAfterLast('-').toLongOrNull() ?: Long.MAX_VALUE
 
         /** 현장 시간값 미적용 동안 판정이 기체마다 더하는 이유(S3c 스펙 T8). 화면에 그대로 보인다. */
         const val UNAPPLIED_REASON = "현장 시간값 미적용: 실행 호스트가 현장 설정을 아직 읽지 못했다"

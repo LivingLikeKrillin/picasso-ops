@@ -151,6 +151,10 @@ function ExecutionRow({ execution, selected, settled, currentInstance }: RowProp
       <td>
         {execution.physicalState}
         {settled !== undefined && <span className="restored"> ({TEXT.settledAt(settled.settledAt)})</span>}
+        {settled !== undefined && execution.jobResponse != null && (
+          <span className="restored"> ({TEXT.orderVersion(execution.jobResponse.version)})</span>
+        )}
+        {settled?.superseded === true && <span className="restored"> ({TEXT.superseded})</span>}
         {execution.cancel != null && <CancelCell cancel={execution.cancel} />}
         {execution.permitBlock != null && <PermitBlockNotice block={execution.permitBlock} />}
       </td>

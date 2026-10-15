@@ -171,15 +171,16 @@ InspectAsset 예:
   "remedyWithheld": false,
   "alternativeLocations": null,
   "sourceMissing": null,
-  "sourceUnobserved": null
+  "sourceUnobserved": null,
+  "forgottenJobOrder": false
 }
 ```
 
 | `result` | 미들웨어 | `executionId`·`robotId` | `rejectionReason` | `refusals` |
 |---|---|---|---|---|
 | `ACCEPTED` | `Submission.Accepted` | 새 실행 | null | `[]` |
-| `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 그 실행이 끝났고 후보가 판정을 통과해야 `assign` 까지 간다) | 기존 실행과 그 기체 | null | `[]` |
-| `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과 등), 실행 일지 차단 | null | 사유(한국어) | `[]` |
+| `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 그 실행이 끝났고 후보가 판정을 통과해야 `assign` 까지 간다. 실행이 아직 picasso 메모리에 남아 있을 때만 성립한다(보존 폭 안의 `FAILED`·`UNVERIFIED` 실행). 정착해 놓은 실행의 같은 id는 `forgottenJobOrder: true`인 REJECTED이다) | 기존 실행과 그 기체 | null | `[]` |
+| `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과, picasso의 놓은 작업 지시 거부 등), 실행 일지 가드(실행 일지에 이미 있는 작업 지시. 정착이 있으면 `FORGOTTEN_JOB_ORDER`, 없으면 `JOURNALED_JOB_ORDER`), 실행 일지 차단 | null | 사유(한국어) | `[]` |
 | `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "...", "alternativeLocations": [...], "sourceMissing": {...}, "sourceUnobserved": {...}}]`, `assign` 이 기체마다 낸 관문 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
 
 - `excluded`: 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행(2.2). 결과와 무관하게 늘 있다(없으면 `[]`).
@@ -188,7 +189,8 @@ InspectAsset 예:
 - `alternativeLocations`: 맨 위 칸은 REJECTED 전용, UNASSIGNED 는 `refusals[]` 기체별 칸에 같은 의미. 출발 결품일 때 그 자재를 든 다른 자리. `[]` = 든 자리 없음, null = 셀이 답하지 않았거나 출발 결품 거부가 아님. 둘을 접지 않는다. 두 null 은 `sourceMissing` 으로 가른다.
 - `sourceMissing`: 출발 결품 거부이면 `{material, source, observed}`(`observed` null = 빈 자리, 아니면 거기 있던 다른 식별 정보, `material` 은 단위가 자재를 지정하지 않았으면 null). REJECTED 의 맨 위 `sourceMissing` 은 이번 제출로 미들웨어 조치 탐색 기록(`remedySearches()`)에 새로 붙은 `SOURCE_MISSING` 줄에서 옮긴다. UNASSIGNED 의 기체별 `sourceMissing` 은 picasso `Unassigned.sourceMissing[robotId]`(관문이 계산한 답)에서 옮기며 조치 탐색 기록에는 적히지 않는다. 아니면 null.
 - `sourceUnobserved`: 출발 미관측이면 picasso `SourceUnobserved` 의 `{material, source, occupied}`. `occupied` null = 설비가 말이 없음, true = 설비가 «있다» 고만 함(신원 없음). 출발 결품과 접지 않는다: 그 기체의 `sourceMissing`·`alternativeLocations` 는 null 이다(대체 자리를 계산하지 않음). REJECTED 의 맨 위 칸은 picasso `Submission.Rejected.sourceUnobserved` 에서, UNASSIGNED 의 기체별 칸은 `Unassigned.sourceUnobserved[robotId]` 에서 옮긴다. 조치 탐색 기록에는 적히지 않는다. 출발 관측을 요구한(`REQUIRED`) 단위에서만 나온다. 지금 `assign` 경로에서는 UNASSIGNED 로만 오고, REJECTED 모양은 `SubmitOutcomeTest` 가 picasso 값을 직접 세워 고정한다. 아니면 null. 근거: `SubmitOutcomeTest` 의 `출발 미관측 거부는 그 자리와 설비가 말한 것을 싣고 결품과 대체 자리를 싣지 않는다`, `미배정의 기체별 사유는 출발 미관측일 때만 그 자리를 싣고 결품 칸과 대체 자리는 비었다`, `SourceObservationHostTest` 의 `출발 관측을 요구한 버전은 설비가 말이 없거나 있다고만 하면 미배정이고 기체별 사유에 출발 미관측이 실리며 결품 칸은 비었다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`.
-- 맨 위 다섯 칸(`sourceUnobserved` 포함)은 미들웨어가 거부한 REJECTED 일 때만 값이 있다. ACCEPTED·IDEMPOTENT·UNASSIGNED·일지 차단 REJECTED 는 null·false. UNASSIGNED 의 출발 결품은 맨 위가 아니라 `refusals[]` 의 기체별 칸에 실린다.
+- `forgottenJobOrder`: boolean. `POST /host/job-orders` 본문의 마지막 칸이며 기본값은 false이다. 거부 사유가 `FORGOTTEN_JOB_ORDER`로 시작하는 REJECTED일 때만 true이다. 운영 서비스는 이를 `/api/job-orders` 결과와 작업 요청 상세 `rejection`에 전달한다. 근거: `SubmitOutcomeTest` 의 `picasso 가 놓은 작업 지시로 거부하면 놓은 작업 지시 칸이 참이고 그 밖의 거부는 거짓이다`, `ForgetSettledTest` 의 `FAILED 는 두는 폭 동안 메모리에 남아 같은 판은 IDEMPOTENT 이고 폭이 지나면 놓아 같은 작업 지시는 판과 무관하게 놓은 작업 지시로 거부한다`, `재기동해 picasso 가 놓은 작업 지시를 몰라도 실행 일지가 같은 작업 지시를 놓은 작업 지시로 거부하고 일지 막힘이 없다`, `정착하지 않은 일지 행이 있는 작업 지시를 다시 내면 일지 쓰기 전에 거부해 호스트가 막히지 않는다`, `MissionHostTest` 의 `끝난 InspectAsset 를 같은 id 로 다시 내면 놓은 작업 지시로 REJECTED 이고 실행에 마지막 작업 응답이 붙는다`.
+- 맨 위 다섯 칸(`sourceUnobserved` 포함)은 미들웨어가 거부한 REJECTED 일 때만 값이 있다. ACCEPTED·IDEMPOTENT·UNASSIGNED·일지 차단 REJECTED 는 null·false. UNASSIGNED 의 출발 결품은 맨 위가 아니라 `refusals[]` 의 기체별 칸에 실린다. `forgottenJobOrder`는 REJECTED(picasso의 거부이거나 실행 일지의 거부)일 때만 true일 수 있고 그 밖에는 false이다.
 - 지금 실행 호스트의 `assign` 경로에서 출발 결품은 UNASSIGNED 로 오므로 `sourceMissing`·`alternativeLocations` 가 찬 REJECTED 는 HTTP 로 나오지 않는다. 모양은 `SubmitOutcomeTest` 가 picasso 거부 값을 직접 세워 고정한다. UNASSIGNED 는 HTTP 로 기체별 구조를 싣는다. 호스트 셀 대역은 스냅숏이 있으면 늘 답하므로 HTTP 로는 기체별 `[]`·목록만 나오고, 기체별 null(셀 무응답)은 `SubmitOutcomeTest` 가 picasso 값을 직접 세워 고정한다.
 
 미들웨어가 출발 결품으로 거부한 REJECTED 의 모양(지금 경로에서는 나오지 않는다):
@@ -205,7 +207,8 @@ InspectAsset 예:
   "remedyWithheld": false,
   "alternativeLocations": ["SEQ-IN-03.BIN-B"],
   "sourceMissing": {"material": "ENGINE-COVER-A", "source": "SEQ-IN-02.BIN-A", "observed": null},
-  "sourceUnobserved": null
+  "sourceUnobserved": null,
+  "forgottenJobOrder": false
 }
 ```
 
@@ -236,7 +239,8 @@ InspectAsset 예:
   "remedyWithheld": false,
   "alternativeLocations": null,
   "sourceMissing": null,
-  "sourceUnobserved": null
+  "sourceUnobserved": null,
+  "forgottenJobOrder": false
 }
 ```
 
@@ -286,13 +290,13 @@ InspectAsset 예:
 |---|---|
 | `instanceId` | 미들웨어 인스턴스(`mw-<UUID>`). 호스트를 재기동하면 바뀌고 `exec-N` 은 1부터 다시 센다 |
 | `pumpedAt` | 마지막 pump 를 **시작할 때**의 호스트 시계 값. 아직 한 번도 안 돌았으면 null. 통합 시험은 밀 때마다 `pumpedAt >= Site.now()` 를 기다린다. 다만 mimic 스트림 갱신은 gRPC 스레드로 비동기로 오므로, 그 pump 가 방금 민 전이를 못 볼 수 있다. 한 주기(250ms) 더 기다리거나 상태로 폴링할 것 |
-| `executions` | 생성 순(`exec-1` 부터). 끝난 실행도 남는다. 정착한 실행은 실행 호스트가 picasso `Middleware.forget`을 부를 때까지 picasso 미들웨어 메모리에 남고, 따라서 이 인자 없는 목록에도 남는다. `Middleware.forget`은 picasso PR #103(머지 커밋 `7d0fa8f`)에서 추가되었고 이 저장소의 picasso 서브모듈은 `faa8ccc`이며 실행 호스트는 아직 `forget`을 부르지 않는다. 화면은 이 인자 없는 목록을 읽지 않고 §5.8의 페이지 형식을 읽는다. |
+| `executions` | 생성 순(`exec-N`의 N 순). 끝난 실행도 남는다. 이 인스턴스가 놓은 실행은 가장 최근 정착 이벤트 본문(정착 당시의 행)이다. 화면은 이 인자 없는 목록을 읽지 않고 §5.8의 페이지 형식을 읽는다. |
 | `missionVersion` | 정수 또는 null. null 이면 코드 정의(화면 표시 «코드 정의»). S3a 는 늘 null |
 | `physicalState` | `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`CANCELING`·`ABORTED`. 정착은 `PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`ABORTED`·`PARTIAL` |
 | `units[].state` | `PENDING`·`IN_DOUBT`·`RUNNING`·`VERIFYING`·`OPERATOR_HOLD`·`DONE`·`UNVERIFIED`·`FAILED`·`ABORTED` |
 | `units[].reached` | 근거 등급 `E0`~`E3`. PrepareSequencedRack 이 셀 대역으로 확인되면 `E2` |
 | `units[].skillType` | `navigate_to`·`inspect`·`pick_place` |
-| `jobResponse` | 그 실행의 **마지막** 작업 응답. 없으면 null. 실행 하나에 작업 응답이 여러 번 날 수 있다(호스트는 `ack` 하지 않는다) |
+| `jobResponse` | 그 실행의 **마지막** 작업 응답. 없으면 null. 실행 하나에 작업 응답이 여러 번 날 수 있다(호스트는 기록 뒤 `ack` 한다) |
 | `jobResponse.residualHold` | `HOLD_KIND_*` 이름 |
 | `jobResponse.incompleteUnits` | 단위 id → 사유 문자열 객체 |
 | `jobResponse.connection` | `CONNECTION_STATE_*` 이름 |
@@ -314,8 +318,8 @@ InspectAsset 예:
 | `result` | 언제 | `physicalState` | `detail` |
 |---|---|---|---|
 | `CANCELED` | 물리 상태가 `pumps`(정착하지 않음 또는 `PARTIAL`)이고 아직 취소를 안 걸었고 실행 일지에 있음 | 건 때의 상태 | null |
-| `NOT_CANCELABLE` | 정착함(`정착한 실행은 취소하지 않는다: <상태>`), 이미 취소를 건 실행(`CANCELING` 이거나 이 인스턴스의 취소 행이 있음, `이미 취소를 건 실행이다`), 실행 일지에 없음(`실행 일지에 없는 실행이다`) | 지금 상태 | 사유 |
-| `NOT_FOUND` | 지금 인스턴스에 그 실행이 없음 | null | `그 실행이 지금 인스턴스에 없다` |
+| `NOT_CANCELABLE` | 정착함(놓은 실행도 정착으로 치며 상태는 마지막 정착 이벤트의 상태다. `정착한 실행은 취소하지 않는다: <상태>`), 이미 취소를 건 실행(`CANCELING` 이거나 이 인스턴스의 취소 행이 있음, `이미 취소를 건 실행이다`), 실행 일지에 없음(`실행 일지에 없는 실행이다`). 근거 시험: `ForgetSettledTest` 의 `정착을 적고 응답을 ack 한 뒤 끝난 실행을 놓으면 호스트 메모리가 비고 목록과 좁힌 목록은 정착 본문으로 같은 줄을 싣는다` | 지금 상태 | 사유 |
+| `NOT_FOUND` | 지금 인스턴스에 그 실행도 정착 기록도 없음 | null | `그 실행이 지금 인스턴스에 없다` |
 | `REFUSED` | 승인자가 사람이 아님. REST 는 늘 사람 승인자라 호스트 메서드를 직접 부를 때만 | null | `에이전트는 실행을 취소하지 못한다. 실행 중단은 사람의 것이다: <approverId>` |
 
 ```json
@@ -395,20 +399,21 @@ InspectAsset 예:
 
 ### 5.7 좁히는 인자
 
-`GET /host/executions?jobOrderId=…&executionId=…`. 두 인자 모두 되풀이 가능하며 값은 쉼표로 가르지 않는다. 인자를 주면 같은 모양이고 `instanceId`·`pumpedAt`·`restore`는 그대로이며, `executions`와 `journalBlockedExecutionIds`는 고른 실행만 담는다. 두 인자는 합집합이다(작업 지시나 실행 id 중 하나라도 맞으면 든다). 빈 값은 400 `BAD_REQUEST`다. 인자가 없으면 전과 같은 전체 목록이다. 모르는 인자는 버린다. 좁히는 인자는 운영 서비스 스테이션 조정과 작업 요청 상세·재작업 관문, 응답 누락 뒤의 두 다시 읽기(작업 지시 제출은 `jobOrderId`, 실행 취소는 `executionId`로 읽는다)가 쓴다. 운영 서비스 `GET /api/executions`는 이 인자들을 호스트에 넘기지 않는다(무시한다. 9.4 참고). 근거 시험: 실행 호스트 `ExecutionsNarrowedTest`의 `작업 지시나 실행 id 로 좁힌 실행 목록은 같은 순간의 전체 목록에서 그 실행만 남긴 것과 같다`, `일지에 막힌 실행은 좁힌 목록에 그 실행이 들 때만 막힘으로 나온다`, `인자 없는 실행 목록은 정착한 실행까지 전과 같은 본문이고 좁히는 값은 쉼표로 가르지 않으며 빈 값은 400 이다`.
+`GET /host/executions?jobOrderId=…&executionId=…`. 두 인자 모두 되풀이 가능하며 값은 쉼표로 가르지 않는다. 인자를 주면 같은 모양이고 `instanceId`·`pumpedAt`·`restore`는 그대로이며, `executions`와 `journalBlockedExecutionIds`는 고른 실행만 담는다. 두 인자는 합집합이다(작업 지시나 실행 id 중 하나라도 맞으면 든다). 빈 값은 400 `BAD_REQUEST`다. 인자가 없으면 전과 같은 전체 목록이다. 모르는 인자는 버린다. 좁히는 인자는 운영 서비스 스테이션 조정과 작업 요청 상세·재작업 관문, 응답 누락 뒤의 두 다시 읽기(작업 지시 제출은 `jobOrderId`, 실행 취소는 `executionId`로 읽는다)가 쓴다. 운영 서비스 `GET /api/executions`는 이 인자들을 호스트에 넘기지 않는다(무시한다. 9.4 참고). 좁힌 읽기 역시 이 인스턴스가 놓은 실행을(정착 본문에서) 가져오며, 결과는 같은 시점의 전체 목록을 해당 실행으로 거른 것과 여전히 같다. 근거 시험: 실행 호스트 `ExecutionsNarrowedTest`의 `작업 지시나 실행 id 로 좁힌 실행 목록은 같은 순간의 전체 목록에서 그 실행만 남긴 것과 같다`, `일지에 막힌 실행은 좁힌 목록에 그 실행이 들 때만 막힘으로 나온다`, `인자 없는 실행 목록은 정착한 실행까지 전과 같은 본문이고 좁히는 값은 쉼표로 가르지 않으며 빈 값은 400 이다`, `ForgetSettledTest`의 `정착을 적고 응답을 ack 한 뒤 끝난 실행을 놓으면 호스트 메모리가 비고 목록과 좁힌 목록은 정착 본문으로 같은 줄을 싣는다`.
 
 ### 5.8 화면 페이지
 
-화면의 실행 목록은 활성 실행과 최근 정착 실행 N개를 읽고, 그보다 이전 이력은 페이지로 읽는다. 정착한 실행은 미들웨어 메모리가 아니라 실행 호스트의 정착 기록(DB)에서 읽으므로, 메모리에서 사라지거나 호스트 재기동 뒤에도 남는다.
+화면의 실행 목록은 활성 실행과 최근 정착 실행 N개를 읽고, 그보다 이전 이력은 페이지로 읽는다. 정착한 실행은 미들웨어 메모리가 아니라 실행 호스트의 정착 기록(DB)에서 읽으므로, 실행 호스트가 picasso `forget`을 불러 실제로 메모리에서 사라지거나 호스트 재기동 뒤에도 남는다.
 
 `GET /host/executions?recent=N`. N은 1~200 정수다. 본문 칸은 `{instanceId, pumpedAt, executions, restore, journalBlockedExecutionIds, settled, nextBefore, olderTotal}` 순서다. 앞 다섯 칸은 §5와 이름과 뜻이 같다.
-- `executions`: 현재 인스턴스의 남은 실행만 담는다(메모리, 생성 순). 남은 실행은 활성이거나, 정착했으나 정착 기록(`SETTLED` 이벤트)이 아직 커밋되지 않은 실행이다. 활성은 `PhysicalState.pumps`(아직 정착하지 않았거나 `PARTIAL`: `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`CANCELING`), 적어도 한 단위가 `OPERATOR_HOLD`나 `IN_DOUBT`, 일지에 막힘 중 하나에 해당한다.
+- `executions`: 현재 인스턴스의 남은 실행만 담는다(메모리, 생성 순). 남은 실행은 활성이거나, 정착했으나 이번 정착 기록(`SETTLED` 이벤트)이 아직 커밋되지 않은 실행이다(다시 돌아 다시 정착한 실행도 든다). 활성은 `PhysicalState.pumps`(아직 정착하지 않았거나 `PARTIAL`: `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`CANCELING`), 적어도 한 단위가 `OPERATOR_HOLD`나 `IN_DOUBT`, 일지에 막힘 중 하나에 해당한다.
 - `journalBlockedExecutionIds`: 남은 실행 가운데 막힌 실행이다. 막힌 실행은 늘 활성이고 따라서 늘 남은 실행이므로 전체 목록과 같다.
-- `settled`: 인스턴스를 가리지 않고 가장 최근 정착 이력 N개 행이며 최신 순이다. 각 원소는 `{settleSeq, instanceId, settledAt, snapshot, execution}`이다. `execution`은 §5의 실행 한 행과 모양이 같다.
+- `settled`: 인스턴스를 가리지 않고 가장 최근 정착 이력 N개 행이며 최신 순이다. 정착마다 한 행이라 한 작업 지시가 여러 행을 가질 수 있다. 각 원소는 `{settleSeq, instanceId, settledAt, snapshot, execution, superseded}`이다. `execution`은 §5의 실행 한 행과 모양이 같다.
   - `settleSeq`: `execution_journal_event`의 `SETTLED` 이벤트 `event_id`다. 정렬 키이자 커서다. 클수록 나중에 정착한 것이다. 다른 일지 이벤트가 같은 식별자를 나누므로 연속적이지 않다.
   - `instanceId`: 정착 기록을 쓴 인스턴스다(재기동 전 인스턴스일 수 있다).
   - `settledAt`: 기록의 DB 시각이다.
   - `snapshot`: `execution`이 정착할 때 쓴 실행 본문이면 true다(마이그레이션 V8). V8 전에 쓰인 행은 `snapshot: false`이며 일지 행으로 만든 `execution`이다(`units` 빈 목록, `jobResponse`와 `cancel` null, 접수 당시 기체).
+  - `superseded`: 같은 작업 지시의 더 뒤 정착 이벤트가 있으면 true이다.
 - `nextBefore`: 이전 이력이 있으면 이 페이지에서 가장 오래된 `settleSeq`이고, 없으면 null이다.
 - `olderTotal`: `nextBefore`보다 오래된 이력 행의 수다(null이면 0).
 
@@ -420,7 +425,7 @@ InspectAsset 예:
 
 값이 잘못되었거나(정수가 아님, 범위 벗어남, 빈 값, 되풀이됨), `recent`를 `before`나 `limit`와 섞어 쓰거나, `before` 없이 `limit`를 주거나, 페이지 인자를 좁히는 인자(`jobOrderId`·`executionId`)와 섞어 쓰면 400 `BAD_REQUEST`다. `instanceId`는 이 엔드포인트들의 인자가 아니며 다른 모르는 인자처럼 버린다.
 
-근거 시험: 실행 호스트 `ExecutionsPagedTest`의 다섯(`화면 목록은 같은 순간의 전체 목록에서 남은 실행을 고르고 정착 이력은 정착할 때의 실행 본문이며 실행 수는 남은 실행을 센 것이다`, `정착 기록이 커밋되기 전의 정착 실행은 남은 실행으로 보이고 기록되면 정착 이력으로 옮긴다`, `커서를 이어 읽으면 정착 이력이 다 한 번씩 나오고 사이에 정착이 생겨도 남은 페이지가 그대로이며 재기동 뒤에도 남는다`, `일지에 막힌 실행은 활성이라 화면 목록에 늘 들고 실행 수의 남은 실행과 막힘에도 든다`, `페이지 인자는 범위와 짝을 검사하고 인자 없는 목록과 모르는 인자는 그대로다`), `SettledHistoryTest`의 셋(`정착 이력 페이지는 정착 이벤트 전부를 최근부터 늘어놓고 커서 앞에서 limit 개로 자른 것과 같다`, `커서를 이어 읽으면 정착 이력이 겹치거나 빠지지 않고 사이에 새 정착이 생겨도 남은 페이지가 그대로다`, `정착 이력은 인스턴스를 가리지 않고 일지 행의 기체와 임무를 싣고 본문 없는 정착 이벤트도 읽는다`), `ExecutionPagesTest`의 둘(`활성은 더 돌 수 있는 실행과 운영자 보류나 불확실 단위가 남은 실행과 일지에 막힌 실행이다`, `남은 실행은 활성이거나 정착 기록이 아직 커밋되지 않은 실행이다`).
+근거 시험: 실행 호스트 `ExecutionsPagedTest`의 다섯(`화면 목록은 같은 순간의 전체 목록에서 남은 실행을 고르고 정착 이력은 정착할 때의 실행 본문이며 실행 수는 남은 실행을 센 것이다`, `정착 기록이 커밋되기 전의 정착 실행은 남은 실행으로 보이고 기록되면 정착 이력으로 옮긴다`, `커서를 이어 읽으면 정착 이력이 다 한 번씩 나오고 사이에 정착이 생겨도 남은 페이지가 그대로이며 재기동 뒤에도 남는다`, `일지에 막힌 실행은 활성이라 화면 목록에 늘 들고 실행 수의 남은 실행과 막힘에도 든다`, `페이지 인자는 범위와 짝을 검사하고 인자 없는 목록과 모르는 인자는 그대로다`), `SettledHistoryTest`의 셋(`정착 이력 페이지는 정착 이벤트 전부를 최근부터 늘어놓고 커서 앞에서 limit 개로 자른 것과 같다`, `커서를 이어 읽으면 정착 이력이 겹치거나 빠지지 않고 사이에 새 정착이 생겨도 남은 페이지가 그대로다`, `정착 이력은 인스턴스를 가리지 않고 일지 행의 기체와 임무를 싣고 본문 없는 정착 이벤트도 읽는다`), `ExecutionPagesTest`의 둘(`활성은 더 돌 수 있는 실행과 운영자 보류나 불확실 단위가 남은 실행과 일지에 막힌 실행이다`, `남은 실행은 활성이거나 정착 기록이 아직 커밋되지 않은 실행이다`), `ForgetSettledTest`의 둘(`실패 뒤 개정판으로 다시 정착하면 그 판의 정착 이력 줄을 하나 더 적고 앞 줄은 다시 정착함으로 표시하며 pump 를 거듭해도 정착마다 한 줄이다`, `취소한 보류 실행은 판단을 기다리는 동안 놓지 않고 판단으로 같은 판에서 다시 정착하면 정착 줄을 하나 더 적고 판단 기록을 적은 뒤 놓는다`).
 
 ## 6. `GET /host/cell`
 
@@ -593,7 +598,8 @@ InspectAsset 예:
     "remedyWithheld": false,
     "alternativeLocations": null,
     "sourceMissing": null,
-    "sourceUnobserved": null
+    "sourceUnobserved": null,
+    "forgottenJobOrder": false
   }
 }
 ```

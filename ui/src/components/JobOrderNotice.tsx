@@ -1,5 +1,5 @@
 import type { Delivered, JobOrderOutcome } from '../api'
-import { SUBMIT_RESULT_LABEL, alternativesLabel, kindLabel, sourceMissingLabel, sourceUnobservedLabel } from '../labels'
+import { FORGOTTEN_JOB_ORDER_TEXT, SUBMIT_RESULT_LABEL, alternativesLabel, kindLabel, sourceMissingLabel, sourceUnobservedLabel } from '../labels'
 
 interface Props {
   /** 어느 임무의 작업 지시인지. 예: `InspectAsset 작업 지시` */
@@ -74,6 +74,7 @@ export function JobOrderNotice({ what, sent }: Props) {
           </>
         )}
       </dl>
+      {outcome.forgottenJobOrder === true && <p>{FORGOTTEN_JOB_ORDER_TEXT}</p>}
       {outcome.sourceUnobserved && <p>{sourceUnobservedLabel(outcome.sourceUnobserved)}</p>}
       {outcome.refusals.length > 0 && (
         <>

@@ -26,10 +26,12 @@ data class ReceiptAccepted(val receipt: Receipt, val duplicate: Boolean)
  * The host's REJECTED on a work request. [alternativeLocations] keeps null (no answer, or not a source-missing rejection) apart from
  * an empty list (no other place holds the material); [sourceMissing] tells the two nulls apart. [remedy] is the host's tagged answer as is.
  * [sourceUnobserved] is the host's source-unobserved answer (the cell did not confirm the source); it is never folded into [sourceMissing].
+ * [forgottenJobOrder]: the host refused a job order that already finished and was forgotten (picasso FORGOTTEN_JOB_ORDER); the same job
+ * order is refused again the same way, so further work goes out as a new work request.
  */
 data class WorkRequestRejection(val reason:String?, val remedy:JsonNode?, val remedyWithheld:Boolean,
  val alternativeLocations:List<String>?, val sourceMissing:dev.picasso.ops.service.host.HostSourceMissing?,
- val sourceUnobserved:dev.picasso.ops.service.host.HostSourceUnobserved?=null)
+ val sourceUnobserved:dev.picasso.ops.service.host.HostSourceUnobserved?=null,val forgottenJobOrder:Boolean=false)
 /**
  * A source the host could not observe on a host UNASSIGNED: the source, what should be there, what the cell said, and the robots refused for it.
  * The work request holds until a person records a source confirmation for it ([WorkRequests.confirmSource]).
@@ -598,7 +600,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   val outcome=receipt.submission?.get("outcome")?.takeIf{it.isObject} ?: return null
   val host=runCatching{kotlinJson.treeToValue(outcome,dev.picasso.ops.service.host.HostSubmitOutcome::class.java)}.getOrNull()
    ?.takeIf{it.result==dev.picasso.ops.service.host.HostSubmitResult.REJECTED} ?: return null
-  return WorkRequestRejection(host.rejectionReason,host.remedy?.takeUnless{it.isNull},host.remedyWithheld,host.alternativeLocations,host.sourceMissing,host.sourceUnobserved)
+  return WorkRequestRejection(host.rejectionReason,host.remedy?.takeUnless{it.isNull},host.remedyWithheld,host.alternativeLocations,host.sourceMissing,host.sourceUnobserved,host.forgottenJobOrder)
  }
  /** The host's own UNASSIGNED, typed from the stored submission like [rejection]. A pre-dispatch UNASSIGNED has no host answer and is null. */
  fun unassignment(receipt:Receipt):WorkRequestUnassignment? {

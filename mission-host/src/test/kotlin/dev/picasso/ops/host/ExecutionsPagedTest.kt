@@ -119,7 +119,7 @@ class ExecutionsPagedTest {
                 listOf("instanceId", "pumpedAt", "executions", "restore", "journalBlockedExecutionIds", "settled", "nextBefore", "olderTotal"),
                 first.fieldNames().asSequence().toList(),
             )
-            assertEquals(listOf("settleSeq", "instanceId", "settledAt", "snapshot", "execution"), first["settled"][0].fieldNames().asSequence().toList())
+            assertEquals(listOf("settleSeq", "instanceId", "settledAt", "snapshot", "execution", "superseded"), first["settled"][0].fieldNames().asSequence().toList())
             assertEquals(listOf("exec-5"), ids(first))
             assertEquals(listOf("exec-4"), settledIds(first))
             val page = { cursor: Long -> bench.get("/host/executions?before=$cursor&limit=2") }
