@@ -142,6 +142,28 @@ class HostClientTest {
     }
 
     @Test
+    fun `좁힌 실행 목록은 작업 지시 id 와 실행 id 를 값마다 되풀이해 인코딩해 보내고 본문을 그대로 넘기며 id 없이는 보내지 않는다`() {
+        val queries = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val answer = """{"instanceId":"mw-1","pumpedAt":null,"executions":[]}"""
+        val s = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        s.createContext("/host/executions") { exchange ->
+            queries += exchange.requestURI.rawQuery ?: ""
+            val bytes = answer.toByteArray()
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        s.start()
+        server = s
+        val client = HostClient("http://127.0.0.1:${s.address.port}/")
+        assertEquals(json.readTree(answer), (client.executionsOf(jobOrderIds = listOf("JO-1", "JO 2,&3")) as HostCall.Ok).value)
+        assertEquals(json.readTree(answer), (client.executionsOf(executionIds = listOf("exec-1")) as HostCall.Ok).value)
+        client.executionsOf(listOf("JO-1"), listOf("exec-2"))
+        assertEquals(listOf("jobOrderId=JO-1&jobOrderId=JO+2%2C%263", "executionId=exec-1", "jobOrderId=JO-1&executionId=exec-2"), queries)
+        assertFailsWith<IllegalArgumentException> { client.executionsOf() }
+        assertEquals(3, queries.size)
+    }
+
+    @Test
     fun `작업 허가는 GET host work-permits 본문 그대로이고 200 아님은 모름이다`() {
         val body = """{"declared":true,"robots":[{"robotId":"r1","permit":"INHIBITED","reasons":[]}]}"""
         val client = serve("/host/work-permits" to (200 to body))

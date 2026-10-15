@@ -2,7 +2,6 @@ package dev.picasso.ops.host.web
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import dev.picasso.ops.host.ExecutionsView
 import dev.picasso.ops.host.HostEligibility
 import dev.picasso.ops.host.JournalWriteFailed
 import dev.picasso.ops.host.MissionHost
@@ -11,6 +10,7 @@ import dev.picasso.ops.host.permit.WorkPermitsView
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.util.MultiValueMap
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
@@ -45,8 +45,20 @@ class HostController(private val host: MissionHost, private val json: ObjectMapp
         host.submit(order, candidates, mission, HostRequests.sourceConfirmations(body?.let { json.readTree(it) }?.get("sourceConfirmations")))
     }
 
+    /**
+     * 실행 목록. 인자 없이 부르면 정착한 실행까지 모든 실행이다. `jobOrderId`·`executionId` 를 (되풀이해) 주면 그 작업 지시나 실행의
+     * 실행만 담은 같은 모양이다(HA 설계 기록 §10). 값은 쉼표로 가르지 않는다. 빈 값이 있으면 400 `BAD_REQUEST` 다.
+     */
     @GetMapping("/host/executions")
-    fun executions(): ExecutionsView = host.executions()
+    fun executions(@RequestParam params: MultiValueMap<String, String>): ResponseEntity<Any> {
+        val jobOrderIds = params[JOB_ORDER_ID].orEmpty()
+        val executionIds = params[EXECUTION_ID].orEmpty()
+        if (jobOrderIds.isEmpty() && executionIds.isEmpty()) return ResponseEntity.ok(host.executions())
+        if ((jobOrderIds + executionIds).any { it.isBlank() }) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(HostRejection(HostRequests.BAD_REQUEST, "jobOrderId·executionId 가 비어 있다"))
+        }
+        return ResponseEntity.ok(host.executions(jobOrderIds.toSet(), executionIds.toSet()))
+    }
 
     @GetMapping("/host/cell")
     fun cell(): CellView = CellView(host.cell())
@@ -76,6 +88,10 @@ class HostController(private val host: MissionHost, private val json: ObjectMapp
         ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(HostRejection(JOURNAL_WRITE_FAILED, e.message ?: ""))
 
     companion object {
+        /** `GET /host/executions` 를 좁히는 인자 이름. */
+        const val JOB_ORDER_ID = "jobOrderId"
+        const val EXECUTION_ID = "executionId"
+
         /** 일지 쓰기 실패의 오류 이름. */
         const val JOURNAL_WRITE_FAILED = "JOURNAL_WRITE_FAILED"
     }

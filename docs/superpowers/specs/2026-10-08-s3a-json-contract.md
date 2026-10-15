@@ -393,6 +393,10 @@ InspectAsset 예:
 
 (예의 시각 값은 보기다.)
 
+### 5.7 좁히는 인자
+
+`GET /host/executions?jobOrderId=…&executionId=…`. 두 인자 모두 되풀이 가능하며 값은 쉼표로 가르지 않는다. 인자를 주면 같은 모양이고 `instanceId`·`pumpedAt`·`restore`는 그대로이며, `executions`와 `journalBlockedExecutionIds`는 고른 실행만 담는다. 두 인자는 합집합이다(작업 지시나 실행 id 중 하나라도 맞으면 든다). 빈 값은 400 `BAD_REQUEST`다. 인자가 없으면 전과 같은 전체 목록이다. 모르는 인자는 버린다. 운영 서비스 스테이션 조정과 작업 요청 상세·재작업 관문이 쓰고, 화면에 넘기는 `GET /api/executions`는 인자 없는 목록 그대로다. 근거 시험: 실행 호스트 `ExecutionsNarrowedTest`의 `작업 지시나 실행 id 로 좁힌 실행 목록은 같은 순간의 전체 목록에서 그 실행만 남긴 것과 같다`, `일지에 막힌 실행은 좁힌 목록에 그 실행이 들 때만 막힘으로 나온다`, `인자 없는 실행 목록은 정착한 실행까지 전과 같은 본문이고 좁히는 값은 쉼표로 가르지 않으며 빈 값은 400 이다`.
+
 ## 6. `GET /host/cell`
 
 응답 200 늘:
@@ -416,7 +420,7 @@ InspectAsset 예:
 |---|---|---|---|
 | `POST /host/eligibility` | 판정 | `UNKNOWN_WORK_MASTER`·`BAD_REQUEST` | JSON 아님 |
 | `POST /host/job-orders` | 결과 넷 전부 | `UNKNOWN_WORK_MASTER`·`BAD_REQUEST` | JSON 아님 |
-| `GET /host/executions` | 늘 | 없음 | 없음 |
+| `GET /host/executions` | 늘 | `BAD_REQUEST`(좁히는 인자의 빈 값) | 없음 |
 | `GET /host/cell` | 늘(`cell` null 가능) | 없음 | 없음 |
 | `GET /host/work-permits` | 늘(`declared` false 가능) | 없음 | 없음 |
 | `POST /host/executions/{executionId}/cancel` | 결과 넷 전부(5.2) | `BAD_REQUEST`(그 밖 409 `INSTANCE_MISMATCH`, 500 `RECORD_WRITE_FAILED`) | JSON 아님 |

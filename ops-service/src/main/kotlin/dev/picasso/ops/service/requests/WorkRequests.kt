@@ -514,7 +514,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   * unlisted executions fail closed: their resource management cannot be known.
   */
  fun executionReceipt(instanceId:String,executionId:String):Receipt? {
-  val body=(host.executions() as? HostCall.Ok)?.value?.takeIf { it["instanceId"]?.isTextual == true && it["executions"]?.isArray == true }
+  val body=(host.executionsOf(executionIds=listOf(executionId)) as? HostCall.Ok)?.value?.takeIf { it["instanceId"]?.isTextual == true && it["executions"]?.isArray == true }
    ?: throw RequestRejected("HOST_SILENT","실행 목록을 읽지 못해 자원 관리 작업인지 확인할 수 없습니다",503)
   if(body["instanceId"].asText()!=instanceId)return null
   val job=body["executions"].firstOrNull { it["executionId"]?.asText()==executionId }?.get("jobOrderId")?.takeIf { it.isTextual }?.asText()
@@ -522,9 +522,10 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   return jdbc.sql("SELECT * FROM ops.work_request WHERE job_order_id=:job").param("job",job).query(::row).optional().orElse(null)
  }
  fun detail(id:UUID,source:String?=null):Map<String,Any?> {
-  get(id,source) // Authorize before any host read.
+  val receipt=get(id,source) // Authorize before any host read.
   val observedAt=java.time.Instant.now()
-  return observe(id,source,host.executions(),observedAt)
+  // A work request's job order never changes, so the read narrowed to it holds the execution observe looks for (HA design record §10).
+  return observe(id,source,host.executionsOf(jobOrderIds=listOf(receipt.jobOrderId)),observedAt)
  }
  private fun observe(id:UUID,source:String?,call:HostCall<JsonNode>,observedAt:java.time.Instant):Map<String,Any?> = transactions.execute {
   get(id,source)
@@ -562,18 +563,30 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    .param("instance",body.get("instanceId").asText()).param("id",receipt.receiptId).update()
   if(observed>0 && !durableResults) captureResult(receipt,body.get("instanceId").asText(),execution)
  }
- /** One `GET /host/executions` read and the instant taken before it, as [detail] takes them. A station tick shares one (HA design record §10). */
+ /** One `GET /host/executions` read and the instant taken before it, as [detail] takes them. A station tick shares them (HA design record §10). */
  class ExecutionsRead(val call:HostCall<JsonNode>,val observedAt:java.time.Instant)
- fun readExecutions():ExecutionsRead {val observedAt=java.time.Instant.now();return ExecutionsRead(host.executions(),observedAt)}
+ /** `GET /host/executions` narrowed to the executions of [jobOrderIds] (at least one). */
+ fun readExecutions(jobOrderIds:Collection<String>):ExecutionsRead {val observedAt=java.time.Instant.now();return ExecutionsRead(host.executionsOf(jobOrderIds=jobOrderIds),observedAt)}
+ /** The job orders of [receipts], in job order id order. */
+ fun jobOrderIds(receipts:Collection<UUID>):List<String> = if(receipts.isEmpty()) emptyList() else
+  jdbc.sql("SELECT job_order_id FROM ops.work_request WHERE receipt_id IN (:ids) ORDER BY job_order_id").param("ids",receipts).query(String::class.java).list()
+ /** The receipt [id] as [get] reads it and its latest stored result as [stationResult] returns it, in one statement (HA design record §10). */
+ fun stationRead(id:UUID):Pair<Receipt,Map<String,Any?>?> = jdbc.sql("""SELECT w.*,v.version AS v_version,v.result_hash AS v_result_hash,v.snapshot AS v_snapshot,
+   v.recorded_at AS v_recorded_at,v.acknowledged_at AS v_acknowledged_at FROM ops.work_request w
+   LEFT JOIN LATERAL (SELECT * FROM ops.work_result r WHERE r.receipt_id=w.receipt_id ORDER BY r.version DESC LIMIT 1) v ON true WHERE w.receipt_id=:id""")
+  .param("id",id).query { rs,i -> row(rs,i) to rs.getObject("v_version")?.let{result(rs,"v_")} }.optional()
+  .orElseThrow { RequestRejected("RECEIPT_NOT_FOUND","작업 요청을 찾을 수 없습니다",404) }
  /**
   * What a station judges a receipt by: records [receipt]'s execution seen in [read] as [detail] does, then returns the latest stored
-  * result, or null. Reads no host and none of the detail fields (HA design record §10). The receipt lock is taken only when there is an
-  * execution to record; [detail] writes nothing either without one.
+  * result, or null. Without an execution to record nothing is written and [latest], read with the receipt by [stationRead], is that result;
+  * after a record it is read again. Reads no host and none of the detail fields (HA design record §10). The receipt lock is taken only when
+  * there is an execution to record; [detail] writes nothing either without one.
   */
- fun stationResult(receipt:Receipt,read:ExecutionsRead):Map<String,Any?>? {
+ fun stationResult(receipt:Receipt,latest:Map<String,Any?>?,read:ExecutionsRead):Map<String,Any?>? {
   val body=executionsBody(read.call)
   val execution=body?.get("executions")?.firstOrNull { it["jobOrderId"]?.asText()==receipt.jobOrderId }
-  if(body!=null && execution!=null && !journalBlocked(body,execution)) transactions.executeWithoutResult {
+  if(body==null || execution==null || journalBlocked(body,execution))return latest
+  transactions.executeWithoutResult {
    jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE receipt_id=:id FOR UPDATE").param("id",receipt.receiptId).query(UUID::class.java).single()
    record(get(receipt.receiptId),body,execution,read.observedAt)
   }
@@ -632,11 +645,12 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  }
  private fun storedResult(id:UUID,version:Int?):Map<String,Any?>? = jdbc.sql("""SELECT * FROM ops.work_result
    WHERE receipt_id=:id AND (:version IS NULL OR version=:version) ORDER BY version DESC LIMIT 1""")
-  .param("id",id).param("version",version,java.sql.Types.INTEGER).query { rs,_ ->
-   mapOf<String,Any?>("version" to rs.getInt("version"),"resultHash" to rs.getString("result_hash"),
-    "snapshot" to json.readTree(rs.getString("snapshot")),"recordedAt" to rs.getString("recorded_at"),
-    "acknowledgedAt" to rs.getString("acknowledged_at"))
-  }.optional().orElse(null)
+  .param("id",id).param("version",version,java.sql.Types.INTEGER).query { rs,_ -> result(rs,"") }.optional().orElse(null)
+ /** A stored result from columns named [p] followed by the `work_result` column name. */
+ private fun result(rs:java.sql.ResultSet,p:String):Map<String,Any?> =
+  mapOf("version" to rs.getInt("${p}version"),"resultHash" to rs.getString("${p}result_hash"),
+   "snapshot" to json.readTree(rs.getString("${p}snapshot")),"recordedAt" to rs.getString("${p}recorded_at"),
+   "acknowledgedAt" to rs.getString("${p}acknowledged_at"))
  fun result(id:UUID,source:String,version:Int?=null):Map<String,Any?> {
   get(id,source)
   if(version!=null && version<1) throw RequestRejected("BAD_VERSION","양의 결과 버전이 필요합니다")
