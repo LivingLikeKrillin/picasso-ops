@@ -6,6 +6,9 @@ import { PERMIT_BLOCK_TEXT as TEXT } from '../labels'
 import { ExecutionList } from './ExecutionList'
 import { WorkRequests } from './WorkRequests'
 
+/** 정착 이력이 없는 화면 실행 목록(HA 설계 기록 §10). */
+const NO_SETTLED = { settled: [], nextBefore: null, olderTotal: 0 }
+
 afterEach(() => vi.unstubAllGlobals())
 
 const block: PermitBlock = {
@@ -47,7 +50,7 @@ it('작업 허가로 막힌 실행은 막은 기체와 주체와 풀릴 근거�
   const held = execution({ executionId: 'exec-2', jobOrderId: 'JO-2', physicalState: 'OPERATOR_HOLD' })
   render(
     <ExecutionList
-      read={{ value: { instanceId: 'mw-1', pumpedAt: 't', executions: [execution({ permitBlock: block }), held] }, error: null }}
+      read={{ value: { instanceId: 'mw-1', pumpedAt: 't', executions: [execution({ permitBlock: block }), held], ...NO_SETTLED }, error: null }}
       highlight={null}
     />,
   )
@@ -75,7 +78,7 @@ it('모름(UNKNOWN)은 까닭과 원천 없음을 그대로 보인다', () => {
     withheld: 'REVISION_UPDATE',
     robots: [{ robotId: 'humanoid-01', permit: 'UNKNOWN', reasons: [{ source: null, cause: 'NOT_COVERED', subject: null, resumeBasis: '이 기체를 덮는 허가 원천이 생길 때', observedAt: null }] }],
   }
-  render(<ExecutionList read={{ value: { instanceId: 'mw-1', pumpedAt: 't', executions: [execution({ permitBlock: unknown })] }, error: null }} highlight={null} />)
+  render(<ExecutionList read={{ value: { instanceId: 'mw-1', pumpedAt: 't', executions: [execution({ permitBlock: unknown })], ...NO_SETTLED }, error: null }} highlight={null} />)
   const notice = screen.getByRole('region', { name: TEXT.heading })
   expect(within(notice).getByText('개정 갱신')).toBeVisible()
   expect(within(notice).getByText('기체 humanoid-01: 모름(막음)')).toBeVisible()

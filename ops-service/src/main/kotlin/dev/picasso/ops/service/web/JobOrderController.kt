@@ -15,10 +15,12 @@ import dev.picasso.ops.service.joborders.JobOrderSubmission
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.util.MultiValueMap
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -65,8 +67,39 @@ class JobOrderController(
         }
     }
 
+    /**
+     * 실행 목록. 인자 없이 부르면 호스트 전체 목록 그대로다. 화면 페이지(HA 설계 기록 §10): `recent=N` 은 지금 인스턴스의 남은 실행 모두와
+     * 최근 정착 이력 N 개, `before=<settleSeq>[&limit=M]` 은 그 정착 차례보다 앞의 정착 이력 M 개다. 인자는 운영 서비스가 먼저 검사하고
+     * (`recent`·`limit` 은 정수 1~[MAX_PAGE], `before` 는 양의 정수, 빈 값·되풀이 없음, `recent` 와 `before`·`limit` 을 섞지 않음, `limit` 은
+     * `before` 와 함께) 틀리면 호스트에 닿지 않은 400 `EXECUTIONS_BAD_REQUEST` 다. 그 밖의 인자(`jobOrderId` 등)는 전처럼 버린다.
+     */
     @GetMapping("/api/executions")
-    fun executions(): ResponseEntity<Any> = forwarded(host.executions())
+    fun executions(@RequestParam params: MultiValueMap<String, String>): ResponseEntity<Any> {
+        if (PAGE_PARAMS.none { params.containsKey(it) }) return forwarded(host.executions())
+        val single = PAGE_PARAMS.associateWith { name ->
+            val values = params[name] ?: return@associateWith null
+            if (values.size != 1 || values[0].isBlank()) return badPage("$name 은 한 번만, 비어 있지 않은 값으로 준다")
+            values[0]
+        }
+        val recent = single[RECENT]
+        val before = single[BEFORE]
+        if (recent != null) {
+            if (before != null || single[LIMIT] != null) return badPage("recent 는 before·limit 과 함께 쓸 수 없다")
+            return forwarded(host.executionsRecent(count(recent) ?: return badPage("recent 는 1~$MAX_PAGE 의 정수다: $recent")))
+        }
+        if (before == null) return badPage("limit 은 before 와 함께 준다")
+        val cursor = before.toLongOrNull()?.takeIf { it > 0 } ?: return badPage("before 는 양의 정수다(정착 이력의 settleSeq·nextBefore): $before")
+        val limit = single[LIMIT]?.let { count(it) ?: return badPage("limit 은 1~$MAX_PAGE 의 정수다: $it") }
+        return forwarded(host.executionsBefore(cursor, limit))
+    }
+
+    /** 실행 수만(HA 설계 기록 §10). 운영 개요가 읽는다. 호스트 본문 그대로이고 호스트가 안 닿으면 503 이다. */
+    @GetMapping("/api/executions/summary")
+    fun executionSummary(): ResponseEntity<Any> = forwarded(host.executionSummary())
+
+    private fun count(raw: String): Int? = raw.toIntOrNull()?.takeIf { it in 1..MAX_PAGE }
+
+    private fun badPage(detail: String): ResponseEntity<Any> = reject(HttpStatus.BAD_REQUEST, EXECUTIONS_BAD_REQUEST, detail)
 
     @GetMapping("/api/cell")
     fun cell(): ResponseEntity<Any> = forwarded(host.cell())
@@ -88,6 +121,16 @@ class JobOrderController(
 
     companion object {
         const val HOST_SILENT = "HOST_SILENT"
+
+        /** 실행 목록 페이지 인자가 틀렸다. 호스트에 닿지 않은 사전 거부다. */
+        const val EXECUTIONS_BAD_REQUEST = "EXECUTIONS_BAD_REQUEST"
+
+        /** 화면 페이지 인자 이름과 상한(HA 설계 기록 §10). 실행 호스트와 같다. */
+        const val RECENT = "recent"
+        const val BEFORE = "before"
+        const val LIMIT = "limit"
+        val PAGE_PARAMS: List<String> = listOf(RECENT, BEFORE, LIMIT)
+        const val MAX_PAGE = 200
 
         /** 판정에 싣는 작업 지시 id. 호스트는 판정에서 id 를 쓰지 않으며, 제출은 새 id 로 다시 판정한다. */
         const val DRAFT_ID = "JO-DRAFT"

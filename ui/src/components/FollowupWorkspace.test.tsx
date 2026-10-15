@@ -12,7 +12,7 @@ afterEach(()=>{vi.unstubAllGlobals();sessionStorage.clear();window.history.repla
 it('개요는 접수 집계와 호스트 실패를 구분하고 지표를 실제 검색 조건으로 연결한다',async()=>{
  vi.stubGlobal('fetch',vi.fn(async(url:string)=>{
   const body=url==='/api/work-requests/summary'?{total:8,states:{UNASSIGNED:2,RECEIVED:1,IN_DOUBT:1},unacknowledgedResults:3,latest:[row],observedAt:'t3'}:url==='/api/work-requests/collector'?{state:'UNAVAILABLE',lastSuccessAt:'t1',lastAttemptAt:'t2',observedRequests:1,error:'호스트 관측 실패'}:{detail:'offline'}
-  return new Response(JSON.stringify(body),{status:url==='/api/executions'||url==='/api/incidents'?503:200})
+  return new Response(JSON.stringify(body),{status:url==='/api/executions/summary'||url==='/api/incidents'?503:200})
  }))
  render(<OverviewArea session={operator}/> )
  expect(await screen.findByRole('link',{name:/총 작업 요청 8/})).toHaveAttribute('href','#requests')
@@ -24,10 +24,11 @@ it('개요는 접수 집계와 호스트 실패를 구분하고 지표를 실제
 })
 it('개요 재조회 실패는 직전 집계를 유지하고 오래된 값임을 표시한다',async()=>{
  let fail=false
- vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(url==='/api/work-requests/summary'?{total:5,states:{},latest:[],unacknowledgedResults:0,observedAt:'t1'}:url==='/api/executions'?{instanceId:'host',executions:[{physicalState:'OPERATOR_HOLD'},{physicalState:'IN_DOUBT'}]}:url==='/api/incidents'?{instanceId:'host',incidents:[]}: {state:'WAITING'}),{status:fail?503:200})))
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(JSON.stringify(url==='/api/work-requests/summary'?{total:5,states:{},latest:[],unacknowledgedResults:0,observedAt:'t1'}:url==='/api/executions/summary'?{instanceId:'host',pumpedAt:null,live:3,states:{RUNNING:1,OPERATOR_HOLD:1,IN_DOUBT:1},journalBlockedExecutionIds:[]}:url==='/api/incidents'?{instanceId:'host',incidents:[]}: {state:'WAITING'}),{status:fail?503:200})))
  render(<OverviewArea session={operator}/> )
  expect(await screen.findByRole('link',{name:/총 작업 요청 5/})).toBeVisible()
  expect(screen.getByText('판단·확인 대기').nextElementSibling).toHaveTextContent('2')
+ expect(screen.getByText('실행 중').nextElementSibling).toHaveTextContent('1')
  fail=true;await userEvent.click(screen.getByRole('button',{name:'개요 다시 조회'}))
  expect(await screen.findByText(/작업 요청 집계:.*직전 조회 값/)).toBeVisible()
  expect(screen.getByRole('link',{name:/총 작업 요청 5/})).toHaveTextContent('직전 값')

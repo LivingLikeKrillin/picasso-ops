@@ -7,7 +7,9 @@ import type {
   DraftView,
   EarlierIncidentRow,
   EligibilityView,
+  Execution,
   ExecutionsView,
+  ExecutionSummary,
   FaultInjectionOutcome,
   Finding,
   HoldResolveOutcome,
@@ -31,6 +33,8 @@ import type {
   SiteSettingsView,
   RevisionView,
   RobotListView,
+  SettledExecution,
+  SettledPage,
   RobotView,
   TestRequestState,
   VersionView,
@@ -55,6 +59,13 @@ export interface FakeOps {
   settings: SiteSettingsView
   /** 실행 호스트를 거치는 읽기(S3a). 운영 서비스가 호스트 본문을 그대로 넘기는 모양이다. */
   executions: ExecutionsView
+  /**
+   * 화면 실행 목록(`GET /api/executions?recent=`)의 정착 이력 쪽(HA 설계 기록 §10). 답은 [executions] 에 이것을 더한 것이다. 대역은 남은 실행을
+   * 고르지 않는다(실행 호스트의 몫). 기본은 정착 이력이 없다.
+   */
+  recent: SettledPage
+  /** 이전 실행 페이지(`GET /api/executions?before=`). 커서마다의 답이고 없으면 빈 페이지다. */
+  older: Map<number, SettledPage>
   cell: CellView
   /** 임무 개요와 템플릿(S3b). 운영 서비스가 호스트 본문을 그대로 넘기는 모양이다. */
   mission: MissionOverview
@@ -87,13 +98,33 @@ export const MISSION_PATH = '/api/missions/PrepareSequencedRack'
 export const TEMPLATES_PATH = '/api/missions/templates/PrepareSequencedRack'
 
 /** 실행 호스트를 거치는 경로. 503 일 때 운영 서비스가 `HOST_SILENT` 를 싣는다(S3a JSON 계약 §9.4, S3b JSON 계약 §10.3). */
-const HOST_PATHS = new Set(['/api/executions', '/api/cell', '/api/incidents', '/api/job-responses', '/api/robots/residual-holds', MISSION_PATH, TEMPLATES_PATH])
+const HOST_PATHS = new Set(['/api/executions', '/api/executions/summary', '/api/cell', '/api/incidents', '/api/job-responses', '/api/robots/residual-holds', MISSION_PATH, TEMPLATES_PATH])
 const INCIDENT_PREFIX = '/api/incidents/'
 const ELIGIBILITY_PATH = '/api/job-orders/eligibility'
 
 /** 실행 목록. 기본은 실행이 없는 호스트 인스턴스 하나다. */
 export function executionsView(partial: Partial<ExecutionsView> = {}): ExecutionsView {
   return { instanceId: 'mw-1', pumpedAt: 't1', executions: [], ...partial }
+}
+
+/** 실행 수(`GET /api/executions/summary`). 대역은 [executionsView] 의 실행을 모두 남은 실행으로 센다. */
+export function executionSummary(view: ExecutionsView): ExecutionSummary {
+  const states: Record<string, number> = {}
+  view.executions.forEach((execution) => {
+    states[execution.physicalState] = (states[execution.physicalState] ?? 0) + 1
+  })
+  return {
+    instanceId: view.instanceId,
+    pumpedAt: view.pumpedAt,
+    live: view.executions.length,
+    states,
+    journalBlockedExecutionIds: view.journalBlockedExecutionIds ?? [],
+  }
+}
+
+/** 정착 이력 한 줄. 기본은 지금 인스턴스(mw-1)에서 정착 본문과 함께 적힌 것이다. */
+export function settledRow(execution: Execution, settleSeq: number, partial: Partial<SettledExecution> = {}): SettledExecution {
+  return { settleSeq, instanceId: 'mw-1', settledAt: `s${settleSeq}`, snapshot: true, execution, ...partial }
 }
 
 /** 셀 대역 신호 셋. 고정 픽스처의 처음 값이다(S3b JSON 계약 §1). */
@@ -568,6 +599,8 @@ export function installFakeOps(
     profiles,
     settings,
     executions: executionsView(),
+    recent: { settled: [], nextBefore: null, olderTotal: 0 },
+    older: new Map(),
     cell: cellView(),
     mission: missionOverview(),
     templates: missionTemplates(),
@@ -624,6 +657,14 @@ export function installFakeOps(
         return found === undefined
           ? new Response(JSON.stringify({ error: 'INCIDENT_NOT_FOUND', detail: '인시던트가 없다' }), { status: 404 })
           : new Response(JSON.stringify(found), { status: 200 })
+      }
+      if (method === 'GET' && path === '/api/executions' && query !== undefined) {
+        const before = params.get('before')
+        const body = before !== null ? (fake.older.get(Number(before)) ?? { settled: [], nextBefore: null, olderTotal: 0 }) : { ...fake.executions, ...fake.recent }
+        return new Response(JSON.stringify(body), { status: 200 })
+      }
+      if (method === 'GET' && path === '/api/executions/summary') {
+        return new Response(JSON.stringify(executionSummary(fake.executions)), { status: 200 })
       }
       if (method === 'GET' && path === '/api/job-responses') {
         const jobOrderId = params.get('jobOrderId')

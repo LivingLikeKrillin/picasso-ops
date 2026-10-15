@@ -43,6 +43,29 @@ data class JournalEvent(
 )
 
 /**
+ * 정착 이력 한 행(V8, HA 설계 기록 §10). 정착 이벤트(SETTLED)와 그 일지 행이다. [eventId] 가 정착 차례이고 페이지 커서다.
+ *
+ * @param physicalState 정착 때의 물리 상태(이벤트의 detail)
+ * @param snapshot 정착 때의 실행 본문 JSON 글자(`ExecutionView`). V8 전에 적힌 행은 `null` 이다
+ * @param robotId·workMasterId·missionVersion 일지 행의 것(받은 때). 재할당 뒤의 기체는 [snapshot] 에 있다
+ */
+data class SettledRow(
+    val eventId: Long,
+    val jobOrderId: String,
+    val instanceId: String,
+    val executionId: String,
+    val physicalState: String,
+    val settledAt: Instant,
+    val snapshot: String?,
+    val robotId: String,
+    val workMasterId: String,
+    val missionVersion: Int?,
+)
+
+/** 정착 이력 한 페이지([HostRecords.settledHistory]). [nextBefore] 가 `null` 이면 [olderTotal] 은 0 이다. */
+data class SettledHistory(val rows: List<SettledRow>, val nextBefore: Long?, val olderTotal: Int)
+
+/**
  * 작업 응답의 내용 키(S4b 스펙 T6). 인스턴스마다 달라지는 것(응답 id, 실행 id, 미완 사유 문자열, `connection`)은 뺀다.
  * 단위 id 목록은 정렬해 둔다. 두 키가 같은지는 이 값의 `equals` 다.
  */
@@ -208,6 +231,75 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             .param("executionId", executionId)
             .param("detail", detail)
             .query { rs, _ -> event(rs) }
+            .single()
+
+    /**
+     * 정착 이벤트와 그때의 실행 본문(V8, HA 설계 기록 §10). [snapshot] 은 `ExecutionView` JSON 글자다. pump 뒤 기록의 트랜잭션 안에서 부른다.
+     */
+    fun settled(jobOrderId: String, instanceId: String, executionId: String, physicalState: String, snapshot: String): JournalEvent =
+        jdbc.sql(
+            """
+            INSERT INTO mission.execution_journal_event (job_order_id, kind, instance_id, execution_id, detail, snapshot)
+            VALUES (:jobOrderId, 'SETTLED', :instanceId, :executionId, :detail, CAST(:snapshot AS json))
+            RETURNING $EVENT_COLUMNS
+            """.trimIndent(),
+        )
+            .param("jobOrderId", jobOrderId)
+            .param("instanceId", instanceId)
+            .param("executionId", executionId)
+            .param("detail", physicalState)
+            .param("snapshot", snapshot)
+            .query { rs, _ -> event(rs) }
+            .single()
+
+    /**
+     * 정착 이력. 정착 차례([SettledRow.eventId])가 [before] 보다 앞인 것(널이면 전부) 가운데 최근부터 많아야 [limit] 개다. 인스턴스를
+     * 가리지 않는다.
+     */
+    fun settledPage(before: Long?, limit: Int): List<SettledRow> =
+        jdbc.sql(
+            """
+            SELECT e.event_id, e.job_order_id, e.instance_id, e.execution_id, e.detail, e.recorded_at, e.snapshot::text AS snapshot,
+                   j.robot_id, j.work_master_id, j.mission_version
+            FROM mission.execution_journal_event e JOIN mission.execution_journal j ON j.job_order_id = e.job_order_id
+            WHERE e.kind = 'SETTLED' AND (CAST(:before AS BIGINT) IS NULL OR e.event_id < :before)
+            ORDER BY e.event_id DESC
+            LIMIT :limit
+            """.trimIndent(),
+        )
+            .param("before", before, Types.BIGINT)
+            .param("limit", limit)
+            .query { rs, _ ->
+                SettledRow(
+                    eventId = rs.getLong("event_id"),
+                    jobOrderId = rs.getString("job_order_id"),
+                    instanceId = rs.getString("instance_id"),
+                    executionId = rs.getString("execution_id"),
+                    physicalState = rs.getString("detail"),
+                    settledAt = instant(rs, "recorded_at"),
+                    snapshot = rs.getString("snapshot"),
+                    robotId = rs.getString("robot_id"),
+                    workMasterId = rs.getString("work_master_id"),
+                    missionVersion = rs.getObject("mission_version") as Int?,
+                )
+            }
+            .list()
+
+    /**
+     * 정착 이력 한 페이지. [settledPage] 의 행과, 더 오래된 행이 남으면 다음 커서(이 페이지의 가장 오래된 정착 차례)와 그보다 앞의 행 수다.
+     * 두 문장이지만 커서보다 앞의 행은 덧붙이기만 하는 표에서 새 정착이 생겨도 바뀌지 않는다(정착 차례는 늘기만 한다).
+     */
+    fun settledHistory(before: Long?, limit: Int): SettledHistory {
+        val rows = settledPage(before, limit)
+        val older = rows.lastOrNull()?.let { settledCountBefore(it.eventId) } ?: 0
+        return SettledHistory(rows, rows.lastOrNull()?.eventId?.takeIf { older > 0 }, older)
+    }
+
+    /** 정착 차례가 [before] 보다 앞인 정착 이벤트 수. */
+    fun settledCountBefore(before: Long): Int =
+        jdbc.sql("SELECT count(*) FROM mission.execution_journal_event WHERE kind = 'SETTLED' AND event_id < :before")
+            .param("before", before)
+            .query(Int::class.java)
             .single()
 
     /** 정착도 포기도 없는 일지 행. 받은 순서다. 기동 복원의 대상이다(T3). */

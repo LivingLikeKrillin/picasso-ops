@@ -153,8 +153,11 @@ class JobOrderOperationsTest {
         bench.answer = HostWrite.NoResponse("응답 없음: HttpTimeoutException")
         // 재조회 대역은 제출이 만든 id 를 알아야 하므로 실행 목록을 제출 뒤에 고른다.
         val host = bench.host
+        val asked = mutableListOf<Collection<String>>()
         val reads = object : HostReads by host {
-            override fun executions() = bench.executionsWith("JO-다른-것", submittedId())
+            override fun executions() = error("재조회는 전체 목록을 읽지 않는다")
+            override fun executionsOf(jobOrderIds: Collection<String>, executionIds: Collection<String>) =
+                bench.executionsWith("JO-다른-것", submittedId()).also { asked += jobOrderIds; assertEquals(emptyList(), executionIds.toList()) }
         }
         val outcome = assertIs<JobOrderSubmission.Submitted>(
             JobOrderOperations(bench.eligibility, host, reads, log, bench.clock, Duration.ZERO).submit(kim, draft),
@@ -171,6 +174,7 @@ class JobOrderOperationsTest {
         assertEquals("exec-2", observed["executionId"].asText())
         assertEquals("mw-1", observed["instanceId"].asText())
         assertEquals(HUMANOID, observed["robotId"].asText())
+        assertEquals(listOf(listOf(submittedId())), asked.map { it.toList() }, "재조회는 그 작업 지시로 좁혀 한 번 읽는다")
     }
 
     @Test
@@ -217,7 +221,8 @@ class JobOrderOperationsTest {
             HostWrite.NoResponse("응답 없음").also { wrote = System.nanoTime() }
         }
         val reads = object : HostReads by host {
-            override fun executions() = bench.executionsWith().also { read = System.nanoTime() }
+            override fun executionsOf(jobOrderIds: Collection<String>, executionIds: Collection<String>) =
+                bench.executionsWith().also { read = System.nanoTime() }
         }
         JobOrderOperations(bench.eligibility, writes, reads, log, bench.clock).submit(kim, draft)
         assertTrue(read > wrote && Duration.ofNanos(read - wrote) >= Duration.ofMillis(900), "제출과 재조회 사이 ${(read - wrote) / 1_000_000} ms")

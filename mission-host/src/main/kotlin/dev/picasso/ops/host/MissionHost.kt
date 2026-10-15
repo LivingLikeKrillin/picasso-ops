@@ -55,6 +55,7 @@ import dev.picasso.ops.host.store.ResponseContent
 import dev.picasso.ops.host.store.ResponseDisposition
 import dev.picasso.ops.host.store.ResponseLogRow
 import dev.picasso.ops.host.store.ResidualHoldRow
+import dev.picasso.ops.host.store.SettledRow
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
@@ -809,6 +810,75 @@ class MissionHost(
         view(middleware.executions().filter { it.order.jobOrderId in jobOrderIds || it.executionId in executionIds })
     }
 
+    /**
+     * 화면의 실행 목록(HA 설계 기록 §10). 지금 인스턴스의 남은 실행([ExecutionPages.live])을 메모리에서, 최근 정착 이력 [recent] 개를
+     * 정착 기록(DB)에서 읽는다. 정착한 실행이 미들웨어 메모리에서 사라져도 이력은 그대로다.
+     *
+     * 메모리를 먼저(호스트 잠금 아래) 읽고 DB 를 잠금 밖에서 뒤에 읽는다. 남은 실행이 아닌 실행은 정착 기록이 커밋된 뒤라 DB 에 있으므로 어느
+     * 쪽에서도 빠지지 않는다. 그 사이 정착을 적은 실행은 두 쪽에 다 나올 수 있다(화면이 실행 id 와 인스턴스로 하나만 보인다).
+     */
+    fun executionsRecent(recent: Int): ExecutionPageView {
+        require(recent in 1..ExecutionPages.MAX) { "recent 는 1~${ExecutionPages.MAX} 다: $recent" }
+        val live = lock.withLock { view(middleware.executions().filter(::live)) }
+        val page = settledPage(null, recent)
+        return ExecutionPageView(
+            instanceId = live.instanceId,
+            pumpedAt = live.pumpedAt,
+            executions = live.executions,
+            restore = live.restore,
+            journalBlockedExecutionIds = live.journalBlockedExecutionIds,
+            settled = page.settled,
+            nextBefore = page.nextBefore,
+            olderTotal = page.olderTotal,
+        )
+    }
+
+    /** 정착 차례가 [before] 보다 앞인 정착 이력 가운데 최근부터 [limit] 개(HA 설계 기록 §10). DB 만 읽고 호스트 잠금을 잡지 않는다. */
+    fun executionsBefore(before: Long, limit: Int): SettledPageView {
+        require(limit in 1..ExecutionPages.MAX) { "limit 은 1~${ExecutionPages.MAX} 다: $limit" }
+        return settledPage(before, limit)
+    }
+
+    /** 남은 실행의 수만(HA 설계 기록 §10). 실행 본문과 작업 응답을 옮기지 않는다. */
+    fun executionSummary(): ExecutionSummaryView = lock.withLock {
+        val live = middleware.executions().filter(::live)
+        val states = PhysicalState.entries.associateTo(linkedMapOf()) { it.name to 0 }
+        live.forEach { states[it.physicalState.name] = states.getValue(it.physicalState.name) + 1 }
+        ExecutionSummaryView(
+            instanceId = middleware.instanceId,
+            pumpedAt = pumpedAt,
+            live = live.size,
+            states = states,
+            journalBlockedExecutionIds = journalBlocked(),
+        )
+    }
+
+    /** [ExecutionPages.live]. 호스트 잠금 아래에서 부른다. */
+    private fun live(execution: Middleware.Execution): Boolean {
+        val journalBlocked = execution.order.jobOrderId !in journaled
+        return ExecutionPages.live(
+            ExecutionPages.active(execution.physicalState, execution.units.map { it.state }, journalBlocked),
+            execution.order.jobOrderId in settledRecorded,
+        )
+    }
+
+    private fun settledPage(before: Long?, limit: Int): SettledPageView =
+        records.settledHistory(before, limit).let { SettledPageView(it.rows.map(::settledView), it.nextBefore, it.olderTotal) }
+
+    /** 정착 이력 한 줄. 본문을 적지 않은 행(V8 전)은 일지 행으로 짓는다. */
+    private fun settledView(row: SettledRow): SettledExecutionView = SettledExecutionView(
+        settleSeq = row.eventId,
+        instanceId = row.instanceId,
+        settledAt = row.settledAt,
+        snapshot = row.snapshot != null,
+        execution = row.snapshot?.let(json::readTree) ?: json.valueToTree(
+            ExecutionView(
+                row.executionId, row.jobOrderId, row.workMasterId, row.missionVersion, row.robotId, row.physicalState,
+                units = emptyList(), jobResponse = null, restoredFrom = null,
+            ),
+        ),
+    )
+
     /** [chosen] 실행의 목록 본문. 호스트 잠금 아래에서 부른다. */
     private fun view(chosen: List<Middleware.Execution>): ExecutionsView {
         val responses = latestResponses(middleware.responses())
@@ -925,6 +995,8 @@ class MissionHost(
         if (pending.isEmpty() && fresh.isEmpty() && resolved.isEmpty() && settled.isEmpty() && judgments.isEmpty()) return
 
         val held = heldIncidents(incidents)
+        // 정착 이력(HA 설계 기록 §10): 정착 이벤트에 그때의 실행 본문을 같이 적는다. 화면은 정착 실행을 메모리가 아니라 이것에서 읽는다.
+        val snapshots = if (settled.isEmpty()) emptyList() else view(settled).executions.map(json::writeValueAsString)
         val copies = fresh.map { it to json.writeValueAsString(IncidentViews.detail(instanceId, it, it.incidentId in held, unitStateOf(it))) }
         val marked = mutableListOf<ResidualHoldRow>()
         try {
@@ -945,8 +1017,8 @@ class MissionHost(
                         ),
                     )
                 }
-                settled.forEach {
-                    records.event(it.order.jobOrderId, JournalEventKind.SETTLED, instanceId, it.executionId, it.physicalState.name)
+                settled.zip(snapshots).forEach { (it, snapshot) ->
+                    records.settled(it.order.jobOrderId, instanceId, it.executionId, it.physicalState.name, snapshot)
                     residualHoldUnit(it.units)?.let { unit ->
                         records.markResidualHold(it.robotId, it.order.jobOrderId, it.executionId, instanceId, unit.unitId, unit.hold.objectRef)
                             ?.let(marked::add)

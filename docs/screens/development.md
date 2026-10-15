@@ -126,11 +126,12 @@ PR #23은 층 이름 통일입니다.
 | `src/main.tsx` | React 진입점 |
 | `src/App.tsx` | 껍데기(사이드바·상단 바·영역 제목), 해시 라우팅, 세션(모드·사용자) 상태, 다섯 조회 묶음 읽기, 영역 전환 |
 | `src/areas.ts` | 아홉 영역의 id·글자·순서 |
-| `src/api.ts` | 운영 서비스 호출 전부(1,311행). 요청 헤더 `X-Ops-Mode`·`X-Ops-User`, 결과 분류 `deliver`, 호출 계약 계열 `interfaceRequest` |
+| `src/api.ts` | 운영 서비스 호출 전부(1,406행). 요청 헤더 `X-Ops-Mode`·`X-Ops-User`, 결과 분류 `deliver`, 호출 계약 계열 `interfaceRequest` |
 | `src/labels.ts` | 코드 값 → 화면 글자 표(설계서 §2.7) |
 | `src/poll.ts` | 주기 상수 `POLL_MS`, `ELIGIBILITY_DEBOUNCE_MS`, `SIGNAL_SETTLE_MS` |
 | `src/jobOrderDraft.ts` | 작업 지시 폼의 초안과 보내기 전 검사 |
 | `src/manualRequests.ts` | 수동 작업 요청의 sessionStorage 보관 |
+| `src/executionHistory.ts` | 5초 조회에 불러온 이전 실행 페이지 결합 |
 | `src/missionTemplates.ts` | 새 임무 생성의 시작 템플릿 둘 |
 | `src/styles.css` | 스타일 한 파일(257행), `:root` 토큰, 반응형 |
 | `public/fonts/` | Pretendard Variable 과 라이선스 고지 |
@@ -150,7 +151,7 @@ PR #23은 층 이름 통일입니다.
 | DeclareForm | 기체 선언 폼 | 로봇 |
 | EligibilityTable | 기체별 배정 가능 아홉 열 표 | 운영, 임무 |
 | ExecutionControls | 운영자 실행 취소 폼 `CancelExecutionForm`(실행 목록 아래), 잔여 파지 확인 표와 기체 빈손 확인 폼 `ResidualHolds`(배정 가능 아래) | 운영 |
-| ExecutionList | 실행 목록과 재기동 복원 보고, 물리 상태 칸의 운영자 취소 표시, 취소 폼 자리 | 운영 |
+| ExecutionList | 실행 목록과 재기동 복원 보고, 최근 정착 이력 행과 «이전 실행» 영역, 물리 상태 칸의 운영자 취소 표시, 취소 폼 자리 | 운영 |
 | FaultPanel | 장애 주입 | 검증 도구 |
 | FindingCard | 막힘·거부 카드 | 로봇, 현장 설정, 임무 |
 | HistoryArea | 조작 기록 | 이력 |

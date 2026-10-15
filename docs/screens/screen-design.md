@@ -195,10 +195,10 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | 읽기 | 엔드포인트 | 주기·시점 | 실패 표현 |
 |---|---|---|---|
 | 다섯 조회(`App.tsx`) | GET `/api/robots`, `/api/adapters`, `/api/profiles`, `/api/operations`, `/api/site-settings` 를 `Promise.all` 로 | 5초, 모드·사용자 변경, 조작 직후 | 하나라도 실패하면 다섯 모두 직전 값 + 띠 «모름: 운영 서비스에 닿지 않습니다 (${opsError})» |
-| 운영 개요 | GET `/api/work-requests/summary`, `/api/executions`, `/api/incidents`, `/api/work-requests/collector` | 영역이 열려 있을 때 5초, 넷이 따로 실패 | 구역마다 alert |
+| 운영 개요 | GET `/api/work-requests/summary`, `/api/executions/summary`, `/api/incidents`, `/api/work-requests/collector` | 영역이 열려 있을 때 5초, 넷이 따로 실패 | 구역마다 alert |
 | 작업 요청 | GET `/api/work-requests?search=&state=&offset=&limit=20&result=`, `/api/work-requests/{receiptId}` | 5초, 검색·필터·쪽 변경, 고른 작업 요청 변경 | alert 와 «직전 조회 값입니다.» 꼬리 |
 | 공유 자원 | GET `/api/stations`, `/api/mission-interfaces`, `/api/mission-resources`, `/api/stations/runs/{runId}` | 스테이션·호출 계약은 5초, 자원 요구는 마운트 때와 호출 계약 목록을 다시 받을 때마다 | alert «자원 조회 실패: ${e} · 표는 직전 값입니다. 조작 전 다시 조회하세요.» |
-| 운영 | GET `/api/executions`, `/api/cell`, `/api/incidents`, `/api/job-responses`(거르면 `?jobOrderId=`), `/api/incidents/{id}?instanceId=`, GET `/api/robots/residual-holds`, POST `/api/job-orders/eligibility`, 그리고 맨 위 작업 요청 목록 | 5초. 배정 가능은 폼이 바뀌고 300ms 멈춘 뒤, 신호 조작·판단·실행 취소·기체 빈손 확인 뒤 곧바로와 500ms 뒤 한 번 더 | 구역마다 «직전 값입니다. 실행 호스트 불통: ${error}». 잔여 파지 표는 첫 읽기 전·실패면 «모름: 잔여 파지 표시를 아직 읽지 못했습니다 (${error})», 직전 값이면 «직전 값입니다. 실행 호스트 불통: ${error}» |
+| 운영 | GET `/api/executions?recent=20`, `/api/cell`, `/api/incidents`, `/api/job-responses`(거르면 `?jobOrderId=`), `/api/incidents/{id}?instanceId=`, GET `/api/robots/residual-holds`, POST `/api/job-orders/eligibility`, 그리고 맨 위 작업 요청 목록 | 5초. `GET /api/executions?before=${settleSeq}&limit=20`은 «이전 실행 더 보기»를 누를 때만(새 정착으로 이력이 밀릴 때의 따라잡기 읽기 포함). 배정 가능은 폼이 바뀌고 300ms 멈춘 뒤, 신호 조작·판단·실행 취소·기체 빈손 확인 뒤 곧바로와 500ms 뒤 한 번 더 | 구역마다 «직전 값입니다. 실행 호스트 불통: ${error}». 잔여 파지 표는 첫 읽기 전·실패면 «모름: 잔여 파지 표시를 아직 읽지 못했습니다 (${error})», 직전 값이면 «직전 값입니다. 실행 호스트 불통: ${error}» |
 | 임무 | GET `/api/job-contracts`(마운트와 «계약 다시 조회» 때만), `/api/mission-interfaces`(마운트와 «호출 계약 다시 조회» 때), `/api/missions/{workMasterId}`(5초), `/api/missions/templates/{workMasterId}`(읽힐 때까지 5초), `/api/mission-interfaces/{id}/{version}/deployments`, POST `/api/job-orders/preview` | | 구역마다 alert 또는 «모름: …» |
 | 현장 설정·이력 | 다섯 조회의 `/api/site-settings`, `/api/operations` | 5초 | «직전 값입니다» |
 | 검증 도구 | GET `/api/work-requests?search=&offset=0&limit=20`, `/api/work-requests/{receiptId}` 두 번, POST `/api/faults` | 버튼을 누를 때만 | alert |
@@ -549,7 +549,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | 누가 | 두 모드에서 사용합니다. 조작이 없는 읽기 전용입니다. |
 | 진입 | 메뉴 1번입니다. 다른 영역에서 오는 링크는 없습니다. |
 | 컴포넌트 | `OverviewArea.tsx`, `CollectorStatus.tsx` |
-| API | GET `/api/work-requests/summary`(컴포넌트 안에서 직접 `fetch`), `/api/executions`, `/api/incidents`, `/api/work-requests/collector` 를 영역이 열려 있을 때 5초마다 호출합니다. 넷이 따로 실패합니다. |
+| API | GET `/api/work-requests/summary`(컴포넌트 안에서 직접 `fetch`), `/api/executions/summary`, `/api/incidents`, `/api/work-requests/collector` 를 영역이 열려 있을 때 5초마다 호출합니다. 넷이 따로 실패합니다. |
 
 운영 개요의 구역 이름은 `section[aria-label=운영 개요]` 입니다.
 
@@ -557,7 +557,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 |---|---|---|
 | 머리 | h2 «외부 주문에서 로봇 실행까지», 설명 «작업 요청과 현재 실행 관측을 구분합니다. 작업 요청 수락은 물리 완료나 품질 승인을 뜻하지 않습니다.», 버튼 «개요 다시 조회» 가 있습니다. | 없음 |
 | 지표 카드 다섯 | `a.overview-card` 링크 다섯 개가 있습니다.<br>«총 작업 요청» → `#requests`<br>«미배정» → `#requests?state=UNASSIGNED`<br>«제출 확인 필요»(RECEIVED, DISPATCHING, IN_DOUBT 의 합) → `#requests?state=NEEDS_CONFIRMATION`<br>«작업 요청 거부» → `#requests?state=REJECTED`<br>«외부 결과 수신 미확인» → `#requests?result=unacknowledged`<br>카드마다 값과 작은 글자 «작업 요청 기록 기준»이 있습니다. 카드 링크의 접근 이름은 «${label} ${값}» 꼴이고 값을 모르면 «모름», 직전 값이면 « · 직전 값» 이 붙습니다. 카드 아래에는 «작업 요청 집계 시각: ${observedAt}»이 표시되며, 아직 못 읽었으면 «아직 조회하지 못함»이 표시됩니다. | 못 읽음: 카드 값 «모름», alert «작업 요청 집계: ${error} · 모름»<br>다시 읽기 실패: alert «작업 요청 집계: ${error} · 직전 조회 값입니다.», 카드에 `.stale` 클래스와 작은 글자 «직전 값 · 재확인 필요» |
-| 호스트 실행 관측 | h3 «호스트 실행 관측»<br>dl «실행 중»(물리 상태 RUNNING 인 실행 수), «판단·확인 대기»(OPERATOR_HOLD 와 IN_DOUBT 수), «일지 저장 차단»(`journalBlockedExecutionIds` 수), «인스턴스», «조회 시각»<br>문장 «호스트가 보유한 실행 기준입니다. 다른 인스턴스의 과거 작업 요청을 포함한 누적 집계가 아닙니다.»<br>링크 «실행·예외 대응 열기»(`#operations`) | 못 읽음: «실행 상태 모름 · 관측을 기다립니다.»<br>실패: alert «호스트: ${error} · 직전 관측입니다.» 또는 «호스트: ${error} · 모름» |
+| 호스트 실행 관측 | h3 «호스트 실행 관측»<br>dl «실행 중»(남은 실행 요약의 물리 상태 `states.RUNNING`), «판단·확인 대기»(남은 실행 요약의 `states.OPERATOR_HOLD` + `states.IN_DOUBT`), «일지 저장 차단»(남은 실행 요약의 `journalBlockedExecutionIds` 수), «인스턴스», «조회 시각»<br>문장 «호스트가 보유한 실행 기준입니다. 다른 인스턴스의 과거 작업 요청을 포함한 누적 집계가 아닙니다.»<br>링크 «실행·예외 대응 열기»(`#operations`)<br>근거: `ExecutionList.test.tsx` 의 `운영 개요는 실행 수만 읽고 실행 목록을 읽지 않는다`, `FollowupWorkspace.test.tsx` 의 `개요 재조회 실패는 직전 집계를 유지하고 오래된 값임을 표시한다` | 못 읽음: «실행 상태 모름 · 관측을 기다립니다.»<br>실패: alert «호스트: ${error} · 직전 관측입니다.» 또는 «호스트: ${error} · 모름» |
 | 운영자 판단 | h3 «운영자 판단»<br>«미해결 인시던트 ${n}건»<br>«인스턴스 ${id} · 조회 ${at}»<br>링크 «인시던트 확인·판단»(`#operations`) | 못 읽음: «판단 대기 상태 모름»<br>실패: alert «인시던트: ${error} · 직전 관측입니다.» 또는 «인시던트: ${error} · 모름» |
 | 결과 자동 수집(`CollectorStatus`, region «결과 자동 수집») | 작업 응답 수집기 상태입니다.<br>h3 «결과 자동 수집»<br>상태 글자: «수집 중»(OK), «첫 수집 대기»(WAITING), «수집 실패 · 확인 필요»(그 밖)<br>«최근 성공: ${lastSuccessAt} · 최근 관측 요청 ${n}건»(없으면 «없음», 수를 모르면 «모름»)<br>수집기 오류가 있으면 alert «${error} · 마지막 시도 ${lastAttemptAt}»<br>커서 방식이 `DURABLE_OUTBOX` 면 «호스트에 저장된 결과를 마지막 커서부터 순서대로 수집합니다. 단절 중 결과도 연결 복구 후 재수집합니다.» 와 «수집 커서 ${sequence} / 확인한 마지막 번호 ${highWatermark} · 관측 시점 미수집 ${n}건»<br>아니면 «수집 방식 확인 중 · 마지막 성공 시각과 현재 연결 상태를 함께 확인하세요.» | 못 읽음: «수집 상태 모름»<br>조회 실패: alert «수집기 조회 모름: ${error}», 앞서 읽은 값이 있으면 뒤에 « · 아래는 직전 값입니다.» |
 | 최근 작업 요청 | h3 «최근 작업 요청» 과 링크 «전체 작업 요청»(`#requests`)<br>표 `table[aria-label=최근 작업 요청]`(스크롤 감싸개 «최근 작업 요청 표 스크롤»)<br>열: 요청(외부 주문 id 링크 → `#requests?receipt=${receiptId}`, 아래 작은 글자로 작업 지시 id) / 출처(출처 식별자 그대로) / 작업 요청 상태(상태 코드 그대로) / 시각 | 못 읽음: «최근 작업 요청 모름»<br>빈 상태: «저장된 작업 요청이 없습니다.» |
@@ -936,7 +936,8 @@ region «배정 가능»(h2 «배정 가능», `EligibilityTable.tsx`)에서는 
 | 직전 값 | `p.stale` «직전 값입니다. 실행 호스트 불통: ${error}» |
 | dl | «실행 호스트 인스턴스» ${instanceId}, «마지막 pump» ${pumpedAt}(없으면 «아직 없음») |
 | 일지 차단 | alert «실행 일지 저장 실패로 호스트의 명령 진행과 신규 배정이 차단되었습니다: ${executionIds}» |
-| 빈 상태 | «실행이 없습니다» |
+| 범위 안내 | 표에 행이 있을 때만 «진행 중이거나 판단이 필요한 실행과 최근 정착한 실행 20건을 표시합니다. 그보다 오래된 실행은 이전 실행에서 확인합니다.» |
+| 빈 상태 | 남은 실행과 정착 이력 행이 모두 없을 때 «실행이 없습니다» |
 
 재기동 복원 보고는 region «재기동 복원 보고» 와 `.restore` 클래스를 쓰며 표보다 앞에 놓입니다. 재기동 뒤 행이 있을 때만 표시합니다.
 - «재기동: 이전 인스턴스의 실행 ${n}건을 다시 지었습니다» 와 «(복원 시각 ${at})»
@@ -944,26 +945,37 @@ region «배정 가능»(h2 «배정 가능», `EligibilityTable.tsx`)에서는 
 - «미룬 실행 ${n}건. 실행 호스트가 다시 시도하며 그동안 그 기체는 배정에서 빠집니다» 와 목록 «미룬 실행»
 - «포기한 실행 ${n}건. 다시 짓지 않습니다. 기체의 남은 태스크를 운영자가 확인하십시오» 와 목록 «포기한 실행»
 
-표 `table[aria-label=실행 목록]` 은 최신부터 표시하며 여덟 열 순서는 다음과 같습니다.
-1. 실행 id(재기동으로 다시 지었으면 뒤에 회색 « (이전 ${id})»)
+컴포넌트는 5초마다 `GET /api/executions?recent=20` 을 읽으며, 본문에는 현재 인스턴스의 남은 실행(진행 중이거나 운영자 판단을 기다리는 실행, 또는 정착했으나 정착 기록이 아직 커밋되지 않은 실행)과 정착 이력 최근 20행(실행 호스트의 정착 기록에서 인스턴스 무관, 최근 정착부터)이 들어 있습니다. 표 `table[aria-label=실행 목록]` 은 먼저 남은 실행을 최신부터, 이어 정착 이력을 최근 정착부터 최대 20행까지 표시합니다. 남은 실행과 같은 실행(같은 인스턴스와 실행 id)인 이력 행은 감추고 남은 실행 행만 표시하며 여덟 열 순서는 다음과 같습니다.
+1. 실행 id(재기동으로 다시 지었으면 뒤에 회색 « (이전 ${id})», 정착 이력 줄에서 행의 인스턴스가 현재 인스턴스와 다르면 뒤에 회색 span `.restored` 로 « (이전 인스턴스 ${instanceId})»)
 2. 작업 지시 id
 3. 임무
 4. 임무 버전(«코드 정의», «버전 ${n}»)
 5. 기체
-6. 물리 상태(코드 값 뒤에, 이 인스턴스에서 건 운영자 취소가 있으면 회색 span(`.restored`) « (취소 요청: ${approverId}, ${reason})», title «${recordedAt}, 취소 때 ${physicalState}». 실행에 `permitBlock` 이 있으면 같은 칸 아래 region «작업 허가 대기»(`PermitBlockNotice.tsx`, `section.permit-block`, 연한 파랑 바탕과 파란 왼쪽 띠 `#2563eb`). 위에서 아래로 h4 «작업 허가 대기», 안내 «현장 안전 신호가 허가를 내지 않아 이 실행의 새 로봇 명령을 내지 않고 기다립니다. 실패나 운영자 보류가 아닙니다.», dl(«막힌 단위», «내지 않은 명령», «처음 막힌 시각»), 목록 `ul[aria-label=허가를 기다리는 기체]`(기체마다 굵게 «기체 ${robotId}: ${허가 글자}», 그 아래 판단마다 «까닭 ${까닭 글자} · 막는 주체 ${subject} · 풀릴 근거 ${resumeBasis}» 와 작은 글자 «(원천 ${source}, 관측 시각 ${observedAt})», 값이 null 이면 «없음»), 끝에 안내 둘(`PERMIT_BLOCK_TEXT.notOperator`, `notSafety`). 운영자 보류(`OPERATOR_HOLD`)·결함 막음 표시와 섞지 않고 버튼이 없음. 근거: `PermitBlockNotice.test.tsx` 의 `작업 허가로 막힌 실행은 막은 기체와 주체와 풀릴 근거를 운영자 보류와 다른 표시로 보이고 조작 버튼이 없다`, `모름(UNKNOWN)은 까닭과 원천 없음을 그대로 보인다`.)
-7. 단위(«${unitId} ${skillType}: ${state}, 근거 ${reached}»)
+6. 물리 상태(코드 값 뒤에, 이 인스턴스에서 건 운영자 취소가 있으면 회색 span(`.restored`) « (취소 요청: ${approverId}, ${reason})», title «${recordedAt}, 취소 때 ${physicalState}». 실행에 `permitBlock` 이 있으면 같은 칸 아래 region «작업 허가 대기»(`PermitBlockNotice.tsx`, `section.permit-block`, 연한 파랑 바탕과 파란 왼쪽 띠 `#2563eb`). 위에서 아래로 h4 «작업 허가 대기», 안내 «현장 안전 신호가 허가를 내지 않아 이 실행의 새 로봇 명령을 내지 않고 기다립니다. 실패나 운영자 보류가 아닙니다.», dl(«막힌 단위», «내지 않은 명령», «처음 막힌 시각»), 목록 `ul[aria-label=허가를 기다리는 기체]`(기체마다 굵게 «기체 ${robotId}: ${허가 글자}», 그 아래 판단마다 «까닭 ${까닭 글자} · 막는 주체 ${subject} · 풀릴 근거 ${resumeBasis}» 와 작은 글자 «(원천 ${source}, 관측 시각 ${observedAt})», 값이 null 이면 «없음»), 끝에 안내 둘(`PERMIT_BLOCK_TEXT.notOperator`, `notSafety`). 운영자 보류(`OPERATOR_HOLD`)·결함 막음 표시와 섞지 않고 버튼이 없음. 근거: `PermitBlockNotice.test.tsx` 의 `작업 허가로 막힌 실행은 막은 기체와 주체와 풀릴 근거를 운영자 보류와 다른 표시로 보이고 조작 버튼이 없다`, `모름(UNKNOWN)은 까닭과 원천 없음을 그대로 보인다`. 정착 이력 줄은 물리 상태 코드 뒤에 회색 span `.restored` 로 « (정착 ${settledAt})» 을 표시합니다.)
+7. 단위(«${unitId} ${skillType}: ${state}, 근거 ${reached}», 정착 기록에 본문이 없으면(본문이 기록되기 전에 정착) 단위 목록 대신 «정착 기록에 단위·작업 응답이 없습니다»)
 8. 작업 응답(«없음» 또는 작업 응답 요약 목록, «운영자 개입 필요» 포함)
 
 방금 낸 작업 지시의 행은 `tr.selected` 입니다.
 
 실행 목록 표 아래에는 `ExecutionControls.tsx` 의 `CancelExecutionForm` 이 담당하는 `form[aria-label=실행 취소]` 와 h3 «실행 취소» 가 있습니다. 실행 목록을 읽은 뒤에만 표 아래에 둡니다(빈 목록이어도 운영자 모드면 h3 와 마지막 결과는 보임).
 
-- 고를 수 있는 실행: 물리 상태가 `PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`ABORTED`·`CANCELING` 이 아니고 `cancel` 이 없는 것(실행 호스트가 다시 판정하므로 고르기 편의). 없으면 폼 몸통은 없습니다.
+- 고를 수 있는 실행: 남은 실행 중 물리 상태가 `PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`ABORTED`·`CANCELING` 이 아니고 `cancel` 이 없는 것(실행 호스트가 다시 판정하므로 고르기 편의). 없으면 폼 몸통은 없습니다.
 - 몸통: 문단 «취소하면 남은 단위를 더 돌리지 않고 이 실행을 중단(ABORTED)으로 끝냅니다. 로봇이 든 물체와 설비 상태를 현장에서 확인한 뒤 결정하세요.», 문단 «부분 완료(PARTIAL) 실행은 취소하기 전까지 기체를 쥐고 있어 그 기체에 새 작업이 배정되지 않습니다.», select «취소할 실행»(첫 선택지 «실행 선택», 선택지 «${executionId} · ${jobOrderId} · ${robotId} · ${physicalState}»), 입력 «취소 사유»(`maxLength=1000`), 체크박스 «기체·설비 상태를 확인했고 이 실행을 끝냅니다», 버튼 «현장 확인 후 실행 취소»(실행·사유·체크가 있어야 활성)로 구성됩니다.
 - POST `/api/executions/{executionId}/cancel` 본문 `{instanceId, reason}`(instanceId 는 실행 목록의 것, reason 은 앞뒤 공백 뗌). 승인자는 싣지 않습니다. 끝나면 고름·사유·체크를 비우고 곧바로와 500ms 뒤 다시 읽습니다.
 - 결과 status «실행 취소 결과»: «${executionId}(${jobOrderId}) 실행 취소: ${결과}» 로 표시합니다. 결과는 `CANCEL_RESULT_LABEL` 에 따르며(CANCELED 가 아니고 detail 이 있으면 «${결과 글자}. ${detail}»), 호스트 4xx 거부 시 «실행 호스트가 거부함(${풀이}). ${detail}», 사전 거부 시 «보내지 않음(${풀이}). ${detail}», 결과 모름 시 «결과 모름(${cause}). 실행 목록에서 확인하십시오», 취소 응답 없음 셋은 «응답은 없었으나 다시 읽어 보니 취소가 걸림», «응답 없음. 다시 읽어 보니 취소가 걸리지 않음. 실행 목록에서 확인하십시오», «응답 없음. 취소가 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오» 입니다.
 - 엔지니어 모드: 폼이 없습니다. 고를 수 있는 실행이 있을 때만 «실행 취소는 운영자 모드에서 합니다» 문장이 보입니다.
 - 취소한 실행은 실행 호스트의 다음 pump 에 `ABORTED` 로 정착하고, 마지막 로봇 단위가 든 채였으면 잔여 파지 표시가 섭니다(§3.4.3).
+
+새 region «이전 실행»(h3 «이전 실행»)은 두 모드 모두에서 취소 폼 아래에 놓입니다. 5초 주기 읽기의 커서 `nextBefore` 에서 시작하여 `GET /api/executions?before=${settleSeq}&limit=20` 으로 이전 정착 이력을 한 번에 20건씩 읽습니다.
+- 더 남아 있으면 문단 «이전 실행 ${n}건이 더 있습니다» 를 표시합니다.
+- 단추 «이전 실행 더 보기» 는 읽기가 진행 중이면 비활성화하며, 더 남은 것이 없으면 감춥니다.
+- 표 `table[aria-label=이전 실행 목록]` 은 같은 여덟 열을 쓰며, 정착 이력 줄도 같은 방식으로 표시합니다.
+- 단추 «이전 실행 접기» 는 읽어온 것이 있을 때 나타나며, 접으면 더 읽은 것을 버립니다.
+- 읽기에 실패하면 alert «이전 실행을 읽지 못했습니다: ${error}» 로 알리며, 주기 읽기의 표는 그대로 둡니다.
+- 따라잡기: 더 읽은 뒤 새 정착으로 5초 주기 읽기의 `nextBefore` 가 움직이면, 새 커서부터 읽어 밀려난 이력만 채워 읽어온 행과 맞닿게 하여 두 표가 정착 차례대로 이어지게 합니다. 최대 10페이지까지 읽으며, 이를 넘어서거나 커서가 사라지거나 뒤로 가면 더 읽은 이력을 버리고 상태 «정착 기록이 크게 바뀌어 이전 실행을 다시 읽어야 합니다» 를 표시합니다.
+- 더 오래된 실행이 없고 읽어온 것도 없으면 region을 표시하지 않습니다.
+
+근거: `ExecutionList.test.tsx` 의 `운영 화면은 남은 실행과 최근 정착 이력을 한 표에 보이고 전체 실행 목록을 읽지 않는다`, `이전 실행 더 보기는 주기 읽기의 커서에서 한 페이지씩 더 읽고 끝나면 단추를 감추며 접으면 더 읽은 것을 버린다`, `더 읽은 뒤 새 정착으로 최근 정착 이력이 밀리면 밀려난 이력만 채워 두 표가 정착 차례대로 맞닿는다`, `따라잡을 이력이 상한보다 많으면 더 읽은 이력을 버리고 알린다`, `이전 실행을 못 읽으면 알리고 주기 읽기의 표는 그대로다`; `executionHistory.test.ts` 의 시험 4개.
 
 ![실행 목록](img/12-operations-executions.png)
 
