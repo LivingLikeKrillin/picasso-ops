@@ -48,6 +48,8 @@ class StationCoordinatorTest {
   var writeFails=false;val writes=mutableListOf<Pair<String,String>>()
   /** Runs once after a read has been taken, before its caller judges it. */
   var afterRead:(()->Unit)?=null
+  /** Runs once when a receipt is read, after tick has read its stations and runs. */
+  var onReceipt:(()->Unit)?=null
   /** The host's work permit (ADR 52). Undeclared keeps today's behaviour. */
   var permit:StationPermit=StationPermit.Undeclared;var permitThrows=false
   override fun permit():StationPermit {if(permitThrows)error("host down");return permit}
@@ -66,6 +68,7 @@ class StationCoordinatorTest {
   }
   /** A changed [physical] is a new stored result version; the latest stored result is what the port reports. */
   override fun receipt(id:UUID):StationReceipt {
+   onReceipt?.let{onReceipt=null;it()}
    physical?.let{if(written[id]!=it){result(id,it);written[id]=it}}
    val latest=jdbc.sql("SELECT version,snapshot->'jobResponse'->>'physicalState' FROM ops.work_result WHERE receipt_id=:id ORDER BY version DESC LIMIT 1").param("id",id).query{r,_->r.getInt(1) to r.getString(2)}.optional().orElse(null)
    return receipts.getValue(id).copy(physicalState=latest?.second,resultVersion=latest?.first)
@@ -571,5 +574,21 @@ class StationCoordinatorTest {
   now=now.plusSeconds(5);signal(complete=true);service.tick();service.tick();assertEquals("WAITING_ROBOT",service.get(run.runId).state);assertEquals(0,port.retries)
   signal();service.tick();assertEquals("RUNNING",service.get(run.runId).state);assertEquals(1,port.retries)
  }
-
+ /** tick 은 잠금 없이 읽은 작업으로 먼저 판단한다. 그 뒤에 바뀐 작업은 쓰기 전에 잠금 아래에서 다시 읽어 그 작업으로 판단한다(HA 설계 기록 §10). */
+ @Test fun `tick 이 읽은 뒤 다른 쪽이 바꾼 작업은 완료를 쓰기 전에 잠금 아래에서 다시 판단해 바뀐 상태를 덮지 않는다`() {
+  val run=enqueue();service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  port.physical="PHYSICALLY_DONE";now=now.plusSeconds(1);signal(complete=true)
+  // 다른 인스턴스가 tick 의 읽기 뒤에 확인 필요로 넘긴다.
+  port.onReceipt={jdbc.sql("UPDATE ops.station_run SET state='REVIEW_REQUIRED',reason='다른 쪽 판단',revision=revision+1 WHERE run_id=:id").param("id",run.runId).update()}
+  service.tick()
+  val after=service.get(run.runId)
+  assertEquals(listOf("REVIEW_REQUIRED","다른 쪽 판단"),listOf(after.state,after.reason));assertEquals(run.runId,service.stations().single().owner)
+  assertEquals(0L,jdbc.sql("SELECT count(*) FROM ops.station_event WHERE run_id=:id AND state='COMPLETED'").param("id",run.runId).query(Long::class.java).single())
+ }
+ /** 잠그고 쓴 스테이션(대기열 점유, 제출)은 트랜잭션과 제출 뒤 작업을 다시 읽어, 같은 tick 안에서 새 상태로 관측한다. */
+ @Test fun `제출한 tick 안에서 다시 읽은 작업을 관측해 정착한 비성공 결과를 그 tick 에 확인 필요로 넘긴다`() {
+  port.physical="FAILED";val run=enqueue();service.tick()
+  val after=service.get(run.runId)
+  assertEquals(listOf("REVIEW_REQUIRED","로봇 FAILED; 자동 재실행 없이 점유 유지"),listOf(after.state,after.reason));assertEquals(1,port.sends)
+ }
 }

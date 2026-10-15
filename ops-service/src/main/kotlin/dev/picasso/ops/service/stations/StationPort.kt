@@ -9,6 +9,7 @@ import dev.picasso.ops.service.host.HostCall
 import dev.picasso.ops.service.host.HostReads
 import dev.picasso.ops.service.interfaces.MissionInterfaces
 import dev.picasso.ops.service.log.OperationResult
+import dev.picasso.ops.service.requests.Receipt
 import dev.picasso.ops.service.requests.WorkRequests
 import java.time.Instant
 import java.util.UUID
@@ -49,10 +50,10 @@ interface StationPort {
  fun dispatch(id: UUID, payload: JsonNode, actor: Actor): StationReceipt
  fun receipt(id: UUID): StationReceipt
  /**
-  * Runs one tick's observations. A port may share one host read across the [receipt] calls inside [block]; a write it sends there is
-  * followed by a new read (HA design record §10). Calls outside [block] read the host themselves.
+  * Runs one tick's observations of [receipts]. A port may share host reads covering them across the [receipt] calls inside [block]; a write
+  * it sends there is followed by a new read (HA design record §10). Calls outside [block] read the host themselves.
   */
- fun <T> observing(block: () -> T): T = block()
+ fun <T> observing(receipts: Collection<UUID>, block: () -> T): T = block()
  fun retryForRun(receipt:StationReceipt,attempt:UUID,actor:Actor,runId:UUID):StationReceipt=retry(receipt,attempt,actor)
  fun retry(receipt: StationReceipt, attempt: UUID, actor: Actor): StationReceipt
  /** Reads a source confirmation body before the run is claimed; throws the work request's refusal. */
@@ -60,8 +61,11 @@ interface StationPort {
  /** Records a person's source confirmation on the run's receipt and submits it again. */
  fun confirmSourceForRun(receipt: StationReceipt, actor: Actor, payload: JsonNode, runId: UUID): StationReceipt = error("출발 자리 확인을 받지 않는 포트입니다")
 }
-/** Uses durable receipts; an uncertain submission is never sent again. */
-class OpsStationPort(private val requests: WorkRequests, private val interfaces: MissionInterfaces, private val host: HostReads, private val cell: CellSignalOperations? = null): StationPort {
+/**
+ * Uses durable receipts; an uncertain submission is never sent again.
+ * [chunk]: job orders per narrowed `GET /host/executions` of a tick, so the request line stays short.
+ */
+class OpsStationPort(private val requests: WorkRequests, private val interfaces: MissionInterfaces, private val host: HostReads, private val cell: CellSignalOperations? = null, private val chunk: Int = READ_CHUNK): StationPort {
  private val json=ObjectMapper()
  override fun validate(payload:JsonNode) {
   val wm=interfaces.get(payload["interfaceId"].asText(),payload["interfaceVersion"].asInt()).workMasterId
@@ -85,19 +89,27 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
   val outcome=(cell ?: return false).write(actor,name,value)
   return outcome.result==OperationResult.SUCCEEDED || outcome.confirmation==OperationResult.CONFIRMED_APPLIED
  }
- /** One tick's `GET /host/executions` read, taken at the first receipt that needs it. Per thread: decisions run on request threads. */
- private val round=ThreadLocal<Array<WorkRequests.ExecutionsRead?>?>()
- override fun <T> observing(block:()->T):T {
-  round.set(arrayOfNulls(1))
+ /**
+  * One tick's execution reads (HA design record §10): the job orders of the tick's receipts in chunks, each read at the first receipt that
+  * needs it, and job order → the read covering it. Per thread: decisions run on request threads.
+  */
+ private class Round(val receipts:Collection<UUID>) {var chunks:List<List<String>>?=null;val reads=HashMap<String,WorkRequests.ExecutionsRead>()}
+ private val round=ThreadLocal<Round?>()
+ override fun <T> observing(receipts:Collection<UUID>,block:()->T):T {
+  round.set(Round(receipts.toList()))
   try {return block()} finally {round.remove()}
  }
- private fun executions():WorkRequests.ExecutionsRead {
-  val shared=round.get() ?: return requests.readExecutions()
-  return shared[0] ?: requests.readExecutions().also{shared[0]=it}
+ /** The execution read covering [receipt]'s job order: its chunk of this tick, else a read of that job order alone. Never the whole list. */
+ private fun executions(receipt:Receipt):WorkRequests.ExecutionsRead {
+  val shared=round.get() ?: return requests.readExecutions(listOf(receipt.jobOrderId))
+  shared.reads[receipt.jobOrderId]?.let{return it}
+  val chunks=shared.chunks ?: requests.jobOrderIds(shared.receipts).chunked(chunk).also{shared.chunks=it}
+  val ids=chunks.firstOrNull{receipt.jobOrderId in it} ?: listOf(receipt.jobOrderId)
+  return requests.readExecutions(ids).also{read->ids.forEach{shared.reads[it]=read}}
  }
  /** A host write changes the executions, sent or not: the next receipt in this tick reads them again. */
  private fun sent(write:()->UUID):StationReceipt {
-  val id=try {write()} finally {round.get()?.set(0,null)}
+  val id=try {write()} finally {round.get()?.reads?.clear()}
   return mapped(id)
  }
  override fun dispatch(id:UUID,payload:JsonNode,actor:Actor):StationReceipt {
@@ -108,9 +120,9 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
  }
  override fun receipt(id:UUID)=mapped(id)
  private fun mapped(id:UUID):StationReceipt {
-  val receipt=requests.get(id)
+  val (receipt,latest)=requests.stationRead(id)
   // Use stored result evidence. A missing current host execution never means the work did not start.
-  val stored=runCatching{requests.stationResult(receipt,executions())}.getOrNull();val saved=stored?.get("snapshot") as? JsonNode
+  val stored=runCatching{requests.stationResult(receipt,latest,executions(receipt))}.getOrNull();val saved=stored?.get("snapshot") as? JsonNode
   return StationReceipt(id,receipt.state,receipt.state=="UNASSIGNED" && receipt.submission==null && receipt.lastExecution==null,receipt.updatedAt,saved?.path("jobResponse")?.path("physicalState")?.takeIf{it.isTextual}?.asText(),saved,stored?.get("version") as? Int,receipt.detail,
    requests.pendingSources(receipt).isNotEmpty())
  }
@@ -124,6 +136,8 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
   return sent{requests.recover(receipt.id,actor,body,runId);receipt.id}
  }
 }
+/** Job orders per narrowed execution read: 50 `JO-<uuid>` keep the request line near 2.6 KB, under the host's 8 KB header limit. */
+const val READ_CHUNK=50
 /** Reads `GET /host/work-permits`. Anything unreadable is [StationPermit.Unreadable]: a permit not known is not a permit. */
 internal fun permitOf(body:JsonNode?):StationPermit {
  val declared=body?.path("declared")?.takeIf{it.isBoolean} ?: return StationPermit.Unreadable("작업 허가를 읽지 못했다")

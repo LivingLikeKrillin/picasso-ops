@@ -3,7 +3,8 @@ package dev.picasso.ops.load
 import java.lang.management.ManagementFactory
 
 /**
- * `./gradlew :load:loadBench --args="<시나리오…> [quick]"`. 시나리오는 stations·delivery·pump·explain·all 이다.
+ * `./gradlew :load:loadBench --args="<시나리오…> [quick]"`. 시나리오는 stations·delivery·pump·explain·list·all 이다. list(실행 목록 크기,
+ * 실행 10000 까지 쌓음)는 all 에 들지 않는다.
  * `quick` 을 붙이면 규모를 줄여 배선만 확인한다. 결과는 `load/build/load/<시나리오>.md` 와 표준 출력에 같이 남는다.
  */
 fun main(args: Array<String>) {
@@ -39,5 +40,6 @@ fun main(args: Array<String>) {
         if (quick) 5 else 30,
         combinedStations = if (quick) 2 else 50,
     )
+    if ("list" in chosen) ListLoad.run(Report("list"), if (quick) listOf(10, 20) else listOf(2_000, 10_000), if (quick) 2 else 50, if (quick) 3 else 10)
     System.exit(0)
 }

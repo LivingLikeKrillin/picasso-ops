@@ -156,6 +156,13 @@ interface HostReads {
     fun resultEvents(after:Long,limit:Int=100): HostCall<JsonNode> = HostCall.Silent("result outbox unsupported")
     fun executions(): HostCall<JsonNode>
 
+    /**
+     * `GET /host/executions` 를 작업 지시 id [jobOrderIds] 나 실행 id [executionIds] 의 실행으로 좁힌 본문 그대로(HA 설계 기록 §10).
+     * 모양은 [executions] 와 같고 실행과 일지 막힘 목록만 그 실행으로 줄어든다. id 가 하나는 있어야 한다. 좁혀 읽을 줄 모르는
+     * 구현은 전체 목록을 준다. 고른 실행이 다 들어 있으니 id 로 찾는 쪽에는 같다.
+     */
+    fun executionsOf(jobOrderIds: Collection<String> = emptyList(), executionIds: Collection<String> = emptyList()): HostCall<JsonNode> = executions()
+
     /** `GET /host/cell` 본문 그대로. 셀 대역을 못 읽은 호스트는 `{"cell": null}` 을 200 으로 준다. */
     fun cell(): HostCall<JsonNode>
 
@@ -349,6 +356,14 @@ class HostClient(
     override fun resultEvents(after:Long,limit:Int):HostCall<JsonNode> = get("/host/result-events?after=$after&limit=$limit")
 
     override fun executions(): HostCall<JsonNode> = get("/host/executions")
+
+    /** 값마다 `jobOrderId=`·`executionId=` 를 되풀이한다. 호스트는 값을 쉼표로 가르지 않는다. */
+    override fun executionsOf(jobOrderIds: Collection<String>, executionIds: Collection<String>): HostCall<JsonNode> {
+        require(jobOrderIds.isNotEmpty() || executionIds.isNotEmpty()) { "좁힐 실행 id 가 없다" }
+        val query = jobOrderIds.map { "jobOrderId=" + URLEncoder.encode(it, Charsets.UTF_8) } +
+            executionIds.map { "executionId=" + URLEncoder.encode(it, Charsets.UTF_8) }
+        return get("/host/executions?" + query.joinToString("&"))
+    }
 
     override fun cell(): HostCall<JsonNode> = get("/host/cell")
 

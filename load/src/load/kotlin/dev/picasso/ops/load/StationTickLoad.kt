@@ -23,6 +23,9 @@ class CountingHost(private val delegate: HostReads) : HostReads by delegate {
     fun reset() = timings.clear()
     private fun <T> timed(name: String, call: () -> T): T = timings.computeIfAbsent(name) { Timings() }.let { t -> synchronized(t) { t.time(call) } }
     override fun executions(): HostCall<JsonNode> = timed("executions") { delegate.executions() }
+    /** 좁힌 실행 목록 읽기도 같은 `GET /host/executions` 로 센다. */
+    override fun executionsOf(jobOrderIds: Collection<String>, executionIds: Collection<String>): HostCall<JsonNode> =
+        timed("executions") { delegate.executionsOf(jobOrderIds, executionIds) }
     override fun cell(): HostCall<JsonNode> = timed("cell") { delegate.cell() }
     override fun workPermits(): HostCall<JsonNode> = timed("work-permits") { delegate.workPermits() }
 }
@@ -92,7 +95,8 @@ object StationTickLoad {
             val eventsAfter = stack.query("SELECT count(*) FROM ops.station_event") { it.getLong(1) }.single()
             val running = stack.query("SELECT count(*) FROM ops.station_run WHERE state='RUNNING'") { it.getLong(1) }.single()
             val calls = host.timings.mapValues { it.value.count.toDouble() / rounds }
-            val stationScans = stmts.filter { it.query.startsWith("SELECT * FROM ops.rf_station ORDER BY station_id") }
+            // 스테이션 목록 전체 읽기: 예전 `stations()` 와 그 자리를 이은 스테이션판(`SELECT s.*,…`).
+            val stationScans = stmts.filter { it.query.startsWith("SELECT * FROM ops.rf_station ORDER BY station_id") || it.query.startsWith("SELECT s.*,") }
             rows += listOf("$s", mode + label) + t.cells() + listOf(
                 f(stmts.calls().toDouble() / rounds),
                 f(stmts.rows().toDouble() / rounds),

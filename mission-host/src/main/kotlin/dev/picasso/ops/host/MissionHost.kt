@@ -798,12 +798,24 @@ class MissionHost(
         ),
     )
 
-    fun executions(): ExecutionsView = lock.withLock {
+    fun executions(): ExecutionsView = lock.withLock { view(middleware.executions()) }
+
+    /**
+     * [executions] 를 작업 지시 id 가 [jobOrderIds] 에 들거나 실행 id 가 [executionIds] 에 드는 실행으로 좁힌 것(HA 설계 기록 §10).
+     * 모양과 칸은 같고 실행과 일지 막힘 목록만 고른 실행으로 줄어든다. 같은 잠금 아래의 전체 목록에서 그 실행만 남긴 것과 같다.
+     * 정착한 실행이 쌓여도 응답은 고른 실행 수만큼이다. 미들웨어의 실행과 아웃박스는 여전히 한 번씩 훑는다(메모리 안).
+     */
+    fun executions(jobOrderIds: Set<String>, executionIds: Set<String>): ExecutionsView = lock.withLock {
+        view(middleware.executions().filter { it.order.jobOrderId in jobOrderIds || it.executionId in executionIds })
+    }
+
+    /** [chosen] 실행의 목록 본문. 호스트 잠금 아래에서 부른다. */
+    private fun view(chosen: List<Middleware.Execution>): ExecutionsView {
         val responses = latestResponses(middleware.responses())
-        ExecutionsView(
+        return ExecutionsView(
             instanceId = middleware.instanceId,
             pumpedAt = pumpedAt,
-            executions = middleware.executions().map { execution ->
+            executions = chosen.map { execution ->
                 ExecutionView(
                     executionId = execution.executionId,
                     jobOrderId = execution.order.jobOrderId,
@@ -819,7 +831,7 @@ class MissionHost(
                 )
             },
             restore = restoreView(),
-            journalBlockedExecutionIds = journalBlocked(),
+            journalBlockedExecutionIds = journalBlocked(chosen),
         )
     }
 
@@ -1128,7 +1140,8 @@ class MissionHost(
      * 운영자 보류에 선 실행도 도는 실행이다(스펙 §12). 부분 완료는 리비전으로 남은 단위가 다시 돌 수 있어 그 기체가 아직 비지 않았다.
      * 부분 완료 실행은 운영자 취소([cancel])로 닫는다. 같은 작업 지시 id 의 리비전은 이 판정에 걸려 UNASSIGNED 다.
      */
-    private fun journalBlocked(): List<String> = middleware.executions().filter { it.order.jobOrderId !in journaled }.map { it.executionId }
+    private fun journalBlocked(among: List<Middleware.Execution> = middleware.executions()): List<String> =
+        among.filter { it.order.jobOrderId !in journaled }.map { it.executionId }
 
     private fun judge(order: JobOrder, robotId: String, applied: Boolean): HostEligibility {
         val active = requireNotNull(catalog.active(order.workMasterId)) { "카탈로그에 없는 WorkMaster 다: ${order.workMasterId}" }
