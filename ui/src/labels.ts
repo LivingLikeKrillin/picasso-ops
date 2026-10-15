@@ -201,6 +201,21 @@ export const CANCEL_RESULT_LABEL: Record<CancelResult, string> = {
   REFUSED: '에이전트는 실행을 취소하지 못합니다',
 }
 
+/** 실행 목록의 «활성 + 최근 N, 이력은 페이지»(HA 설계 기록 §10) 글자. */
+export const EXECUTION_LIST_TEXT = {
+  scope: (recent: number) => `진행 중이거나 판단이 필요한 실행과 최근 정착한 실행 ${recent}건을 표시합니다. 그보다 오래된 실행은 이전 실행에서 확인합니다.`,
+  settledAt: (at: string) => `정착 ${at}`,
+  otherInstance: (instanceId: string) => `이전 인스턴스 ${instanceId}`,
+  noSnapshot: '정착 기록에 단위·작업 응답이 없습니다',
+  historyHeading: '이전 실행',
+  historyTable: '이전 실행 목록',
+  olderCount: (count: number) => `이전 실행 ${count}건이 더 있습니다`,
+  loadOlder: '이전 실행 더 보기',
+  collapse: '이전 실행 접기',
+  historyError: (error: string) => `이전 실행을 읽지 못했습니다: ${error}`,
+  historyReset: '정착 기록이 크게 바뀌어 이전 실행을 다시 읽어야 합니다',
+} as const
+
 /** 운영자 실행 취소와 잔여 파지 확인 문구(P0-b2). */
 export const EXECUTION_CONTROL_TEXT = {
   cancelHeading: '실행 취소',

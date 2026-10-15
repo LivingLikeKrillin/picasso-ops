@@ -49,6 +49,9 @@ class ExecutionControlsTest {
 
         override fun executions(): HostCall<JsonNode> = executions.also { calls += mapOf("op" to "executions") }
 
+        override fun executionsOf(executionId: String): HostCall<JsonNode> =
+            executions.also { calls += mapOf("op" to "executionsOf", "executionId" to executionId) }
+
         override fun cancelExecution(executionId: String, approverId: String, reason: String, instanceId: String, requestId: UUID): HostWrite {
             calls += mapOf("op" to "cancel", "executionId" to executionId, "approverId" to approverId, "reason" to reason, "instanceId" to instanceId)
             return cancelAnswer
@@ -161,6 +164,9 @@ class ExecutionControlsTest {
         val restarted = assertIs<ExecutionCancelOutcome>(cancel("operator").body)
         assertEquals(OperationResult.NO_RESPONSE, restarted.result)
         assertNull(restarted.confirmation)
+        // 재조회는 취소한 실행 하나로 좁혀 읽고 전체 목록을 읽지 않는다.
+        val reads = host.calls.filter { it["op"].toString().startsWith("executions") }
+        assertEquals(List(4) { mapOf("op" to "executionsOf", "executionId" to "exec-1") }, reads)
     }
 
     @Test

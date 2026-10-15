@@ -53,8 +53,8 @@ sealed interface JobOrderSubmission {
  *
  * `OperationRunner` 를 쓰지 않는 것은 결과를 가르는 자리가 달라서다. registry 는 HTTP 상태 코드로 결과를 말하지만 호스트는
  * 200 본문의 `result` 로 말한다. 응답 없음과 재조회의 규칙은 같다. 응답이 오지 않거나 5xx 면 «응답 없음» 을 남기고
- * [requeryDelay] 뒤 `GET /host/executions` 를 한 번 읽어, 그 작업 지시 id 의 실행이 있으면 반영됨, 없으면 반영 안 됨을 같은
- * 요청 id 의 새 행으로 붙인다. 재조회도 못 읽으면 행을 붙이지 않는다. 재시도는 하지 않는다.
+ * [requeryDelay] 뒤 그 작업 지시로 좁힌 `GET /host/executions?jobOrderId=` 를 한 번 읽어, 그 작업 지시 id 의 실행이 있으면 반영됨,
+ * 없으면 반영 안 됨을 같은 요청 id 의 새 행으로 붙인다. 재조회도 못 읽으면 행을 붙이지 않는다. 재시도는 하지 않는다.
  *
  * 200 인데 본문을 못 읽으면 응답 없음과 같이 다룬다. 호스트는 답했지만 무엇을 했는지 모르기 때문이다.
  *
@@ -120,14 +120,14 @@ class JobOrderOperations(
         }
     }
 
-    /** 응답 없음 뒤 재조회. 읽지 못하면 행을 붙이지 않고 확인 결과를 널로 둔다. */
+    /** 응답 없음 뒤 재조회. 그 작업 지시로 좁힌 실행 목록을 읽는다(HA 설계 기록 §10). 읽지 못하면 행을 붙이지 않고 확인 결과를 널로 둔다. */
     private fun confirm(
         requestId: UUID,
         jobOrderId: String,
         record: (OperationResult, String) -> Unit,
     ): JobOrderSubmission {
         if (!requeryDelay.isZero) Thread.sleep(requeryDelay)
-        val seen = when (val call = reads.executions()) {
+        val seen = when (val call = reads.executionsOf(jobOrderIds = listOf(jobOrderId))) {
             is HostCall.Ok -> runCatching { json.treeToValue(call.value, HostExecutions::class.java) }.getOrNull()
             is HostCall.Silent -> null
         }

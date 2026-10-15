@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   checkEligibility,
   fetchCell,
-  fetchExecutions,
+  fetchExecutionPage,
   fetchIncidents,
   fetchJobResponses,
   submitManualJobOrder,
@@ -14,7 +14,7 @@ import {
 import type {
   CellView,
   Delivered,
-  ExecutionsView,
+  ExecutionPage,
   IncidentsView,
   JobOrderForm,
   JobOrderOutcome,
@@ -65,7 +65,7 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 export function OperationsArea({ session, onChanged }: Props) {
   // 주기마다, 그리고 제출이 끝나면 하나 올린다. 셋을 다시 읽는다.
   const [tick, setTick] = useState(0)
-  const [executions, setExecutions] = useState<HostRead<ExecutionsView>>({ value: null, error: null })
+  const [executions, setExecutions] = useState<HostRead<ExecutionPage>>({ value: null, error: null })
   const [cell, setCell] = useState<HostRead<CellView>>({ value: null, error: null })
   const [incidents, setIncidents] = useState<HostRead<IncidentsView>>({ value: null, error: null })
   const [responses, setResponses] = useState<HostRead<JobResponsesView>>({ value: null, error: null })
@@ -120,7 +120,7 @@ export function OperationsArea({ session, onChanged }: Props) {
   useEffect(() => {
     let alive = true
     // 셋을 묶지 않는다. 셀 대역만 못 읽어도 실행 목록은 새 값이어야 한다.
-    fetchExecutions(session)
+    fetchExecutionPage(session)
       .then((value) => {
         if (alive) setExecutions({ value, error: null })
       })
@@ -168,6 +168,7 @@ export function OperationsArea({ session, onChanged }: Props) {
   }
   const responseJobOrders = [
     ...[...(executions.value?.executions ?? [])].reverse().map((execution) => execution.jobOrderId),
+    ...(executions.value?.settled ?? []).map((row) => row.execution.jobOrderId),
     ...(responses.value?.responses ?? []).map((row) => row.jobOrderId),
   ]
 

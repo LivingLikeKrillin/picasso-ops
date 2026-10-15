@@ -623,6 +623,40 @@ export interface ExecutionsView {
   restore?: { at: string; rows: RestoreRow[] } | null
 }
 
+/**
+ * 정착 이력 한 줄(HA 설계 기록 §10). 실행 호스트가 정착을 적을 때 함께 적은 실행 본문이다. `settleSeq` 가 정착 차례이고 커서다.
+ * `instanceId` 는 정착을 적은 인스턴스다(재기동 전의 것일 수 있다). `snapshot` 이 거짓이면 이력 기록 전에 정착한 실행이라 단위·작업 응답이 없다.
+ */
+export interface SettledExecution {
+  settleSeq: number
+  instanceId: string
+  settledAt: string
+  snapshot: boolean
+  execution: Execution
+}
+
+/** 정착 이력 한 페이지(`GET /api/executions?before=`). `nextBefore` 가 null 이면 더 오래된 이력이 없다. */
+export interface SettledPage {
+  settled: SettledExecution[]
+  nextBefore: number | null
+  olderTotal: number
+}
+
+/**
+ * 화면의 실행 목록(`GET /api/executions?recent=`, HA 설계 기록 §10). `executions` 는 지금 인스턴스의 남은 실행(활성이거나 정착 기록 전)이고,
+ * `settled` 는 최근 정착 이력이다(최근부터).
+ */
+export interface ExecutionPage extends ExecutionsView, SettledPage {}
+
+/** 운영 개요의 실행 수(`GET /api/executions/summary`). `states` 는 남은 실행의 물리 상태별 수다. */
+export interface ExecutionSummary {
+  instanceId: string
+  pumpedAt: string | null
+  live: number
+  states: Record<string, number>
+  journalBlockedExecutionIds: string[]
+}
+
 /** 셀 대역의 자리 하나(S3a JSON 계약 §1). 제시 자리의 `observedAt` 은 늘 null 이다. */
 export interface CellPlace {
   id: string
@@ -674,7 +708,16 @@ const postJobOrderForm = <T>(path: string, session: Session, form: JobOrderForm)
     body: JSON.stringify(form),
   })
 
-export const fetchExecutions = (session: Session) => getHostJson<ExecutionsView>('/api/executions', session)
+/** 운영 화면이 주기마다 받는 최근 정착 이력 수와 이력 한 페이지의 크기(HA 설계 기록 §10). */
+export const RECENT_EXECUTIONS = 20
+export const EXECUTION_HISTORY_PAGE = 20
+export const EXECUTIONS_RECENT_PATH = `/api/executions?recent=${RECENT_EXECUTIONS}`
+export const EXECUTION_SUMMARY_PATH = '/api/executions/summary'
+export const settledBeforePath = (before: number) => `/api/executions?before=${before}&limit=${EXECUTION_HISTORY_PAGE}`
+
+export const fetchExecutionPage = (session: Session) => getHostJson<ExecutionPage>(EXECUTIONS_RECENT_PATH, session)
+export const fetchSettledBefore = (session: Session, before: number) => getHostJson<SettledPage>(settledBeforePath(before), session)
+export const fetchExecutionSummary = (session: Session) => getHostJson<ExecutionSummary>(EXECUTION_SUMMARY_PATH, session)
 export const fetchCell = (session: Session) => getHostJson<CellView>('/api/cell', session)
 export const checkEligibility = (session: Session, form: JobOrderForm) =>
   postJobOrderForm<EligibilityView>('/api/job-orders/eligibility', session, form)

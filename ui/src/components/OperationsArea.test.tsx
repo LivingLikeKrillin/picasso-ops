@@ -10,6 +10,7 @@ import type {
   Session,
   SignalWriteOutcome,
 } from '../api'
+import { EXECUTIONS_RECENT_PATH } from '../api'
 import { ELIGIBILITY_DEBOUNCE_MS, POLL_MS, SIGNAL_SETTLE_MS } from '../poll'
 import { cellView, eligibilityView, executionsView, installFakeOps, standardSignals } from '../testing/fakeOps'
 import type { FakeOps } from '../testing/fakeOps'
@@ -626,7 +627,7 @@ describe('운영 영역', () => {
     await user.type(screen.getByLabelText('대상 1 장소'), 'bay-7')
     await waitFor(() => expect(calls(fake, 'POST', '/api/job-orders/eligibility').length).toBeGreaterThan(0))
     const count = () => ({
-      executions: calls(fake, 'GET', '/api/executions').length,
+      executions: calls(fake, 'GET', EXECUTIONS_RECENT_PATH).length,
       cell: calls(fake, 'GET', '/api/cell').length,
       eligibility: calls(fake, 'POST', '/api/job-orders/eligibility').length,
     })
@@ -680,7 +681,7 @@ describe('운영 영역', () => {
     fake.failing.add('/api/cell')
     render(<App />)
     expect(await screen.findByText('선언된 기체가 없습니다')).toBeInTheDocument()
-    expect(fake.calls.filter((call) => call.url === '/api/executions' || call.url === '/api/cell')).toEqual([])
+    expect(fake.calls.filter((call) => call.url.startsWith('/api/executions') || call.url === '/api/cell')).toEqual([])
 
     await userEvent.click(screen.getByRole('button', { name: '운영' }))
     expect(

@@ -112,7 +112,7 @@ class ExecutionControls(
     }
 
     private fun recheckCancel(executionId: String, instanceId: String, approver: String, sentAt: Instant): HostRecheck? {
-        val body = (host.executions() as? HostCall.Ok)?.value ?: return null
+        val body = (host.executionsOf(executionId) as? HostCall.Ok)?.value ?: return null
         if (body.path("instanceId").asText() != instanceId) return null
         val execution = body.path("executions").takeIf { it.isArray }?.firstOrNull { it.path("executionId").asText() == executionId }
             ?: return HostRecheck(false, null)

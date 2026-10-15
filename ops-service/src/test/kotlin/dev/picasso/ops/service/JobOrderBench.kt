@@ -44,6 +44,15 @@ class JobOrderBench {
     var executions: HostCall<JsonNode> = HostCall.Ok(json.readTree("""{"instanceId":"mw-1","pumpedAt":null,"executions":[]}"""))
     var cell: HostCall<JsonNode> = HostCall.Ok(json.readTree("""{"cell":null}"""))
 
+    /** 화면 실행 페이지·실행 수의 호스트 답(HA 설계 기록 §10). 받은 인자는 [pageCalls] 에 남는다. */
+    var recentPage: HostCall<JsonNode> = HostCall.Ok(json.readTree("""{"instanceId":"mw-1","executions":[],"nextBefore":null}"""))
+    var beforePage: HostCall<JsonNode> = HostCall.Ok(json.readTree("""{"settled":[],"nextBefore":null,"olderTotal":0}"""))
+    var summary: HostCall<JsonNode> = HostCall.Ok(json.readTree("""{"instanceId":"mw-1","total":0,"active":0,"states":{}}"""))
+    val pageCalls = mutableListOf<String>()
+
+    /** 좁힌 실행 목록 읽기의 인자(작업 지시 id, 실행 id). 답은 [executions] 다. */
+    val narrowed = mutableListOf<Pair<List<String>, List<String>>>()
+
     /** `GET /host/work-permits` 본문. 기본은 허가 대응을 선언하지 않은 현장이다(ADR 52). */
     var workPermits: HostCall<JsonNode> = HostCall.Ok(json.readTree("""{"declared":false,"evaluatedAt":"t","session":null,"validFor":null,"mappings":[],"robots":[]}"""))
 
@@ -64,6 +73,18 @@ class JobOrderBench {
         }
 
         override fun executions(): HostCall<JsonNode> = this@JobOrderBench.executions
+
+        override fun executionsOf(jobOrderIds: Collection<String>, executionIds: Collection<String>): HostCall<JsonNode> {
+            narrowed += jobOrderIds.toList() to executionIds.toList()
+            return this@JobOrderBench.executions
+        }
+
+        override fun executionsRecent(recent: Int): HostCall<JsonNode> = recentPage.also { pageCalls += "recent=$recent" }
+
+        override fun executionsBefore(before: Long, limit: Int?): HostCall<JsonNode> =
+            beforePage.also { pageCalls += "before=$before limit=$limit" }
+
+        override fun executionSummary(): HostCall<JsonNode> = summary.also { pageCalls += "summary" }
 
         override fun cell(): HostCall<JsonNode> = this@JobOrderBench.cell
 

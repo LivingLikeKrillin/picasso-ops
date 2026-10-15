@@ -136,6 +136,39 @@ class JobOrderTest {
         }
     }
 
+    @Test
+    @Order(4)
+    fun `화면 실행 목록은 남은 실행과 정착 이력이고 이력 페이지와 실행 수가 운영 서비스를 거쳐 전체 목록과 맞는다`() {
+        // 앞 두 시험의 실행이 정착 기록까지 끝나면 남은 실행이 없고 정착 이력이 둘이다.
+        val deadline = java.time.Instant.now().plusSeconds(10)
+        var recent = stack.get("/api/executions?recent=1")
+        while (!(recent["executions"].isEmpty && recent["settled"].size() == 1)) {
+            check(java.time.Instant.now().isBefore(deadline)) { "정착 기록을 기다리다 끝났다: $recent" }
+            Thread.sleep(100)
+            recent = stack.get("/api/executions?recent=1")
+        }
+        val full = driver.executions()
+        val byId = full["executions"].associateBy { it["executionId"].asText() }
+        assertEquals(full["instanceId"], recent["instanceId"])
+        val newest = recent["settled"][0]
+        assertEquals("exec-2" to full["instanceId"].asText(), newest["execution"]["executionId"].asText() to newest["instanceId"].asText())
+        assertEquals(byId.getValue("exec-2"), newest["execution"], "정착 이력은 정착할 때의 실행 본문이다")
+        assertEquals(1, recent["olderTotal"].asInt())
+
+        val older = stack.get("/api/executions?before=${recent["nextBefore"].asLong()}")
+        assertEquals(listOf("exec-1"), older["settled"].map { it["execution"]["executionId"].asText() })
+        assertEquals(byId.getValue("exec-1"), older["settled"][0]["execution"])
+        assertTrue(older["nextBefore"].isNull && older["olderTotal"].asInt() == 0, "$older")
+
+        val summary = stack.get("/api/executions/summary")
+        assertEquals(full["instanceId"], summary["instanceId"])
+        assertEquals(0, summary["live"].asInt())
+        assertEquals(0, summary["states"].sumOf { it.asInt() })
+
+        val bad = stack.send("GET", "/api/executions?recent=0", mode = null)
+        assertEquals(400 to "EXECUTIONS_BAD_REQUEST", bad.status to bad.body!!["error"].asText())
+    }
+
     /** 운영자 모드로 작업 지시를 낸다. 운영 서비스가 호스트에 제출했으면 200 이다. */
     private fun submit(form: String): JsonNode {
         val reply = stack.send("POST", "/api/job-orders", "operator", body = form)

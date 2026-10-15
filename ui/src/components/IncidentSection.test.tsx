@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import type { FaultDetail, HoldResolveOutcome, IncidentResolution, Session } from '../api'
+import { EXECUTIONS_RECENT_PATH } from '../api'
 import { POLL_MS, SIGNAL_SETTLE_MS } from '../poll'
 import { earlierRow, holdResolved, incidentDetail, incidentRow, incidentsView, installFakeOps } from '../testing/fakeOps'
 import type { FakeOps } from '../testing/fakeOps'
@@ -321,7 +322,7 @@ describe('인시던트', () => {
     fireEvent.change(within(detail).getByLabelText('판단 사유'), { target: { value: '  랙 재배치 뒤 재작업 ' } })
     const reads = () => ({
       incidents: calls(fake, 'GET', '/api/incidents').length,
-      executions: calls(fake, 'GET', '/api/executions').length,
+      executions: calls(fake, 'GET', EXECUTIONS_RECENT_PATH).length,
       detail: calls(fake, 'GET', '/api/incidents/incident-1?instanceId=mw-1').length,
     })
     const before = reads()

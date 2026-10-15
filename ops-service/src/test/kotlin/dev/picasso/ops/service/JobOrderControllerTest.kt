@@ -20,6 +20,7 @@ import dev.picasso.registry.PostgresSupport
 import org.springframework.http.ResponseEntity
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.jdbc.datasource.DriverManagerDataSource
+import org.springframework.util.LinkedMultiValueMap
 import java.time.Duration
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -131,15 +132,52 @@ class JobOrderControllerTest {
     fun `실행 목록과 셀은 호스트 본문을 그대로 넘기고 호스트가 안 닿으면 503 과 이유다`() {
         val executions = bench.executionsWith("JO-1")
         bench.executions = executions
-        assertSame((executions as HostCall.Ok).value, controller.executions().body)
+        assertSame((executions as HostCall.Ok).value, controller.executions(LinkedMultiValueMap()).body)
         assertSame((bench.cell as HostCall.Ok).value, controller.cell().body)
 
         bench.executions = HostCall.Silent("응답 없음: ConnectException")
         bench.cell = HostCall.Silent("HTTP 500")
-        val down = controller.executions()
+        val down = controller.executions(LinkedMultiValueMap())
         assertEquals(503, down.statusCode.value())
         assertEquals(PreRejection(JobOrderController.HOST_SILENT, "실행 호스트가 답하지 않는다: 응답 없음: ConnectException"), down.body)
         assertEquals(503, controller.cell().statusCode.value())
         assertEquals("실행 호스트가 답하지 않는다: HTTP 500", controller.cell().rejection().detail)
+    }
+
+    private fun params(query: String): LinkedMultiValueMap<String, String> = LinkedMultiValueMap<String, String>().apply {
+        query.split("&").filter { it.isNotEmpty() }.forEach { part -> add(part.substringBefore("="), part.substringAfter("=", "")) }
+    }
+
+    @Test
+    fun `화면 실행 페이지와 실행 수는 인자를 검사한 뒤 호스트 본문을 그대로 넘기고 인자 없는 목록과 모르는 인자는 그대로다`() {
+        assertSame((bench.recentPage as HostCall.Ok).value, controller.executions(params("recent=20")).body)
+        assertSame((bench.beforePage as HostCall.Ok).value, controller.executions(params("before=17&limit=5")).body)
+        assertSame((bench.beforePage as HostCall.Ok).value, controller.executions(params("before=17")).body)
+        assertSame((bench.summary as HostCall.Ok).value, controller.executionSummary().body)
+        assertSame((bench.executions as HostCall.Ok).value, controller.executions(params("jobOrderId=JO-1&instanceId=mw-1&other=1")).body, "모르는 인자는 전처럼 버린다")
+        assertEquals(listOf("recent=20", "before=17 limit=5", "before=17 limit=null", "summary"), bench.pageCalls)
+
+        val bad = listOf(
+            "recent=0", "recent=201", "recent=x", "recent=", "recent=1&recent=2", "recent=1&before=3", "recent=1&limit=2",
+            "limit=2", "before=0", "before=-1", "before=x", "before=", "before=3&before=4", "before=3&limit=0", "before=3&limit=201",
+        )
+        for (query in bad) {
+            val reply = controller.executions(params(query))
+            assertEquals(400, reply.statusCode.value(), query)
+            assertEquals(JobOrderController.EXECUTIONS_BAD_REQUEST, reply.rejection().error, query)
+        }
+        assertEquals(4, bench.pageCalls.size, "틀린 인자는 호스트에 닿지 않는다")
+        controller.executions(params("recent=200"))
+        controller.executions(params("before=${Long.MAX_VALUE}&limit=200"))
+        assertEquals(listOf("recent=200", "before=${Long.MAX_VALUE} limit=200"), bench.pageCalls.drop(4))
+
+        bench.beforePage = HostCall.Silent("응답 없음: ConnectException")
+        bench.recentPage = HostCall.Silent("HTTP 500")
+        bench.summary = HostCall.Silent("응답 없음: ConnectException")
+        for (down in listOf(controller.executions(params("before=1")), controller.executions(params("recent=20")), controller.executionSummary())) {
+            assertEquals(503, down.statusCode.value())
+            assertEquals(JobOrderController.HOST_SILENT, down.rejection().error)
+        }
+        assertEquals("실행 호스트가 답하지 않는다: HTTP 500", controller.executions(params("recent=20")).rejection().detail)
     }
 }

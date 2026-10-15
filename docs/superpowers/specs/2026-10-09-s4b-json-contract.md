@@ -262,6 +262,7 @@ picasso 서브모듈 `74e4d3d` 위의 실행 호스트가 실제로 내고 받�
 | `execution_id` | TEXT NULL | `RESTORED`(새 실행)·`SETTLED`(정착한 실행)에만 있음(CHECK) |
 | `detail` | TEXT NULL | `DEFERRED`·`GAVE_UP` 사유, `SETTLED` 의 물리 상태. `RESTORED` 만 NULL(CHECK) |
 | `recorded_at` | TIMESTAMPTZ | |
+| `snapshot` | JSON NULL | `SETTLED` 시점의 실행 본문(`GET /host/executions` 의 `ExecutionView` JSON: 재할당 뒤 기체, 단위 상태와 근거, 마지막 작업 응답, 운영자 취소). `SETTLED` 만 본문 가능(CHECK `execution_journal_event_snapshot_settled`), V8 이전 `SETTLED` 행과 다른 모든 이벤트는 NULL. JSONB 아님(적힌 본문 글자 그대로라 키 순서 보존) |
 
 다시 짓기 대상 = `SETTLED`·`GAVE_UP` 이벤트가 없는 일지 행. `DEFERRED` 는 미룬 기동마다 한 번 적고(다시 시도마다 적지 않음, 미룬 까닭이 만료 뒤 스냅숏으로 바뀌어도 이벤트를 더 적지 않음) 결과가 바뀌면 `RESTORED` 나 `GAVE_UP` 을 하나 더 적습니다. `DEFERRED` 의 `detail` 에 다른 인스턴스 사유(`살아 있는 다른 인스턴스가 든 실행이라 다시 짓지 않는다: instance=<id>`)도 옵니다. `SETTLED` 는 물리 상태가 `PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`ABORTED` 가 된 실행에 한 번(`PARTIAL` 은 미들웨어가 계속 돌리므로 적지 않음).
 
@@ -274,6 +275,8 @@ picasso 서브모듈 `74e4d3d` 위의 실행 호스트가 실제로 내고 받�
 HA 단계 0 에서 더해진 V6 `execution_judgment_record`(`V6__execution_judgment_record.sql`): `record_id` identity PK, `job_order_id`(FK → `execution_journal`), `instance_id`, `execution_id`, `wire_version`(`JudgmentRecordWire.SCHEMA_VERSION`, 지금 `"1"`), `record`(TEXT, 받은 글자 그대로. JSON 이 아님), `recorded_at`. 변경·삭제·통째 비우기 금지. 수락 직후, pump 뒤 기록, 운영자 판단 직후 직전 글자와 다를 때만 한 행.
 
 HA 단계 0 에서 더해진 V7 `host_instance`(`V7__host_instance_heartbeat.sql`): `instance_id` PK, `started_at`, `last_seen_at`, `expires_at`, `stopped_at`(NULL 가능), CHECK(`expires_at >= last_seen_at OR stopped_at IS NOT NULL`). 인스턴스마다 한 행이고 그 인스턴스만 고침. 덧붙이기 전용이 아님. 시각은 DB `clock_timestamp()`.
+
+브랜치 `perf/ui-execution-list` 에서 더해진 V8(`V8__settled_execution_snapshot.sql`): `execution_journal_event` 에 `snapshot JSON`(NULL 가능) 칸을 더함. 새 표는 없고 표 수는 15 개로 유지됨. CHECK(`execution_journal_event_snapshot_settled`: `snapshot IS NULL OR kind = 'SETTLED'`)로 정착 이벤트만 본문을 가질 수 있습니다. 정착 이력 페이징을 위해 `(event_id) WHERE kind = 'SETTLED'` 부분 인덱스 `execution_journal_event_settled` 를 둠(커서는 `event_id`). 실행 호스트가 `recordAfterPump` 에서 동일 트랜잭션으로 `SETTLED` 이벤트를 적을 때 그 시점의 실행 본문인 `GET /host/executions` 실행 행(`ExecutionView` JSON)을 함께 적습니다. 이 본문에는 재할당 뒤 기체, 단위 상태와 근거, 마지막 작업 응답, 운영자 취소가 담김. JSONB 가 아닌 JSON 을 쓰는 이유는 인시던트 사본과 마찬가지로 적힌 본문 글자 그대로라 REST 실행 행의 키 순서를 보존하기 위함임. V8 이전에 적힌 `SETTLED` 행과 다른 모든 이벤트는 NULL 입니다. 표는 여전히 덧붙이기 전용입니다(행 트리거는 `UPDATE`·`DELETE` 만 막으며 변경 없음). 화면의 실행 목록은 미들웨어 메모리가 아니라 이 정착 이력에서 정착된 실행을 읽습니다(HA 설계 기록 §10, S3a JSON 계약 §5.8). 근거 시험은 `MissionStoreTest`(마이그레이션 8 개), `SettledHistoryTest` 의 `정착 이력은 인스턴스를 가리지 않고 일지 행의 기체와 임무를 싣고 본문 없는 정착 이벤트도 읽는다`(정착 아닌 이벤트에 본문 작성이 거부됨도 확인).
 
 ### H9. e2e·화면이 기댈 사실
 

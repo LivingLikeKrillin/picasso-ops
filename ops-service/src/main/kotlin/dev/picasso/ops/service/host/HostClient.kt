@@ -163,6 +163,21 @@ interface HostReads {
      */
     fun executionsOf(jobOrderIds: Collection<String> = emptyList(), executionIds: Collection<String> = emptyList()): HostCall<JsonNode> = executions()
 
+    /**
+     * `GET /host/executions?recent=` 본문 그대로(HA 설계 기록 §10). 지금 인스턴스의 남은 실행 모두와 최근 정착 이력 [recent] 개, 다음 페이지
+     * 커서 `nextBefore`. 읽을 줄 모르는 구현은 모름이다.
+     */
+    fun executionsRecent(recent: Int): HostCall<JsonNode> = HostCall.Silent("실행 목록 페이지를 지원하지 않는 호스트 읽기다")
+
+    /**
+     * `GET /host/executions?before=[&limit=]` 본문 그대로(HA 설계 기록 §10). 정착 차례가 [before] 보다 앞인 정착 이력. [limit] 이 널이면 싣지
+     * 않는다(호스트 기본 20). 읽을 줄 모르는 구현은 모름이다.
+     */
+    fun executionsBefore(before: Long, limit: Int?): HostCall<JsonNode> = HostCall.Silent("실행 목록 페이지를 지원하지 않는 호스트 읽기다")
+
+    /** `GET /host/executions/summary` 본문 그대로(HA 설계 기록 §10). 읽을 줄 모르는 구현은 모름이다. */
+    fun executionSummary(): HostCall<JsonNode> = HostCall.Silent("실행 수 조회를 지원하지 않는 호스트 읽기다")
+
     /** `GET /host/cell` 본문 그대로. 셀 대역을 못 읽은 호스트는 `{"cell": null}` 을 200 으로 준다. */
     fun cell(): HostCall<JsonNode>
 
@@ -293,8 +308,14 @@ fun interface HostJobResponses {
  * 읽기 둘은 본문을 해석하지 않고 넘긴다. 쓰기 둘은 응답이 오면 코드와 본문을 그대로 넘기고 분류는 부르는 쪽이 한다.
  */
 interface HostExecutionControls {
-    /** `GET /host/executions` 본문 그대로. 취소의 응답 없음 뒤 재조회가 쓴다. */
+    /** `GET /host/executions` 본문 그대로. 좁혀 읽을 줄 모르는 구현의 [executionsOf] 가 쓴다. */
     fun executions(): HostCall<JsonNode>
+
+    /**
+     * 취소의 응답 없음 뒤 재조회가 쓴다. `GET /host/executions?executionId=` 로 그 실행 하나만 좁힌 본문 그대로(HA 설계 기록 §10). 모양은 [executions] 와 같다. 좁혀 읽을 줄
+     * 모르는 구현은 전체 목록을 준다. 그 실행이 다 들어 있으니 id 로 찾는 재조회에는 같다.
+     */
+    fun executionsOf(executionId: String): HostCall<JsonNode> = executions()
 
     /**
      * `POST /host/executions/{executionId}/cancel`. [instanceId] 는 실행 목록에서 받은 인스턴스이고 지금 인스턴스가 아니면 호스트가
@@ -364,6 +385,16 @@ class HostClient(
             executionIds.map { "executionId=" + URLEncoder.encode(it, Charsets.UTF_8) }
         return get("/host/executions?" + query.joinToString("&"))
     }
+
+    override fun executionsRecent(recent: Int): HostCall<JsonNode> = get("/host/executions?recent=$recent")
+
+    override fun executionsBefore(before: Long, limit: Int?): HostCall<JsonNode> =
+        get("/host/executions?before=$before" + (limit?.let { "&limit=$it" } ?: ""))
+
+    override fun executionSummary(): HostCall<JsonNode> = get("/host/executions/summary")
+
+    /** 취소 재조회는 그 실행 하나로 좁혀 읽는다(HA 설계 기록 §10). */
+    override fun executionsOf(executionId: String): HostCall<JsonNode> = executionsOf(executionIds = listOf(executionId))
 
     override fun cell(): HostCall<JsonNode> = get("/host/cell")
 

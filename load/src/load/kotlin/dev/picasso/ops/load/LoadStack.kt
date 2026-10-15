@@ -131,6 +131,20 @@ class LoadStack(val robots: Int, withOps: Boolean = true) : AutoCloseable {
         "--logging.level.root=WARN",
     )
 
+    val opsUrl: String get() {
+        val context = checkNotNull(ops) { "운영 서비스 없이 띄운 세트다" } as WebServerApplicationContext
+        return "http://127.0.0.1:" + context.webServer.port
+    }
+
+    /** 운영 서비스 REST 하나(화면이 부르는 `/api` 아래 경로). 본문과 걸린 시간(ms), 응답 바이트 수. */
+    fun opsGet(path: String): Triple<JsonNode, Double, Int> {
+        val started = System.nanoTime()
+        val response = HTTP.send(HttpRequest.newBuilder(URI.create(opsUrl + path)).build(), HttpResponse.BodyHandlers.ofString())
+        val ms = (System.nanoTime() - started) / 1e6
+        check(response.statusCode() == 200) { "$path → ${response.statusCode()} ${response.body()}" }
+        return Triple(JSON.readTree(response.body()), ms, response.body().toByteArray().size)
+    }
+
     /** 이 JVM 에서 컨테이너까지의 JDBC 왕복(`SELECT 1`, 연결 하나, 예열 50회 뒤 200회). 회차 시간의 바닥이다. */
     fun roundTrip(): Timings = connection().use { c ->
         c.prepareStatement("SELECT 1").use { p ->

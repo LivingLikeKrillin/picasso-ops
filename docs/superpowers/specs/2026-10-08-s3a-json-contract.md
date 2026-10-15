@@ -286,7 +286,7 @@ InspectAsset 예:
 |---|---|
 | `instanceId` | 미들웨어 인스턴스(`mw-<UUID>`). 호스트를 재기동하면 바뀌고 `exec-N` 은 1부터 다시 센다 |
 | `pumpedAt` | 마지막 pump 를 **시작할 때**의 호스트 시계 값. 아직 한 번도 안 돌았으면 null. 통합 시험은 밀 때마다 `pumpedAt >= Site.now()` 를 기다린다. 다만 mimic 스트림 갱신은 gRPC 스레드로 비동기로 오므로, 그 pump 가 방금 민 전이를 못 볼 수 있다. 한 주기(250ms) 더 기다리거나 상태로 폴링할 것 |
-| `executions` | 생성 순(`exec-1` 부터). 끝난 실행도 남는다 |
+| `executions` | 생성 순(`exec-1` 부터). 끝난 실행도 남는다. 정착한 실행은 실행 호스트가 picasso `Middleware.forget`을 부를 때까지 picasso 미들웨어 메모리에 남고, 따라서 이 인자 없는 목록에도 남는다. `Middleware.forget`은 picasso PR #103(머지 커밋 `7d0fa8f`)에서 추가되었고 이 저장소의 picasso 서브모듈은 `faa8ccc`이며 실행 호스트는 아직 `forget`을 부르지 않는다. 화면은 이 인자 없는 목록을 읽지 않고 §5.8의 페이지 형식을 읽는다. |
 | `missionVersion` | 정수 또는 null. null 이면 코드 정의(화면 표시 «코드 정의»). S3a 는 늘 null |
 | `physicalState` | `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`CANCELING`·`ABORTED`. 정착은 `PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`ABORTED`·`PARTIAL` |
 | `units[].state` | `PENDING`·`IN_DOUBT`·`RUNNING`·`VERIFYING`·`OPERATOR_HOLD`·`DONE`·`UNVERIFIED`·`FAILED`·`ABORTED` |
@@ -395,7 +395,32 @@ InspectAsset 예:
 
 ### 5.7 좁히는 인자
 
-`GET /host/executions?jobOrderId=…&executionId=…`. 두 인자 모두 되풀이 가능하며 값은 쉼표로 가르지 않는다. 인자를 주면 같은 모양이고 `instanceId`·`pumpedAt`·`restore`는 그대로이며, `executions`와 `journalBlockedExecutionIds`는 고른 실행만 담는다. 두 인자는 합집합이다(작업 지시나 실행 id 중 하나라도 맞으면 든다). 빈 값은 400 `BAD_REQUEST`다. 인자가 없으면 전과 같은 전체 목록이다. 모르는 인자는 버린다. 운영 서비스 스테이션 조정과 작업 요청 상세·재작업 관문이 쓰고, 화면에 넘기는 `GET /api/executions`는 인자 없는 목록 그대로다. 근거 시험: 실행 호스트 `ExecutionsNarrowedTest`의 `작업 지시나 실행 id 로 좁힌 실행 목록은 같은 순간의 전체 목록에서 그 실행만 남긴 것과 같다`, `일지에 막힌 실행은 좁힌 목록에 그 실행이 들 때만 막힘으로 나온다`, `인자 없는 실행 목록은 정착한 실행까지 전과 같은 본문이고 좁히는 값은 쉼표로 가르지 않으며 빈 값은 400 이다`.
+`GET /host/executions?jobOrderId=…&executionId=…`. 두 인자 모두 되풀이 가능하며 값은 쉼표로 가르지 않는다. 인자를 주면 같은 모양이고 `instanceId`·`pumpedAt`·`restore`는 그대로이며, `executions`와 `journalBlockedExecutionIds`는 고른 실행만 담는다. 두 인자는 합집합이다(작업 지시나 실행 id 중 하나라도 맞으면 든다). 빈 값은 400 `BAD_REQUEST`다. 인자가 없으면 전과 같은 전체 목록이다. 모르는 인자는 버린다. 좁히는 인자는 운영 서비스 스테이션 조정과 작업 요청 상세·재작업 관문, 응답 누락 뒤의 두 다시 읽기(작업 지시 제출은 `jobOrderId`, 실행 취소는 `executionId`로 읽는다)가 쓴다. 운영 서비스 `GET /api/executions`는 이 인자들을 호스트에 넘기지 않는다(무시한다. 9.4 참고). 근거 시험: 실행 호스트 `ExecutionsNarrowedTest`의 `작업 지시나 실행 id 로 좁힌 실행 목록은 같은 순간의 전체 목록에서 그 실행만 남긴 것과 같다`, `일지에 막힌 실행은 좁힌 목록에 그 실행이 들 때만 막힘으로 나온다`, `인자 없는 실행 목록은 정착한 실행까지 전과 같은 본문이고 좁히는 값은 쉼표로 가르지 않으며 빈 값은 400 이다`.
+
+### 5.8 화면 페이지
+
+화면의 실행 목록은 활성 실행과 최근 정착 실행 N개를 읽고, 그보다 이전 이력은 페이지로 읽는다. 정착한 실행은 미들웨어 메모리가 아니라 실행 호스트의 정착 기록(DB)에서 읽으므로, 메모리에서 사라지거나 호스트 재기동 뒤에도 남는다.
+
+`GET /host/executions?recent=N`. N은 1~200 정수다. 본문 칸은 `{instanceId, pumpedAt, executions, restore, journalBlockedExecutionIds, settled, nextBefore, olderTotal}` 순서다. 앞 다섯 칸은 §5와 이름과 뜻이 같다.
+- `executions`: 현재 인스턴스의 남은 실행만 담는다(메모리, 생성 순). 남은 실행은 활성이거나, 정착했으나 정착 기록(`SETTLED` 이벤트)이 아직 커밋되지 않은 실행이다. 활성은 `PhysicalState.pumps`(아직 정착하지 않았거나 `PARTIAL`: `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`CANCELING`), 적어도 한 단위가 `OPERATOR_HOLD`나 `IN_DOUBT`, 일지에 막힘 중 하나에 해당한다.
+- `journalBlockedExecutionIds`: 남은 실행 가운데 막힌 실행이다. 막힌 실행은 늘 활성이고 따라서 늘 남은 실행이므로 전체 목록과 같다.
+- `settled`: 인스턴스를 가리지 않고 가장 최근 정착 이력 N개 행이며 최신 순이다. 각 원소는 `{settleSeq, instanceId, settledAt, snapshot, execution}`이다. `execution`은 §5의 실행 한 행과 모양이 같다.
+  - `settleSeq`: `execution_journal_event`의 `SETTLED` 이벤트 `event_id`다. 정렬 키이자 커서다. 클수록 나중에 정착한 것이다. 다른 일지 이벤트가 같은 식별자를 나누므로 연속적이지 않다.
+  - `instanceId`: 정착 기록을 쓴 인스턴스다(재기동 전 인스턴스일 수 있다).
+  - `settledAt`: 기록의 DB 시각이다.
+  - `snapshot`: `execution`이 정착할 때 쓴 실행 본문이면 true다(마이그레이션 V8). V8 전에 쓰인 행은 `snapshot: false`이며 일지 행으로 만든 `execution`이다(`units` 빈 목록, `jobResponse`와 `cancel` null, 접수 당시 기체).
+- `nextBefore`: 이전 이력이 있으면 이 페이지에서 가장 오래된 `settleSeq`이고, 없으면 null이다.
+- `olderTotal`: `nextBefore`보다 오래된 이력 행의 수다(null이면 0).
+
+`GET /host/executions?before=<settleSeq>[&limit=M]`. `before`는 양의 정수, M은 1~200 정수이며 기본값은 20이다. 본문은 `{settled, nextBefore, olderTotal}`이다. `settleSeq`가 `before`보다 작은 이력 행을 최신 순으로 최대 M개 담는다. 칸의 뜻은 위와 같다.
+
+`GET /host/executions/summary`. 본문은 `{instanceId, pumpedAt, live, states, journalBlockedExecutionIds}`다. `live`는 남은 실행 수다. `states`는 열한 가지 `PhysicalState` 이름을 모두 담고(0 포함) 남은 실행만 센다. 늘 200이다.
+
+읽기 순서는 메모리가 먼저이고(호스트 잠금 아래) DB가 나중이다(잠금 밖). 남은 실행이 아닌 실행은 이미 정착 기록이 커밋되었으므로 빠뜨리지 않는다. 그 사이에 정착 기록이 쓰인 실행은 양쪽에 모두 나타날 수 있으며, 화면은 (인스턴스, 실행 id) 기준 남은 실행 쪽에 한 번만 표시한다. 호스트는 호스트 잠금 아래 단일 트랜잭션 안에서만 정착 기록을 쓰므로 `event_id` 할당 순서는 커밋 순서와 같다(단일 호스트 전제).
+
+값이 잘못되었거나(정수가 아님, 범위 벗어남, 빈 값, 되풀이됨), `recent`를 `before`나 `limit`와 섞어 쓰거나, `before` 없이 `limit`를 주거나, 페이지 인자를 좁히는 인자(`jobOrderId`·`executionId`)와 섞어 쓰면 400 `BAD_REQUEST`다. `instanceId`는 이 엔드포인트들의 인자가 아니며 다른 모르는 인자처럼 버린다.
+
+근거 시험: 실행 호스트 `ExecutionsPagedTest`의 다섯(`화면 목록은 같은 순간의 전체 목록에서 남은 실행을 고르고 정착 이력은 정착할 때의 실행 본문이며 실행 수는 남은 실행을 센 것이다`, `정착 기록이 커밋되기 전의 정착 실행은 남은 실행으로 보이고 기록되면 정착 이력으로 옮긴다`, `커서를 이어 읽으면 정착 이력이 다 한 번씩 나오고 사이에 정착이 생겨도 남은 페이지가 그대로이며 재기동 뒤에도 남는다`, `일지에 막힌 실행은 활성이라 화면 목록에 늘 들고 실행 수의 남은 실행과 막힘에도 든다`, `페이지 인자는 범위와 짝을 검사하고 인자 없는 목록과 모르는 인자는 그대로다`), `SettledHistoryTest`의 셋(`정착 이력 페이지는 정착 이벤트 전부를 최근부터 늘어놓고 커서 앞에서 limit 개로 자른 것과 같다`, `커서를 이어 읽으면 정착 이력이 겹치거나 빠지지 않고 사이에 새 정착이 생겨도 남은 페이지가 그대로다`, `정착 이력은 인스턴스를 가리지 않고 일지 행의 기체와 임무를 싣고 본문 없는 정착 이벤트도 읽는다`), `ExecutionPagesTest`의 둘(`활성은 더 돌 수 있는 실행과 운영자 보류나 불확실 단위가 남은 실행과 일지에 막힌 실행이다`, `남은 실행은 활성이거나 정착 기록이 아직 커밋되지 않은 실행이다`).
 
 ## 6. `GET /host/cell`
 
@@ -420,7 +445,8 @@ InspectAsset 예:
 |---|---|---|---|
 | `POST /host/eligibility` | 판정 | `UNKNOWN_WORK_MASTER`·`BAD_REQUEST` | JSON 아님 |
 | `POST /host/job-orders` | 결과 넷 전부 | `UNKNOWN_WORK_MASTER`·`BAD_REQUEST` | JSON 아님 |
-| `GET /host/executions` | 늘 | `BAD_REQUEST`(좁히는 인자의 빈 값) | 없음 |
+| `GET /host/executions` | 늘 | `BAD_REQUEST`(좁히는 인자의 빈 값이나 잘못된 페이지 인자, 5.7·5.8절 참조) | 없음 |
+| `GET /host/executions/summary` | 늘 | 없음 | 없음 |
 | `GET /host/cell` | 늘(`cell` null 가능) | 없음 | 없음 |
 | `GET /host/work-permits` | 늘(`declared` false 가능) | 없음 | 없음 |
 | `POST /host/executions/{executionId}/cancel` | 결과 넷 전부(5.2) | `BAD_REQUEST`(그 밖 409 `INSTANCE_MISMATCH`, 500 `RECORD_WRITE_FAILED`) | JSON 아님 |
@@ -602,6 +628,8 @@ InspectAsset 예:
 
 모드 헤더 없이 된다. 호스트 `GET /host/executions` 의 200 본문(5절)을 **그대로** 넘긴다(해석·변형 없음). 그래서 `permitBlock`(5.5)도 그대로 넘어간다(운영 서비스는 해석하지 않는다). 작업 요청 상세(`GET /api/work-requests/{id}`)의 `execution` 도 같은 실행 객체다. 근거 시험: `WorkRequestsTest` 의 `작업 허가로 막힌 실행은 작업 요청 상세의 실행에 막은 기체와 주체와 풀릴 근거를 그대로 싣고 작업 요청 상태를 바꾸지 않는다`, 통합 시험 `WorkPermitTest`.
 
+인자가 없으면 `GET /api/executions` 는 이전처럼 실행 호스트의 인자 없는 목록을 그대로 넘긴다. 페이지 인자 `recent`·`before`·`limit`(5.8절)은 운영 서비스가 실행 호스트와 같은 규칙으로 먼저 검사한다(`recent`·`limit` 은 1~200 정수, `before` 는 양의 정수, 빈 값이나 중복 값 없음, `recent` 는 `before`·`limit` 과 섞지 않음, `limit` 은 `before` 와만 함께 씀). 잘못되었으면 실행 호스트에 닿지 않고 400 `EXECUTIONS_BAD_REQUEST` 로 응답한다(사전 거부). 그렇지 않으면 해당 인자로 실행 호스트를 호출해 호스트 본문을 그대로 넘긴다. `limit` 이 없으면 보내지 않는다(호스트 기본값 20). `GET /api/executions/summary` 는 호스트의 `GET /host/executions/summary` 본문을 그대로 넘긴다. 다른 인자(예: `jobOrderId`)는 이전처럼 무시한다. 화면은 5초마다 운영 영역에서 `GET /api/executions?recent=20`, 개요에서 `GET /api/executions/summary` 를 읽고, 운영자가 더 오래된 실행을 요청할 때 `?before=…&limit=20` 을 읽는다. 근거 시험: `JobOrderControllerTest` 의 `화면 실행 페이지와 실행 수는 인자를 검사한 뒤 호스트 본문을 그대로 넘기고 인자 없는 목록과 모르는 인자는 그대로다`, `HostClientTest` 의 `화면 실행 페이지와 실행 수는 인자를 실어 보내고 본문을 그대로 넘기며 200 아님은 모름이다`, 통합 시험 `JobOrderTest` 의 `화면 실행 목록은 남은 실행과 정착 이력이고 이력 페이지와 실행 수가 운영 서비스를 거쳐 전체 목록과 맞는다`. 호스트에 닿을 수 없으면 두 엔드포인트 모두 아래의 503을 준다.
+
 호스트가 안 닿으면(연결 실패, 5초 시간 초과, 200 아님, 객체 아님) **503**:
 
 ```json
@@ -618,7 +646,8 @@ InspectAsset 예:
 |---|---|---|---|---|---|
 | `POST /api/job-orders/eligibility` | 판정(registry·호스트 불통도 200, 칸이 null) | 폼 셋 | 없음 | JSON 아님 | 없음 |
 | `POST /api/job-orders` | 제출함(결과는 본문) | `ACTOR_REQUIRED`·폼 셋·`NO_ELIGIBLE_ROBOT` | `MODE_NOT_ALLOWED` | JSON 아님 | 없음 |
-| `GET /api/executions` | 호스트 본문 | 없음 | 없음 | 없음 | `HOST_SILENT` |
+| `GET /api/executions` | 호스트 본문 | `EXECUTIONS_BAD_REQUEST`(페이지 인자) | 없음 | 없음 | `HOST_SILENT` |
+| `GET /api/executions/summary` | 호스트 본문 | 없음 | 없음 | 없음 | `HOST_SILENT` |
 | `GET /api/cell` | 호스트 본문 | 없음 | 없음 | 없음 | `HOST_SILENT` |
 | `GET /api/robots/residual-holds` | 호스트 본문 | 없음 | 없음 | 없음 | `HOST_SILENT` |
 | `POST /api/executions/{executionId}/cancel` | 보냄(결과는 본문) | `ACTOR_REQUIRED`·`CANCEL_BAD_REQUEST`·`REASON_REQUIRED` | `MODE_NOT_ALLOWED` | JSON 아님 | 없음 |

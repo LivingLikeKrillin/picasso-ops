@@ -2,6 +2,8 @@ package dev.picasso.ops.host.web
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import dev.picasso.ops.host.ExecutionPages
+import dev.picasso.ops.host.ExecutionSummaryView
 import dev.picasso.ops.host.HostEligibility
 import dev.picasso.ops.host.JournalWriteFailed
 import dev.picasso.ops.host.MissionHost
@@ -48,17 +50,56 @@ class HostController(private val host: MissionHost, private val json: ObjectMapp
     /**
      * 실행 목록. 인자 없이 부르면 정착한 실행까지 모든 실행이다. `jobOrderId`·`executionId` 를 (되풀이해) 주면 그 작업 지시나 실행의
      * 실행만 담은 같은 모양이다(HA 설계 기록 §10). 값은 쉼표로 가르지 않는다. 빈 값이 있으면 400 `BAD_REQUEST` 다.
+     *
+     * 화면의 페이지(HA 설계 기록 §10, [ExecutionPages]): `recent=N` 은 지금 인스턴스의 남은 실행 모두와 최근 정착 이력 N 개
+     * ([dev.picasso.ops.host.ExecutionPageView]), `before=<settleSeq>[&limit=M]` 은 그 정착 차례보다 앞의 정착 이력 M 개(기본
+     * [ExecutionPages.DEFAULT_LIMIT], [dev.picasso.ops.host.SettledPageView])다. 정착 이력은 실행 호스트의 정착 기록(DB)에서 읽고 인스턴스를
+     * 가리지 않는다. 값이 틀리거나(`recent`·`limit` 이 정수 1~[ExecutionPages.MAX] 아님, `before` 가 양의 정수 아님, 빈 값, 되풀이) 좁히는
+     * 인자와 섞거나 `recent` 와 `before`·`limit` 을 섞거나 `limit` 을 `before` 없이 주면 400 `BAD_REQUEST` 다.
      */
     @GetMapping("/host/executions")
     fun executions(@RequestParam params: MultiValueMap<String, String>): ResponseEntity<Any> {
         val jobOrderIds = params[JOB_ORDER_ID].orEmpty()
         val executionIds = params[EXECUTION_ID].orEmpty()
+        if (PAGE_PARAMS.any { params.containsKey(it) }) {
+            if (jobOrderIds.isNotEmpty() || executionIds.isNotEmpty()) return badRequest("좁히는 인자와 recent·before 를 함께 쓸 수 없다")
+            return paged(params)
+        }
         if (jobOrderIds.isEmpty() && executionIds.isEmpty()) return ResponseEntity.ok(host.executions())
         if ((jobOrderIds + executionIds).any { it.isBlank() }) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(HostRejection(HostRequests.BAD_REQUEST, "jobOrderId·executionId 가 비어 있다"))
         }
         return ResponseEntity.ok(host.executions(jobOrderIds.toSet(), executionIds.toSet()))
     }
+
+    /** 실행 수만(HA 설계 기록 §10). 운영 개요가 읽는다. */
+    @GetMapping("/host/executions/summary")
+    fun executionSummary(): ExecutionSummaryView = host.executionSummary()
+
+    private fun paged(params: MultiValueMap<String, String>): ResponseEntity<Any> {
+        val single = PAGE_PARAMS.associateWith { name ->
+            val values = params[name] ?: return@associateWith null
+            if (values.size != 1 || values[0].isBlank()) return badRequest("$name 은 한 번만, 비어 있지 않은 값으로 준다")
+            values[0]
+        }
+        val recent = single[RECENT]
+        val before = single[BEFORE]
+        if (recent != null) {
+            if (before != null || single[LIMIT] != null) return badRequest("recent 는 before·limit 과 함께 쓸 수 없다")
+            val count = count(recent) ?: return badRequest("recent 는 1~${ExecutionPages.MAX} 의 정수다: $recent")
+            return ResponseEntity.ok(host.executionsRecent(count))
+        }
+        if (before == null) return badRequest("limit 은 before 와 함께 준다")
+        val cursor = before.toLongOrNull()?.takeIf { it > 0 } ?: return badRequest("before 는 양의 정수다(정착 이력의 settleSeq·nextBefore): $before")
+        val limit = single[LIMIT]?.let { count(it) ?: return badRequest("limit 은 1~${ExecutionPages.MAX} 의 정수다: $it") }
+            ?: ExecutionPages.DEFAULT_LIMIT
+        return ResponseEntity.ok(host.executionsBefore(cursor, limit))
+    }
+
+    private fun count(raw: String): Int? = raw.toIntOrNull()?.takeIf { it in 1..ExecutionPages.MAX }
+
+    private fun badRequest(detail: String): ResponseEntity<Any> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(HostRejection(HostRequests.BAD_REQUEST, detail))
 
     @GetMapping("/host/cell")
     fun cell(): CellView = CellView(host.cell())
@@ -91,6 +132,12 @@ class HostController(private val host: MissionHost, private val json: ObjectMapp
         /** `GET /host/executions` 를 좁히는 인자 이름. */
         const val JOB_ORDER_ID = "jobOrderId"
         const val EXECUTION_ID = "executionId"
+
+        /** 화면 페이지 인자 이름(HA 설계 기록 §10). */
+        const val RECENT = "recent"
+        const val BEFORE = "before"
+        const val LIMIT = "limit"
+        val PAGE_PARAMS: List<String> = listOf(RECENT, BEFORE, LIMIT)
 
         /** 일지 쓰기 실패의 오류 이름. */
         const val JOURNAL_WRITE_FAILED = "JOURNAL_WRITE_FAILED"

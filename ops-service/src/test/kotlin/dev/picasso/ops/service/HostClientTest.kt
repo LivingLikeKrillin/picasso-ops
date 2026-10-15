@@ -164,6 +164,49 @@ class HostClientTest {
     }
 
     @Test
+    fun `화면 실행 페이지와 실행 수는 인자를 실어 보내고 본문을 그대로 넘기며 200 아님은 모름이다`() {
+        val queries = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val page = """{"instanceId":"mw-1","pumpedAt":null,"executions":[],"restore":null,"journalBlockedExecutionIds":[],"settled":[],"nextBefore":null,"olderTotal":0}"""
+        val older = """{"settled":[],"nextBefore":null,"olderTotal":0}"""
+        val summary = """{"instanceId":"mw-1","pumpedAt":null,"live":0,"states":{},"journalBlockedExecutionIds":[]}"""
+        val s = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        s.createContext("/host/executions") { exchange ->
+            val query = exchange.requestURI.rawQuery ?: ""
+            queries += exchange.requestURI.rawPath + "?" + query
+            val (status, body) = when {
+                exchange.requestURI.rawPath == "/host/executions/summary" -> 200 to summary
+                query.startsWith("before=400") -> 400 to """{"error":"BAD_REQUEST","detail":"x"}"""
+                query.startsWith("before=") -> 200 to older
+                else -> 200 to page
+            }
+            val bytes = body.toByteArray()
+            exchange.sendResponseHeaders(status, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        s.start()
+        server = s
+        val client = HostClient("http://127.0.0.1:${s.address.port}/")
+        assertEquals(json.readTree(page), assertIs<HostCall.Ok<*>>(client.executionsRecent(20)).value)
+        assertEquals(json.readTree(older), assertIs<HostCall.Ok<*>>(client.executionsBefore(17, 5)).value)
+        assertEquals(json.readTree(older), assertIs<HostCall.Ok<*>>(client.executionsBefore(9, null)).value)
+        assertEquals(json.readTree(summary), assertIs<HostCall.Ok<*>>(client.executionSummary()).value)
+        assertEquals(HostCall.Silent("HTTP 400"), client.executionsBefore(400, 1))
+        // 취소 재조회는 그 실행 하나로 좁혀 읽는다.
+        client.executionsOf("exec-3")
+        assertEquals(
+            listOf(
+                "/host/executions?recent=20", "/host/executions?before=17&limit=5", "/host/executions?before=9", "/host/executions/summary?",
+                "/host/executions?before=400&limit=1", "/host/executions?executionId=exec-3",
+            ),
+            queries,
+        )
+        stop()
+        assertIs<HostCall.Silent>(client.executionsBefore(1, 1))
+        assertIs<HostCall.Silent>(client.executionsRecent(1))
+        assertIs<HostCall.Silent>(client.executionSummary())
+    }
+
+    @Test
     fun `작업 허가는 GET host work-permits 본문 그대로이고 200 아님은 모름이다`() {
         val body = """{"declared":true,"robots":[{"robotId":"r1","permit":"INHIBITED","reasons":[]}]}"""
         val client = serve("/host/work-permits" to (200 to body))
