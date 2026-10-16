@@ -156,6 +156,7 @@ class RegistryClient(
     private val token: String,
     private val http: HttpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(),
     private val json: ObjectMapper = jacksonObjectMapper(),
+    private val readFailures: ReadFailureLog = ReadFailureLog(warn = { log.warn(it) }, info = { log.info(it) }),
 ) : RobotSource, TokenProbe, RobotWrites, AdapterSource, AdapterWrites,
     ProfileSource, CommissioningSource, ProfileWrites, BindingWrites, AutoCloseable {
 
@@ -284,19 +285,29 @@ class RegistryClient(
         }
         return when (val status = response.statusCode()) {
             in 200..299 -> try {
-                read(response.body())?.let { RegistryCall.Ok(it) } ?: silent(path, "본문이 null 이다", started)
+                read(response.body())?.let { answered(path, RegistryCall.Ok(it)) } ?: silent(path, "본문이 null 이다", started)
             } catch (e: JacksonException) {
                 silent(path, "본문 해석 실패: ${e.originalMessage}", started)
             }
-            401 -> RegistryCall.Unauthorized
+            401 -> answered(path, RegistryCall.Unauthorized)
             else -> silent(path, "HTTP $status", started)
         }
     }
 
-    /** 모름을 한 번 WARN 으로 남긴다. 경로는 질의 문자열을 뺀다. 원인과 걸린 시간은 [RegistryCall.Silent.cause] 로 위에 올린다. */
+    /** 응답이 왔다. 앞서 모른 적이 있으면 회복을 한 번 남긴다. 401 도 registry 가 응답한 것이다. */
+    private fun <R : RegistryCall<*>> answered(path: String, call: R): R {
+        readFailures.answered(path.substringBefore('?'))
+        return call
+    }
+
+    /**
+     * 모름을 경로마다 솎아 [readFailures] 로 남긴다(처음은 바로, 그 뒤는 간격마다 한 줄). 경로는 질의 문자열을 뺀다.
+     * 원인과 걸린 시간은 [RegistryCall.Silent.cause] 로 요청마다 위에 올린다.
+     */
     private fun silent(path: String, cause: String, started: Long): RegistryCall.Silent {
-        val silent = RegistryCall.Silent("GET ${path.substringBefore('?')}: $cause (${(System.nanoTime() - started) / 1_000_000}ms)")
-        log.warn("registry 읽기 모름: {}", silent.cause)
+        val key = path.substringBefore('?')
+        val silent = RegistryCall.Silent("GET $key: $cause (${(System.nanoTime() - started) / 1_000_000}ms)")
+        readFailures.failed(key, silent.cause)
         return silent
     }
 
