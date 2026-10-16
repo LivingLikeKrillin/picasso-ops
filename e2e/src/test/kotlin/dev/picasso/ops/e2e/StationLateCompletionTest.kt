@@ -6,6 +6,7 @@ import java.nio.file.Files
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import org.junit.jupiter.api.AfterEach
 import kotlin.test.*
 
 /**
@@ -20,6 +21,8 @@ class StationLateCompletionTest {
  private lateinit var stack:E2eStack
  private lateinit var driver:ExecutionDriver
  private var version=0
+ /** up() can fail after the stack is up (e.g. a registry 503 in mock-run). A live stack left behind shares the Postgres and ticks its own station coordinator. */
+ @AfterEach fun down(){if(::stack.isInitialized)stack.close()}
  private fun up(station:String) {
   stack=E2eStack.start();driver=ExecutionDriver(stack);Commissioned.complete(stack)
   val profile=json.readTree(Files.readString(E2eStack.root.resolve("docs/examples/mission-profile-station-inspection.json")))
@@ -45,7 +48,7 @@ class StationLateCompletionTest {
  }
  @Test fun `작업 번호 반환 스테이션은 해제한 이전 작업의 늦은 완료 신호를 실제 스택에서 다음 작업의 완료로 채택하지 않는다`() {
   up("""{"stationId":"inspection-1","name":"번호 검사","readySignal":"inspection_ready","completeSignal":"inspection_complete","timeoutSeconds":$TIMEOUT_SECONDS,"jobSignal":"inspection_job","jobEchoSignal":"inspection_job_done"}""")
-  try {
+  run {
    val (x,xExecution)=clearedX();assertTrue(station()["quarantinedBy"].isNull)
    assertEquals(x,dispatching(x)["jobToken"].asText())
    // Y: 준비 true, 완료 false 라 번호를 쓰고 바로 보낸다. X 의 기체는 아직 실행 중이라 다른 기체로 간다.
@@ -64,11 +67,11 @@ class StationLateCompletionTest {
    signal("inspection_job_done",y);signal("inspection_complete","true")
    val done=waitFor(y,"COMPLETED");assertEquals("로봇 물리 완료와 이번 작업의 설비 완료 신호 확인; 자원 해제",done["reason"].asText())
    report("station-late-completion-echo.json",x,y)
-  } finally {stack.close()}
+  }
  }
  @Test fun `작업 번호 반환이 없는 스테이션은 보낸 작업을 해제하면 격리하고 현장 확인 후 격리 해제 전에는 실제 스택에서 다음 작업을 보내지 않는다`() {
   up("""{"stationId":"inspection-1","name":"공유 검사","readySignal":"inspection_ready","completeSignal":"inspection_complete","timeoutSeconds":$TIMEOUT_SECONDS}""")
-  try {
+  run {
    val (x,_)=clearedX();assertEquals(x,station()["quarantinedBy"].asText())
    val events=stack.get("/api/stations/runs/$x/evidence")["events"].toList().takeLast(2)
    assertEquals(listOf("현장 확인에 의한 자원 해제: 로봇이 멈춘 것으로 보고 현장 확인 해제","자원 해제에 따른 스테이션 격리"),events.map{it["reason"].asText()})
@@ -87,7 +90,7 @@ class StationLateCompletionTest {
    val done=waitFor(y,"COMPLETED");assertEquals("로봇 물리 완료와 이번 작업의 설비 완료 신호 확인; 자원 해제",done["reason"].asText())
    assertTrue(stack.get("/api/stations/runs/$y/evidence")["events"].any{it["reason"].asText()=="현장 확인 후 격리 해제: 설비 비어 있음과 이전 로봇 정지 확인"})
    report("station-late-completion-quarantine.json",x,y)
-  } finally {stack.close()}
+  }
  }
  private fun report(name:String,x:String,y:String) {
   val report=json.createObjectNode().apply {set<JsonNode>("station",station());put("siteNow",stack.site.now().toString());put("wallNow",Instant.now().toString());set<JsonNode>("x",stack.get("/api/stations/runs/$x/evidence"));set<JsonNode>("y",stack.get("/api/stations/runs/$y/evidence"))}
