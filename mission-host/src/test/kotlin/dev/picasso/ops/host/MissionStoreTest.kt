@@ -23,7 +23,7 @@ class MissionStoreTest {
     @BeforeTest
     fun freshSchema() {
         PostgresSupport.execute("DROP SCHEMA IF EXISTS mission CASCADE")
-        assertEquals(10, HostSchema.flyway(dataSource).migrate().migrationsExecuted)
+        assertEquals(11, HostSchema.flyway(dataSource).migrate().migrationsExecuted)
     }
 
     private fun draft(workMaster: String = PSR) = store.saveDraft(workMaster, "{}", "lee", UUID.randomUUID())
@@ -37,7 +37,7 @@ class MissionStoreTest {
         ) { it.getString(1) }
         assertEquals(
             listOf(
-                "draft", "execution_cancel", "execution_journal", "execution_journal_event", "execution_journal_revision", "execution_judgment_record",
+                "draft", "execution_cancel", "execution_fault_release", "execution_journal", "execution_journal_event", "execution_journal_revision", "execution_judgment_record",
                 "flyway_schema_history",
                 "host_instance", "incident_copy", "incident_copy_resolution", "job_response_log", "mission_version", "mock_run", "result_outbox",
                 "result_producer", "robot_residual_hold", "robot_residual_hold_clearing",

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import dev.picasso.capability.PreconditionViolation
 import dev.picasso.capability.Remedy
 import dev.picasso.capability.RemedyStep
+import dev.picasso.contracts.v1.Fault
 import dev.picasso.contracts.v1.HoldKind
 import dev.picasso.contracts.v1.TaskState
 import dev.picasso.middleware.ActiveMission
@@ -47,6 +48,7 @@ import dev.picasso.ops.host.web.BadRequest
 import dev.picasso.ops.host.web.HostRequests
 import dev.picasso.ops.host.store.CancelRow
 import dev.picasso.ops.host.store.CopyResolutionRow
+import dev.picasso.ops.host.store.FaultReleaseRow
 import dev.picasso.ops.host.store.HostRecords
 import dev.picasso.ops.host.store.IncidentCopyRow
 import dev.picasso.ops.host.store.JournalRow
@@ -60,6 +62,7 @@ import dev.picasso.ops.host.store.SettledRow
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
@@ -270,6 +273,9 @@ data class JobResponseView(
  *   건 것, [MissionHost.carryCancel]). 없으면 `null`.
  * @param permitBlock 이 실행의 새 로봇 명령을 지금 막고 있는 작업 허가(ADR 52). 막힌 것이 없거나 현장이 허가 대응을 선언하지 않았으면
  *   `null` 이다. 운영자 보류·결함 막음과 다른 칸이다([PermitBlockView]).
+ * @param blockedFaults 지금 다음 단위를 막고 있는 기체 결함 전부(picasso `Execution.blockedBy`). 없으면 빈 목록이다. 작업 응답의
+ *   `blockedBy` 는 분류 이름뿐이고 picasso 가 새 작업 응답을 낼 때만 바뀐다. 이것은 지금의 값이다. 운영자 결함 감수가 이것과 대조한다
+ * @param releases 그 작업 지시에 건 운영자 결함 감수(V11, 적은 순서). 작업 지시 id 로 읽어 재기동 전 인스턴스의 것도 든다
  */
 data class ExecutionView(
     val executionId: String,
@@ -283,6 +289,8 @@ data class ExecutionView(
     val restoredFrom: RestoredFromView?,
     val cancel: CancelRecordView? = null,
     val permitBlock: PermitBlockView? = null,
+    val blockedFaults: List<FaultDetailView> = emptyList(),
+    val releases: List<FaultReleaseView> = emptyList(),
 )
 
 /** 다시 지은 실행의 이전 실행(S4b 스펙 §6.3). 바로 앞 인스턴스에서 그 작업 지시를 들었던 실행이다. */
@@ -363,6 +371,9 @@ data class JobResponseLogView(
 /** `GET /host/job-responses` 의 본문. [responses] 는 최근부터 많아야 limit 개이고 [total] 은 자르기 전의 수다. */
 data class JobResponsesView(val instanceId: String, val total: Int, val responses: List<JobResponseLogView>)
 
+/** 결함 감수의 요청 id 가 이미 감수 행에 있다(V11). 아무것도 바꾸지 않았다. REST 는 409 `REQUEST_ID_REUSED` 다. */
+class ReleaseRequestReused(val requestId: String) : RuntimeException("결함 감수의 요청 id 가 이미 쓰였다: $requestId")
+
 /** 일지 쓰기가 실패했다(S4b 스펙 §9). 실행은 미들웨어에 남는다. 제출은 500 이다. */
 class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeException("실행 일지를 적지 못했다: $executionId", cause)
 
@@ -433,8 +444,9 @@ data class HostFootprint(
  * 미들웨어의 판단 기록(`Middleware.judgmentRecord`)을 `mission.execution_judgment_record` 에 덧붙인다. 받는 때는 수락 직후, pump 뒤
  * 기록(판정·검증 결과·정착, 송신 기록과 한 트랜잭션), 운영자 판단 직후다. 직전에 적은 글자와 같으면 적지 않는다. 기동 복원은 그
  * 작업 지시의 가장 최근 기록을 `resume` 에 넘긴다. 못 읽는 기록과 picasso 가 거부한 기록(`RESUME_RECORD_MISMATCH`)은 GAVE_UP 으로
- * 보고하고 기록 없이 다시 짓지 않는다. 이 호스트는 결함 감수(`release`)와 조치 승인(`approveRemedy`)을 부르지 않으므로 그 두 칸은
- * 이 호스트가 지은 실행에서 늘 비어 있다. 기록이 들고 오면 그대로 넘긴다.
+ * 보고하고 기록 없이 다시 짓지 않는다. 결함 감수([release])는 감수 직후 기록을 적어 `acknowledgedFaults` 칸이 재기동을 넘는다. 이
+ * 호스트는 조치 승인(`approveRemedy`)을 부르지 않으므로 `approval` 칸은 이 호스트가 지은 실행에서 늘 비어 있다. 기록이 들고 오면 그대로
+ * 넘긴다.
  *
  * ## 인스턴스와 심장박동(HA 설계 기록 §8 단계 0)
  *
@@ -1052,6 +1064,7 @@ class MissionHost(
     /** [chosen] 실행의 목록 본문. 호스트 잠금 아래에서 부른다. */
     private fun view(chosen: List<Middleware.Execution>): ExecutionsView {
         val responses = latestResponses(middleware.responses())
+        val released = records.releases(chosen.map { it.order.jobOrderId }).groupBy { it.jobOrderId }
         return ExecutionsView(
             instanceId = middleware.instanceId,
             pumpedAt = pumpedAt,
@@ -1068,12 +1081,17 @@ class MissionHost(
                     restoredFrom = restoredFrom[execution.executionId],
                     cancel = cancels[execution.executionId]?.let(CancelRecordView::of),
                     permitBlock = execution.permitBlock?.let(PermitBlockView::of),
+                    blockedFaults = execution.blockedBy.map(FaultDetailView::fromContract),
+                    releases = released[execution.order.jobOrderId].orEmpty().map(::releaseView),
                 )
             },
             restore = restoreView(),
             journalBlockedExecutionIds = journalBlocked(chosen),
         )
     }
+
+    private fun releaseView(row: FaultReleaseRow) =
+        FaultReleaseView(row.requestId?.toString(), row.approverId, row.reason, json.readValue(row.faults), row.recordedAt)
 
     /**
      * 봉인된 인시던트(S3c 스펙 §7.2, S4a 스펙 §6). 최신부터 많아야 [limit] 개다. 번들은 미들웨어 안의 값이라 호스트 잠금 아래에서
@@ -1369,6 +1387,65 @@ class MissionHost(
     }
 
     /**
+     * 운영자 결함 감수(결함 감수·조치 승인 노출 설계 제안 §2.1). picasso `release` 는 승인자와 사유를 받지 않고 막는 결함 전부를 감수하므로,
+     * 사람 승인자 판정과 «본 결함» 대조를 이 호스트가 한다. 모두 호스트 잠금 아래다 — 대조와 감수 사이에 막는 결함이 바뀔 틈이 없다.
+     *
+     * 순서: 사람 승인자 → 요청 id 재사용([ReleaseRequestReused]) → 실행 찾기 → 막는 결함 유무 → [saw] 와 지금 막는 결함 대조(오류 종류와
+     * 참조 집합, 순서 무관, 같은 결함 둘이면 둘) → 감수 행 적기 → `Middleware.release` → 판단 기록([persistRecord]). 감수 행을 못 적으면
+     * 예외가 나가고 picasso 를 부르지 않는다(아무것도 바뀌지 않는다). 요청 id 의 UNIQUE 는 DB 의 둘째 담이다 — 잠금 안에서 먼저 묻고 적으므로
+     * 이 인스턴스에서는 거기 걸리지 않고, 걸리면 쓰기 실패와 같게 나간다. 판단 기록을 못 적으면 경고만 남기고 다음 pump 가 같은 글자를 다시
+     * 적는다(운영자 판단과 같다).
+     *
+     * 실행이 picasso 메모리에 없으면 이 인스턴스가 놓은 실행인지 정착 본문으로 가른다. 놓은 실행은 정착한 실행이라 NOT_BLOCKED 이고 그
+     * 정착 상태를 싣는다. 둘 다 없으면 NOT_FOUND 다. 작업 허가만 막고 있으면 NOT_BLOCKED 이고 사유가 [PERMIT_WAIT] 로 시작한다 — 허가는
+     * 감수할 값이 아니다(ADR 52, picasso `release` 가 걷지 않는다).
+     *
+     * picasso `release` 는 `notify` 를 부르지 않는다. 그래서 그 실행의 마지막 작업 응답은 picasso 가 다음 작업 응답을 낼 때까지 감수 전의
+     * 것(`OPERATOR_HOLD`, `blockedBy`)이다. 실행 목록의 `physicalState`·`blockedFaults` 는 곧바로 바뀐다.
+     */
+    fun release(executionId: String, approver: Approver, reason: String, saw: List<FaultSighting>, requestId: String?): ReleaseView = lock.withLock {
+        if (approver.kind != ApproverKind.PERSON) {
+            return@withLock ReleaseView(ReleaseResult.REFUSED, executionId, null, "$AGENT_RELEASE_REFUSED: ${approver.id}", requestId)
+        }
+        val requestKey = requestId?.let(UUID::fromString)
+        if (requestKey != null && records.releaseByRequest(requestKey) != null) throw ReleaseRequestReused(requestId)
+        val execution = middleware.executions().firstOrNull { it.executionId == executionId }
+            ?: return@withLock records.settledSnapshots(instanceId, executionIds = setOf(executionId)).singleOrNull()
+                ?.let { ReleaseView(ReleaseResult.NOT_BLOCKED, executionId, it.physicalState, "$SETTLED_NOT_BLOCKED: ${it.physicalState}", requestId) }
+                ?: ReleaseView(ReleaseResult.NOT_FOUND, executionId, null, "그 실행이 지금 인스턴스에 없다", requestId)
+        val blocking = execution.blockedBy
+        if (blocking.isEmpty()) {
+            val detail = permitWait(execution)
+                ?: if (execution.physicalState.pumps) NO_BLOCKING_FAULT else "$SETTLED_NOT_BLOCKED: ${execution.physicalState.name}"
+            return@withLock ReleaseView(ReleaseResult.NOT_BLOCKED, executionId, execution.physicalState.name, detail, requestId)
+        }
+        if (sightings(saw) != blocking.map(::sighting).sorted()) {
+            val now = blocking.joinToString(", ") { fault -> fault.errorType + fault.referencesList.joinToString(",", "[", "]") { "${it.key.name}=${it.value}" } }
+            return@withLock ReleaseView(ReleaseResult.BLOCK_CHANGED, executionId, execution.physicalState.name, "$BLOCK_CHANGED_DETAIL: $now", requestId)
+        }
+        records.release(
+            instanceId, executionId, execution.order.jobOrderId, json.writeValueAsString(blocking.map(FaultDetailView::fromContract)),
+            approver.id, approver.kind.name, reason, requestKey,
+        )
+        check(middleware.release(executionId)) { "미들웨어가 감수를 받지 않았다: $executionId" }
+        persistRecord(executionId)
+        ReleaseView(ReleaseResult.RELEASED, executionId, execution.physicalState.name, permitWait(execution), requestId)
+    }
+
+    /** 작업 허가가 이 실행의 새 로봇 명령을 막고 있으면 그 사실, 아니면 `null`. */
+    private fun permitWait(execution: Middleware.Execution): String? =
+        execution.permitBlock?.let { "$PERMIT_WAIT: ${it.unitId} (${it.withheld.name})" }
+
+    /** 운영자가 본 결함을 대조할 꼴로. 참조는 순서 없이 본다. */
+    private fun sightings(saw: List<FaultSighting>): List<String> =
+        saw.map { sighting(it.errorType, it.references.map { r -> r.key to r.value }) }.sorted()
+
+    private fun sighting(fault: Fault): String = sighting(fault.errorType, fault.referencesList.map { it.key.name to it.value })
+
+    private fun sighting(errorType: String, references: List<Pair<String, String>>): String =
+        json.writeValueAsString(listOf(errorType, references.sortedWith(compareBy({ it.first }, { it.second })).map { listOf(it.first, it.second) }))
+
+    /**
      * 호스트 메모리의 크기(놓기, 한계 §15.224 · 놓기 소비자). 미들웨어의 실행·아웃박스와 실행마다 드는 호스트 쪽 맵의 크기다. 놓기가
      * 돌면 활성 실행과 개정판을 받으려고 두는 실행만큼이다. 시험과 부하 하네스가 읽는다.
      */
@@ -1658,6 +1735,19 @@ class MissionHost(
         /** 에이전트 승인자의 취소·해소 거부 사유의 앞부분. 뒤에 승인자 id 가 붙는다. */
         const val AGENT_CANCEL_REFUSED = "에이전트는 실행을 취소하지 못한다. 실행 중단은 사람의 것이다"
         const val AGENT_CLEAR_REFUSED = "에이전트는 잔여 파지 표시를 해소하지 못한다. 기체가 빈손인지는 사람이 현장에서 확인한다"
+        const val AGENT_RELEASE_REFUSED = "에이전트는 결함을 감수하지 못한다. 결함을 안고 계속할지는 사람이 현장에서 정한다"
+
+        /** 결함 감수 NOT_BLOCKED·RELEASED 의 작업 허가 사유 앞부분. 뒤에 `: 막힌 단위 (막은 명령)` 이 붙는다. 허가는 감수로 풀리지 않는다. */
+        const val PERMIT_WAIT = "작업 허가 대기 중이다. 감수로 풀리지 않는다"
+
+        /** 결함 감수 NOT_BLOCKED 의 정착 사유 앞부분. 뒤에 정착 상태가 붙는다. */
+        const val SETTLED_NOT_BLOCKED = "정착한 실행이다"
+
+        /** 결함 감수 NOT_BLOCKED 의 사유. 도는 실행에 막는 결함도 작업 허가 막음도 없다. */
+        const val NO_BLOCKING_FAULT = "막는 결함이 없다"
+
+        /** 결함 감수 BLOCK_CHANGED 의 사유 앞부분. 뒤에 지금 막는 결함(`오류 종류[참조]`)이 `, ` 로 붙는다. */
+        const val BLOCK_CHANGED_DETAIL = "본 결함과 지금 막는 결함이 다르다. 다시 읽고 판단한다"
 
         /** 기동 복원의 대상과 판정 제외를 정하는 일지 이벤트([HostRecords.openJournal]). 그 가운데 마지막이 정한다. */
         private val TURNS = setOf(JournalEventKind.SETTLED, JournalEventKind.REOPENED, JournalEventKind.GAVE_UP)

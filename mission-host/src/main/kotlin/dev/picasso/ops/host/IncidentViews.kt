@@ -1,10 +1,13 @@
 package dev.picasso.ops.host
 
 import com.fasterxml.jackson.annotation.JsonUnwrapped
+import dev.picasso.contracts.v1.FailureClass
+import dev.picasso.contracts.v1.Fault
 import dev.picasso.middleware.Approver
 import dev.picasso.middleware.FaultDetail
 import dev.picasso.middleware.IncidentBundle
 import dev.picasso.middleware.IncidentResolution
+import dev.picasso.middleware.Middleware
 import dev.picasso.middleware.OperatorDecision
 import dev.picasso.middleware.Verification
 import java.time.Duration
@@ -58,6 +61,26 @@ data class FaultDetailView(
             fault.failureClass, fault.errorType, fault.vendorDetail, fault.errorHint,
             fault.references.map { FaultReferenceView(it.key, it.value) },
             fault.canContinueCurrentTask, fault.canAcceptNewTask, fault.activeUntilKind, fault.activeUntilTime,
+        )
+
+        /**
+         * 계약 결함을 같은 모양으로(실행의 막는 결함, 결함 감수). picasso 의 결함 투영(`faultDetailOf`)은 모듈 안에서만 보이므로 같은
+         * 규칙을 여기서 다시 쓴다. 분류가 없거나 모르는 값이면 [Middleware.UNCLASSIFIED] 이고, 있으면 `FAILURE_CLASS_` 를 뗀 이름이다.
+         * 참조 열쇠는 계약 열거형의 이름이다. 같은 결함을 번들이 실은 것과 칸마다 같다.
+         */
+        fun fromContract(fault: Fault) = FaultDetailView(
+            failureClass = fault.failureClass
+                .takeIf { it != FailureClass.FAILURE_CLASS_UNSPECIFIED && it != FailureClass.UNRECOGNIZED }
+                ?.name?.removePrefix("FAILURE_CLASS_")
+                ?: Middleware.UNCLASSIFIED,
+            errorType = fault.errorType,
+            vendorDetail = fault.vendorDetail,
+            errorHint = fault.errorHint,
+            references = fault.referencesList.map { FaultReferenceView(it.key.name, it.value) },
+            canContinueCurrentTask = fault.canContinueCurrentTask,
+            canAcceptNewTask = fault.canAcceptNewTask,
+            activeUntilKind = fault.activeUntil.kind.name,
+            activeUntilTime = fault.activeUntil.until,
         )
     }
 }

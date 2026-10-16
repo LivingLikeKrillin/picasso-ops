@@ -427,6 +427,48 @@ InspectAsset 예:
 
 근거 시험: 실행 호스트 `ExecutionsPagedTest`의 다섯(`화면 목록은 같은 순간의 전체 목록에서 남은 실행을 고르고 정착 이력은 정착할 때의 실행 본문이며 실행 수는 남은 실행을 센 것이다`, `정착 기록이 커밋되기 전의 정착 실행은 남은 실행으로 보이고 기록되면 정착 이력으로 옮긴다`, `커서를 이어 읽으면 정착 이력이 다 한 번씩 나오고 사이에 정착이 생겨도 남은 페이지가 그대로이며 재기동 뒤에도 남는다`, `일지에 막힌 실행은 활성이라 화면 목록에 늘 들고 실행 수의 남은 실행과 막힘에도 든다`, `페이지 인자는 범위와 짝을 검사하고 인자 없는 목록과 모르는 인자는 그대로다`), `SettledHistoryTest`의 셋(`정착 이력 페이지는 정착 이벤트 전부를 최근부터 늘어놓고 커서 앞에서 limit 개로 자른 것과 같다`, `커서를 이어 읽으면 정착 이력이 겹치거나 빠지지 않고 사이에 새 정착이 생겨도 남은 페이지가 그대로다`, `정착 이력은 인스턴스를 가리지 않고 일지 행의 기체와 임무를 싣고 본문 없는 정착 이벤트도 읽는다`), `ExecutionPagesTest`의 둘(`활성은 더 돌 수 있는 실행과 운영자 보류나 불확실 단위가 남은 실행과 일지에 막힌 실행이다`, `남은 실행은 활성이거나 정착 기록이 아직 커밋되지 않은 실행이다`), `ForgetSettledTest`의 둘(`실패 뒤 개정판으로 다시 정착하면 그 판의 정착 이력 줄을 하나 더 적고 앞 줄은 다시 정착함으로 표시하며 pump 를 거듭해도 정착마다 한 줄이다`, `취소한 보류 실행은 판단을 기다리는 동안 놓지 않고 판단으로 같은 판에서 다시 정착하면 정착 줄을 하나 더 적고 판단 기록을 적은 뒤 놓는다`).
 
+### 5.9 실행의 `blockedFaults`·`releases` 칸
+
+실행마다 끝에 `blockedFaults`(`permitBlock` 뒤, 열두째 칸)와 `releases`(마지막 열셋째 칸). 실행 행은 칸 13개 이 순서 `executionId, jobOrderId, workMasterId, missionVersion, robotId, physicalState, units, jobResponse, restoredFrom, cancel, permitBlock, blockedFaults, releases`. `blockedFaults` 는 결함 객체의 배열. 지금 다음 단위를 막고 있는 기체 결함 전부(picasso `Execution.blockedBy`). 없으면 `[]`. 결함 객체 칸은 S4a JSON 계약 §4 의 결함 객체 9칸과 같다(`failureClass, errorType, vendorDetail, errorHint, references[{key, value}], canContinueCurrentTask, canAcceptNewTask, activeUntilKind, activeUntilTime`), 같은 결함이면 인시던트 상세 `blockedBy` 와 칸마다 같다. `failureClass` 는 분류 이름(접두사 `FAILURE_CLASS_` 를 뗀 것, 분류가 없거나 모르면 picasso `Middleware.UNCLASSIFIED`), 그 목록은 작업 응답 `blockedBy` 의 이름들과 같다. 참조 `key` 는 계약 열거형 이름(예 `KEY_TASK_ID`). 작업 응답의 `blockedBy` 는 분류 이름뿐이고 picasso 가 새 작업 응답을 낼 때만 바뀌지만 `blockedFaults` 는 지금의 값이다. 결함 감수(§5.10)가 이것과 대조한다. 작업 허가 막음(`permitBlock`)과 다른 칸이다. `releases` 는 그 작업 지시에 건 운영자 결함 감수(V11 `execution_fault_release`, 적은 순서). 없으면 `[]`. 원소 칸 5개 이 순서 `requestId`, `approverId`, `reason`, `faults`, `recordedAt`. `requestId` 는 없으면 null. `faults` 는 감수할 때의 `blockedFaults` 그대로(결함 객체 배열). `recordedAt` 은 DB 시각. 작업 지시 id 로 읽으므로 재기동 전 인스턴스가 적은 감수도 싣는다. 이 인스턴스가 놓은 실행의 줄과 정착 이력의 `execution`(§5.8)은 정착할 때 적은 본문이라 두 칸도 정착할 때의 값이다. V11 전에 적은 정착 본문에는 두 칸이 없다. 놓은 실행의 줄로 읽으면 두 칸이 `[]` 로 나오고, 정착 이력의 `execution` 은 적힌 글자 그대로라 두 칸이 빠진다. 근거 시험: `FaultReleaseHostTest` 의 `본 결함대로 감수하면 감수 행과 판단 기록을 곧바로 적고 다음 단위를 내며 작업 응답은 다음 작업 응답까지 감수 전 그대로다`(실행 목록 `blockedFaults` 가 인시던트 상세 `blockedBy` 와 같음, `releases` 칸 순서), `JudgmentRecordHostTest` 의 `감수한 결함을 실은 기록으로 다시 지으면 그 결함이 다음 단위를 다시 막지 않는다`(재기동한 인스턴스의 `releases` 가 앞 인스턴스의 감수를 실음), 칸 순서는 `HostRestoreTest` 의 `EXECUTION_FIELDS`.
+
+```json
+"blockedFaults": [{"failureClass": "LOCALIZATION_LOST", "errorType": "LOCALIZATION_LOST", "vendorDetail": "", "errorHint": "로봇을 알려진 랜드마크 앞으로 옮기고 재측위를 실행하십시오.", "references": [], "canContinueCurrentTask": false, "canAcceptNewTask": false, "activeUntilKind": "KIND_UNTIL_CLEARED", "activeUntilTime": ""}]
+```
+```json
+"releases": [{"requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a", "approverId": "kim", "reason": "현장에서 기체 상태를 확인했다", "faults": [{"failureClass": "LOCALIZATION_LOST", "errorType": "LOCALIZATION_LOST", "vendorDetail": "", "errorHint": "로봇을 알려진 랜드마크 앞으로 옮기고 재측위를 실행하십시오.", "references": [], "canContinueCurrentTask": false, "canAcceptNewTask": false, "activeUntilKind": "KIND_UNTIL_CLEARED", "activeUntilTime": ""}], "recordedAt": "2026-10-17T01:02:03.456789Z"}]
+```
+(예의 값은 보기다.)
+
+### 5.10 `POST /host/executions/{executionId}/release`
+
+운영자 결함 감수다. picasso `Middleware.release` 는 승인자와 사유를 받지 않고 지금 막는 결함 전부를 감수한다. 그래서 사람 승인자 판정과 «본 결함» 대조를 실행 호스트가 한다. 요청 본문은 `{approverId, reason, instanceId, sawFaults, requestId?}` 다. `approverId`·`reason`·`instanceId` 는 비어 있지 않은 문자열(공백만이면 안 됨)이고, 사유는 앞뒤 공백을 떼며 길이 제한은 호스트에 없다. `sawFaults` 는 운영자가 본 막는 결함이며 비어 있지 않은 객체 배열이다(원소 `{errorType, references}`, `errorType` 비어 있지 않은 문자열, `references` 필수이고 빈 배열 가능한 객체 배열, 원소 `{key, value}`, `key` 비어 있지 않은 문자열, `value` 빈 문자열 가능한 문자열). `requestId` 는 없음·`null`·UUID 문자열이다. 400 은 본문이 객체가 아님(«본문이 JSON 객체가 아니다»), `approverId`·`reason`·`instanceId` 와 `errorType`·`key` 가 비어 있지 않은 문자열이 아님(«<칸> 가 비어 있지 않은 문자열이 아니다»), `sawFaults` 가 비어 있지 않은 객체 배열이 아님(«sawFaults 가 비어 있지 않은 객체의 배열이 아니다»), `references` 가 객체 배열이 아님(«sawFaults 의 references 가 객체의 배열이 아니다»), 참조 `value` 가 문자열이 아님(«sawFaults 의 참조 value 가 문자열이 아니다»), `requestId` 가 UUID 문자열이 아님(«requestId 가 UUID 문자열이 아니다»). 판정 순서 본문(400) → `instanceId` 가 지금 인스턴스인가(아니면 409 `INSTANCE_MISMATCH`, `detail` «감수 요청의 인스턴스(<요청>)가 지금 인스턴스(<지금>)가 아니다», 감수하지 않음) → (여기서부터 호스트 잠금 안) 사람 승인자 → 요청 id 재사용 → 실행 찾기 → 막는 결함 유무 → 본 결함 대조 → 감수 행 적기(V11 `execution_fault_release`) → picasso `release` → 판단 기록 적기 → 결과. 결과는 늘 200 본문 `{result, executionId, physicalState, detail, requestId}` (5칸, 이 순서) 다. `requestId` 는 요청 값 그대로다. §5 공통과 달리 `requestId` 는 감수 행에 적는다. 같은 `requestId` 의 감수 행이 이미 있으면 409 `REQUEST_ID_REUSED`(`detail` «결함 감수의 요청 id 가 이미 쓰였다: <requestId>»)이고 아무것도 바꾸지 않는다. 실행 상태와 무관하게 실행을 찾기 전에 가른다(감수해서 더는 막히지 않은 실행에 같은 요청을 다시 보내도 409). S3b JSON 계약 §3 과 같은 이름이다. 요청 id 의 UNIQUE 는 DB 의 둘째 담이다. 잠금 안에서 먼저 묻고 적으므로 이 인스턴스에서는 거기 걸리지 않고, 걸리면 500 `RECORD_WRITE_FAILED` 다(409 아님). 감수 행을 못 적으면 500 `RECORD_WRITE_FAILED` 다. picasso `release` 를 부르지 않는다. 실행은 막힌 그대로, 판단 기록도 늘지 않는다. 감수 직후 pump 없이 판단 기록을 적는다. 그 기록의 `acknowledgedFaults` 에 감수한 결함의 열쇠(실측 `LOCALIZATION_LOST[]`)가 들어 재기동을 넘는다. 판단 기록 쓰기가 실패하면 경고만 남기고 다음 pump 뒤 기록이 같은 글자를 다시 적는다(운영자 판단과 같다).
+
+| `result` | 언제 | `physicalState` | `detail` | 바뀐 것 |
+|---|---|---|---|---|
+| `RELEASED` | 막는 결함이 있고 본 결함과 같음 | 감수 뒤 상태 `RUNNING` | 작업 허가가 아직 이 실행의 새 로봇 명령을 막고 있으면 `작업 허가 대기 중이다. 감수로 풀리지 않는다: <unitId> (<withheld>)`, 아니면 null | 감수 행 하나, picasso `acknowledgedFaults`, 실행 `RUNNING`, 판단 기록 한 행. 다음 pump 가 다음 단위를 낸다. |
+| `NOT_BLOCKED` | 실행은 있으나 막는 결함이 없음 | 지금 상태(이 인스턴스가 놓은 실행이면 마지막 정착 본문의 상태) | 작업 허가만 막고 있으면 `작업 허가 대기 중이다. 감수로 풀리지 않는다: <unitId> (<withheld>)`(허가는 감수할 값이 아니다, ADR 52, picasso `release` 가 허가 막음을 걷지 않는다). 정착한 실행(이 인스턴스가 놓은 실행 포함)이면 `정착한 실행이다: <상태>`. 그 밖(도는데 막는 결함 없음, `PARTIAL` 포함)은 `막는 결함이 없다`. | 없음 |
+| `BLOCK_CHANGED` | 본 결함과 지금 막는 결함이 다름 | 지금 상태(`OPERATOR_HOLD`) | `본 결함과 지금 막는 결함이 다르다. 다시 읽고 판단한다: <errorType[KEY=value,…]>, …`(지금 막는 결함을 `, ` 로 이음, 참조가 없으면 `[]`) | 없음 |
+| `NOT_FOUND` | 지금 인스턴스에 그 실행이 없음(메모리에도 정착 본문에도) | null | `그 실행이 지금 인스턴스에 없다` | 없음 |
+| `REFUSED` | 승인자가 사람이 아님. REST 는 늘 사람 승인자라 호스트 메서드를 직접 부를 때만 | null | `에이전트는 결함을 감수하지 못한다. 결함을 안고 계속할지는 사람이 현장에서 정한다: <approverId>` | 없음 |
+
+대조는 (`errorType`, 참조 (key, value) 모음)의 다중집합으로 한다. 참조 순서와 결함 순서는 보지 않는다. 같은 결함을 둘 보내면 지금 하나일 때 다르다. 참조 `key` 는 계약 열거형 이름(예 `KEY_TASK_ID`)이고 §5.9 `blockedFaults` 의 `references` 와 같다. picasso 의 결함 열쇠 문자열은 호스트가 만들지 않는다. picasso `release` 가 막는 결함 전부를 감수하므로 이 대조가 본 적 없는 결함의 감수를 막는 자리다. 대조와 감수가 같은 잠금 안이라 그 사이에 막는 결함이 바뀌지 않는다. 감수는 결함을 지우지 않는다. 같은 결함은 다시 막지 않고 새 결함은 다시 막는다.
+
+picasso `release` 는 `notify` 를 부르지 않는다. 그래서 그 실행의 `jobResponse`(마지막 작업 응답)는 picasso 가 다음 작업 응답을 낼 때까지 감수 전의 것이다(실측: `physicalState` `OPERATOR_HOLD`, `blockedBy` `["LOCALIZATION_LOST"]`, `operatorRequired` true). 단위 시작·완료는 작업 응답을 내지 않으므로 다음 단위가 `DONE` 이 되어도 그대로이고, 실행이 정착(실측 `PARTIAL`)할 때 새 작업 응답(`blockedBy` `[]`)이 난다. 송신 기록·결과 outbox·상위도 정착까지 감수 전 응답을 본다. 실행 목록의 `physicalState`·`blockedFaults`·`releases` 는 곧바로 바뀐다. 호스트에는 작업 응답만 내게 하는 picasso 공개 API 가 없다. S4a JSON 계약 §5.2 의 판단 뒤와 같은 성질이다.
+
+```json
+{"approverId": "kim", "reason": "현장에서 기체 상태를 확인했다", "instanceId": "mw-3f0c...", "sawFaults": [{"errorType": "LOCALIZATION_LOST", "references": []}], "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
+```
+```json
+{"result": "RELEASED", "executionId": "exec-1", "physicalState": "RUNNING", "detail": null, "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
+{"result": "BLOCK_CHANGED", "executionId": "exec-1", "physicalState": "OPERATOR_HOLD", "detail": "본 결함과 지금 막는 결함이 다르다. 다시 읽고 판단한다: LOCALIZATION_LOST[]", "requestId": null}
+{"result": "NOT_BLOCKED", "executionId": "exec-1", "physicalState": "PHYSICALLY_DONE", "detail": "정착한 실행이다: PHYSICALLY_DONE", "requestId": null}
+```
+```json
+{"error": "REQUEST_ID_REUSED", "detail": "결함 감수의 요청 id 가 이미 쓰였다: 6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
+```
+
+(예의 id 값은 보기다. 근거 시험: `FaultReleaseHostTest` 의 첫째~여덟째 시험, `본 결함대로 감수하면 감수 행과 판단 기록을 곧바로 적고 다음 단위를 내며 작업 응답은 다음 작업 응답까지 감수 전 그대로다`, `본 결함과 지금 막는 결함이 다르면 BLOCK_CHANGED 이고 감수 행 없이 막힌 그대로다`.)
+
 ## 6. `GET /host/cell`
 
 응답 200 늘:
@@ -455,11 +497,12 @@ InspectAsset 예:
 | `GET /host/cell` | 늘(`cell` null 가능) | 없음 | 없음 |
 | `GET /host/work-permits` | 늘(`declared` false 가능) | 없음 | 없음 |
 | `POST /host/executions/{executionId}/cancel` | 결과 넷 전부(5.2) | `BAD_REQUEST`(그 밖 409 `INSTANCE_MISMATCH`, 500 `RECORD_WRITE_FAILED`) | JSON 아님 |
+| `POST /host/executions/{executionId}/release` | 결과 다섯 전부(5.10) | `BAD_REQUEST`(그 밖 409 `INSTANCE_MISMATCH`, 409 `REQUEST_ID_REUSED`, 500 `RECORD_WRITE_FAILED`) | JSON 아님 |
 | `GET /host/robots/residual-holds` | 늘 | 없음 | 없음 |
 | `POST /host/robots/{robotId}/residual-holds/{markerId}/clear` | 해소함 | `BAD_REQUEST`(그 밖 404 `RESIDUAL_HOLD_NOT_FOUND`, 409 `RESIDUAL_HOLD_ALREADY_CLEARED`, 403 `APPROVER_REFUSED`(REST 로는 안 남), 500 `RECORD_WRITE_FAILED`) | JSON 아님 |
 | 현장 `GET /cell` | 늘 | 없음(405·404 는 위 1절) | 없음 |
 
-호스트가 안 닿으면(연결 실패) 운영 서비스가 503·NO_RESPONSE 로 다룬다(스펙 §8). 취소·해소 기록 실패는 500 `RECORD_WRITE_FAILED`(P0-b2), 실행 일지 쓰기 실패는 500 `JOURNAL_WRITE_FAILED`(S4b H6, 이 PR 전부터)다. 운영 서비스는 호스트 5xx 를 응답 없음으로 다루고 재조회한다.
+호스트가 안 닿으면(연결 실패) 운영 서비스가 503·NO_RESPONSE 로 다룬다(스펙 §8). 취소·해소(P0-b2)·결함 감수(5.10) 기록 실패는 500 `RECORD_WRITE_FAILED`, 실행 일지 쓰기 실패는 500 `JOURNAL_WRITE_FAILED`(S4b H6, 이 PR 전부터)다. 운영 서비스는 호스트 5xx 를 응답 없음으로 다루고 재조회한다.
 
 ---
 
