@@ -180,7 +180,7 @@ InspectAsset 예:
 |---|---|---|---|---|
 | `ACCEPTED` | `Submission.Accepted` | 새 실행 | null | `[]` |
 | `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 그 실행이 끝났고 후보가 판정을 통과해야 `assign` 까지 간다. 실행이 아직 picasso 메모리에 남아 있을 때만 성립한다(보존 폭 안의 `FAILED`·`UNVERIFIED` 실행). 정착해 놓은 실행의 같은 id는 `forgottenJobOrder: true`인 REJECTED이다) | 기존 실행과 그 기체 | null | `[]` |
-| `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과, picasso의 놓은 작업 지시 거부 등), 실행 일지 가드(실행 일지에 이미 있는 작업 지시. 정착이 있으면 `FORGOTTEN_JOB_ORDER`, 없으면 `JOURNALED_JOB_ORDER`), 실행 일지 차단 | null | 사유(한국어) | `[]` |
+| `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과, picasso의 놓은 작업 지시 거부 등), 실행 일지 가드(실행 일지에 이미 있는 작업 지시. 그 작업 지시의 정착(`SETTLED`)·다시 실행(`REOPENED`)·포기(`GAVE_UP`) 이벤트 가운데 마지막이 정착이면 `FORGOTTEN_JOB_ORDER`, 그 밖이면 `JOURNALED_JOB_ORDER`), 실행 일지 차단 | null | 사유(한국어) | `[]` |
 | `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "...", "alternativeLocations": [...], "sourceMissing": {...}, "sourceUnobserved": {...}}]`, `assign` 이 기체마다 낸 관문 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
 
 - `excluded`: 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행(2.2). 결과와 무관하게 늘 있다(없으면 `[]`).
@@ -305,7 +305,7 @@ InspectAsset 예:
 
 ### 5.1 실행의 `cancel` 칸(P0-b2)
 
-실행마다 끝에 `cancel`(S4b H1 의 `restoredFrom` 뒤, 열째 칸). 이 인스턴스에서 그 실행에 건 운영자 취소. 없으면 null. 이전 인스턴스의 취소는 싣지 않음. 칸 5개 이 순서. `physicalState` 는 취소를 건 때의 물리 상태, `recordedAt` 은 DB 시각.
+실행마다 끝에 `cancel`(S4b H1 의 `restoredFrom` 뒤, 열째 칸). 이 인스턴스에서 그 실행에 건 운영자 취소. 없으면 null. 기동 복원이 다시 지은 실행이면 그 작업 지시의 처음 취소 행(이전 인스턴스가 적은 것)을 실음. 기동 복원이 그 취소를 다시 건 것이고 취소 행은 새로 적지 않으며(브랜치 `fix/restore-rerun-and-cancel`), 그 밖의 이전 인스턴스 취소는 싣지 않음. 칸 5개 이 순서. `physicalState` 는 취소를 건 때의 물리 상태, `recordedAt` 은 DB 시각.
 
 ```json
 "cancel": {"approverId": "kim", "approverKind": "PERSON", "reason": "둘째 슬롯 결품으로 부분 완료를 닫는다", "physicalState": "PARTIAL", "recordedAt": "2026-10-14T01:02:03.456789Z"}

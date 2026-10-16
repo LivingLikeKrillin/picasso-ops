@@ -266,7 +266,8 @@ data class JobResponseView(
  *
  * @param missionVersion 임무 버전. `null` 이면 코드 정의다.
  * @param jobResponse 그 실행의 마지막 작업 응답. 아직 없으면 `null`.
- * @param cancel 이 인스턴스에서 그 실행에 건 운영자 취소(P0-b2). 없으면 `null`.
+ * @param cancel 이 인스턴스에서 그 실행에 건 운영자 취소(P0-b2). 기동 복원이 다시 지은 실행이면 그 작업 지시에 앞서 건 처음 취소다(다시
+ *   건 것, [MissionHost.carryCancel]). 없으면 `null`.
  * @param permitBlock 이 실행의 새 로봇 명령을 지금 막고 있는 작업 허가(ADR 52). 막힌 것이 없거나 현장이 허가 대응을 선언하지 않았으면
  *   `null` 이다. 운영자 보류·결함 막음과 다른 칸이다([PermitBlockView]).
  */
@@ -414,6 +415,11 @@ data class HostFootprint(
  * 알린 작업 응답(그 실행의 마지막 작업 응답)으로 가린다 — picasso 는 정착하지 않은 상태에서 정착한 상태로 옮길 때마다 작업 응답을 낸다.
  * 같은 판에서도 다시 정착할 수 있으므로(정착한 실행의 보류 단위를 운영자가 판단) 판으로 가리지 않는다.
  *
+ * 다시 돎([recordReruns], V10): 이미 있던 실행이 받은 개정판은 개정판 행으로, 정착을 적은 실행이 다시 도는 것은 `REOPENED` 이벤트로, 그때의
+ * 판단 기록과 한 트랜잭션에 적는다. 받은 제출과 운영자 판단 안에서 적고, 못 적었으면 pump 가 미들웨어 pump 전에 다시 적으며 적을 때까지
+ * pump 와 신규 제출을 막는다([journalBlocked]). 그래서 다시 돈 실행의 로봇 명령은 그 기록이 커밋된 뒤에만 나간다. 기동 복원은 마지막이
+ * `REOPENED` 인 일지 행을 가장 높은 받은 판으로 다시 짓는다.
+ *
  * ## 놓기(picasso `Middleware.forget`, 한계 §15.224 · 놓기 소비자)
  *
  * pump 뒤 기록이 커밋되고 응답을 `ack` 한 뒤, 지금의 정착을 적었고 활성이 아닌([ExecutionPages.active]) 실행을 picasso 메모리에서 놓는다.
@@ -488,10 +494,11 @@ class MissionHost(
     // ── S4b 기록. 모두 호스트 잠금 아래에서만 읽고 쓴다.
 
     /**
-     * 이 인스턴스에서 일지 행이 있는 실행의 작업 지시 id(제출로 적었거나 다시 지은 것). 정착 이벤트는 이것만 적는다. 놓은 실행의 것은 지운다
-     * (같은 작업 지시 id 의 새 실행은 picasso 와 실행 일지가 막는다).
+     * 이 인스턴스에서 일지 행이 있는 실행의 작업 지시 id 에서 일지에 적은 판으로(제출로 적었거나 다시 지은 것, 받은 개정판을 적으면 그 판).
+     * 정착 이벤트는 이것만 적는다. 실행의 판이 이보다 높으면 개정판을 아직 적지 않은 것이다([rerunOf]). 놓은 실행의 것은 지운다(같은 작업
+     * 지시 id 의 새 실행은 picasso 와 실행 일지가 막는다).
      */
-    private val journaled = mutableSetOf<String>()
+    private val journaled = mutableMapOf<String, Int>()
 
     /**
      * 이 인스턴스가 실행마다 마지막으로 적은 정착(실행 id 에서). [SettleMark.responseId] 가 그 실행의 마지막 작업 응답과 같고 실행이 정착해
@@ -499,8 +506,11 @@ class MissionHost(
      */
     private val settleMarks = mutableMapOf<String, SettleMark>()
 
-    /** 적은 정착 하나. [at] 은 기록을 커밋한 뒤의 호스트 시각이고 개정판을 받을 실행을 두는 폭을 여기서 잰다. */
-    private data class SettleMark(val responseId: String?, val at: Instant)
+    /**
+     * 적은 정착 하나. [at] 은 기록을 커밋한 뒤의 호스트 시각이고 개정판을 받을 실행을 두는 폭을 여기서 잰다. [reopened] 는 그 정착 뒤
+     * 다시 돎(`REOPENED`)을 적었는가다. 다시 정착하면 새 표시로 바뀐다.
+     */
+    private data class SettleMark(val responseId: String?, val at: Instant, val reopened: Boolean = false)
 
     /** 사본을 적은 인시던트 수. 미들웨어의 인시던트 목록은 덧붙이기만 하므로 이 색인 뒤가 새로 봉인된 것이다. */
     private var copiedIncidents = 0
@@ -533,10 +543,16 @@ class MissionHost(
     private val openHolds = mutableListOf<ResidualHoldRow>()
 
     /**
-     * 이 인스턴스에서 건 운영자 취소. 실행 id 에서. 이전 인스턴스의 취소는 그 인스턴스의 실행 id 라 싣지 않는다. 놓은 실행의 것은 지운다
-     * (정착 이벤트의 본문과 `execution_cancel` 표에 남는다).
+     * 이 인스턴스에서 건 운영자 취소. 실행 id 에서. 이전 인스턴스의 취소는 그 작업 지시를 다시 지은 실행에 다시 건 것만 싣는다([carryCancel]).
+     * 놓은 실행의 것은 지운다(정착 이벤트의 본문과 `execution_cancel` 표에 남는다).
      */
     private val cancels = mutableMapOf<String, CancelRow>()
+
+    /**
+     * 기동 복원이 운영자 취소를 다시 걸 실행 id 가운데, 그 작업 지시의 태스크가 기체에 아직 끝나지 않아 다시 붙은 뒤에 걸 것([carryCancel]).
+     * 다시 지은 뒤 첫 미들웨어 pump 가 그 태스크에 다시 붙고, 그 직후 [reapplyCancels] 가 건다.
+     */
+    private val cancelOnAttach = mutableSetOf<String>()
 
     /**
      * 이 인스턴스가 작업 지시마다 마지막으로 적은(또는 복원에 넘긴) 판단 기록 글자. 같은 글자는 다시 적지 않는다. 적기가 실패하면
@@ -579,8 +595,9 @@ class MissionHost(
     }
 
     /**
-     * 기동 복원(S4b 스펙 T3, §6.3). 정착도 포기도 없는 일지 행을 받은 순서대로 다시 짓는다. 결과는 일지 이벤트로 남고 복원 보고에
-     * 실린다. 그 뒤 포기한 행(이전 기동의 것 포함)을 판정 제외 목록으로, 미해소 잔여 파지 표시를 판정이 읽을 사본으로 읽는다.
+     * 기동 복원(S4b 스펙 T3, §6.3). 도는 일지 행(정착·다시 돎·포기가 없거나 마지막이 다시 돎, [HostRecords.openJournal])을 받은 순서대로
+     * 다시 짓는다. 결과는 일지 이벤트로 남고 복원 보고에 실린다. 그 뒤 포기한 채인 행(이전 기동의 것 포함)을 판정 제외 목록으로, 미해소
+     * 잔여 파지 표시를 판정이 읽을 사본으로 읽는다.
      *
      * 단계 0 범위(HA 설계 기록 §7): 행을 든 인스턴스가 이 인스턴스이거나 심장박동이 끊긴 행만 지금 다시 짓는다. 살아 있는 다른
      * 인스턴스가 든 행은 DEFERRED 로 미룬다([restoreRow]).
@@ -600,7 +617,8 @@ class MissionHost(
         val index = restoreRows.size
         restoreRows += RestoreRowView(row.jobOrderId, row.robotId, previous.instanceId, previous.executionId, RestoreResult.GAVE_UP.name, null, null)
         val prepared = try {
-            val order = HostRequests.jobOrder(json.readTree(row.jobOrder))
+            // 받은 개정판이 있으면 가장 높은 판이다(V10). picasso `resume` 은 이전 인스턴스가 받은 마지막 판을 받아야 한다.
+            val order = HostRequests.jobOrder(json.readTree(records.latestRevision(row.jobOrderId)?.jobOrder ?: row.jobOrder))
             val version = row.missionVersion?.let {
                 store.version(row.workMasterId, it) ?: throw IllegalStateException("임무 버전 행이 없다: ${row.workMasterId} 버전 $it")
             }
@@ -656,13 +674,18 @@ class MissionHost(
             }
             return
         }
-        settleRestore(waiting.row, waiting.index, previous, result, executionId, reason)
+        settleRestore(waiting.row, waiting.index, previous, result, executionId, reason, waiting.order.version)
         deferred.remove(waiting)
         if (result == RestoreResult.GAVE_UP) gaveUp += waiting.row
     }
 
-    /** 결과를 일지 이벤트로 적고 보고 행을 갈아 끼운다. 이벤트를 먼저 적는다. 못 적으면 예외가 나가고 보고는 그대로다. */
-    private fun settleRestore(row: JournalRow, index: Int, previous: RestoredFromView, result: RestoreResult, executionId: String?, reason: String?) {
+    /**
+     * 결과를 일지 이벤트로 적고 보고 행을 갈아 끼운다. 이벤트를 먼저 적는다. 못 적으면 예외가 나가고 보고는 그대로다. [version] 은 다시 지은
+     * 작업 지시의 판이다(RESTORED 일 때).
+     */
+    private fun settleRestore(
+        row: JournalRow, index: Int, previous: RestoredFromView, result: RestoreResult, executionId: String?, reason: String?, version: Int? = null,
+    ) {
         val kind = when (result) {
             RestoreResult.RESTORED -> JournalEventKind.RESTORED
             RestoreResult.DEFERRED -> JournalEventKind.DEFERRED
@@ -672,7 +695,7 @@ class MissionHost(
         restoreRows[index] = RestoreRowView(row.jobOrderId, row.robotId, previous.instanceId, previous.executionId, result.name, executionId, reason)
         if (executionId != null) {
             restoredFrom[executionId] = previous
-            journaled += row.jobOrderId
+            journaled[row.jobOrderId] = checkNotNull(version) { "다시 지은 작업 지시의 판이 없다: ${row.jobOrderId}" }
         }
     }
 
@@ -685,9 +708,13 @@ class MissionHost(
      * `resume` 을 부르지 않고 GAVE_UP([RECORD_UNREADABLE]) 이다. 기록 없이 다시 지으면 읽지 못한 판단이 조용히 «없었다» 가 된다.
      * picasso 가 기록을 거부하면(`RESUME_RECORD_MISMATCH`) 그 문장 뒤에 기록 행 번호를 붙여 GAVE_UP 이다.
      *
+     * 그 작업 지시에 운영자 취소가 적혀 있으면 새로 지은 실행에 다시 건다([carryCancel]). 취소 행도 `resume` 전에 읽는다 — 읽기가 실패해
+     * 다시 시도하면 Idempotent 라 다시 걸 자리가 없다.
+     *
      * @return 결과, RESTORED 의 실행 id, DEFERRED·GAVE_UP 의 사유
      */
     private fun resumed(waiting: Deferred): Triple<RestoreResult, String?, String?> {
+        val cancel = records.cancelOf(waiting.row.jobOrderId)
         val stored = records.latestJudgmentRecord(waiting.row.jobOrderId)
         val record = stored?.let {
             try {
@@ -699,6 +726,7 @@ class MissionHost(
         return when (val submission = middleware.resume(waiting.order, waiting.row.robotId, waiting.mission, record)) {
             is Middleware.Submission.Accepted -> {
                 stored?.let { recorded[waiting.row.jobOrderId] = it.record }
+                cancel?.let { carryCancel(it, submission.execution) }
                 Triple(RestoreResult.RESTORED, submission.execution.executionId, null)
             }
             is Middleware.Submission.Idempotent -> Triple(RestoreResult.RESTORED, submission.execution.executionId, null)
@@ -711,6 +739,34 @@ class MissionHost(
                     Triple(RestoreResult.GAVE_UP, null, submission.reason)
                 }
             is Unassigned -> Triple(RestoreResult.GAVE_UP, null, "배정되지 않았다: ${submission.refusals}")
+        }
+    }
+
+    /**
+     * 기동 복원이 다시 지은 실행에 운영자 취소([cancel])를 다시 건다. 취소 행은 새로 적지 않는다 — 취소는 사람이 한 번 건 것이고 picasso 의
+     * 취소 요청은 그 실행에 붙어 다시 돌아도 풀리지 않는다. 그래서 다시 지은 실행은 그 작업 지시의 처음 취소 행을 싣고([ExecutionView.cancel])
+     * 운영자 취소는 이미 건 실행으로 받지 않는다.
+     *
+     * 언제 거는지는 기체에 그 작업 지시의 끝나지 않은 태스크가 있는가로 가른다. 없으면 지금 건다 — 첫 pump 가 새 명령 없이 멈춘다. 있거나
+     * 스냅숏을 못 읽으면 첫 pump 가 그 태스크에 다시 붙은 뒤 건다([reapplyCancels]) — 지금 걸면 붙지 않은 채 멈춰 기체가 그 태스크를 하는
+     * 동안 실행이 정착하고 판정이 그 기체를 다시 내준다. 붙은 뒤 걸면 그 태스크에 취소가 다시 가고 끝날 때까지 실행이 기체를 쥔다.
+     */
+    private fun carryCancel(cancel: CancelRow, execution: Middleware.Execution) {
+        cancels[execution.executionId] = cancel
+        val jobOrderId = execution.order.jobOrderId
+        val inFlight = robots.snapshot(execution.robotId)
+            ?.tasks?.any { (taskId, state) -> taskId.startsWith("$jobOrderId#") && state !in TERMINAL_TASK_STATES }
+            ?: true
+        if (inFlight) cancelOnAttach += execution.executionId else middleware.cancel(execution.executionId)
+    }
+
+    /** 다시 붙은 뒤 걸 취소를 건다([carryCancel]). 미들웨어 pump 뒤에 부른다. 이미 정착했거나 취소 중이면 걸지 않는다. 한 번뿐이다. */
+    private fun reapplyCancels() {
+        if (cancelOnAttach.isEmpty()) return
+        val waiting = cancelOnAttach.toList()
+        cancelOnAttach.clear()
+        middleware.executions().filter { it.executionId in waiting }.forEach { execution ->
+            if (execution.physicalState.pumps && execution.physicalState != PhysicalState.CANCELING) middleware.cancel(execution.executionId)
         }
     }
 
@@ -728,9 +784,12 @@ class MissionHost(
                 permits?.observe(cell, fetchedAt)
                 val at = clock.now()
                 retryDeferred()
+                // 다시 돈 실행의 기록이 커밋되기 전에는 미들웨어 pump 를 돌리지 않는다(그 실행의 로봇 명령이 pump 에서 나간다).
+                recordReruns()
                 if (journalBlocked().isNotEmpty()) return@withLock
                 middleware.pump()
                 pumpedAt = at
+                reapplyCancels()
                 recordAfterPump()
             }
         } catch (e: Exception) {
@@ -767,8 +826,9 @@ class MissionHost(
      * 기체마다 관문을 걸므로 기체가 없으면 요구 근거 등급 검사도 하지 않는다.
      *
      * 새 실행으로 ACCEPTED 이면 같은 잠금 안에서 응답하기 전에 실행 일지를 적는다(S4b 스펙 T2). 이미 있던 실행의 `revise` 가 낸
-     * Accepted 와 IDEMPOTENT 는 적지 않는다. pump 도 이 잠금을 잡으므로 일지에 없는 실행은 로봇 명령을 낸 적이 없다. 일지 쓰기가
-     * 실패하면 [JournalWriteFailed] 이고 실행은 메모리에 남지만 다음 pump와 신규 제출을 차단한다.
+     * Accepted 는 받은 개정판(그 실행이 정착을 적은 뒤면 다시 돎도)과 판단 기록을 적는다([recordReruns]). IDEMPOTENT 는 적지 않는다.
+     * pump 도 이 잠금을 잡으므로 일지에 없는 실행은 로봇 명령을 낸 적이 없다. 일지 쓰기가 실패하면 [JournalWriteFailed] 이고 실행은
+     * 메모리에 남지만 다음 pump와 신규 제출을 차단한다. 개정판 쓰기의 실패는 pump 가 다시 적으면 풀린다.
      *
      * [confirmations] 는 사람이 기록한 출발 자리 확인이다. 이 `assign` 한 번 동안만 셀 포트의 관측이 되고([CellBandSignals.observe])
      * 끝나면 비운다. 호스트는 저장하지 않는다 — 다음 제출이나 재배정은 확인을 다시 싣지 않으면 설비의 답만 본다.
@@ -806,6 +866,8 @@ class MissionHost(
                 if (!existed) {
                     journal(submission.execution)
                     persistRecord(submission.execution.executionId)
+                } else {
+                    recordReruns()?.let { throw JournalWriteFailed(submission.execution.executionId, it) }
                 }
                 SubmitOutcome(
                     SubmitResult.ACCEPTED, submission.execution.executionId, submission.execution.robotId, null, emptyList(), excluded,
@@ -831,13 +893,14 @@ class MissionHost(
     }
 
     /**
-     * 미들웨어에 실행이 없는 작업 지시가 실행 일지에 이미 있으면 거부 사유, 없으면 `null`. 정착을 적은 작업 지시(이 인스턴스가 놓았거나
-     * 재기동 전에 정착한 것)는 picasso 의 [Middleware.FORGOTTEN_JOB_ORDER] 로 시작해 picasso 의 거부와 같은 뜻으로 읽힌다. 정착을 적지
-     * 않은 일지 행(미뤘거나 포기한 것)은 [JOURNALED_JOB_ORDER] 로 시작한다.
+     * 미들웨어에 실행이 없는 작업 지시가 실행 일지에 이미 있으면 거부 사유, 없으면 `null`. 마지막으로 정착을 적은 작업 지시(이 인스턴스가
+     * 놓았거나 재기동 전에 정착한 것)는 picasso 의 [Middleware.FORGOTTEN_JOB_ORDER] 로 시작해 picasso 의 거부와 같은 뜻으로 읽힌다. 그 밖의
+     * 일지 행(미뤘거나 포기한 것, 정착 뒤 다시 돌아 미뤘거나 포기한 것)은 [JOURNALED_JOB_ORDER] 로 시작한다.
      */
     private fun journalRefusal(jobOrderId: String): String? {
         val row = records.journalRow(jobOrderId) ?: return null
-        val settled = records.events(jobOrderId).lastOrNull { it.kind == JournalEventKind.SETTLED }
+        // 정착을 적은 뒤 다시 돌았으면(REOPENED) 끝난 작업 지시가 아니다. 마지막 정착·다시 돎·포기로 가른다.
+        val settled = records.events(jobOrderId).lastOrNull { it.kind in TURNS }?.takeIf { it.kind == JournalEventKind.SETTLED }
             ?: return "$JOURNALED_JOB_ORDER: $jobOrderId · ${row.instanceId} ${row.executionId}"
         return "${Middleware.FORGOTTEN_JOB_ORDER}: $jobOrderId · ${settled.instanceId} ${settled.executionId} · ${settled.detail} " +
             "(실행 일지). 다시 할 일은 새 작업 지시 ID로 낸다"
@@ -854,7 +917,7 @@ class MissionHost(
         } catch (e: Exception) {
             throw JournalWriteFailed(execution.executionId, e)
         }
-        journaled += order.jobOrderId
+        journaled[order.jobOrderId] = order.version
     }
 
     private fun orderJson(order: JobOrder): String = json.writeValueAsString(
@@ -1263,6 +1326,8 @@ class MissionHost(
             }?.incidentId
             when (val outcome = middleware.resolve(executionId, unitId, decision, approver)) {
                 ResolveOutcome.Resolved -> {
+                    // 정착을 적은 실행이 판단으로 다시 돌면 다시 돎과 판단 기록을 같이 적는다. 못 적으면 pump 가 다시 적을 때까지 pump 를 막는다.
+                    recordReruns()
                     persistRecord(executionId)
                     ResolveView(RESOLVED, null, target, requestId)
                 }
@@ -1394,7 +1459,54 @@ class MissionHost(
      * 부분 완료 실행은 운영자 취소([cancel])로 닫는다. 같은 작업 지시 id 의 리비전은 이 판정에 걸려 UNASSIGNED 다.
      */
     private fun journalBlocked(among: List<Middleware.Execution> = middleware.executions()): List<String> =
-        among.filter { it.order.jobOrderId !in journaled }.map { it.executionId }
+        among.filter { it.order.jobOrderId !in journaled || rerunOf(it) != null }.map { it.executionId }
+
+    /**
+     * 다시 돎 하나. [revised] 는 일지에 적은 판보다 높은 판을 받았고, [reopened] 는 이 인스턴스가 정착을 적은 실행이 다시 돌고 그것을 아직
+     * 적지 않았다.
+     */
+    private class Rerun(val execution: Middleware.Execution, val revised: Boolean, val reopened: Boolean)
+
+    /** [execution] 의 아직 적지 않은 다시 돎. 없으면 `null` 이다. 일지에 없는 실행은 [journalBlocked] 가 따로 본다. */
+    private fun rerunOf(execution: Middleware.Execution): Rerun? {
+        val written = journaled[execution.order.jobOrderId] ?: return null
+        val revised = execution.order.version > written
+        val reopened = execution.physicalState.pumps && settleMarks[execution.executionId]?.reopened == false
+        return if (revised || reopened) Rerun(execution, revised, reopened) else null
+    }
+
+    /**
+     * 아직 적지 않은 다시 돎을 한 트랜잭션으로 적는다(V10). 받은 개정판 행, 정착 뒤 다시 돎(`REOPENED`, 상세는 지금의 물리 상태), 그 실행의
+     * 바뀐 판단 기록이다. 커밋한 뒤에만 [journaled]·[settleMarks]·[recorded] 를 고친다. 실패하면 그 예외를 돌려주고 아무것도 고치지 않는다 —
+     * 그 실행은 [journalBlocked] 에 남아 pump 와 신규 제출을 막고 다음 pump 가 다시 적는다.
+     */
+    private fun recordReruns(): Exception? {
+        val reruns = middleware.executions().mapNotNull(::rerunOf)
+        if (reruns.isEmpty()) return null
+        val ids = reruns.mapTo(HashSet()) { it.execution.executionId }
+        val judgments = changedRecords().filter { it.first.executionId in ids }
+        try {
+            records.inTransaction {
+                reruns.forEach { rerun ->
+                    val execution = rerun.execution
+                    val jobOrderId = execution.order.jobOrderId
+                    if (rerun.revised) records.revision(jobOrderId, execution.order.version, orderJson(execution.order), instanceId, execution.executionId)
+                    if (rerun.reopened) records.event(jobOrderId, JournalEventKind.REOPENED, instanceId, execution.executionId, execution.physicalState.name)
+                }
+                judgments.forEach { (execution, text) -> writeRecord(execution, text) }
+            }
+        } catch (e: Exception) {
+            log.warn("다시 돈 실행을 적지 못했다, 적을 때까지 pump 를 막는다: {} {}", ids, e.toString())
+            return e
+        }
+        reruns.forEach { rerun ->
+            val execution = rerun.execution
+            journaled[execution.order.jobOrderId] = execution.order.version
+            if (rerun.reopened) settleMarks[execution.executionId] = settleMarks.getValue(execution.executionId).copy(reopened = true)
+        }
+        judgments.forEach { (execution, text) -> recorded[execution.order.jobOrderId] = text }
+        return null
+    }
 
     private fun judge(order: JobOrder, robotId: String, applied: Boolean): HostEligibility {
         val active = requireNotNull(catalog.active(order.workMasterId)) { "카탈로그에 없는 WorkMaster 다: ${order.workMasterId}" }
@@ -1546,6 +1658,9 @@ class MissionHost(
         /** 에이전트 승인자의 취소·해소 거부 사유의 앞부분. 뒤에 승인자 id 가 붙는다. */
         const val AGENT_CANCEL_REFUSED = "에이전트는 실행을 취소하지 못한다. 실행 중단은 사람의 것이다"
         const val AGENT_CLEAR_REFUSED = "에이전트는 잔여 파지 표시를 해소하지 못한다. 기체가 빈손인지는 사람이 현장에서 확인한다"
+
+        /** 기동 복원의 대상과 판정 제외를 정하는 일지 이벤트([HostRecords.openJournal]). 그 가운데 마지막이 정한다. */
+        private val TURNS = setOf(JournalEventKind.SETTLED, JournalEventKind.REOPENED, JournalEventKind.GAVE_UP)
 
         /** 종료 상태(용어집 태스크 수명주기). 사람을 기다리는 RETRIABLE·NEEDS_INTERVENTION 은 종료하지 않은 상태라 기체를 계속 뺀다. */
         private val TERMINAL_TASK_STATES = setOf(

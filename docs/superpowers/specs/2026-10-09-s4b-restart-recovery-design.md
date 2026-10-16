@@ -5,6 +5,7 @@
 - 요청·응답 JSON 의 정확한 모양과 스파이크가 정한 세부: S4b JSON 계약 `docs/superpowers/specs/2026-10-09-s4b-json-contract.md`(스파이크에서 정함)
 - 근거 문서: picasso 운영 관리 화면 설계 제안 `picasso/docs/superpowers/specs/2026-10-07-ops-console-lifecycle-design.md`(서브모듈) §10, S3a·S3b·S3c·S4a 스펙, picasso `docs/contract.md` §3(멱등 담보), `docs/orchestration.md` §8, picasso ADR 9·ADR 46·ADR 48, picasso-ops `8ed1b91`, picasso `195c1ee`
 - 갱신(2026-10-15, HA 단계 0): HA 단계 0 이 본문의 옛 결정(«입증하지 않는 것» 표의 «운영자 판단의 자동 재적용» 행, T8 의 «운영자 판단, 설비 대기의 기한 시작 시각, 근거 윈도우의 요청 시각은 다시 짓기 뒤 새 인스턴스의 값입니다. 판단을 자동으로 다시 넣지 않습니다», §11 의 «판단은 자동으로 다시 넣지 않습니다(T8).» 와 그 아래 기한·E0 두 항목)을 대체했습니다. 실행 호스트가 picasso 판단 기록을 `mission.execution_judgment_record` 에 영속하고 다시 지을 때 `resume` 에 넘깁니다. 그래서 운영자 판단, 운영자 보류, 앞선 단위의 판정과 근거 등급, 설비 대기의 기한 시작, 근거 윈도우의 요청 시각이 넘어오고, 넘어온 보류는 새 인스턴스의 인시던트로 다시 열립니다(picasso PR #100). 기록 없는 일지 행만 이 문서의 거동입니다. T8 의 `instanceId` 검사와 409 `INSTANCE_MISMATCH` 는 그대로입니다. 근거: 통합 시험 `RestartRecoveryTest` 단계 1·4·5, `JudgmentRecordHostTest`, 운영 보장 명세(`docs/guarantees.md`)의 판단 기록 절.
+- 갱신(2026-10-16, 정착 뒤 다시 실행): 브랜치 `fix/restore-rerun-and-cancel`(마이그레이션 V10)이 본문의 옛 결정 둘(T2 의 «`revise` 가 낸 Accepted 와 IDEMPOTENT 는 적지 않습니다», T3 의 «정착도 포기도 없는 일지 행»)을 대체했습니다. 지금은 받은 리비전을 `mission.execution_journal_revision` 에 버전마다 한 행으로 적고(일지 행은 여전히 새 실행에만 적습니다), 정착 뒤 다시 실행된 실행을 일지 이벤트 `REOPENED` 로 적습니다. 기동 복원의 대상은 정착(`SETTLED`)·다시 실행(`REOPENED`)·포기(`GAVE_UP`) 이벤트 가운데 마지막이 `REOPENED` 이거나 셋 다 없는 일지 행입니다. 그 작업 지시에 운영자 취소가 적혀 있으면 다시 지은 실행에 다시 겁니다. 근거: 실행 호스트 시험 `RerunRestoreTest`, 운영 보장 명세(`docs/guarantees.md`)의 판단 기록 절.
 
 ## 1. 목적과 범위
 
@@ -132,11 +133,11 @@ picasso 문서는 한계 레지스터에 내부 행 `§15.213 · 재기동 뒤 �
 
 새 실행의 ACCEPTED 제출은 응답 전에 일지 행을 적고, 작업 지시 JSON 은 picasso `JobOrder` 의 칸 그대로입니다. 일지 쓰기가 실패하면 제출은 500 이고 이미 만든 실행은 남습니다. 이 경우는 한계(§11)입니다.
 
-pump 뒤 같은 잠금 안에서 한 트랜잭션으로 송신 기록, 인시던트 사본, 정착 이벤트를 적습니다. 정착 이벤트는 정착마다 한 번 적으며, 실행의 마지막 작업 응답 id 로 표시하고(`settleMarks`) 이 표시는 트랜잭션이 커밋된 뒤에만 남깁니다. 트랜잭션이 실패하면 아무것도 `ack` 하지 않고, 다음 pump 에 다시 합니다. 커밋과 `ack` 뒤 같은 잠금 안에서 호스트는 정착하고 활성이 아닌 실행을 놓습니다(`forget`)(`PHYSICALLY_DONE`·`ABORTED` 는 바로, `FAILED`·`UNVERIFIED` 는 `host.settled.revisable-retention`(기본값 `PT5M`) 뒤). 복원은 여전히 정착 이벤트가 있는 실행 일지 행을 건너뛰므로, 정착 뒤 다시 실행되어 재기동 시점에 돌고 있는 실행은 다시 짓지 않습니다(알려진 제약이며 이 브랜치에서도 바뀌지 않습니다).
+pump 뒤 같은 잠금 안에서 한 트랜잭션으로 송신 기록, 인시던트 사본, 정착 이벤트를 적습니다. 정착 이벤트는 정착마다 한 번 적으며, 실행의 마지막 작업 응답 id 로 표시하고(`settleMarks`) 이 표시는 트랜잭션이 커밋된 뒤에만 남깁니다. 트랜잭션이 실패하면 아무것도 `ack` 하지 않고, 다음 pump 에 다시 합니다. 커밋과 `ack` 뒤 같은 잠금 안에서 호스트는 정착하고 활성이 아닌 실행을 놓습니다(`forget`)(`PHYSICALLY_DONE`·`ABORTED` 는 바로, `FAILED`·`UNVERIFIED` 는 `host.settled.revisable-retention`(기본값 `PT5M`) 뒤). 정착 뒤 다시 실행된 실행(리비전 수락, 정착한 실행의 보류 단위에 대한 운영자 판단)은 V10 의 리비전 행(`execution_journal_revision`)과 일지 이벤트 `REOPENED` 로 적습니다. 그 실행의 다음 미들웨어 pump 전에 판단 기록과 한 트랜잭션으로 적으며, 못 적으면 적을 때까지 pump 와 신규 제출을 막습니다.
 
 ### 6.3 기동 복원
 
-복원은 `MissionHost.start()` 안에서 pump 를 켜기 전에 돕니다. 행마다 일지의 임무 버전으로 정의를 읽고 `resume` 을 부릅니다. Accepted 이면 RESTORED 이고, 기체 스냅숏을 못 읽은 Rejected 는 DEFERRED 이며, 그 밖의 Rejected 와 정의를 못 읽은 것은 GAVE_UP 으로 사유를 남깁니다. 새 미들웨어라 Idempotent 는 생기지 않습니다.
+복원은 `MissionHost.start()` 안에서 pump 를 켜기 전에 돕니다. 대상 행은 그 작업 지시의 정착·다시 실행·포기 이벤트 가운데 마지막이 `REOPENED` 이거나 셋 다 없는 일지 행이며, 마지막이 `GAVE_UP` 인 행은 판정 제외 대상입니다. 다시 지을 작업 지시는 받은 리비전 가운데 가장 높은 버전이고 리비전이 없으면 일지 행의 작업 지시인데, picasso `resume` 은 이전 인스턴스가 받은 마지막 버전을 받아야 하기 때문입니다. 행마다 일지의 임무 버전으로 정의를 읽고 `resume` 을 부릅니다. Accepted 이면 RESTORED 이고, 기체 스냅숏을 못 읽은 Rejected 는 DEFERRED 이며, 그 밖의 Rejected 와 정의를 못 읽은 것은 GAVE_UP 으로 사유를 남깁니다. 새 미들웨어라 Idempotent 는 생기지 않습니다. 그 작업 지시에 운영자 취소 행이 있으면 다시 지은 실행에 한 번 다시 걸며, 취소 행은 새로 적지 않습니다. 기체에 그 작업 지시의 끝나지 않은 태스크가 있으면(또는 기체 스냅숏을 못 읽으면) 첫 pump 가 그 태스크에 다시 붙은 뒤 걸고, 없으면 곧바로 겁니다.
 
 복원 보고는 이번 인스턴스, 복원 시각, 행마다 작업 지시 id, 기체 id, 이전 인스턴스와 실행 id, 결과, 새 실행 id 또는 사유이고, `GET /host/executions` 의 `restore` 칸에 실립니다. DEFERRED 가 나중에 RESTORED 가 되면 그 칸도 바뀝니다.
 
