@@ -2,6 +2,7 @@ package dev.picasso.ops.service.executions
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import dev.picasso.ops.service.actor.Actor
 import dev.picasso.ops.service.host.HostCall
@@ -36,6 +37,23 @@ data class ExecutionCancelOutcome(
 )
 
 /**
+ * 운영자 결함 감수의 200 응답(S3a JSON 계약 §9.8). 칸은 [ExecutionCancelOutcome] 과 같다.
+ *
+ * @param result 조작 기록의 결과. `RELEASED` 는 성공, `NOT_BLOCKED`·`BLOCK_CHANGED`·`NOT_FOUND`·`REFUSED` 와 호스트 4xx 는 거부,
+ *   호스트가 안 닿으면 응답 없음이다
+ * @param outcome 호스트 감수 결과 이름 그대로. 호스트가 200 으로 답했을 때만 있다
+ */
+data class ExecutionReleaseOutcome(
+    val requestId: UUID,
+    val executionId: String,
+    val result: OperationResult,
+    val confirmation: OperationResult?,
+    val outcome: String?,
+    val answer: JsonNode?,
+    val rejection: HostRejection?,
+)
+
+/**
  * 잔여 파지 표시 해소(기체 빈손 확인)의 200 응답(P0-b2).
  *
  * @param result 호스트가 해소하면 성공, 404 `RESIDUAL_HOLD_NOT_FOUND`·409 `RESIDUAL_HOLD_ALREADY_CLEARED` 는 거부다
@@ -52,7 +70,8 @@ data class RobotEmptyOutcome(
 )
 
 /**
- * 운영자 실행 취소와 기체 빈손 확인(P0-b2). 둘 다 운영자 모드의 조작이며(모드 검사는 컨트롤러의 몫) 승인자는 행위자(`X-Ops-User`)다.
+ * 운영자 실행 취소와 기체 빈손 확인(P0-b2), 운영자 결함 감수(S3a JSON 계약 §5.10). 셋 다 운영자 모드의 조작이며(모드 검사는 컨트롤러의
+ * 몫) 승인자는 행위자(`X-Ops-User`)다.
  * 호스트는 그 id 로 `Approver(id, PERSON)` 을 만든다(ADR 43). 사유는 조작 기록과 호스트의 표 둘에 남는다.
  *
  * 취소: 부분 완료(`PARTIAL`) 실행은 picasso 가 계속 돌리므로 그 기체가 배정에서 빠져 있다. 운영 서비스는 작업 지시 id 를 다시 쓰지
@@ -63,6 +82,13 @@ data class RobotEmptyOutcome(
  * 빈손 확인: 정착할 때 로봇 단위의 마지막 파지 관측이 HOLDING 이던 기체에 호스트가 표시를 세우고, 표시가 있는 동안 그 기체를
  * 배정에서 뺀다. 사람이 현장에서 빈손을 확인해야 푼다. 응답 없음 뒤 재조회는 미해소 표시 목록으로 한다. 그 표시가 목록에 없으면
  * 반영됨이다(누가 풀었는지는 호스트의 해소 행이 말한다).
+ *
+ * 결함 감수: picasso `release` 는 막는 결함 전부를 감수하므로 운영자가 본 결함(`sawFaults`)을 함께 보내고, 대조는 실행 호스트가
+ * 잠금 아래에서 한다. 감수는 결함을 지우지 않고 작업 허가 막음을 풀지 않는다. 재작업이 아니라 계획의 다음 단위로 가므로 재작업
+ * 관문([dev.picasso.ops.service.incidents.ReworkGuard])을 거치지 않는다. 호스트는 요청 id 를 감수 행에 적고 실행 목록의
+ * `releases` 로 낸다. 응답 없음 뒤 재조회는 그 실행 하나로 좁힌 실행 목록이다. 목록의 인스턴스가 요청한 인스턴스와 같고 그 실행의
+ * `releases` 에 이 요청 id 가 있으면 반영됨, 실행이 없거나 그런 줄이 없으면 반영 안 됨이다. 인스턴스가 다르면 같은 실행 id 가 다른
+ * 실행일 수 있어 확인하지 못한다(널).
  */
 class ExecutionControls(
     private val host: HostExecutionControls,
@@ -96,6 +122,23 @@ class ExecutionControls(
         return ExecutionCancelOutcome(ran.requestId, executionId, ran.result, ran.confirmation, outcome, ran.body, ran.rejection)
     }
 
+    /** [instanceId]·[reason] 은 컨트롤러가 비어 있지 않음을, [sawFaults] 는 모양을 본 값이다. */
+    fun release(actor: Actor, executionId: String, instanceId: String, reason: String, sawFaults: ArrayNode): ExecutionReleaseOutcome {
+        val request = json.createObjectNode()
+            .put("op", RELEASE_OP)
+            .put("executionId", executionId)
+            .put("approverId", actor.user)
+            .put("instanceId", instanceId)
+        request.set<JsonNode>("sawFaults", sawFaults)
+        val ran = runner.run(
+            actor, executionId, request, reason,
+            accepted = { body -> releaseResultOf(body.path("result").takeIf { it.isTextual }?.asText()) },
+            recheck = { requestId -> recheckRelease(executionId, instanceId, requestId) },
+        ) { requestId -> host.releaseFaults(executionId, actor.user, reason, instanceId, sawFaults, requestId) }
+        val outcome = ran.body?.path("result")?.takeIf { it.isTextual }?.asText()
+        return ExecutionReleaseOutcome(ran.requestId, executionId, ran.result, ran.confirmation, outcome, ran.body, ran.rejection)
+    }
+
     /** [reason] 은 컨트롤러가 비어 있지 않음을 본 값이다. */
     fun confirmEmpty(actor: Actor, robotId: String, markerId: Long, reason: String): RobotEmptyOutcome {
         val request = json.createObjectNode()
@@ -122,6 +165,15 @@ class ExecutionControls(
         return HostRecheck(applied, execution)
     }
 
+    private fun recheckRelease(executionId: String, instanceId: String, requestId: UUID): HostRecheck? {
+        val body = (host.executionsOf(executionId) as? HostCall.Ok)?.value ?: return null
+        if (body.path("instanceId").asText() != instanceId) return null
+        val execution = body.path("executions").takeIf { it.isArray }?.firstOrNull { it.path("executionId").asText() == executionId }
+            ?: return HostRecheck(false, null)
+        val releases = execution.path("releases").takeIf { it.isArray } ?: return HostRecheck(false, execution)
+        return HostRecheck(releases.any { it.path("requestId").asText() == requestId.toString() }, execution)
+    }
+
     private fun recheckClear(markerId: Long): HostRecheck? {
         val holds = (host.residualHolds() as? HostCall.Ok)?.value?.path("holds")?.takeIf { it.isArray } ?: return null
         val open = holds.firstOrNull { it.path("markerId").asLong() == markerId }
@@ -142,6 +194,18 @@ class ExecutionControls(
         fun cancelResultOf(name: String?): OperationResult? = when (name) {
             CANCELED -> OperationResult.SUCCEEDED
             in CANCEL_REFUSALS -> OperationResult.REJECTED
+            else -> null
+        }
+
+        const val RELEASE_OP = "RELEASE_FAULT_BLOCK"
+
+        /** 호스트 감수 결과 이름(S3a JSON 계약 §5.10). */
+        const val RELEASED = "RELEASED"
+        val RELEASE_REFUSALS: Set<String> = setOf("NOT_BLOCKED", "BLOCK_CHANGED", "NOT_FOUND", "REFUSED")
+
+        fun releaseResultOf(name: String?): OperationResult? = when (name) {
+            RELEASED -> OperationResult.SUCCEEDED
+            in RELEASE_REFUSALS -> OperationResult.REJECTED
             else -> null
         }
     }

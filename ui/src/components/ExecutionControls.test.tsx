@@ -1,8 +1,8 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Execution, ExecutionCancelOutcome, ResidualHold, RobotEmptyOutcome, Session } from '../api'
-import { CANCEL_RESULT_LABEL, EXECUTION_CONTROL_TEXT as TEXT } from '../labels'
+import type { Execution, ExecutionCancelOutcome, ExecutionReleaseOutcome, FaultDetail, ResidualHold, RobotEmptyOutcome, Session } from '../api'
+import { CANCEL_RESULT_LABEL, EXECUTION_CONTROL_TEXT as TEXT, RELEASE_RESULT_LABEL } from '../labels'
 import { executionsView, installFakeOps } from '../testing/fakeOps'
 import { OperationsArea } from './OperationsArea'
 
@@ -11,6 +11,20 @@ const engineer: Session = { mode: 'engineer', user: 'lee' }
 const emptyList = { registry: 'OK' as const, checkedAt: 't1', robots: [], robotsAsOf: 't1' }
 const CANCEL = '/api/executions/exec-1/cancel'
 const CLEAR = '/api/robots/humanoid-01/residual-holds/7/clear'
+const RELEASE = '/api/executions/exec-2/release'
+
+/** 다음 단위를 막는 로봇 수준 결함(S3a JSON 계약 §5.9 예). */
+const localization: FaultDetail = {
+  failureClass: 'LOCALIZATION_LOST',
+  errorType: 'LOCALIZATION_LOST',
+  vendorDetail: 'lidar lost',
+  errorHint: '로봇을 알려진 랜드마크 앞으로 옮기고 재측위를 실행하십시오.',
+  references: [{ key: 'KEY_TASK_ID', value: 'JO-2#T1' }],
+  canContinueCurrentTask: false,
+  canAcceptNewTask: false,
+  activeUntilKind: 'KIND_UNTIL_CLEARED',
+  activeUntilTime: '',
+}
 
 function execution(partial: Partial<Execution> = {}): Execution {
   return {
@@ -54,6 +68,25 @@ function canceled(partial: Partial<ExecutionCancelOutcome> = {}): ExecutionCance
     ...partial,
   }
 }
+
+function released(partial: Partial<ExecutionReleaseOutcome> = {}): ExecutionReleaseOutcome {
+  return {
+    requestId: '3f0c6c1e-6a0e-4f43-9a52-2a3b4a9e8d10',
+    executionId: 'exec-2',
+    result: 'SUCCEEDED',
+    confirmation: null,
+    outcome: 'RELEASED',
+    answer: { result: 'RELEASED', executionId: 'exec-2', physicalState: 'RUNNING', detail: null, requestId: '3f0c6c1e-6a0e-4f43-9a52-2a3b4a9e8d10' },
+    rejection: null,
+    ...partial,
+  }
+}
+
+/** 실행 둘: 막힘 없이 도는 exec-1, 결함으로 막힌 exec-2. */
+const blockedPair = () => [
+  execution({ physicalState: 'RUNNING', blockedFaults: [], releases: [] }),
+  execution({ executionId: 'exec-2', jobOrderId: 'JO-2', robotId: 'quadruped-01', physicalState: 'OPERATOR_HOLD', blockedFaults: [localization], releases: [] }),
+]
 
 function emptied(partial: Partial<RobotEmptyOutcome> = {}): RobotEmptyOutcome {
   return {
@@ -142,6 +175,149 @@ describe('운영자 실행 취소', () => {
     await screen.findByRole('table', { name: '실행 목록' })
     expect(screen.queryByRole('form', { name: TEXT.cancelHeading })).toBeNull()
     expect(screen.getByText(TEXT.cancelOperatorOnly)).toBeInTheDocument()
+  })
+})
+
+describe('운영자 결함 감수', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** 감수 폼에서 exec-2 를 고르고 사유와 현장 확인을 넣어 보낸다. */
+  async function release(form: HTMLElement, reason = '재측위 뒤 계속') {
+    await userEvent.selectOptions(within(form).getByLabelText(TEXT.releaseTarget), 'exec-2')
+    await userEvent.type(within(form).getByLabelText(TEXT.releaseReason), reason)
+    await userEvent.click(within(form).getByLabelText(TEXT.releaseConfirm))
+    await userEvent.click(within(form).getByRole('button', { name: TEXT.releaseButton }))
+  }
+
+  it('막는 결함이 있는 실행만 고르고 고른 실행의 결함을 카드로 보이며 사유와 현장 확인이 있어야 본 결함을 실어 보낸다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.executions = executionsView({ executions: blockedPair() })
+    fake.answers.set(RELEASE, { status: 200, body: released() })
+    open()
+    const form = await screen.findByRole('form', { name: TEXT.releaseHeading })
+    expect(form).toHaveTextContent(TEXT.releaseIntro)
+    expect(form).toHaveTextContent(TEXT.releasePermitNote)
+    const options = within(within(form).getByLabelText(TEXT.releaseTarget)).getAllByRole('option').map((option) => option.textContent)
+    expect(options).toEqual([TEXT.releaseChoose, 'exec-2 · JO-2 · quadruped-01'])
+    const button = within(form).getByRole('button', { name: TEXT.releaseButton })
+    expect(button).toBeDisabled()
+    expect(within(form).queryByRole('group', { name: TEXT.releaseFaults })).toBeNull()
+
+    await userEvent.selectOptions(within(form).getByLabelText(TEXT.releaseTarget), 'exec-2')
+    const card = within(within(form).getByRole('group', { name: TEXT.releaseFaults })).getByLabelText(`${TEXT.releaseFaults} 1`)
+    expect(card).toHaveTextContent('LOCALIZATION_LOST(LOCALIZATION_LOST)')
+    expect(card).toHaveTextContent('KEY_TASK_ID=JO-2#T1')
+    expect(card).toHaveTextContent('lidar lost')
+    await userEvent.type(within(form).getByLabelText(TEXT.releaseReason), ' 재측위 뒤 계속 ')
+    expect(button).toBeDisabled()
+    await userEvent.click(within(form).getByLabelText(TEXT.releaseConfirm))
+    await userEvent.click(button)
+
+    expect(posts(fake, RELEASE).map((call) => call.body)).toEqual([
+      { instanceId: 'mw-1', reason: '재측위 뒤 계속', sawFaults: [{ errorType: 'LOCALIZATION_LOST', references: [{ key: 'KEY_TASK_ID', value: 'JO-2#T1' }] }] },
+    ])
+    expect(await within(form).findByRole('status', { name: '결함 감수 결과' })).toHaveTextContent(
+      `exec-2(JO-2) ${TEXT.releaseHeading}: ${RELEASE_RESULT_LABEL.RELEASED}`,
+    )
+    expect(within(form).getByLabelText(TEXT.releaseTarget)).toHaveValue('')
+  })
+
+  it('실행 호스트 결과마다 그 풀이를 보이고 작업 허가 대기와 바뀐 결함의 사실 문장을 붙인다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.executions = executionsView({ executions: blockedPair() })
+    open()
+    const form = await screen.findByRole('form', { name: TEXT.releaseHeading })
+    const status = () => within(form).getByRole('status', { name: '결함 감수 결과' })
+    const permit = '작업 허가 대기 중이다. 감수로 풀리지 않는다: T2 (START)'
+    const changed = '본 결함과 지금 막는 결함이 다르다. 다시 읽고 판단한다: PAYLOAD_LOST[]'
+    const base = released().answer!
+    const cases: [ExecutionReleaseOutcome, string][] = [
+      [released({ answer: { ...base, detail: permit } }), `${RELEASE_RESULT_LABEL.RELEASED}. ${permit}`],
+      [released({ result: 'REJECTED', outcome: 'NOT_BLOCKED', answer: { ...base, result: 'NOT_BLOCKED', detail: permit } }), `${RELEASE_RESULT_LABEL.NOT_BLOCKED}. ${permit}`],
+      [released({ result: 'REJECTED', outcome: 'BLOCK_CHANGED', answer: { ...base, result: 'BLOCK_CHANGED', detail: changed } }), `${RELEASE_RESULT_LABEL.BLOCK_CHANGED}. ${changed}`],
+      [released({ result: 'REJECTED', outcome: 'NOT_FOUND', answer: { ...base, result: 'NOT_FOUND' } }), RELEASE_RESULT_LABEL.NOT_FOUND],
+      [released({ result: 'REJECTED', outcome: 'REFUSED', answer: { ...base, result: 'REFUSED' } }), RELEASE_RESULT_LABEL.REFUSED],
+      [
+        released({ result: 'REJECTED', outcome: null, answer: null, rejection: { status: 409, error: 'REQUEST_ID_REUSED', detail: '결함 감수의 요청 id 가 이미 쓰였다' } }),
+        '실행 호스트가 거부함(요청 id 재사용). 결함 감수의 요청 id 가 이미 쓰였다',
+      ],
+    ]
+    for (const [answer, text] of cases) {
+      fake.answers.set(RELEASE, { status: 200, body: answer })
+      await release(form)
+      await waitFor(() => expect(status()).toHaveTextContent(`exec-2(JO-2) ${TEXT.releaseHeading}: ${text}`))
+    }
+    fake.answers.set(RELEASE, { status: 400, body: { error: 'RELEASE_BAD_REQUEST', detail: 'sawFaults 가 틀리다' } })
+    await release(form)
+    await waitFor(() => expect(status()).toHaveTextContent('보내지 않음(감수 본문 오류). sawFaults 가 틀리다'))
+  })
+
+  it('응답이 없으면 다시 읽은 결과 셋을 가르고 운영 서비스가 답하지 않으면 결과 모름이다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.executions = executionsView({ executions: blockedPair() })
+    open()
+    const form = await screen.findByRole('form', { name: TEXT.releaseHeading })
+    const status = () => within(form).getByRole('status', { name: '결함 감수 결과' })
+    const silent = { result: 'NO_RESPONSE' as const, outcome: null, answer: null }
+    const cases: [ExecutionReleaseOutcome, string][] = [
+      [released({ ...silent, confirmation: 'CONFIRMED_APPLIED' }), TEXT.releaseApplied],
+      [released({ ...silent, confirmation: 'CONFIRMED_NOT_APPLIED' }), TEXT.releaseNotApplied],
+      [released({ ...silent, confirmation: null }), TEXT.releaseUnconfirmed],
+    ]
+    for (const [answer, text] of cases) {
+      fake.answers.set(RELEASE, { status: 200, body: answer })
+      await release(form)
+      await waitFor(() => expect(status()).toHaveTextContent(`exec-2(JO-2) ${TEXT.releaseHeading}: ${text}`))
+    }
+    fake.answers.set(RELEASE, { status: 502, body: {} })
+    await release(form)
+    await waitFor(() => expect(status()).toHaveTextContent('결과 모름(운영 서비스 응답 502). 실행 목록에서 확인하십시오'))
+  })
+
+  it('엔지니어 모드에는 감수 폼이 없고 막힌 실행이 있을 때만 운영자 모드에서 한다는 안내가 있으며 막힌 실행이 없으면 운영자 모드에도 폼이 없다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.executions = executionsView({ executions: blockedPair() })
+    const blockedView = open(engineer)
+    await screen.findByRole('table', { name: '실행 목록' })
+    expect(screen.queryByRole('form', { name: TEXT.releaseHeading })).toBeNull()
+    expect(screen.getByText(TEXT.releaseOperatorOnly)).toBeInTheDocument()
+    blockedView.unmount()
+
+    fake.executions = executionsView({ executions: [execution({ physicalState: 'RUNNING', blockedFaults: [] })] })
+    const engineerView = open(engineer)
+    await screen.findByRole('table', { name: '실행 목록' })
+    expect(screen.queryByText(TEXT.releaseOperatorOnly)).toBeNull()
+    engineerView.unmount()
+    open()
+    await screen.findByRole('form', { name: TEXT.cancelHeading })
+    expect(screen.queryByRole('form', { name: TEXT.releaseHeading })).toBeNull()
+  })
+
+  it('물리 상태 칸에 지금 막는 결함의 수와 그 작업 지시에 건 감수를 보이고 작업 허가 대기 표시와 섞지 않는다', async () => {
+    const fake = installFakeOps(emptyList)
+    const earlier = { requestId: null, approverId: 'park', reason: '첫 재측위', faults: [localization], recordedAt: '2026-10-17T01:00:00Z' }
+    const later = { requestId: 'r-2', approverId: 'kim', reason: '둘째 재측위', faults: [localization], recordedAt: '2026-10-17T02:00:00Z' }
+    fake.executions = executionsView({
+      executions: [
+        execution({ physicalState: 'RUNNING', blockedFaults: [], releases: [earlier] }),
+        execution({
+          executionId: 'exec-2',
+          jobOrderId: 'JO-2',
+          physicalState: 'OPERATOR_HOLD',
+          blockedFaults: [localization, { ...localization, errorType: 'PAYLOAD_LOST' }],
+          releases: [earlier, later],
+        }),
+      ],
+    })
+    open()
+    const table = await screen.findByRole('table', { name: '실행 목록' })
+    const [, blocked, running] = within(table).getAllByRole('row')
+    const state = (row: HTMLElement) => within(row).getAllByRole('cell')[5]
+    expect(state(blocked).textContent).toBe(`OPERATOR_HOLD${TEXT.blockedCount(2)} (${TEXT.releasedBy}: park, 첫 재측위) (${TEXT.releasedBy}: kim, 둘째 재측위)`)
+    expect(state(running).textContent).toBe(`RUNNING (${TEXT.releasedBy}: park, 첫 재측위)`)
+    expect(within(table).queryByRole('region', { name: '작업 허가 대기' })).toBeNull()
   })
 })
 

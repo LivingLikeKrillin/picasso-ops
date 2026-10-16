@@ -561,7 +561,26 @@ export interface Execution {
    * 운영자 보류(물리 상태 OPERATOR_HOLD)·결함 막음(작업 응답 blockedBy)과 다른 칸이다.
    */
   permitBlock?: PermitBlock | null
+  /**
+   * 지금 다음 단위를 막고 있는 기체 결함 전부(S3a JSON 계약 §5.9). 인시던트 상세 `blockedBy` 와 같은 결함 객체이고 없으면 빈 배열이다.
+   * 작업 응답의 `blockedBy`(분류 이름)는 다음 작업 응답까지 옛 값일 수 있지만 이것은 지금 값이다. 옛 호스트는 칸을 싣지 않는다.
+   */
+  blockedFaults?: FaultDetail[]
+  /** 그 작업 지시에 건 운영자 결함 감수(S3a JSON 계약 §5.9). 적은 순서이고 재기동 전 인스턴스의 것도 싣는다. 옛 호스트는 칸을 싣지 않는다. */
+  releases?: ReleaseRecord[]
 }
+
+/** 운영자 결함 감수 한 건(S3a JSON 계약 §5.9). `faults` 는 감수할 때의 `blockedFaults`, `recordedAt` 은 실행 호스트가 적은 시각이다. */
+export interface ReleaseRecord {
+  requestId: string | null
+  approverId: string
+  reason: string
+  faults: FaultDetail[]
+  recordedAt: string
+}
+
+/** 지금 결함으로 막혀 있는 실행. 실행 호스트가 본 결함과 다시 대조하므로 화면에서는 고르기·표시 편의다. */
+export const faultBlocked = (execution: Execution) => (execution.blockedFaults?.length ?? 0) > 0
 
 /** 작업 허가 값(ADR 52). UNKNOWN 은 막음으로 읽는다. */
 export type WorkPermitValue = 'PERMITTED' | 'INHIBITED' | 'UNKNOWN'
@@ -1233,6 +1252,45 @@ export const cancelExecution = (session: Session, target: { instanceId: string; 
   postOps<ExecutionCancelOutcome>(`/api/executions/${encodeURIComponent(target.executionId)}/cancel`, session, {
     instanceId: target.instanceId,
     reason,
+  })
+
+/** 실행 호스트 결함 감수 결과 이름(S3a JSON 계약 §5.10). */
+export type ReleaseResult = 'RELEASED' | 'NOT_BLOCKED' | 'BLOCK_CHANGED' | 'NOT_FOUND' | 'REFUSED'
+
+/** 실행 호스트 결함 감수의 200 본문(S3a JSON 계약 §5.10). `detail` 은 작업 허가 대기·정착·바뀐 결함 같은 사실 문장이다. */
+export interface ReleaseAnswer {
+  result: ReleaseResult
+  executionId: string
+  physicalState: string | null
+  detail: string | null
+  requestId: string | null
+}
+
+/** 운영자 결함 감수의 200 응답(S3a JSON 계약 §9.8). 화면은 `outcome`(실행 호스트 결과 이름 그대로)으로 가른다. */
+export interface ExecutionReleaseOutcome {
+  requestId: string
+  executionId: string
+  result: 'SUCCEEDED' | 'REJECTED' | 'NO_RESPONSE'
+  confirmation: 'CONFIRMED_APPLIED' | 'CONFIRMED_NOT_APPLIED' | null
+  outcome: ReleaseResult | null
+  answer: ReleaseAnswer | null
+  rejection: HostRejection | null
+}
+
+/**
+ * 승인자는 싣지 않는다(ADR 43). `sawFaults` 는 운영자가 화면에서 본 막는 결함이다. 실행 호스트가 지금 막는 결함과 대조하고 다르면
+ * `BLOCK_CHANGED` 로 감수하지 않는다. 인스턴스 규칙은 취소와 같다.
+ */
+export const releaseFaults = (
+  session: Session,
+  target: { instanceId: string; executionId: string },
+  sawFaults: FaultDetail[],
+  reason: string,
+) =>
+  postOps<ExecutionReleaseOutcome>(`/api/executions/${encodeURIComponent(target.executionId)}/release`, session, {
+    instanceId: target.instanceId,
+    reason,
+    sawFaults: sawFaults.map((fault) => ({ errorType: fault.errorType, references: fault.references.map(({ key, value }) => ({ key, value })) })),
   })
 
 /**

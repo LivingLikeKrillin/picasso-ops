@@ -9,6 +9,7 @@ import type {
   MockRunFailure,
   MockRunView,
   Owner,
+  ReleaseResult,
   SkillFit,
   SourceMissing,
   SourceUnobserved,
@@ -68,6 +69,7 @@ export const KIND_LABEL: Record<string, string> = {
   MODE_NOT_ALLOWED: '이 모드에서 할 수 없는 조작',
   ACTOR_REQUIRED: '행위자 없음',
   // 임무 정의 거부 10종(S3b JSON 계약 §3.1). 호스트는 바닥 소유를 쥐지 않아 FLOOR_UNOWNED 를 내지 않지만 이름은 둔다.
+  // SOURCE_OBSERVATION_UNUSED 는 picasso `b57964e` 가 더한 열한째 종류다. 서브모듈을 올리기 전에는 호스트가 내지 않는다.
   UNREADABLE: '읽을 수 없는 정의',
   DUPLICATE_NODE_ID: '노드 id 겹침',
   DEADLINE_INVALID: '대기 기한 오류',
@@ -79,6 +81,7 @@ export const KIND_LABEL: Record<string, string> = {
   SKILL_NOT_ON_SITE: '현장에 없는 스킬',
   SAFETY_SIGNAL_WAIT: '안전 신호 대기',
   SOURCE_OBSERVATION_UNDECLARED: '출발 관측 선언 없음',
+  SOURCE_OBSERVATION_UNUSED: '출발 관측 선언 미사용',
   // 임무·신호 조작의 사전 거부와 호스트·현장의 4xx(S3b JSON 계약 §10).
   MISSION_BAD_REQUEST: '임무 요청 오류',
   REASON_REQUIRED: '사유 없음',
@@ -103,6 +106,8 @@ export const KIND_LABEL: Record<string, string> = {
   CLEAR_BAD_REQUEST: '빈손 확인 본문 오류',
   RESIDUAL_HOLD_NOT_FOUND: '없는 잔여 파지 표시',
   RESIDUAL_HOLD_ALREADY_CLEARED: '이미 해소한 잔여 파지 표시',
+  // 운영자 결함 감수(S3a JSON 계약 §9.8). 요청 id 재사용(REQUEST_ID_REUSED)과 인스턴스 다름은 위의 이름을 같이 쓴다.
+  RELEASE_BAD_REQUEST: '감수 본문 오류',
 }
 
 /** «시운전» 칸(P2·S1d 스펙 §8.5). 연결 칸과 합치지 않는다. */
@@ -201,6 +206,15 @@ export const CANCEL_RESULT_LABEL: Record<CancelResult, string> = {
   REFUSED: '에이전트는 실행을 취소하지 못합니다',
 }
 
+/** 실행 호스트 결함 감수 결과(S3a JSON 계약 §5.10). */
+export const RELEASE_RESULT_LABEL: Record<ReleaseResult, string> = {
+  RELEASED: '감수했습니다. 실행 호스트의 다음 pump 에서 다음 단위를 냅니다',
+  NOT_BLOCKED: '막는 결함이 없습니다',
+  BLOCK_CHANGED: '본 결함과 지금 막는 결함이 다릅니다. 실행 목록을 다시 읽고 결함을 확인한 뒤 다시 판단하십시오',
+  NOT_FOUND: '지금 실행 호스트 인스턴스에 없는 실행입니다',
+  REFUSED: '에이전트는 결함을 감수하지 못합니다',
+}
+
 /** 실행 목록의 «활성 + 최근 N, 이력은 페이지»(HA 설계 기록 §10) 글자. */
 export const EXECUTION_LIST_TEXT = {
   scope: (recent: number) => `진행 중이거나 판단이 필요한 실행과 최근 정착한 실행 ${recent}건을 표시합니다. 그보다 오래된 실행은 이전 실행에서 확인합니다.`,
@@ -249,6 +263,24 @@ export const EXECUTION_CONTROL_TEXT = {
   emptyConfirm: '기체 손에 남은 물체가 없음을 현장에서 직접 확인했습니다',
   emptyOperatorOnly: '기체 빈손 확인은 운영자 모드에서 합니다',
   emptyDone: '빈손 확인이 기록되었습니다. 그 기체는 다음 배정 판정부터 다시 판정됩니다',
+  // 운영자 결함 감수(S3a JSON 계약 §5.10·§9.8).
+  releaseHeading: '결함 감수',
+  releaseIntro: '감수는 결함을 지우지 않으며, 이 결함들이 다음 단위를 막지 않게 하고 다음 로봇 단위를 냅니다. 기체 상태를 현장에서 확인한 뒤 결정하세요.',
+  releaseRepeat: '같은 결함은 다시 막지 않고 새 결함은 다시 막습니다.',
+  releasePermitNote: '작업 허가 대기는 감수로 풀리지 않습니다.',
+  releaseTarget: '감수할 실행',
+  releaseChoose: '실행 선택',
+  releaseFaults: '감수할 결함',
+  releaseReason: '감수 사유',
+  releaseConfirm: '기체 상태를 현장에서 확인했고 이 결함을 안고 계속합니다',
+  releaseButton: '현장 확인 후 결함 감수',
+  releaseOperatorOnly: '결함 감수는 운영자 모드에서 합니다',
+  blockedCount: (count: number) => `결함 막음 ${count}건`,
+  releasedBy: '결함 감수',
+  incidentPointer: '이 실행은 지금도 결함으로 막혀 있습니다. 감수는 운영 영역의 실행 구역에서 합니다.',
+  releaseApplied: '응답은 없었으나 다시 읽어 보니 감수가 걸림',
+  releaseNotApplied: '응답 없음. 다시 읽어 보니 감수가 걸리지 않음. 실행 목록에서 확인하십시오',
+  releaseUnconfirmed: '응답 없음. 감수가 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오',
 } as const
 
 /** 조치 탐색이 대안을 못 찾은 종류(picasso `Remedy.None.Cause`). 「없다」와 「덜 봤다」를 가른다. */

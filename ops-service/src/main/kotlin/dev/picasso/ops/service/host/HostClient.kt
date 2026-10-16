@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.core.JacksonException
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
@@ -306,9 +307,9 @@ fun interface HostJobResponses {
 }
 
 /**
- * 운영자 실행 취소와 잔여 파지 표시(P0-b2). 시험이 호스트 없이 대신 끼운다.
+ * 운영자 실행 취소와 잔여 파지 표시(P0-b2), 운영자 결함 감수(S3a JSON 계약 §5.10). 시험이 호스트 없이 대신 끼운다.
  *
- * 읽기 둘은 본문을 해석하지 않고 넘긴다. 쓰기 둘은 응답이 오면 코드와 본문을 그대로 넘기고 분류는 부르는 쪽이 한다.
+ * 읽기 둘은 본문을 해석하지 않고 넘긴다. 쓰기 셋은 응답이 오면 코드와 본문을 그대로 넘기고 분류는 부르는 쪽이 한다.
  */
 interface HostExecutionControls {
     /** `GET /host/executions` 본문 그대로. 좁혀 읽을 줄 모르는 구현의 [executionsOf] 가 쓴다. */
@@ -325,6 +326,14 @@ interface HostExecutionControls {
      * 409 `INSTANCE_MISMATCH` 로 막는다. 결과(CANCELED·NOT_CANCELABLE·NOT_FOUND·REFUSED)는 200 본문의 `result` 에 있다.
      */
     fun cancelExecution(executionId: String, approverId: String, reason: String, instanceId: String, requestId: UUID): HostWrite
+
+    /**
+     * `POST /host/executions/{executionId}/release`(S3a JSON 계약 §5.10). [sawFaults] 는 운영자가 본 막는 결함
+     * `[{errorType, references:[{key, value}]}]` 이고 호스트가 지금 막는 결함과 대조한다. [instanceId] 와 요청 id 규칙은
+     * [cancelExecution] 과 같고, 호스트는 요청 id 를 감수 행에 적는다. 결과(RELEASED·NOT_BLOCKED·BLOCK_CHANGED·NOT_FOUND·REFUSED)는
+     * 200 본문의 `result` 에 있다.
+     */
+    fun releaseFaults(executionId: String, approverId: String, reason: String, instanceId: String, sawFaults: ArrayNode, requestId: UUID): HostWrite
 
     /** `GET /host/robots/residual-holds` 본문 그대로. */
     fun residualHolds(): HostCall<JsonNode>
@@ -521,6 +530,23 @@ class HostClient(
             .put("instanceId", instanceId)
             .put("requestId", requestId.toString())
         return post("/host/executions/${segment(executionId)}/cancel", body)
+    }
+
+    override fun releaseFaults(
+        executionId: String,
+        approverId: String,
+        reason: String,
+        instanceId: String,
+        sawFaults: ArrayNode,
+        requestId: UUID,
+    ): HostWrite {
+        val body = json.createObjectNode()
+            .put("approverId", approverId)
+            .put("reason", reason)
+            .put("instanceId", instanceId)
+        body.set<JsonNode>("sawFaults", sawFaults)
+        body.put("requestId", requestId.toString())
+        return post("/host/executions/${segment(executionId)}/release", body)
     }
 
     override fun residualHolds(): HostCall<JsonNode> = get("/host/robots/residual-holds")

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { fetchIncident, resolveHold } from '../api'
+import { faultBlocked, fetchIncident, resolveHold } from '../api'
 import type {
   Delivered,
   EarlierIncidentRow,
-  FaultDetail,
+  ExecutionPage,
   HoldDecision,
   HoldResolveOutcome,
   IncidentDetail,
@@ -13,8 +13,9 @@ import type {
   IncidentsView,
   Session,
 } from '../api'
-import { DECISION_LABEL, kindLabel, rejectionText } from '../labels'
+import { DECISION_LABEL, EXECUTION_CONTROL_TEXT, kindLabel, rejectionText } from '../labels'
 import type { HostRead } from './ExecutionList'
+import { FaultCard } from './FaultCard'
 
 interface Props {
   read: HostRead<IncidentsView>
@@ -23,6 +24,8 @@ interface Props {
   tick: number
   /** 판단을 보낸 뒤 부른다. 인시던트와 실행 목록을 곧바로, 그리고 조금 뒤 한 번 더 읽는다. */
   onDecided: () => void
+  /** 운영 영역이 읽은 실행 목록. 상세의 실행이 지금 결함으로 막혀 있는지 가린다. 없으면 가리지 않는다. */
+  executions?: ExecutionPage | null
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -56,7 +59,7 @@ function judgement(row: IncidentRow): string {
  * 상세에는 판단 폼이 없다. 그 단위는 다시 지은 실행에서 새로 판단해야 한다. 지금 인스턴스의 판단은 상세의 `instanceId` 를
  * 함께 보내고, 그 사이 재기동했으면 실행 호스트가 거부한다.
  */
-export function IncidentSection({ read, session, tick, onDecided }: Props) {
+export function IncidentSection({ read, session, tick, onDecided, executions = null }: Props) {
   const [selected, setSelected] = useState<Selection | null>(null)
   const [detail, setDetail] = useState<{ key: string; lookup: IncidentLookup | null; error: string | null } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -162,6 +165,7 @@ export function IncidentSection({ read, session, tick, onDecided }: Props) {
                 detail={shown.lookup.detail}
                 session={session}
                 decidable={!earlier}
+                blockedNow={!earlier && stillBlocked(executions, shown.lookup.detail)}
                 busy={busy}
                 onDecide={(decision, reason) => {
                   if (shown.lookup?.kind === 'found') decide(shown.lookup.detail, decision, reason)
@@ -173,6 +177,15 @@ export function IncidentSection({ read, session, tick, onDecided }: Props) {
       )}
     </section>
   )
+}
+
+/**
+ * 상세의 실행이 지금 결함으로 막혀 있는가(S3a JSON 계약 §5.9). 실행 목록이 같은 인스턴스일 때만 실행 id 로 찾는다. 다른 인스턴스의
+ * `exec-N` 은 다른 실행일 수 있다.
+ */
+function stillBlocked(page: ExecutionPage | null, detail: IncidentDetail): boolean {
+  if (page === null || page.instanceId !== detail.instanceId) return false
+  return page.executions.some((execution) => execution.executionId === detail.executionId && faultBlocked(execution))
 }
 
 /** 고른 인시던트. 재기동하면 id 를 다시 세므로 인스턴스와 짝을 짓는다. */
@@ -257,6 +270,8 @@ interface DetailProps {
   session: Session
   /** 지금 인스턴스의 상세일 때만 참이다. 거짓이면 보류여도 판단 폼을 두지 않는다. */
   decidable: boolean
+  /** 그 실행이 지금도 결함으로 막혀 있으면 참이다. 감수는 실행 구역에서 한다는 안내를 붙인다. */
+  blockedNow: boolean
   busy: boolean
   onDecide: (decision: HoldDecision, reason: string) => void
 }
@@ -265,7 +280,7 @@ interface DetailProps {
  * 인시던트 상세(S4a 스펙 §8.2). 판단은 «사람의 판단» 에, 봉인 때의 근거는 «관측» 에 따로 둔다. 확인 결과는 코드 이름 그대로
  * 보인다. `NOT_REQUESTED` 를 «설비 확인 안 함» 으로 풀면, 설비 슬롯을 실제로 읽은 인시던트를 틀리게 읽힌다(S4a JSON 계약 §4).
  */
-function Detail({ detail, session, decidable, busy, onDecide }: DetailProps) {
+function Detail({ detail, session, decidable, blockedNow, busy, onDecide }: DetailProps) {
   const { intent, step } = detail
   const position = step.at === 0 ? `계획에 없음(계획 ${step.plan.length}개)` : `${step.at}/${step.plan.length}`
   return (
@@ -350,6 +365,7 @@ function Detail({ detail, session, decidable, busy, onDecide }: DetailProps) {
             <FaultCard key={index} fault={fault} label={`실행을 막던 결함 ${index + 1}`} />
           ))
         )}
+        {blockedNow && <p role="note">{EXECUTION_CONTROL_TEXT.incidentPointer}</p>}
         <h4>
           근거 윈도우(앞 {seconds(intent.evidenceBeforeSeconds)}, 뒤 {seconds(intent.evidenceAfterSeconds)})
         </h4>
@@ -407,36 +423,6 @@ function Judgement({ resolution, withoutEvidence }: { resolution: IncidentResolu
         </p>
       )}
     </section>
-  )
-}
-
-function FaultCard({ fault, label }: { fault: FaultDetail; label: string }) {
-  return (
-    <dl aria-label={label}>
-      <dt>분류</dt>
-      <dd>
-        {fault.failureClass}({fault.errorType})
-      </dd>
-      <dt>조치 힌트</dt>
-      <dd>{fault.errorHint === '' ? '없음' : fault.errorHint}</dd>
-      {fault.vendorDetail !== '' && (
-        <>
-          <dt>벤더 원문</dt>
-          <dd>{fault.vendorDetail}</dd>
-        </>
-      )}
-      <dt>참조</dt>
-      <dd>{fault.references.map((ref) => `${ref.key}=${ref.value}`).join(', ') || '없음'}</dd>
-      <dt>지금 태스크 계속</dt>
-      <dd>{fault.canContinueCurrentTask ? '가능' : '불가'}</dd>
-      <dt>새 태스크 받기</dt>
-      <dd>{fault.canAcceptNewTask ? '가능' : '불가'}</dd>
-      <dt>유지</dt>
-      <dd>
-        {fault.activeUntilKind}
-        {fault.activeUntilTime !== '' && ` ${fault.activeUntilTime}`}
-      </dd>
-    </dl>
   )
 }
 
