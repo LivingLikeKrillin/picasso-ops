@@ -6,6 +6,8 @@ import dev.picasso.middleware.Evidence
 import dev.picasso.middleware.JobOrder
 import dev.picasso.middleware.MaterialRequirement
 import dev.picasso.middleware.OperatorDecision
+import dev.picasso.ops.host.FaultReferenceView
+import dev.picasso.ops.host.FaultSighting
 import dev.picasso.ops.host.MissionHost
 import dev.picasso.ops.host.cell.SourceConfirmation
 import java.time.Instant
@@ -22,6 +24,12 @@ data class ResolveRequest(val decision: OperatorDecision, val approverId: String
 
 /** 운영자 실행 취소 요청(P0-b2). [instanceId] 는 운영 서비스가 실행 목록에서 받은 인스턴스다. [requestId] 는 응답에 그대로 돌려줄 뿐이다. */
 data class CancelRequest(val approverId: String, val reason: String, val instanceId: String, val requestId: String?)
+
+/**
+ * 운영자 결함 감수 요청(결함 감수·조치 승인 노출 설계 제안 §2.1). [sawFaults] 는 운영자가 본 막는 결함이다. [requestId] 는 감수 행에 적고
+ * 같은 id 를 두 번 받지 않는다.
+ */
+data class ReleaseRequest(val approverId: String, val reason: String, val instanceId: String, val sawFaults: List<FaultSighting>, val requestId: String?)
 
 /** 잔여 파지 표시 해소 요청(P0-b2). */
 data class ClearRequest(val approverId: String, val reason: String, val requestId: String?)
@@ -122,6 +130,34 @@ object HostRequests {
     fun cancel(body: JsonNode?): CancelRequest {
         if (body == null || !body.isObject) throw BadRequest(BAD_REQUEST, "본문이 JSON 객체가 아니다")
         return CancelRequest(text(body, "approverId"), text(body, "reason").trim(), text(body, "instanceId"), requestId(body))
+    }
+
+    /**
+     * 운영자 결함 감수 `{approverId, reason, instanceId, sawFaults, requestId?}` 를 읽는다. 앞 세 칸과 requestId 의 규칙은 [cancel] 과 같다.
+     * sawFaults 는 비어 있지 않은 객체의 배열이고 원소마다 `errorType` 이 비어 있지 않은 문자열, `references` 가 객체의 배열(비어도 된다)이며
+     * 참조마다 `key` 가 비어 있지 않은 문자열, `value` 가 문자열이다.
+     */
+    fun release(body: JsonNode?): ReleaseRequest {
+        if (body == null || !body.isObject) throw BadRequest(BAD_REQUEST, "본문이 JSON 객체가 아니다")
+        val saw = body.get("sawFaults")
+        if (saw == null || !saw.isArray || saw.isEmpty || saw.any { !it.isObject }) {
+            throw BadRequest(BAD_REQUEST, "sawFaults 가 비어 있지 않은 객체의 배열이 아니다")
+        }
+        val sightings = saw.map { fault ->
+            val references = fault.get("references")
+            if (references == null || !references.isArray || references.any { !it.isObject }) {
+                throw BadRequest(BAD_REQUEST, "sawFaults 의 references 가 객체의 배열이 아니다")
+            }
+            FaultSighting(
+                text(fault, "errorType"),
+                references.map { reference ->
+                    val value = reference.get("value")?.takeIf { it.isTextual }?.asText()
+                        ?: throw BadRequest(BAD_REQUEST, "sawFaults 의 참조 value 가 문자열이 아니다")
+                    FaultReferenceView(text(reference, "key"), value)
+                },
+            )
+        }
+        return ReleaseRequest(text(body, "approverId"), text(body, "reason").trim(), text(body, "instanceId"), sightings, requestId(body))
     }
 
     /** 잔여 파지 표시 해소 `{approverId, reason, requestId?}` 를 읽는다(P0-b2). 규칙은 [cancel] 과 같다. */

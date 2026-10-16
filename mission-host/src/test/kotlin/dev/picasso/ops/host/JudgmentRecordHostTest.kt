@@ -40,7 +40,8 @@ import kotlin.test.assertTrue
  * 호스트만 다시 띄우고 mimic 과 DB 는 그대로다(S4b 의 재기동과 같은 배선). pump 를 멈추고 볼 때는 호스트 잠금을 쥔다
  * ([MissionHost.exclusive]) — 그 안에서 부른 제출·판단은 같은 스레드라 잠금을 다시 잡고, pump 는 그동안 기다린다.
  *
- * 결함 감수와 조치 승인은 이 호스트가 부르지 않으므로(그 REST 가 없다) 그 둘은 이전 인스턴스가 적었을 기록을 DB 에 직접 넣어 본다.
+ * 조치 승인은 이 호스트가 부르지 않으므로(그 REST 가 없다) 이전 인스턴스가 적었을 기록을 DB 에 직접 넣어 본다. 결함 감수는 호스트 REST
+ * (`POST /host/executions/{executionId}/release`)로 건다.
  */
 class JudgmentRecordHostTest {
 
@@ -175,17 +176,30 @@ class JudgmentRecordHostTest {
             bench.restartHost()
             bench.eventually("다시 막힘") { bench.execution("exec-1")?.get("physicalState")?.asText() == "OPERATOR_HOLD" }
 
-            // 이전 인스턴스가 운영자 해제(picasso `release`)를 기록했다면 남았을 기록이다. 이 호스트에는 그 REST 가 없다.
-            bench.host.exclusive {
-                val latest = bench.records("JO-1").last()
-                val acknowledged = decode(latest).copy(acknowledgedFaults = listOf(key))
-                insertRecord("JO-1", latest.instanceId, latest.executionId, JudgmentRecordWire.encode(acknowledged))
-            }
+            // 운영자가 이 인스턴스에서 감수한다(호스트 REST). 감수 직후의 판단 기록이 감수한 결함의 열쇠를 싣는다.
+            val again = bench.execution("exec-1")!!
+            val released = bench.post(
+                "/host/executions/exec-1/release",
+                JSON.writeValueAsString(
+                    linkedMapOf(
+                        "approverId" to "kim", "reason" to "재측위 확인", "instanceId" to bench.host.instanceId,
+                        "sawFaults" to again["blockedFaults"].map { mapOf("errorType" to it["errorType"].asText(), "references" to it["references"]) },
+                    ),
+                ),
+            ).body!!
+            assertEquals("RELEASED", released["result"].asText(), released.toString())
+            val releasedBy = bench.host.instanceId
             bench.restartHost()
             bench.idlePumps(6)
             val resumed = bench.execution("exec-1")!!
             assertEquals("RUNNING", resumed["physicalState"].asText(), resumed.toString())
             assertEquals(listOf(key), bench.latestAny("JO-1").acknowledgedFaults)
+            // 감수 이력은 작업 지시 id 로 읽어 앞 인스턴스의 감수도 싣는다.
+            assertEquals(listOf("kim" to "재측위 확인"), resumed["releases"].map { it["approverId"].asText() to it["reason"].asText() }, resumed.toString())
+            assertEquals(
+                listOf(releasedBy),
+                PostgresSupport.queryAll("SELECT instance_id FROM mission.execution_fault_release WHERE job_order_id = 'JO-1'") { it.getString(1) },
+            )
         }
     }
 

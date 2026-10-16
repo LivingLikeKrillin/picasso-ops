@@ -9,6 +9,7 @@ import java.sql.Types
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
+import java.util.UUID
 
 /**
  * 일지 행 이후의 일(S4b 스펙 T2·T3). [REOPENED] 는 이 인스턴스가 정착을 적은 실행이 개정판 수락이나 운영자 판단으로 다시 도는 것이다(V10).
@@ -162,6 +163,23 @@ data class ResidualHoldRow(
 data class ResidualHoldClearingRow(val markerId: Long, val approverId: String, val approverKind: String, val reason: String, val clearedAt: Instant)
 
 /**
+ * 운영자 결함 감수 한 행(V11). [faults] 는 감수한 막는 결함 전부의 JSON 배열 글자(호스트 `FaultDetailView` 모양)다. [requestId] 는
+ * 운영 서비스가 실은 요청 id 이고 없으면 `null` 이다.
+ */
+data class FaultReleaseRow(
+    val releaseId: Long,
+    val instanceId: String,
+    val executionId: String,
+    val jobOrderId: String,
+    val faults: String,
+    val approverId: String,
+    val approverKind: String,
+    val reason: String,
+    val requestId: UUID?,
+    val recordedAt: Instant,
+)
+
+/**
  * 판단 기록 한 행(V6, picasso 한계 §15.221 · 판단 기록 영속). [record] 는 picasso `JudgmentRecordWire` 의 글자 그대로다.
  *
  * @param wireVersion 적을 때의 `JudgmentRecordWire.SCHEMA_VERSION`
@@ -180,7 +198,7 @@ data class JudgmentRecordRow(
 /**
  * 실행 호스트의 기록(S4b 스펙 §6.1). 실행 일지와 그 이벤트, 송신 기록, 인시던트 사본과 판단의 다섯 표다. 덧붙이기와 읽기만 있다.
  * P0-b2 의 V5 가 운영자 실행 취소, 잔여 파지 표시와 그 해소의 세 표를 더한다. HA 단계 0 의 V6 이 판단 기록(덧붙이기만)을, V7 이
- * 인스턴스 심장박동(인스턴스마다 한 행, 그 인스턴스만 고침)을 더한다.
+ * 인스턴스 심장박동(인스턴스마다 한 행, 그 인스턴스만 고침)을 더한다. V11 이 운영자 결함 감수(덧붙이기만)를 더한다.
  *
  * pump 뒤 기록은 [inTransaction] 하나로 묶는다(§6.2). 그 밖의 호출은 문장 하나가 한 트랜잭션이다. 호스트 잠금 아래에서 부를 수
  * 있고, 연결을 쥔 채 호스트 잠금을 기다리는 길은 없다(S3b 와 같은 잠금 순서).
@@ -653,6 +671,54 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             .query { rs, _ -> clearingRow(rs) }
             .single()
 
+    // ── 운영자 결함 감수(V11)
+
+    /** 감수 한 행을 적는다. 같은 [requestId] 가 이미 있으면 `DuplicateKeyException`(쓰기 실패)이다. */
+    fun release(
+        instanceId: String,
+        executionId: String,
+        jobOrderId: String,
+        faults: String,
+        approverId: String,
+        approverKind: String,
+        reason: String,
+        requestId: UUID?,
+    ): FaultReleaseRow =
+        jdbc.sql(
+            """
+            INSERT INTO mission.execution_fault_release (instance_id, execution_id, job_order_id, faults, approver_id, approver_kind, reason, request_id)
+            VALUES (:instanceId, :executionId, :jobOrderId, CAST(:faults AS JSONB), :approverId, :approverKind, :reason, :requestId)
+            RETURNING $RELEASE_COLUMNS
+            """.trimIndent(),
+        )
+            .param("instanceId", instanceId)
+            .param("executionId", executionId)
+            .param("jobOrderId", jobOrderId)
+            .param("faults", faults)
+            .param("approverId", approverId)
+            .param("approverKind", approverKind)
+            .param("reason", reason)
+            .param("requestId", requestId, Types.OTHER)
+            .query { rs, _ -> releaseRow(rs) }
+            .single()
+
+    /** 그 요청 id 의 감수 행. 없으면 `null` 이다. */
+    fun releaseByRequest(requestId: UUID): FaultReleaseRow? =
+        jdbc.sql("SELECT $RELEASE_COLUMNS FROM mission.execution_fault_release WHERE request_id = :requestId")
+            .param("requestId", requestId)
+            .query { rs, _ -> releaseRow(rs) }
+            .optional()
+            .orElse(null)
+
+    /** [jobOrderIds] 의 감수 행(인스턴스 무관). 적은 순서다. 비어 있으면 묻지 않는다. */
+    fun releases(jobOrderIds: Collection<String>): List<FaultReleaseRow> {
+        if (jobOrderIds.isEmpty()) return emptyList()
+        return jdbc.sql("SELECT $RELEASE_COLUMNS FROM mission.execution_fault_release WHERE job_order_id IN (:jobs) ORDER BY release_id")
+            .param("jobs", jobOrderIds.toSet())
+            .query { rs, _ -> releaseRow(rs) }
+            .list()
+    }
+
     // ── 판단 기록(V6)
 
     fun judgmentRecord(jobOrderId: String, instanceId: String, executionId: String, wireVersion: String, record: String): JudgmentRecordRow =
@@ -760,6 +826,19 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
         recordedAt = instant(rs, "recorded_at"),
     )
 
+    private fun releaseRow(rs: ResultSet) = FaultReleaseRow(
+        releaseId = rs.getLong("release_id"),
+        instanceId = rs.getString("instance_id"),
+        executionId = rs.getString("execution_id"),
+        jobOrderId = rs.getString("job_order_id"),
+        faults = rs.getString("faults"),
+        approverId = rs.getString("approver_id"),
+        approverKind = rs.getString("approver_kind"),
+        reason = rs.getString("reason"),
+        requestId = rs.getObject("request_id", UUID::class.java),
+        recordedAt = instant(rs, "recorded_at"),
+    )
+
     private fun holdRow(rs: ResultSet) = ResidualHoldRow(
         markerId = rs.getLong("marker_id"),
         robotId = rs.getString("robot_id"),
@@ -854,6 +933,8 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
                 "residual_hold, blocked_by, disposition, recorded_at"
         const val CANCEL_COLUMNS =
             "cancel_id, instance_id, execution_id, job_order_id, physical_state, approver_id, approver_kind, reason, recorded_at"
+        const val RELEASE_COLUMNS =
+            "release_id, instance_id, execution_id, job_order_id, faults::text AS faults, approver_id, approver_kind, reason, request_id, recorded_at"
         const val HOLD_COLUMNS = "marker_id, robot_id, job_order_id, execution_id, instance_id, unit_id, object_ref, recorded_at"
         const val CLEARING_COLUMNS = "marker_id, approver_id, approver_kind, reason, cleared_at"
         const val RECORD_COLUMNS = "record_id, job_order_id, instance_id, execution_id, wire_version, record, recorded_at"

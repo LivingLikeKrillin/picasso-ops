@@ -226,7 +226,7 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 
 - 이름은 picasso `ResolveOutcome` 그대로 대소문자를 섞은 `Resolved`, `NotHeld`, `Refused` 다. 운영 서비스는 `Resolved` 를 SUCCEEDED, 나머지 둘을 REJECTED 로 기록하고 본문에 이 이름을 남긴다(스펙 T7).
 - **Refused 는 호스트 REST 로는 나지 않는다.** 호스트는 늘 `PERSON` 을 만든다. 호스트 시험은 호스트 빈을 직접 불러 Refused 이름을 확인한다. 운영 서비스와 화면은 Refused 를 처리하되 통합 시험에서 만들 수단은 없다.
-- 실행 수준 막힘(`blockedBy`)은 단위 보류가 아니므로 `NotHeld` 다(풀이 `release` 는 S4a 범위 밖).
+- 실행 수준 막힘(`blockedBy`)은 단위 보류가 아니므로 `NotHeld` 다(실행 수준 막힘을 푸는 것은 운영자 결함 감수 `POST /host/executions/{executionId}/release`(S3a JSON 계약 §5.10)다).
 - 판단 뒤 작업 응답은 갱신되지 않는다(picasso `resolve` 가 `notify` 를 부르지 않음, 스펙 T10). 실행 목록 `GET /host/executions` 의 실행 상태·단위 상태와 인시던트는 곧바로 바뀐다. `jobResponse` 칸은 다음 갱신까지 옛 값이다.
 
 ### 5.3 거부

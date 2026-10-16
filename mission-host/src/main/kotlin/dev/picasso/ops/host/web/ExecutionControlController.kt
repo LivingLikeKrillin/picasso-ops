@@ -5,6 +5,7 @@ import dev.picasso.middleware.Approver
 import dev.picasso.middleware.ApproverKind
 import dev.picasso.ops.host.ClearOutcome
 import dev.picasso.ops.host.MissionHost
+import dev.picasso.ops.host.ReleaseRequestReused
 import dev.picasso.ops.host.ResidualHoldsView
 import org.springframework.dao.DataAccessException
 import org.springframework.http.HttpStatus
@@ -18,7 +19,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 운영자 실행 취소와 잔여 파지 표시(P0-b2). 루프백이고 인증이 없다. 호출자는 운영 서비스뿐이다. 모드 검사(운영자)와 조작 기록은 운영
+ * 운영자 실행 취소와 잔여 파지 표시(P0-b2), 운영자 결함 감수(결함 감수·조치 승인 노출 설계 제안 §2.1). 루프백이고 인증이 없다. 호출자는 운영 서비스뿐이다. 모드 검사(운영자)와 조작 기록은 운영
  * 서비스가 한다. 사유는 호스트도 받아 자기 표에 적는다(취소·해소의 근거가 호스트 기록에 남아야 재기동 뒤에도 읽힌다).
  *
  * 승인자는 늘 `Approver(approverId, PERSON)` 이다(운영자 판단과 같이 ADR 43, 기본값 없음). 에이전트 승인자의 거부는 호스트 메서드를
@@ -27,6 +28,9 @@ import org.springframework.web.bind.annotation.RestController
  * 취소의 결과(CANCELED·NOT_CANCELABLE·NOT_FOUND·REFUSED)는 늘 200 의 본문에 있다(운영자 판단과 같은 모양). 해소는 200(해소함),
  * 404 `RESIDUAL_HOLD_NOT_FOUND`(그 기체에 그 표시가 없음), 409 `RESIDUAL_HOLD_ALREADY_CLEARED`(이미 해소함)다. 기록을 못 적으면
  * 500 `RECORD_WRITE_FAILED` 이고 아무것도 바꾸지 않는다.
+ *
+ * 감수의 결과(RELEASED·NOT_BLOCKED·BLOCK_CHANGED·NOT_FOUND·REFUSED)도 늘 200 의 본문에 있다. 같은 requestId 의 감수 행이 이미 있으면
+ * 409 `REQUEST_ID_REUSED` 이고(S3b JSON 계약 §3 과 같은 이름), 감수 행을 못 적으면 500 `RECORD_WRITE_FAILED` 이고 감수하지 않는다.
  */
 @RestController
 class ExecutionControlController(private val host: MissionHost, private val json: ObjectMapper) {
@@ -51,6 +55,34 @@ class ExecutionControlController(private val host: MissionHost, private val json
             )
         }
         return ResponseEntity.ok(host.cancel(executionId, Approver(request.approverId, ApproverKind.PERSON), request.reason, request.requestId))
+    }
+
+    /**
+     * 운영자 결함 감수. 본문의 `instanceId` 가 지금 인스턴스가 아니면 409 `INSTANCE_MISMATCH` 이고 감수하지 않는다(취소와 같은 까닭).
+     * 판정 순서와 결과는 [MissionHost.release] 다.
+     */
+    @PostMapping("/host/executions/{executionId}/release", consumes = [MediaType.APPLICATION_JSON_VALUE])
+    fun release(@PathVariable executionId: String, @RequestBody(required = false) body: ByteArray?): ResponseEntity<Any> {
+        val request = try {
+            HostRequests.release(body?.let { runCatching { json.readTree(it) }.getOrNull() })
+        } catch (e: BadRequest) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(HostRejection(e.error, e.message ?: ""))
+        }
+        if (request.instanceId != host.instanceId) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(
+                HostRejection(
+                    IncidentController.INSTANCE_MISMATCH,
+                    "감수 요청의 인스턴스(${request.instanceId})가 지금 인스턴스(${host.instanceId})가 아니다",
+                ),
+            )
+        }
+        return try {
+            ResponseEntity.ok(
+                host.release(executionId, Approver(request.approverId, ApproverKind.PERSON), request.reason, request.sawFaults, request.requestId),
+            )
+        } catch (e: ReleaseRequestReused) {
+            ResponseEntity.status(HttpStatus.CONFLICT).body(HostRejection(MissionController.REQUEST_ID_REUSED, e.message ?: ""))
+        }
     }
 
     @GetMapping("/host/robots/residual-holds")
@@ -79,7 +111,7 @@ class ExecutionControlController(private val host: MissionHost, private val json
         }
     }
 
-    /** 취소·해소 기록을 못 적었다. 아무것도 바꾸지 않았다(취소는 기록을 먼저 적고 미들웨어를 부른다). */
+    /** 취소·해소·감수 기록을 못 적었다. 아무것도 바꾸지 않았다(취소와 감수는 기록을 먼저 적고 미들웨어를 부른다). */
     @ExceptionHandler(DataAccessException::class)
     fun recordFailed(e: DataAccessException): ResponseEntity<Any> =
         ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(HostRejection(RECORD_WRITE_FAILED, e.mostSpecificCause.message ?: e.toString()))
