@@ -440,7 +440,7 @@ Kotlin 네 모듈은 2026-10-17에 `fix/registry-warn-throttle` 브랜치의 `<�
 | `ops-service` | 453(442 에서 11 늘어남: `ReadFailureLogTest` 10, `RegistryClientTest` 1) | 로컬 시험 결과 XML 453건, 실패 0 |
 | `mission-host` | 165(159 에서 6 늘어남: `RerunRestoreTest` 5, `MissionStoreTest` 1) | 로컬 시험 결과 XML 165건, 실패 0 |
 | `site` | 39 | 로컬 시험 결과 XML 39건, 실패 0 |
-| `e2e` | 73(시험 클래스 18개 그대로) | 로컬 시험 결과 XML 73건, 실패 0 |
+| `e2e` | 75(73 에서 2 늘어남: `SlowCallDiagnosticTest` 2, 시험 클래스 19개) | 로컬 시험 결과 XML, `SlowCallDiagnosticTest` 2건과 `RestartRecoveryTest` 6건 실패 0 |
 | `ui`(vitest) | 258(255 에서 3 늘어남: `ExecutionList.test.tsx` 1, `JobOrderNotice.test.tsx` 1, `WorkRequests.test.tsx` 1, 시험 파일 28개) | 2026-10-15 `feat/forget-settled` 브랜치 로컬 실행, 실패 0 |
 | `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `feat/forget-settled` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 

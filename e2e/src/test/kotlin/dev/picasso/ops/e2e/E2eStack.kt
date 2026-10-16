@@ -108,6 +108,7 @@ class E2eStack private constructor(
 
         /** @param permitMapping 주면 현장이 이 작업 허가 대응을 선언한 것이다(ADR 52). 실행 호스트에 그대로 넘긴다. */
         fun start(integrationToken: String = "", permitMapping: Path? = null): E2eStack {
+            SlowCallDiagnostic.reset()
             val siteId = checkNotNull(System.getenv("SITE_ID")) { "SITE_ID 가 없다(루트 .env)" }
             PostgresSupport.reset()
             PostgresSupport.execute("DROP SCHEMA IF EXISTS ops CASCADE")
@@ -213,8 +214,17 @@ class E2eStack private constructor(
             val builder = HttpRequest.newBuilder(URI.create(url))
                 .method(method, body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody())
             headers.forEach { (name, value) -> builder.header(name, value) }
-            val response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+            // 진단 전용(SlowCallDiagnostic): 2초를 넘기는 호출이나 503 HOST_SILENT 는 JVM 스레드 덤프를 남긴다. 단언·재시도는 건드리지 않는다.
+            val watch = SlowCallDiagnostic.watch("$method $url")
+            val response = try {
+                http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+            } finally {
+                watch.cancel(false)
+            }
             val parsed = response.body().takeIf { it.isNotBlank() }?.let { runCatching { json.readTree(it) }.getOrNull() }
+            if (response.statusCode() == 503 && response.body().contains("HOST_SILENT")) {
+                SlowCallDiagnostic.dump("503 HOST_SILENT: $method $url")
+            }
             return Reply(response.statusCode(), parsed)
         }
     }
