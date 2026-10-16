@@ -197,7 +197,8 @@ class MissionOperationsTest {
         // 한 번 읽어 직전 목록을 남긴 뒤 registry 를 끊는다. 직전 목록으로 대신하지 않아야 한다.
         bench.base.robotList.read()
         bench.base.robots = RegistryCall.Silent("응답 없음: ConnectException")
-        val detail = "registry 가 답하지 않아 시운전 완료 기체를 모른다"
+        // 모르는 원인이 사전 거부 detail 에 실린다(간헐 503 을 사후에 가를 수 있게).
+        val detail = "registry 가 답하지 않아 시운전 완료 기체를 모른다: 응답 없음: ConnectException"
         assertEquals(MissionValidation.RobotsUnknown(detail), operations.validate(WM, 3))
         assertEquals(MissionSubmission.RobotsUnknown(detail), operations.mockRun(lee, WM, 3))
         assertEquals(MissionSubmission.RobotsUnknown(detail), operations.activate(lee, WM, 3, "사유"))

@@ -241,7 +241,8 @@ class MissionOperations(
         fun commissioned(list: RobotListView): CommissionedRobots {
             val unknown = when {
                 list.registry == RegistryState.REGISTRY_UNAUTHORIZED -> "운영자 토큰이 registry 와 맞지 않아 시운전 완료 기체를 모른다"
-                list.registry != RegistryState.OK || list.robots == null -> "registry 가 답하지 않아 시운전 완료 기체를 모른다"
+                list.registry != RegistryState.OK || list.robots == null ->
+                    "registry 가 답하지 않아 시운전 완료 기체를 모른다" + list.registryCause?.let { ": $it" }.orEmpty()
                 list.robots.any { it.commissioning == null } -> "시운전 판정이 없는 기체가 있어 시운전 완료 기체를 모른다"
                 else -> null
             }

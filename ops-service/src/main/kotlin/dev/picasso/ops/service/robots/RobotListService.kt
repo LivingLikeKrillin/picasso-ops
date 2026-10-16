@@ -1,5 +1,6 @@
 package dev.picasso.ops.service.robots
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import dev.picasso.ops.service.finding.Finding
 import dev.picasso.ops.service.registry.CommissioningSource
 import dev.picasso.ops.service.registry.RegistryBinding
@@ -42,6 +43,8 @@ data class RobotView(
  * @param robotsAsOf [robots] 를 registry 에서 읽은 시각. [checkedAt] 과 다르면 직전 값이다.
  * @param settingsVersion [robots] 의 연결 칸과 막힘을 판정한 현장 설정 버전(S2 스펙 §6.4). [robots] 가 널이면 널
  * @param connectionThresholdSeconds 그 버전의 연결 기준 시간(초)
+ * @param registryCause 이번 읽기가 [RegistryState.REGISTRY_SILENT] 인 원인([RegistryCall.Silent.cause]). 시운전 완료 기체를 모를 때의 사전 거부
+ * detail 에 싣는다. `GET /api/robots` 응답에는 싣지 않는다(화면 계약 그대로)
  */
 data class RobotListView(
     val registry: RegistryState,
@@ -50,6 +53,7 @@ data class RobotListView(
     val robotsAsOf: Instant?,
     val settingsVersion: Long? = null,
     val connectionThresholdSeconds: Long? = null,
+    @get:JsonIgnore val registryCause: String? = null,
 )
 
 /**
@@ -89,7 +93,7 @@ class RobotListService(
         val robots = source.robots(siteId)
         if (robots !is RegistryCall.Ok) {
             val state = if (robots == RegistryCall.Unauthorized) RegistryState.REGISTRY_UNAUTHORIZED else RegistryState.REGISTRY_SILENT
-            return view(state, now, last.get())
+            return view(state, now, last.get(), (robots as? RegistryCall.Silent)?.cause)
         }
         val bindings = commissioning?.bindings(siteId)
         val software = if (bindings is RegistryCall.Ok) commissioning?.software(siteId) else null
@@ -99,7 +103,7 @@ class RobotListService(
             } else {
                 RegistryState.REGISTRY_SILENT
             }
-            return view(state, now, last.get())
+            return view(state, now, last.get(), listOf(bindings, software).filterIsInstance<RegistryCall.Silent>().firstOrNull()?.cause)
         }
         val fresh = Known(
             robots.value,
@@ -118,7 +122,7 @@ class RobotListService(
         return view(state, maxOf(now, known.at), known)
     }
 
-    private fun view(state: RegistryState, now: Instant, known: Known?): RobotListView =
+    private fun view(state: RegistryState, now: Instant, known: Known?, cause: String? = null): RobotListView =
         RobotListView(
             registry = state,
             checkedAt = now,
@@ -126,6 +130,7 @@ class RobotListService(
             robotsAsOf = known?.at,
             settingsVersion = known?.settings?.version,
             connectionThresholdSeconds = known?.settings?.connectionThreshold?.seconds,
+            registryCause = cause,
         )
 
     private fun robotView(robot: RegistryRobot, known: Known): RobotView {

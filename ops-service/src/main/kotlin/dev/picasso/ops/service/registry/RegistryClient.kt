@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JacksonException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
@@ -27,6 +28,7 @@ import java.time.Duration
 sealed interface RegistryCall<out T> {
     data class Ok<T>(val value: T) : RegistryCall<T>
 
+    /** [cause] 는 왜 모르는지다. [RegistryClient] 의 읽기는 경로·원인(예외 클래스와 메시지 또는 HTTP 상태)·걸린 시간을 적는다. */
     data class Silent(val cause: String) : RegistryCall<Nothing>
 
     /** 운영 서비스의 운영자 토큰이 registry 와 맞지 않는다(스펙 §7.4). */
@@ -269,6 +271,7 @@ class RegistryClient(
 
     /** [read] 가 널을 내면(본문 `null`) 값을 모르는 것이다. `OK` 인데 목록이 널인 보기를 만들지 않는다. */
     private fun <T : Any> get(path: String, read: (String) -> T?): RegistryCall<T> {
+        val started = System.nanoTime()
         val request = HttpRequest.newBuilder(URI.create(base + path))
             .timeout(REQUEST_TIMEOUT)
             .header("Authorization", "Bearer $token")
@@ -277,17 +280,24 @@ class RegistryClient(
         val response = try {
             http.send(request, HttpResponse.BodyHandlers.ofString())
         } catch (e: IOException) {
-            return RegistryCall.Silent("응답 없음: ${e.javaClass.simpleName}")
+            return silent(path, "응답 없음: ${e.javaClass.simpleName}${e.message?.let { "($it)" }.orEmpty()}", started)
         }
         return when (val status = response.statusCode()) {
             in 200..299 -> try {
-                read(response.body())?.let { RegistryCall.Ok(it) } ?: RegistryCall.Silent("본문이 null 이다")
+                read(response.body())?.let { RegistryCall.Ok(it) } ?: silent(path, "본문이 null 이다", started)
             } catch (e: JacksonException) {
-                RegistryCall.Silent("본문 해석 실패: ${e.originalMessage}")
+                silent(path, "본문 해석 실패: ${e.originalMessage}", started)
             }
             401 -> RegistryCall.Unauthorized
-            else -> RegistryCall.Silent("HTTP $status")
+            else -> silent(path, "HTTP $status", started)
         }
+    }
+
+    /** 모름을 한 번 WARN 으로 남긴다. 경로는 질의 문자열을 뺀다. 원인과 걸린 시간은 [RegistryCall.Silent.cause] 로 위에 올린다. */
+    private fun silent(path: String, cause: String, started: Long): RegistryCall.Silent {
+        val silent = RegistryCall.Silent("GET ${path.substringBefore('?')}: $cause (${(System.nanoTime() - started) / 1_000_000}ms)")
+        log.warn("registry 읽기 모름: {}", silent.cause)
+        return silent
     }
 
     private fun send(method: String, path: String, actor: String, body: String?): RegistryWrite =
@@ -312,6 +322,7 @@ class RegistryClient(
     private fun segment(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20")
 
     companion object {
+        private val log = LoggerFactory.getLogger(RegistryClient::class.java)
         val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(2)
         val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(3)
 

@@ -15,6 +15,7 @@ import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class RobotListServiceTest {
@@ -68,6 +69,9 @@ class RobotListServiceTest {
         assertEquals(RegistryState.REGISTRY_SILENT, view.registry)
         assertNull(view.robots)
         assertNull(view.robotsAsOf)
+        // 모르는 원인은 보기에 남지만 GET /api/robots 응답 모양에는 들어가지 않는다.
+        assertEquals("응답 없음", view.registryCause)
+        assertFalse(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().findAndRegisterModules().valueToTree<com.fasterxml.jackson.databind.JsonNode>(view).has("registryCause"))
     }
 
     @Test

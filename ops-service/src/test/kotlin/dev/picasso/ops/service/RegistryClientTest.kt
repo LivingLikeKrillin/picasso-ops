@@ -8,6 +8,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class RegistryClientTest {
 
@@ -63,7 +64,9 @@ class RegistryClientTest {
 
     @Test
     fun `5xx 는 모름이다`() {
-        assertIs<RegistryCall.Silent>(RegistryClient(serve(503, ""), "op-t").robots("site-01"))
+        val silent = assertIs<RegistryCall.Silent>(RegistryClient(serve(503, ""), "op-t").robots("site-01"))
+        // 원인에 경로(질의 문자열 없이)·HTTP 상태·걸린 시간이 남는다.
+        assertTrue(silent.cause.startsWith("GET /diag/robots: HTTP 503 (") && silent.cause.endsWith("ms)"), silent.cause)
     }
 
     @Test
@@ -76,6 +79,8 @@ class RegistryClientTest {
         val url = serve(200, "[]")
         server!!.stop(0)
         server = null
-        assertIs<RegistryCall.Silent>(RegistryClient(url, "op-t").robots("site-01"))
+        val silent = assertIs<RegistryCall.Silent>(RegistryClient(url, "op-t").robots("site-01"))
+        // 원인에 예외 클래스가 남는다.
+        assertTrue(silent.cause.startsWith("GET /diag/robots: 응답 없음: ConnectException"), silent.cause)
     }
 }
