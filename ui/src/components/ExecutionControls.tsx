@@ -1,8 +1,18 @@
 import { useEffect, useState } from 'react'
-import { cancelExecution, confirmRobotEmpty, fetchResidualHolds } from '../api'
-import type { Delivered, Execution, ExecutionCancelOutcome, ResidualHold, ResidualHoldsView, RobotEmptyOutcome, Session } from '../api'
-import { CANCEL_RESULT_LABEL, EXECUTION_CONTROL_TEXT as TEXT, kindLabel, rejectionText } from '../labels'
+import { cancelExecution, confirmRobotEmpty, faultBlocked, fetchResidualHolds, releaseFaults } from '../api'
+import type {
+  Delivered,
+  Execution,
+  ExecutionCancelOutcome,
+  ExecutionReleaseOutcome,
+  ResidualHold,
+  ResidualHoldsView,
+  RobotEmptyOutcome,
+  Session,
+} from '../api'
+import { CANCEL_RESULT_LABEL, EXECUTION_CONTROL_TEXT as TEXT, kindLabel, rejectionText, RELEASE_RESULT_LABEL } from '../labels'
 import type { HostRead } from './ExecutionList'
+import { FaultCard } from './FaultCard'
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -105,6 +115,115 @@ function describeCancel(sent: Delivered<ExecutionCancelOutcome>): string {
       return '응답 없음. 다시 읽어 보니 취소가 걸리지 않음. 실행 목록에서 확인하십시오'
     default:
       return '응답 없음. 취소가 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오'
+  }
+}
+
+interface ReleaseProps {
+  instanceId: string
+  executions: Execution[]
+  session: Session
+  /** 조작이 끝나면 부른다. 실행 목록을 지금 한 번, pump 뒤 한 번 더 읽는다. */
+  onReleased: () => void
+}
+
+/**
+ * 운영자 결함 감수(S3a JSON 계약 §5.10·§9.8). 운영자 모드에서만 조작하고 승인자는 운영 서비스가 행위자로 정한다(ADR 43). 고른 실행의
+ * 막는 결함을 카드로 보이고, 보낼 때 그 결함을 본 결함으로 싣는다. 실행 호스트는 지금 막는 결함과 다르면 감수하지 않는다. 사유와 현장
+ * 확인이 있어야 보낸다. 고를 실행도 마지막 결과도 없으면 아무것도 그리지 않는다(막힌 실행은 드물다).
+ */
+export function ReleaseFaultForm({ instanceId, executions, session, onReleased }: ReleaseProps) {
+  const [target, setTarget] = useState('')
+  const [reason, setReason] = useState('')
+  const [confirmed, setConfirmed] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [last, setLast] = useState<{ what: string; sent: Delivered<ExecutionReleaseOutcome> } | null>(null)
+  const choices = executions.filter(faultBlocked)
+  if (session.mode !== 'operator') return choices.length > 0 ? <p>{TEXT.releaseOperatorOnly}</p> : null
+  if (choices.length === 0 && last === null) return null
+
+  const chosen = choices.find((execution) => execution.executionId === target) ?? null
+  const faults = chosen?.blockedFaults ?? []
+  const send = () => {
+    if (chosen === null || faults.length === 0 || reason.trim() === '' || !confirmed) return
+    const what = `${chosen.executionId}(${chosen.jobOrderId}) ${TEXT.releaseHeading}`
+    setBusy(true)
+    releaseFaults(session, { instanceId, executionId: chosen.executionId }, faults, reason.trim())
+      .then((sent) => setLast({ what, sent }))
+      .finally(() => {
+        setBusy(false)
+        setReason('')
+        setConfirmed(false)
+        setTarget('')
+        onReleased()
+      })
+  }
+
+  return (
+    <form aria-label={TEXT.releaseHeading} onSubmit={(event) => event.preventDefault()}>
+      <h3>{TEXT.releaseHeading}</h3>
+      {last !== null && (
+        <p role="status" aria-label="결함 감수 결과">
+          {last.what}: {describeRelease(last.sent)}
+        </p>
+      )}
+      {choices.length === 0 ? null : (
+        <>
+          <p>{TEXT.releaseIntro}</p>
+          <p>
+            {TEXT.releaseRepeat} {TEXT.releasePermitNote}
+          </p>
+          <label>
+            {TEXT.releaseTarget}
+            <select value={target} disabled={busy} onChange={(event) => setTarget(event.target.value)}>
+              <option value="">{TEXT.releaseChoose}</option>
+              {choices.map((execution) => (
+                <option key={execution.executionId} value={execution.executionId}>
+                  {execution.executionId} · {execution.jobOrderId} · {execution.robotId}
+                </option>
+              ))}
+            </select>
+          </label>
+          {chosen !== null && (
+            <div className="release-faults" role="group" aria-label={TEXT.releaseFaults}>
+              {faults.map((fault, index) => (
+                <FaultCard key={index} fault={fault} label={`${TEXT.releaseFaults} ${index + 1}`} />
+              ))}
+            </div>
+          )}{' '}
+          <label>
+            {TEXT.releaseReason}
+            <input maxLength={1000} value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} />
+          </label>{' '}
+          <label>
+            <input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />
+            {TEXT.releaseConfirm}
+          </label>{' '}
+          <button type="button" disabled={busy || chosen === null || reason.trim() === '' || !confirmed} onClick={send}>
+            {TEXT.releaseButton}
+          </button>
+        </>
+      )}
+    </form>
+  )
+}
+
+function describeRelease(sent: Delivered<ExecutionReleaseOutcome>): string {
+  if (sent.kind === 'refused') return `보내지 않음(${kindLabel(sent.refusal.error)}). ${sent.refusal.detail}`
+  if (sent.kind === 'unknown') return `결과 모름(${sent.cause}). 실행 목록에서 확인하십시오`
+  const { outcome, answer, rejection, confirmation } = sent.outcome
+  if (outcome !== null) {
+    const label = RELEASE_RESULT_LABEL[outcome] ?? outcome
+    // 감수했어도 작업 허가 대기가 남았으면 실행 호스트가 그 사실을 detail 에 싣는다.
+    return answer?.detail ? `${label}. ${answer.detail}` : label
+  }
+  if (rejection !== null) return rejectionText('실행 호스트가 거부함', rejection)
+  switch (confirmation) {
+    case 'CONFIRMED_APPLIED':
+      return TEXT.releaseApplied
+    case 'CONFIRMED_NOT_APPLIED':
+      return TEXT.releaseNotApplied
+    default:
+      return TEXT.releaseUnconfirmed
   }
 }
 

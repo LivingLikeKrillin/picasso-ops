@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { fetchSettledBefore, RECENT_EXECUTIONS } from '../api'
-import type { CancelRecord, Execution, ExecutionPage, JobResponse, RestoreRow, Session, SettledExecution } from '../api'
+import { faultBlocked, fetchSettledBefore, RECENT_EXECUTIONS } from '../api'
+import type { CancelRecord, Execution, ExecutionPage, JobResponse, ReleaseRecord, RestoreRow, Session, SettledExecution } from '../api'
 import { appendOlder, catchUp, olderCount, olderCursor, sameExecution } from '../executionHistory'
 import type { ExecutionHistory } from '../executionHistory'
 import { EXECUTION_CONTROL_TEXT, EXECUTION_LIST_TEXT as TEXT } from '../labels'
-import { CancelExecutionForm } from './ExecutionControls'
+import { CancelExecutionForm, ReleaseFaultForm } from './ExecutionControls'
 import { PermitBlockNotice } from './PermitBlockNotice'
 
 /** 실행 호스트를 거친 읽기 하나. 못 읽으면 직전 값을 지우지 않고 [error] 로 불통을 표시한다. */
@@ -18,9 +18,9 @@ interface Props {
   read: HostRead<ExecutionPage>
   /** 방금 낸 작업 지시 id. 그 실행 행을 눈에 띄게 한다. */
   highlight: string | null
-  /** 주면 표 아래에 운영자 실행 취소 폼과 이전 실행(정착 이력 페이지)을 보인다(P0-b2, HA 설계 기록 §10). */
+  /** 주면 표 아래에 운영자 실행 취소 폼, 결함 감수 폼과 이전 실행(정착 이력 페이지)을 보인다(P0-b2, HA 설계 기록 §10). */
   session?: Session
-  /** 취소 조작이 끝나면 부른다. */
+  /** 취소·결함 감수 조작이 끝나면 부른다. */
   onCanceled?: () => void
 }
 
@@ -45,6 +45,9 @@ const withoutLive = (rows: SettledExecution[], page: ExecutionPage) =>
  *
  * 작업 허가 대기(ADR 52): 물리 상태 칸에 막은 기체·막는 주체·풀릴 근거를 따로 붙인다. 운영자 보류(물리 상태)·결함 막음(작업 응답)과
  * 다른 표시이고 운영자 조작이 없다.
+ *
+ * 결함 막음과 운영자 결함 감수(S3a JSON 계약 §5.9·§5.10): 물리 상태 칸에 지금 막는 결함의 수와 그 작업 지시에 건 감수를 붙이고, 취소
+ * 폼 아래에 결함 감수 폼을 둔다. 감수할 실행은 남은 실행 가운데 막는 결함이 있는 것에서만 고른다.
  */
 export function ExecutionList({ read, highlight, session, onCanceled }: Props) {
   const { value, error } = read
@@ -93,6 +96,14 @@ export function ExecutionList({ read, highlight, session, onCanceled }: Props) {
           executions={value.executions}
           session={session}
           onCanceled={onCanceled ?? (() => undefined)}
+        />
+      )}
+      {session !== undefined && (
+        <ReleaseFaultForm
+          instanceId={value.instanceId}
+          executions={value.executions}
+          session={session}
+          onReleased={onCanceled ?? (() => undefined)}
         />
       )}
       {session !== undefined && <OlderExecutions page={value} session={session} />}
@@ -156,6 +167,10 @@ function ExecutionRow({ execution, selected, settled, currentInstance }: RowProp
         )}
         {settled?.superseded === true && <span className="restored"> ({TEXT.superseded})</span>}
         {execution.cancel != null && <CancelCell cancel={execution.cancel} />}
+        {faultBlocked(execution) && <strong className="fault-blocked">{EXECUTION_CONTROL_TEXT.blockedCount(execution.blockedFaults!.length)}</strong>}
+        {(execution.releases ?? []).map((release, index) => (
+          <ReleaseCell key={index} release={release} />
+        ))}
         {execution.permitBlock != null && <PermitBlockNotice block={execution.permitBlock} />}
       </td>
       <td>
@@ -273,6 +288,16 @@ function CancelCell({ cancel }: { cancel: CancelRecord }) {
     <span className="restored" title={`${cancel.recordedAt}, 취소 때 ${cancel.physicalState}`}>
       {' '}
       ({EXECUTION_CONTROL_TEXT.canceledBy}: {cancel.approverId}, {cancel.reason})
+    </span>
+  )
+}
+
+/** 그 작업 지시에 건 운영자 결함 감수 한 건(S3a JSON 계약 §5.9). */
+function ReleaseCell({ release }: { release: ReleaseRecord }) {
+  return (
+    <span className="restored" title={`${release.recordedAt}, ${release.faults.map((fault) => fault.errorType).join(', ')}`}>
+      {' '}
+      ({EXECUTION_CONTROL_TEXT.releasedBy}: {release.approverId}, {release.reason})
     </span>
   )
 }

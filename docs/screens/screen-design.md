@@ -39,7 +39,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | 모드 | 하는 일 |
 |---|---|
 | 엔지니어 | 기체 선언, 어댑터 제품·빌드 선언과 인스턴스 등록, 프로파일 리비전 제출·시험 요청·활성화, 바인딩, 명칭 등록 기록, 현장 설정 변경, 장애 주입, 새 임무 만들기, 임무 정의 편집(초안 저장·검증·모의 실행·활성화), 호출 계약 작성·복제·공개·공개 중지, 실행 배포, 공유 스테이션 등록, 임무 필수 자원 등록 |
-| 운영자 | 퇴역·복귀, 수동 작업 요청 내기(작업 지시 폼), 호출 계약으로 작업 요청, 보관된 수동 작업 요청 재확인·새 작업 작성, 운영자 판단(완료 확인·재작업), 미배정 재평가, 현장 확인 기록, 공유 스테이션 작업 요청, 대기 작업 취소·현장 확인 후 자원 해제·재실행 없이 관측 재개, 실행 취소(운영 › 실행), 기체 빈손 확인(운영 › 배정 가능 아래 잔여 파지 확인) |
+| 운영자 | 퇴역·복귀, 수동 작업 요청 내기(작업 지시 폼), 호출 계약으로 작업 요청, 보관된 수동 작업 요청 재확인·새 작업 작성, 운영자 판단(완료 확인·재작업), 미배정 재평가, 현장 확인 기록, 공유 스테이션 작업 요청, 대기 작업 취소·현장 확인 후 자원 해제·재실행 없이 관측 재개, 실행 취소·결함 감수(운영 › 실행), 기체 빈손 확인(운영 › 배정 가능 아래 잔여 파지 확인) |
 | 두 모드 공통 | 모든 조회, 배정 가능 확인(작업 지시 폼, 호출 계약 입력), 입력 검증·변환 미리보기, 셀 대역 신호 켜기·끄기, 송신 기록 거르기, 작업 요청 검색, 작업 요청 비교, 이력 |
 
 ### 1.3 모드 가르기의 세 방식
@@ -58,6 +58,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 - 운영자 판단: «보류 중입니다. 운영자 판단은 운영자 모드에서 합니다»
 - 현장 확인 기록: «현장 확인 기록은 운영자 모드에서 작성합니다.»
 - 실행 취소: «실행 취소는 운영자 모드에서 합니다» (취소할 수 있는 실행이 있을 때만 문장, 없으면 아무것도 없음)
+- 결함 감수: «결함 감수는 운영자 모드에서 합니다» (결함으로 막힌 실행이 있을 때만 문장, 없으면 아무것도 없음)
 - 기체 빈손 확인: «기체 빈손 확인은 운영자 모드에서 합니다» (표의 확인 칸은 버튼 대신 «운영자 모드», 표는 두 모드에 보임)
 
 2. 감추기만 하고 문장이 없습니다.
@@ -198,7 +199,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | 운영 개요 | GET `/api/work-requests/summary`, `/api/executions/summary`, `/api/incidents`, `/api/work-requests/collector` | 영역이 열려 있을 때 5초, 넷이 따로 실패 | 구역마다 alert |
 | 작업 요청 | GET `/api/work-requests?search=&state=&offset=&limit=20&result=`, `/api/work-requests/{receiptId}` | 5초, 검색·필터·쪽 변경, 고른 작업 요청 변경 | alert 와 «직전 조회 값입니다.» 꼬리 |
 | 공유 자원 | GET `/api/stations`, `/api/mission-interfaces`, `/api/mission-resources`, `/api/stations/runs/{runId}` | 스테이션·호출 계약은 5초, 자원 요구는 마운트 때와 호출 계약 목록을 다시 받을 때마다 | alert «자원 조회 실패: ${e} · 표는 직전 값입니다. 조작 전 다시 조회하세요.» |
-| 운영 | GET `/api/executions?recent=20`, `/api/cell`, `/api/incidents`, `/api/job-responses`(거르면 `?jobOrderId=`), `/api/incidents/{id}?instanceId=`, GET `/api/robots/residual-holds`, POST `/api/job-orders/eligibility`, 그리고 맨 위 작업 요청 목록 | 5초. `GET /api/executions?before=${settleSeq}&limit=20`은 «이전 실행 더 보기»를 누를 때만(새 정착으로 이력이 밀릴 때의 따라잡기 읽기 포함). 배정 가능은 폼이 바뀌고 300ms 멈춘 뒤, 신호 조작·판단·실행 취소·기체 빈손 확인 뒤 곧바로와 500ms 뒤 한 번 더 | 구역마다 «직전 값입니다. 실행 호스트 불통: ${error}». 잔여 파지 표는 첫 읽기 전·실패면 «모름: 잔여 파지 표시를 아직 읽지 못했습니다 (${error})», 직전 값이면 «직전 값입니다. 실행 호스트 불통: ${error}» |
+| 운영 | GET `/api/executions?recent=20`, `/api/cell`, `/api/incidents`, `/api/job-responses`(거르면 `?jobOrderId=`), `/api/incidents/{id}?instanceId=`, GET `/api/robots/residual-holds`, POST `/api/job-orders/eligibility`, 그리고 맨 위 작업 요청 목록 | 5초. `GET /api/executions?before=${settleSeq}&limit=20`은 «이전 실행 더 보기»를 누를 때만(새 정착으로 이력이 밀릴 때의 따라잡기 읽기 포함). 배정 가능은 폼이 바뀌고 300ms 멈춘 뒤, 신호 조작·판단·실행 취소·결함 감수·기체 빈손 확인 뒤 곧바로와 500ms 뒤 한 번 더 | 구역마다 «직전 값입니다. 실행 호스트 불통: ${error}». 잔여 파지 표는 첫 읽기 전·실패면 «모름: 잔여 파지 표시를 아직 읽지 못했습니다 (${error})», 직전 값이면 «직전 값입니다. 실행 호스트 불통: ${error}» |
 | 임무 | GET `/api/job-contracts`(마운트와 «계약 다시 조회» 때만), `/api/mission-interfaces`(마운트와 «호출 계약 다시 조회» 때), `/api/missions/{workMasterId}`(5초), `/api/missions/templates/{workMasterId}`(읽힐 때까지 5초), `/api/mission-interfaces/{id}/{version}/deployments`, POST `/api/job-orders/preview` | | 구역마다 alert 또는 «모름: …» |
 | 현장 설정·이력 | 다섯 조회의 `/api/site-settings`, `/api/operations` | 5초 | «직전 값입니다» |
 | 검증 도구 | GET `/api/work-requests?search=&offset=0&limit=20`, `/api/work-requests/{receiptId}` 두 번, POST `/api/faults` | 버튼을 누를 때만 | alert |
@@ -277,6 +278,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | `FaultPanel.tsx` 의 결과 | 장애 주입 | «장애 주입 결과» |
 | `IncidentSection.tsx` 의 결과 | 운영자 판단 | «판단 결과» |
 | `ExecutionControls.tsx` 의 `CancelExecutionForm` | 운영 › 실행의 실행 취소 | «실행 취소 결과» |
+| `ExecutionControls.tsx` 의 `ReleaseFaultForm` | 운영 › 실행의 결함 감수 | «결함 감수 결과» |
 | `ExecutionControls.tsx` 의 `ResidualHolds` | 운영 › 잔여 파지 확인의 기체 빈손 확인 | «빈손 확인 결과» |
 | `MissionInterfaces.tsx` | 호출 계약 초안 저장·공개·공개 중지 | «호출 계약 처리 결과» |
 | `MissionInterfaces.tsx` | 호출 계약으로 작업 요청 | «계약 호출 결과» |
@@ -360,12 +362,13 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 
 확인 대화(`confirm`)는 없습니다.
 
-체크박스 관문 여섯은 다음과 같습니다.
+체크박스 관문 일곱은 다음과 같습니다.
 - «이 입력으로 실제 작업을 지시합니다»(호출 계약으로 작업 요청)
 - «준비 조건이 충족되면 실제 로봇 작업을 지시합니다»(공유 스테이션 작업 요청)
 - «현장 작업과 자원 해제 가능 여부를 확인했습니다»(현장 확인 후 자원 해제)
 - «설비·로봇 상태와 격리 해제 가능 여부를 확인했습니다»(현장 확인 후 격리 해제)
 - «기체·설비 상태를 확인했고 이 실행을 끝냅니다»(실행 취소)
+- «기체 상태를 현장에서 확인했고 이 결함을 안고 계속합니다»(결함 감수)
 - «기체 손에 남은 물체가 없음을 현장에서 직접 확인했습니다»(기체 빈손 확인)
 
 사유 입력 관문은 비면 보내지 않거나 버튼을 비활성화합니다.
@@ -382,6 +385,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 - 현장 확인 기록
 - 스테이션 작업의 운영자 판단
 - 실행 취소
+- 결함 감수
 - 기체 빈손 확인
 
 ### 2.7 거부·막힘 카드와 상태 글자
@@ -436,6 +440,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | SIGNAL_VALUE_INVALID | «신호 종류에 맞지 않는 값» | FLOOR_UNOWNED | «바닥 소유 없음» |
 | SKILL_NOT_IN_CONTRACT | «계약에 없는 스킬» | SKILL_NOT_ON_SITE | «현장에 없는 스킬» |
 | SAFETY_SIGNAL_WAIT | «안전 신호 대기» | SOURCE_OBSERVATION_UNDECLARED | «출발 관측 선언 없음» |
+| SOURCE_OBSERVATION_UNUSED | «출발 관측 선언 미사용» | | |
 | MISSION_BAD_REQUEST | «임무 요청 오류» | REASON_REQUIRED | «사유 없음» |
 | DRAFT_NOT_FOUND | «없는 초안» | REQUEST_ID_REUSED | «요청 id 재사용» |
 | HOST_SILENT | «실행 호스트 불통» | SIGNAL_BAD_REQUEST | «신호 값 형식 오류» |
@@ -446,6 +451,7 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | INSTANCE_MISMATCH | «실행 호스트가 재기동해 인스턴스가 다름» | JOB_RESPONSE_BAD_REQUEST | «송신 기록 요청 오류» |
 | CANCEL_BAD_REQUEST | «취소 본문 오류» | CLEAR_BAD_REQUEST | «빈손 확인 본문 오류» |
 | RESIDUAL_HOLD_NOT_FOUND | «없는 잔여 파지 표시» | RESIDUAL_HOLD_ALREADY_CLEARED | «이미 해소한 잔여 파지 표시» |
+| RELEASE_BAD_REQUEST | «감수 본문 오류» | | |
 
 풀이 함수 동작은 다음과 같습니다.
 - `kindLabel`: 모르는 이름은 그대로 둡니다.
@@ -801,12 +807,12 @@ h3 «임무 필수 자원»과 안내 «임무의 모든 호출 계약과 수동
 | 항목 | 내용 |
 |---|---|
 | 목적 | 운영자가 작업 지시 폼으로 수동 작업 요청을 내고, 실행 호스트의 실행·인시던트·셀 대역·작업 응답 송신 기록을 보고, 보류된 단위를 판단하고, 실행을 취소하며(부분 완료 닫기 등), 잔여 파지 표시가 선 기체의 빈손을 확인합니다. |
-| 누가 | 조회와 셀 대역 신호 켜기·끄기, 송신 기록 거르기, 잔여 파지 표 보기는 두 모드에서 합니다. 작업 요청 내기와 운영자 판단, 실행 취소, 기체 빈손 확인은 운영자가 합니다. |
+| 누가 | 조회와 셀 대역 신호 켜기·끄기, 송신 기록 거르기, 잔여 파지 표 보기는 두 모드에서 합니다. 작업 요청 내기와 운영자 판단, 실행 취소, 결함 감수, 기체 빈손 확인은 운영자가 합니다. |
 | 진입 | 메뉴 4번, 운영 개요의 «실행·예외 대응 열기»·«인시던트 확인·판단», 로봇 도입 준비의 «운영에서 배정 조건 확인», 검증 도구의 «배정·실행 확인»·«보류·인시던트 판단»에서 진입합니다. |
 | 컴포넌트 | `OperationsArea.tsx` |
-| 배치 | 위에서 아래로 작업 요청 목록(region «상위 작업 요청») → `.split`[region «작업 지시» \| region «배정 가능»(배정 가능 표 아래 region «잔여 파지 확인»(h3))] → region «실행»(실행 목록 표 아래 form «실행 취소»(h3)) → region «인시던트» → region «셀 대역» → region «작업 응답 송신 기록» 순서입니다. 1199px 이하에서 `.split` 은 1열입니다. 탭이나 앵커는 없습니다. |
+| 배치 | 위에서 아래로 작업 요청 목록(region «상위 작업 요청») → `.split`[region «작업 지시» \| region «배정 가능»(배정 가능 표 아래 region «잔여 파지 확인»(h3))] → region «실행»(실행 목록 표 아래 form «실행 취소»(h3), 결함으로 막힌 실행이 있으면 그 아래 form «결함 감수»(h3)) → region «인시던트» → region «셀 대역» → region «작업 응답 송신 기록» 순서입니다. 1199px 이하에서 `.split` 은 1열입니다. 탭이나 앵커는 없습니다. |
 
-실행 호스트를 거치는 읽기는 이 영역이 열려 있을 때만 5초마다 합니다. 신호 조작, 판단, 실행 취소, 기체 빈손 확인 뒤에는 곧바로 한 번, 500ms 뒤에 한 번 더 읽습니다. 잔여 파지 표도 이 읽기에 포함됩니다(같은 `tick`). 모드나 사용자가 바뀌면 마지막 제출 알림과 보관 요청을 다시 읽습니다.
+실행 호스트를 거치는 읽기는 이 영역이 열려 있을 때만 5초마다 합니다. 신호 조작, 판단, 실행 취소, 결함 감수, 기체 빈손 확인 뒤에는 곧바로 한 번, 500ms 뒤에 한 번 더 읽습니다. 잔여 파지 표도 이 읽기에 포함됩니다(같은 `tick`). 모드나 사용자가 바뀌면 마지막 제출 알림과 보관 요청을 다시 읽습니다.
 
 #### 3.4.1 맨 위 작업 요청 목록
 
@@ -926,7 +932,7 @@ region «배정 가능»(h2 «배정 가능», `EligibilityTable.tsx`)에서는 
 
 #### 3.4.4 실행
 
-`ExecutionList.tsx` 컴포넌트가 담당하며 region «실행» 과 h2 «실행» 을 씁니다. 실행 목록 보기는 두 모드에서 지원하며, 실행 취소는 운영자 모드에서만 합니다(표 아래 `ExecutionControls.tsx` 의 `CancelExecutionForm`).
+`ExecutionList.tsx` 컴포넌트가 담당하며 region «실행» 과 h2 «실행» 을 씁니다. 실행 목록 보기는 두 모드에서 지원하며, 실행 취소와 결함 감수는 운영자 모드에서만 합니다(표 아래 `ExecutionControls.tsx` 의 `CancelExecutionForm` 과 `ReleaseFaultForm`).
 
 상태와 요소는 다음 표와 같습니다.
 
@@ -951,7 +957,7 @@ region «배정 가능»(h2 «배정 가능», `EligibilityTable.tsx`)에서는 
 3. 임무
 4. 임무 버전(«코드 정의», «버전 ${n}»)
 5. 기체
-6. 물리 상태(코드 값 뒤에, 이 인스턴스에서 건 운영자 취소가 있으면 회색 span(`.restored`) « (취소 요청: ${approverId}, ${reason})», title «${recordedAt}, 취소 때 ${physicalState}». 실행에 `permitBlock` 이 있으면 같은 칸 아래 region «작업 허가 대기»(`PermitBlockNotice.tsx`, `section.permit-block`, 연한 파랑 바탕과 파란 왼쪽 띠 `#2563eb`). 위에서 아래로 h4 «작업 허가 대기», 안내 «현장 안전 신호가 허가를 내지 않아 이 실행의 새 로봇 명령을 내지 않고 기다립니다. 실패나 운영자 보류가 아닙니다.», dl(«막힌 단위», «내지 않은 명령», «처음 막힌 시각»), 목록 `ul[aria-label=허가를 기다리는 기체]`(기체마다 굵게 «기체 ${robotId}: ${허가 글자}», 그 아래 판단마다 «까닭 ${까닭 글자} · 막는 주체 ${subject} · 풀릴 근거 ${resumeBasis}» 와 작은 글자 «(원천 ${source}, 관측 시각 ${observedAt})», 값이 null 이면 «없음»), 끝에 안내 둘(`PERMIT_BLOCK_TEXT.notOperator`, `notSafety`). 운영자 보류(`OPERATOR_HOLD`)·결함 막음 표시와 섞지 않고 버튼이 없음. 근거: `PermitBlockNotice.test.tsx` 의 `작업 허가로 막힌 실행은 막은 기체와 주체와 풀릴 근거를 운영자 보류와 다른 표시로 보이고 조작 버튼이 없다`, `모름(UNKNOWN)은 까닭과 원천 없음을 그대로 보인다`. 정착 이력 줄은 물리 상태 코드 뒤에 회색 span `.restored` 로 « (정착 ${settledAt})» 을 표시합니다. 그 뒤에 해당 줄의 실행에 작업 응답이 있으면 회색 span `.restored` 로 « (작업 지시 버전 ${jobResponse.version})» 을 표시합니다. 해당 줄이 `superseded` 이면 회색 span `.restored` 로 « (이후 다시 정착)» 을 표시합니다. 다시 정착한 작업 지시는 정착 이력 줄이 여러 개 생깁니다. 작업 응답이 없는 줄은 버전을 표시하지 않습니다.)
+6. 물리 상태(코드 값 뒤에, 이 인스턴스에서 건 운영자 취소가 있으면 회색 span(`.restored`) « (취소 요청: ${approverId}, ${reason})», title «${recordedAt}, 취소 때 ${physicalState}». 실행에 `permitBlock` 이 있으면 같은 칸 아래 region «작업 허가 대기»(`PermitBlockNotice.tsx`, `section.permit-block`, 연한 파랑 바탕과 파란 왼쪽 띠 `#2563eb`). 위에서 아래로 h4 «작업 허가 대기», 안내 «현장 안전 신호가 허가를 내지 않아 이 실행의 새 로봇 명령을 내지 않고 기다립니다. 실패나 운영자 보류가 아닙니다.», dl(«막힌 단위», «내지 않은 명령», «처음 막힌 시각»), 목록 `ul[aria-label=허가를 기다리는 기체]`(기체마다 굵게 «기체 ${robotId}: ${허가 글자}», 그 아래 판단마다 «까닭 ${까닭 글자} · 막는 주체 ${subject} · 풀릴 근거 ${resumeBasis}» 와 작은 글자 «(원천 ${source}, 관측 시각 ${observedAt})», 값이 null 이면 «없음»), 끝에 안내 둘(`PERMIT_BLOCK_TEXT.notOperator`, `notSafety`). 운영자 보류(`OPERATOR_HOLD`)·결함 막음 표시와 섞지 않고 버튼이 없음. 근거: `PermitBlockNotice.test.tsx` 의 `작업 허가로 막힌 실행은 막은 기체와 주체와 풀릴 근거를 운영자 보류와 다른 표시로 보이고 조작 버튼이 없다`, `모름(UNKNOWN)은 까닭과 원천 없음을 그대로 보인다`. 정착 이력 줄은 물리 상태 코드 뒤에 회색 span `.restored` 로 « (정착 ${settledAt})» 을 표시합니다. 그 뒤에 해당 줄의 실행에 작업 응답이 있으면 회색 span `.restored` 로 « (작업 지시 버전 ${jobResponse.version})» 을 표시합니다. 해당 줄이 `superseded` 이면 회색 span `.restored` 로 « (이후 다시 정착)» 을 표시합니다. 다시 정착한 작업 지시는 정착 이력 줄이 여러 개 생깁니다. 작업 응답이 없는 줄은 버전을 표시하지 않습니다. `blockedFaults` 가 비어 있지 않으면 코드 값 아래에 `strong.fault-blocked` «결함 막음 ${n}건»(주황 계열 글자, 작업 허가 대기 region 과 다른 표시)이 표시됩니다. `releases` 가 있으면 감수마다 회색 span(`.restored`) « (결함 감수: ${approverId}, ${reason})»(title «${recordedAt}, ${errorType 들}»)이 붙으며, `releases` 는 작업 지시 id 로 읽으므로 재기동 전 인스턴스의 감수도 보입니다.)
 7. 단위(«${unitId} ${skillType}: ${state}, 근거 ${reached}», 정착 기록에 본문이 없으면(본문이 기록되기 전에 정착) 단위 목록 대신 «정착 기록에 단위·작업 응답이 없습니다»)
 8. 작업 응답(«없음» 또는 작업 응답 요약 목록, «운영자 개입 필요» 포함)
 
@@ -965,6 +971,15 @@ region «배정 가능»(h2 «배정 가능», `EligibilityTable.tsx`)에서는 
 - 결과 status «실행 취소 결과»: «${executionId}(${jobOrderId}) 실행 취소: ${결과}» 로 표시합니다. 결과는 `CANCEL_RESULT_LABEL` 에 따르며(CANCELED 가 아니고 detail 이 있으면 «${결과 글자}. ${detail}»), 호스트 4xx 거부 시 «실행 호스트가 거부함(${풀이}). ${detail}», 사전 거부 시 «보내지 않음(${풀이}). ${detail}», 결과 모름 시 «결과 모름(${cause}). 실행 목록에서 확인하십시오», 취소 응답 없음 셋은 «응답은 없었으나 다시 읽어 보니 취소가 걸림», «응답 없음. 다시 읽어 보니 취소가 걸리지 않음. 실행 목록에서 확인하십시오», «응답 없음. 취소가 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오» 입니다.
 - 엔지니어 모드: 폼이 없습니다. 고를 수 있는 실행이 있을 때만 «실행 취소는 운영자 모드에서 합니다» 문장이 보입니다.
 - 취소한 실행은 실행 호스트의 다음 pump 에 `ABORTED` 로 정착하고, 마지막 로봇 단위가 든 채였으면 잔여 파지 표시가 섭니다(§3.4.3).
+
+form «실행 취소» 아래에는 `ExecutionControls.tsx` 의 `ReleaseFaultForm` 이 담당하는 `form[aria-label=결함 감수]` 와 h3 «결함 감수» 가 있습니다. 운영자 모드에서 고를 실행도 마지막 결과도 없으면 폼 전체를 그리지 않습니다(취소 폼과 다름: 취소 폼은 빈 목록이어도 h3 를 보임).
+
+- 고를 수 있는 실행: 남은 실행 중 `blockedFaults` 가 비지 않은 것입니다. 없으면 폼 몸통은 없습니다.
+- 몸통: 문단 «감수는 결함을 지우지 않으며, 이 결함들이 다음 단위를 막지 않게 하고 다음 로봇 단위를 냅니다. 기체 상태를 현장에서 확인한 뒤 결정하세요.», 문단 «같은 결함은 다시 막지 않고 새 결함은 다시 막습니다. 작업 허가 대기는 감수로 풀리지 않습니다.», select «감수할 실행»(첫 선택지 «실행 선택», 선택지 «${executionId} · ${jobOrderId} · ${robotId}»), 실행을 고르면 group «감수할 결함» 안에 결함 카드 «감수할 결함 ${n}»(인시던트 상세의 결함 카드와 같은 컴포넌트 `FaultCard.tsx`: 분류, 조치 힌트, 벤더 원문, 참조, 지금 태스크 계속, 새 태스크 받기, 유지), 입력 «감수 사유»(`maxLength=1000`), 체크박스 «기체 상태를 현장에서 확인했고 이 결함을 안고 계속합니다», 버튼 «현장 확인 후 결함 감수»(실행·사유·체크가 있어야 활성)로 구성됩니다.
+- POST `/api/executions/{executionId}/release` 본문 `{instanceId, reason, sawFaults}`. 보낼 때 카드에 보인 결함을 `sawFaults` 로 싣습니다. 승인자는 싣지 않습니다(`X-Ops-User`). 끝나면 고름·사유·체크를 비우고 곧바로와 500ms 뒤 다시 읽습니다.
+- 결과 status «결함 감수 결과»: «${executionId}(${jobOrderId}) 결함 감수: ${결과}» 입니다. 결과 글자는 `RELEASE_RESULT_LABEL` 에 따릅니다(RELEASED «감수했습니다. 실행 호스트의 다음 pump 에서 다음 단위를 냅니다», NOT_BLOCKED «막는 결함이 없습니다», BLOCK_CHANGED «본 결함과 지금 막는 결함이 다릅니다. 실행 목록을 다시 읽고 결함을 확인한 뒤 다시 판단하십시오», NOT_FOUND «지금 실행 호스트 인스턴스에 없는 실행입니다», REFUSED «에이전트는 결함을 감수하지 못합니다»). 실행 호스트 detail 이 있으면 결과 이름과 관계없이 «${결과 글자}. ${detail}» 로 붙입니다(RELEASED 여도 작업 허가 대기 사실 «작업 허가 대기 중이다. 감수로 풀리지 않는다: …» 가 붙음). 실행 호스트 4xx 는 «실행 호스트가 거부함(${풀이}). ${detail}», 사전 거부는 «보내지 않음(${풀이}). ${detail}», 결과 모름은 «결과 모름(${cause}). 실행 목록에서 확인하십시오», 응답 없음 셋은 «응답은 없었으나 다시 읽어 보니 감수가 걸림», «응답 없음. 다시 읽어 보니 감수가 걸리지 않음. 실행 목록에서 확인하십시오», «응답 없음. 감수가 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오» 입니다.
+- 엔지니어 모드: 폼이 없습니다. 고를 수 있는 실행이 있을 때만 «결함 감수는 운영자 모드에서 합니다» 문장이 보입니다.
+- 근거: `ExecutionControls.test.tsx` 의 `막는 결함이 있는 실행만 고르고 고른 실행의 결함을 카드로 보이며 사유와 현장 확인이 있어야 본 결함을 실어 보낸다`, `실행 호스트 결과마다 그 풀이를 보이고 작업 허가 대기와 바뀐 결함의 사실 문장을 붙인다`, `응답이 없으면 다시 읽은 결과 셋을 가르고 운영 서비스가 답하지 않으면 결과 모름이다`, `엔지니어 모드에는 감수 폼이 없고 막힌 실행이 있을 때만 운영자 모드에서 한다는 안내가 있으며 막힌 실행이 없으면 운영자 모드에도 폼이 없다`, `물리 상태 칸에 지금 막는 결함의 수와 그 작업 지시에 건 감수를 보이고 작업 허가 대기 표시와 섞지 않는다`.
 
 새 region «이전 실행»(h3 «이전 실행»)은 두 모드 모두에서 취소 폼 아래에 놓입니다. 5초 주기 읽기의 커서 `nextBefore` 에서 시작하여 `GET /api/executions?before=${settleSeq}&limit=20` 으로 이전 정착 이력을 한 번에 20건씩 읽습니다.
 - 더 남아 있으면 문단 «이전 실행 ${n}건이 더 있습니다» 를 표시합니다.
@@ -1050,7 +1065,7 @@ region «배정 가능»(h2 «배정 가능», `EligibilityTable.tsx`)에서는 
 - 효과와 관측의 어긋남
 - 연결
 
-그 아래에는 h4 «결함»(결함 카드 «이 단위의 결함»), h4 «실행을 막던 결함(blockedBy)», h4 «근거 윈도우(앞 ${s}, 뒤 ${s})» 와 표 «근거 윈도우» 가 이어집니다. 표 «근거 윈도우» 의 열은 순번, 시각, 종류, 내용, 출처(«미들웨어 기록», «현장 관측»)입니다. 관측이 비면 «윈도우 안의 관측이 없습니다» 를 표시합니다.
+그 아래에는 h4 «결함»(결함 카드 «이 단위의 결함»), h4 «실행을 막던 결함(blockedBy)», h4 «근거 윈도우(앞 ${s}, 뒤 ${s})» 와 표 «근거 윈도우» 가 이어집니다. h4 «실행을 막던 결함(blockedBy)» 의 결함 카드 아래에는 지금 인스턴스의 상세이고 운영 영역이 읽은 실행 목록(같은 인스턴스)의 그 실행에 `blockedFaults` 가 있을 때만 note «이 실행은 지금도 결함으로 막혀 있습니다. 감수는 운영 영역의 실행 구역에서 합니다.» 가 붙습니다. 감수하여 막는 결함이 없어지거나 실행 목록이 다른 인스턴스면 이 안내는 보이지 않습니다(근거: `IncidentSection.test.tsx` 의 `지금 인스턴스의 그 실행이 아직 결함으로 막혀 있을 때만 상세에 감수는 실행 구역에서 한다는 안내를 붙인다`). 표 «근거 윈도우» 의 열은 순번, 시각, 종류, 내용, 출처(«미들웨어 기록», «현장 관측»)입니다. 관측이 비면 «윈도우 안의 관측이 없습니다» 를 표시합니다.
 
 판단 폼은 운영자 모드이고 지금 인스턴스이며 보류 중일 때만 form «운영자 판단» 으로 표시합니다.
 - «${exec}/${unit} 보류 해소 방식(완료 확인 또는 재작업)을 결정합니다. 결정자는 ${user}입니다.»
@@ -1760,7 +1775,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 - 사유
 - 결과: 코드 값(예: SUCCEEDED)으로 표시합니다.
 
-대상 칸에는 기체·어댑터·프로파일·현장 설정·임무 조작뿐 아니라 작업 요청, 호출 계약, 실행 배포, 스테이션, 임무 자원, 현장 확인, 실행 취소(대상 = 실행 id, `op` `CANCEL_EXECUTION`), 기체 빈손 확인(대상 = `${robotId}/${markerId}`, `op` `CONFIRM_ROBOT_EMPTY`) 같은 새 조작도 서버가 적은 대상 문자열로 쌓입니다.
+대상 칸에는 기체·어댑터·프로파일·현장 설정·임무 조작뿐 아니라 작업 요청, 호출 계약, 실행 배포, 스테이션, 임무 자원, 현장 확인, 실행 취소(대상 = 실행 id, `op` `CANCEL_EXECUTION`), 결함 감수(대상 = 실행 id, `op` `RELEASE_FAULT_BLOCK`), 기체 빈손 확인(대상 = `${robotId}/${markerId}`, `op` `CONFIRM_ROBOT_EMPTY`) 같은 새 조작도 서버가 적은 대상 문자열로 쌓입니다.
 
 상태 문구는 다음과 같습니다:
 - «모름: 조작 기록을 아직 읽지 못했습니다»
@@ -1995,8 +2010,8 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 
 | 구분 | 글자 | 시험 파일 |
 |---|---|---|
-| form | «기체 선언», «리비전 제출», «바인딩», «빌드 선언», «제품 선언», «인스턴스 등록», «운영자 판단», «작업 지시 폼», «장애 주입 폼», «퇴역», «현장 설정 변경», «실행 취소», «기체 빈손 확인» | 영역별 vitest |
-| status | «제출 결과», «판단 결과», «신호 조작 결과», «임무 조작 결과», «장애 주입 결과», «계약 호출 결과», «호출 계약 처리 결과», «실행 취소 결과», «빈손 확인 결과» | 영역별 vitest |
+| form | «기체 선언», «리비전 제출», «바인딩», «빌드 선언», «제품 선언», «인스턴스 등록», «운영자 판단», «작업 지시 폼», «장애 주입 폼», «퇴역», «현장 설정 변경», «실행 취소», «결함 감수», «기체 빈손 확인» | 영역별 vitest |
+| status | «제출 결과», «판단 결과», «신호 조작 결과», «임무 조작 결과», «장애 주입 결과», «계약 호출 결과», «호출 계약 처리 결과», «실행 취소 결과», «결함 감수 결과», «빈손 확인 결과» | 영역별 vitest |
 
 다음은 버튼과 링크에 기대는 글자입니다. 버튼 이름은 101가지가 시험에 나옵니다.
 
@@ -2016,7 +2031,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | 버튼 | «개요 다시 조회» | `FollowupWorkspace.test.tsx` |
 | 버튼 | «rack_present 켜기»·«rack_present 끄기» | `OperationsArea.test.tsx`, `lifecycle.spec.ts` |
 | 버튼 | «${id} 상세 보기» | `IncidentSection.test.tsx` |
-| 버튼 | «현장 확인 후 실행 취소»·«기체 빈손 확인» | `ExecutionControls.test.tsx` |
+| 버튼 | «현장 확인 후 실행 취소»·«현장 확인 후 결함 감수»·«기체 빈손 확인» | `ExecutionControls.test.tsx` |
 | 버튼 | «${externalOrderId} 작업 요청 보기» | `WorkRequests.test.tsx`, `lifecycle.spec.ts` |
 | 버튼 | 하위 탭과 패널 버튼 «기체»·«도입 준비»·«어댑터 관리»·«프로파일 관리»·«실행 정의»·«호출 연결»·«버전·배포» | `lifecycle.spec.ts` 등 |
 | 링크 | 지표 카드 «총 작업 요청»·«작업 요청 거부» | `lifecycle.spec.ts` |
@@ -2062,7 +2077,7 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | 문장 | «자원을 해제해도 이전 작업은 멈추지 않으며 해당 스테이션은 격리됩니다.» | `StationWorkspace.test.tsx` |
 | alert | «작업 번호 송신·반환 신호는 둘 다 연결하거나 둘 다 비워야 합니다.» | `StationWorkspace.test.tsx` |
 
-운영 화면의 실행 취소·잔여 파지에서 시험이 글자로 보는 항목(전부 `ExecutionControls.test.tsx`, 글자는 `labels.ts` 의 `EXECUTION_CONTROL_TEXT`·`CANCEL_RESULT_LABEL`·`KIND_LABEL`):
+운영 화면의 실행 취소·결함 감수·잔여 파지에서 시험이 글자로 보는 항목(인시던트 상세의 note 만 `IncidentSection.test.tsx`, 나머지는 `ExecutionControls.test.tsx`, 글자는 `labels.ts` 의 `EXECUTION_CONTROL_TEXT`·`CANCEL_RESULT_LABEL`·`RELEASE_RESULT_LABEL`·`KIND_LABEL`):
 
 | 종류 | 문구 | 시험 파일 |
 |---|---|---|
@@ -2074,6 +2089,13 @@ region «초안» 에는 표 «임무 초안 목록» 이 있습니다. 표 «�
 | status 안 | «이미 해소한 잔여 파지 표시» | `ExecutionControls.test.tsx` |
 | status 안 | «빈손 확인이 기록되었습니다. 그 기체는 다음 배정 판정부터 다시 판정됩니다» | `ExecutionControls.test.tsx`, `lifecycle.spec.ts` |
 | 문장 | «실행 취소는 운영자 모드에서 합니다» | `ExecutionControls.test.tsx` |
+| 문장 | «결함 감수는 운영자 모드에서 합니다» | `ExecutionControls.test.tsx` |
+| 폼 글자 | «감수는 결함을 지우지 않으며, 이 결함들이 다음 단위를 막지 않게 하고 다음 로봇 단위를 냅니다. 기체 상태를 현장에서 확인한 뒤 결정하세요.»·«작업 허가 대기는 감수로 풀리지 않습니다.» | `ExecutionControls.test.tsx` |
+| group·dl | «감수할 결함»·«감수할 결함 1» | `ExecutionControls.test.tsx` |
+| status | «exec-2(JO-2) 결함 감수: 감수했습니다. 실행 호스트의 다음 pump 에서 다음 단위를 냅니다» 와 결과·응답 없음 글자 전부(`RELEASE_RESULT_LABEL`, `releaseApplied`·`releaseNotApplied`·`releaseUnconfirmed`) | `ExecutionControls.test.tsx` |
+| status 안 | «요청 id 재사용»·«감수 본문 오류» | `ExecutionControls.test.tsx` |
+| 실행 목록 표 글자 | «결함 막음 2건»·«(결함 감수: park, 첫 재측위)» | `ExecutionControls.test.tsx` |
+| note | «이 실행은 지금도 결함으로 막혀 있습니다. 감수는 운영 영역의 실행 구역에서 합니다.» | `IncidentSection.test.tsx` |
 | 문장 | «기체 빈손 확인은 운영자 모드에서 합니다» | `ExecutionControls.test.tsx` |
 | 문장 | «미해소 잔여 파지 표시가 없습니다» | `ExecutionControls.test.tsx`, `lifecycle.spec.ts` |
 | 문장 | «이름 없음» | `ExecutionControls.test.tsx` |

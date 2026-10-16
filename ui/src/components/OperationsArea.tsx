@@ -246,7 +246,7 @@ export function OperationsArea({ session, onChanged }: Props) {
   }
 
   // 바뀐 값은 실행 호스트의 다음 pump 부터 보인다. 곧바로 한 번, pump 가 돈 뒤 한 번 더 읽는다. 조작이 잇따르면 마지막 조작
-  // 뒤의 한 번이 앞의 것을 대신한다. 신호 조작, 운영자 판단, 실행 취소, 기체 빈손 확인이 같이 쓴다.
+  // 뒤의 한 번이 앞의 것을 대신한다. 신호 조작, 운영자 판단, 실행 취소, 결함 감수, 기체 빈손 확인이 같이 쓴다.
   const rereadNowAndAfterPump = () => {
     setTick((value) => value + 1)
     if (settle.current !== null) clearTimeout(settle.current)
@@ -311,7 +311,7 @@ export function OperationsArea({ session, onChanged }: Props) {
         <h2>실행</h2>
         <ExecutionList read={executions} highlight={submitted} session={session} onCanceled={rereadNowAndAfterPump} />
       </section>
-      <IncidentSection read={incidents} session={session} tick={tick} onDecided={rereadNowAndAfterPump} />
+      <IncidentSection read={incidents} session={session} tick={tick} onDecided={rereadNowAndAfterPump} executions={executions.value} />
       <section aria-label="셀 대역">
         <h2>셀 대역</h2>
         {signalLast !== null && <SignalNotice what={signalLast.what} sent={signalLast.sent} />}

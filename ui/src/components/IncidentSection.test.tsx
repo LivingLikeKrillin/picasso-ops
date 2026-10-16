@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import type { FaultDetail, HoldResolveOutcome, IncidentResolution, Session } from '../api'
 import { EXECUTIONS_RECENT_PATH } from '../api'
+import { EXECUTION_CONTROL_TEXT } from '../labels'
 import { POLL_MS, SIGNAL_SETTLE_MS } from '../poll'
-import { earlierRow, holdResolved, incidentDetail, incidentRow, incidentsView, installFakeOps } from '../testing/fakeOps'
+import { earlierRow, executionsView, holdResolved, incidentDetail, incidentRow, incidentsView, installFakeOps } from '../testing/fakeOps'
 import type { FakeOps } from '../testing/fakeOps'
 import { OperationsArea } from './OperationsArea'
 
@@ -189,6 +190,45 @@ describe('인시던트', () => {
     const observed = within(detail).getByRole('region', { name: '관측' })
     expect(field(observed, '임무 버전')).toBe('PrepareSequencedRack 코드 정의')
     expect(field(observed, '현장 설정 버전')).toBe('모름')
+  })
+
+  it('지금 인스턴스의 그 실행이 아직 결함으로 막혀 있을 때만 상세에 감수는 실행 구역에서 한다는 안내를 붙인다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.incidents = threeRows()
+    fake.incidentDetails.set('incident-1', incidentDetail({ incidentId: 'incident-1', executionId: 'exec-0', blockedBy: [localization] }))
+    const run = (blockedFaults: FaultDetail[], instanceId = 'mw-1') =>
+      executionsView({
+        instanceId,
+        executions: [
+          {
+            executionId: 'exec-0',
+            jobOrderId: 'JO-0',
+            workMasterId: 'PrepareSequencedRack',
+            missionVersion: null,
+            robotId: 'humanoid-01',
+            physicalState: blockedFaults.length > 0 ? 'OPERATOR_HOLD' : 'RUNNING',
+            units: [],
+            jobResponse: null,
+            blockedFaults,
+          },
+        ],
+      })
+    fake.executions = run([localization])
+    const blocked = open()
+    const detail = await select('incident-1')
+    expect(await within(detail).findByText(EXECUTION_CONTROL_TEXT.incidentPointer)).toHaveAttribute('role', 'note')
+    blocked.unmount()
+
+    // 감수한 뒤(막는 결함 없음)나 실행 목록이 다른 인스턴스이면 안내가 없다.
+    for (const page of [run([]), run([localization], 'mw-2')]) {
+      fake.executions = page
+      const view = open()
+      const shown = await select('incident-1')
+      await within(shown).findByLabelText('실행을 막던 결함 1')
+      await screen.findByRole('table', { name: '실행 목록' })
+      expect(within(shown).queryByText(EXECUTION_CONTROL_TEXT.incidentPointer)).toBeNull()
+      view.unmount()
+    }
   })
 
   it('판단 없는 인시던트는 관측만 보이고 판단된 인시던트는 판단자와 실제 시각, 결정을 관측과 다른 구역에 보인다', async () => {

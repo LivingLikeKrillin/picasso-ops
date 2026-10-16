@@ -701,6 +701,7 @@ picasso `release` 는 `notify` 를 부르지 않는다. 그래서 그 실행의 
 | `GET /api/robots/residual-holds` | 호스트 본문 | 없음 | 없음 | 없음 | `HOST_SILENT` |
 | `POST /api/executions/{executionId}/cancel` | 보냄(결과는 본문) | `ACTOR_REQUIRED`·`CANCEL_BAD_REQUEST`·`REASON_REQUIRED` | `MODE_NOT_ALLOWED` | JSON 아님 | 없음 |
 | `POST /api/robots/{robotId}/residual-holds/{markerId}/clear` | 보냄(결과는 본문) | `ACTOR_REQUIRED`·`CLEAR_BAD_REQUEST`·`REASON_REQUIRED` | `MODE_NOT_ALLOWED` | JSON 아님 | 없음 |
+| `POST /api/executions/{executionId}/release` | 보냄(결과는 본문, 9.8) | `ACTOR_REQUIRED`·`RELEASE_BAD_REQUEST`·`REASON_REQUIRED` | `MODE_NOT_ALLOWED` | JSON 아님 | 없음 |
 
 ### 9.7 운영자 실행 취소와 기체 빈손 확인(P0-b2)
 
@@ -736,3 +737,30 @@ picasso `release` 는 `notify` 를 부르지 않는다. 그래서 그 실행의 
 ```
 
 (근거 시험: `ExecutionControlsTest` 여섯.)
+
+### 9.8 운영자 결함 감수
+
+- `POST /api/executions/{executionId}/release`: 운영자 모드만. 본문 `{instanceId, reason, sawFaults}`. 판정 순서 1) 400 `ACTOR_REQUIRED` 2) 403 `MODE_NOT_ALLOWED` 3) 본문(본문이 객체가 아니거나 `instanceId` 가 비어 있지 않은 문자열이 아니면 400 `RELEASE_BAD_REQUEST` «instanceId 는 비어 있지 않은 문자열이다(실행 목록의 instanceId)», `sawFaults` 가 비어 있지 않은 배열이 아니거나 원소의 `errorType` 이 비어 있지 않은 문자열이 아니거나 `references` 가 배열이 아니거나 참조의 `key` 가 비어 있지 않은 문자열·`value` 가 문자열이 아니면 400 `RELEASE_BAD_REQUEST` «sawFaults 는 비어 있지 않은 배열이고 원소마다 errorType 은 비어 있지 않은 문자열, references 는 {key, value} 객체의 배열이다») 4) 사유(앞뒤 공백을 뗀 뒤 비면 400 `REASON_REQUIRED` «결함 감수 사유가 없다»). 1~4 는 조작 기록에 남지 않음. 그 뒤는 실행 호스트가 무엇을 답했든 200. 승인자는 본문에 없고 `X-Ops-User`. 요청 id 는 운영 서비스가 만들어 실행 호스트에 넘기고, 실행 호스트는 그 id 를 감수 행에 적음.
+- 실행 호스트(5.10)에는 `errorType` 과 `references` 의 `key`·`value` 만 옮겨 보냄. 결함 객체의 다른 칸(`failureClass` 등)은 버림.
+- 200 칸 7개 이 순서 `requestId`·`executionId`·`result`·`confirmation`·`outcome`(실행 호스트 `result` 이름, 실행 호스트가 200 으로 답했을 때만)·`answer`(실행 호스트 200 본문)·`rejection`(실행 호스트 4xx 일 때 `{status, error, detail}`). 취소와 같은 칸. `result`: `RELEASED` → `SUCCEEDED`. `NOT_BLOCKED`·`BLOCK_CHANGED`·`NOT_FOUND`·`REFUSED` 와 실행 호스트 4xx(409 `INSTANCE_MISMATCH`, 409 `REQUEST_ID_REUSED`, 400 `BAD_REQUEST`) → `REJECTED`. 연결 실패·시간 초과·5xx·200 인데 본문을 못 읽음 → `NO_RESPONSE` 와 1초 뒤 재조회 한 번.
+- 재조회: `GET /host/executions?executionId=<그 실행>`. 목록의 인스턴스가 요청한 인스턴스와 같고 그 실행의 `releases` 에 이 요청 id 가 있으면 `CONFIRMED_APPLIED`, 실행이 없거나 그 요청 id 가 없으면 `CONFIRMED_NOT_APPLIED`, 인스턴스가 다르거나(같은 실행 id 가 다른 실행일 수 있음) 못 읽으면 null(확인 행 없음). 취소의 재조회와 달리 시각을 견주지 않음(요청 id 로 찾음).
+- 조작 기록: `target` = 실행 id, `request` = `{"op":"RELEASE_FAULT_BLOCK","executionId","approverId","instanceId","sawFaults"}`, `reason` = 입력 사유. 재조회 행의 `observed` 는 그 실행 또는 null.
+- 재작업 관문(스테이션 조정)은 거치지 않음. 감수는 끝난 단위를 다시 돌리지 않고 계획의 다음 단위로 감.
+
+```json
+{"instanceId": "mw-3f0c...", "reason": "현장에서 기체 상태를 확인했다", "sawFaults": [{"errorType": "LOCALIZATION_LOST", "references": []}]}
+```
+
+```json
+{
+  "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a",
+  "executionId": "exec-1",
+  "result": "SUCCEEDED",
+  "confirmation": null,
+  "outcome": "RELEASED",
+  "answer": {"result": "RELEASED", "executionId": "exec-1", "physicalState": "RUNNING", "detail": null, "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"},
+  "rejection": null
+}
+```
+
+(근거 시험: `ExecutionControlsTest` 의 `결함 감수는 운영자 모드만 하고 본문이 틀리면 사유보다 먼저 400 RELEASE_BAD_REQUEST 이며 사유가 없으면 400 REASON_REQUIRED 다`·`결함 감수는 승인자가 행위자이고 본 결함의 종류와 참조만 옮겨 보내며 RELEASED 는 성공 그 밖의 결과와 호스트 4xx 는 거부로 남는다`·`결함 감수 응답이 없으면 그 실행의 releases 에 이 요청 id 가 있는지로 대조하고 인스턴스가 바뀌었거나 못 읽으면 확인하지 못한다`, `HostClientTest` 의 `결함 감수는 승인자와 사유와 인스턴스와 본 결함과 요청 id 를 실어 보내고 상태 코드와 본문을 그대로 돌려준다`.)

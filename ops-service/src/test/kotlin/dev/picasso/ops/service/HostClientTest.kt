@@ -1,6 +1,7 @@
 package dev.picasso.ops.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ArrayNode
 import com.sun.net.httpserver.HttpServer
 import dev.picasso.ops.service.host.HostCall
 import dev.picasso.ops.service.host.HostClient
@@ -8,6 +9,7 @@ import dev.picasso.ops.service.host.HostEligibility
 import dev.picasso.ops.service.host.HostSkillFit
 import dev.picasso.ops.service.host.HostWrite
 import java.net.InetSocketAddress
+import java.util.UUID
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -214,6 +216,25 @@ class HostClientTest {
         assertIs<HostCall.Silent>(client.executionsBefore(1, 1))
         assertIs<HostCall.Silent>(client.executionsRecent(1))
         assertIs<HostCall.Silent>(client.executionSummary())
+    }
+
+    @Test
+    fun `결함 감수는 승인자와 사유와 인스턴스와 본 결함과 요청 id 를 실어 보내고 상태 코드와 본문을 그대로 돌려준다`() {
+        val answer = """{"result":"RELEASED","executionId":"exec-1","physicalState":"RUNNING","detail":null,"requestId":"6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}"""
+        val path = "/host/executions/exec-1/release"
+        val client = serve(path to (200 to answer))
+        val saw = json.readTree("""[{"errorType":"LOCALIZATION_LOST","references":[{"key":"KEY_TASK_ID","value":"t-1"}]}]""") as ArrayNode
+        val requestId = UUID.fromString("6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a")
+        assertEquals(HostWrite.Answered(200, answer), client.releaseFaults("exec-1", "kim", "현장 확인", "mw-1", saw, requestId))
+        val (method, contentType, body) = seen.getValue(path)
+        assertEquals(listOf("POST", "application/json"), listOf(method, contentType))
+        assertEquals(
+            json.readTree(
+                """{"approverId":"kim","reason":"현장 확인","instanceId":"mw-1","sawFaults":[{"errorType":"LOCALIZATION_LOST",""" +
+                    """"references":[{"key":"KEY_TASK_ID","value":"t-1"}]}],"requestId":"6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}""",
+            ),
+            json.readTree(body),
+        )
     }
 
     @Test
