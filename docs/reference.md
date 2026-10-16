@@ -433,11 +433,11 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-16에 `fix/restore-rerun-and-cancel` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 이 브랜치에서 바뀌지 않아 2026-10-15 `feat/forget-settled` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 258개 통과를 확인한 기록을 그대로 씁니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-17에 `fix/registry-warn-throttle` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 이 브랜치에서 바뀌지 않아 2026-10-15 `feat/forget-settled` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 258개 통과를 확인한 기록을 그대로 씁니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 442(그대로) | 로컬 시험 결과 XML 442건, 실패 0 |
+| `ops-service` | 453(442 에서 11 늘어남: `ReadFailureLogTest` 10, `RegistryClientTest` 1) | 로컬 시험 결과 XML 453건, 실패 0 |
 | `mission-host` | 165(159 에서 6 늘어남: `RerunRestoreTest` 5, `MissionStoreTest` 1) | 로컬 시험 결과 XML 165건, 실패 0 |
 | `site` | 39 | 로컬 시험 결과 XML 39건, 실패 0 |
 | `e2e` | 73(시험 클래스 18개 그대로) | 로컬 시험 결과 XML 73건, 실패 0 |
