@@ -10,8 +10,11 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
-/** 일지 행 이후의 일(S4b 스펙 T2·T3). */
-enum class JournalEventKind { RESTORED, DEFERRED, GAVE_UP, SETTLED }
+/**
+ * 일지 행 이후의 일(S4b 스펙 T2·T3). [REOPENED] 는 이 인스턴스가 정착을 적은 실행이 개정판 수락이나 운영자 판단으로 다시 도는 것이다(V10).
+ * 그 작업 지시의 [SETTLED]·[REOPENED]·[GAVE_UP] 가운데 마지막이 기동 복원의 대상과 판정 제외를 정한다([HostRecords.openJournal]).
+ */
+enum class JournalEventKind { RESTORED, DEFERRED, GAVE_UP, SETTLED, REOPENED }
 
 /**
  * 실행 일지 한 행(S4b 스펙 T2). [jobOrder] 는 picasso `JobOrder` 의 칸 그대로의 JSON 글자다.
@@ -31,7 +34,7 @@ data class JournalRow(
     val receivedAt: Instant,
 )
 
-/** 일지 이벤트 한 행. [executionId] 는 RESTORED·SETTLED 에만, [detail] 은 RESTORED 밖에만 있다. */
+/** 일지 이벤트 한 행. [executionId] 는 RESTORED·SETTLED·REOPENED 에만, [detail] 은 RESTORED 밖에만 있다(SETTLED·REOPENED 는 물리 상태). */
 data class JournalEvent(
     val eventId: Long,
     val jobOrderId: String,
@@ -39,6 +42,22 @@ data class JournalEvent(
     val instanceId: String,
     val executionId: String?,
     val detail: String?,
+    val recordedAt: Instant,
+)
+
+/**
+ * 받은 개정판 한 행(V10). 이미 있던 실행의 `revise` 가 ACCEPTED 를 낸 판이다. [jobOrder] 는 [JournalRow.jobOrder] 와 같은 모양의 JSON
+ * 글자다. 기동 복원은 그 작업 지시의 가장 높은 판으로 다시 짓는다.
+ *
+ * @param instanceId·executionId 받은 인스턴스와 그때의 실행 id
+ */
+data class RevisionRow(
+    val revisionId: Long,
+    val jobOrderId: String,
+    val version: Int,
+    val jobOrder: String,
+    val instanceId: String,
+    val executionId: String,
     val recordedAt: Instant,
 )
 
@@ -339,21 +358,39 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             .query(Int::class.java)
             .single()
 
-    /** 정착도 포기도 없는 일지 행. 받은 순서다. 기동 복원의 대상이다(T3). */
-    fun openJournal(): List<JournalRow> = journalWhere(
-        """
-        NOT EXISTS (SELECT 1 FROM mission.execution_journal_event e
-                    WHERE e.job_order_id = j.job_order_id AND e.kind IN ('SETTLED', 'GAVE_UP'))
-        """.trimIndent(),
-    )
+    /**
+     * 도는 일지 행. 정착·다시 돎·포기 이벤트가 없거나 그 가운데 마지막이 다시 돎(REOPENED)인 행이다. 받은 순서다. 기동 복원의
+     * 대상이다(T3). 정착한 뒤 개정판이나 운영자 판단으로 다시 돈 실행도 든다.
+     */
+    fun openJournal(): List<JournalRow> = journalWhere("coalesce($LAST_TURN, 'REOPENED') = 'REOPENED'")
 
-    /** 포기했고 정착하지 않은 일지 행. 받은 순서다. 판정이 그 기체를 뺄지 본다(T4). */
-    fun gaveUpJournal(): List<JournalRow> = journalWhere(
-        """
-        EXISTS (SELECT 1 FROM mission.execution_journal_event e WHERE e.job_order_id = j.job_order_id AND e.kind = 'GAVE_UP')
-        AND NOT EXISTS (SELECT 1 FROM mission.execution_journal_event e WHERE e.job_order_id = j.job_order_id AND e.kind = 'SETTLED')
-        """.trimIndent(),
-    )
+    /** 포기한 채인 일지 행. 정착·다시 돎·포기 이벤트 가운데 마지막이 포기다. 받은 순서다. 판정이 그 기체를 뺄지 본다(T4). */
+    fun gaveUpJournal(): List<JournalRow> = journalWhere("$LAST_TURN = 'GAVE_UP'")
+
+    /** 받은 개정판을 적는다(V10). [jobOrder] 는 picasso `JobOrder` 의 칸 그대로의 JSON 글자다. */
+    fun revision(jobOrderId: String, version: Int, jobOrder: String, instanceId: String, executionId: String): RevisionRow =
+        jdbc.sql(
+            """
+            INSERT INTO mission.execution_journal_revision (job_order_id, version, job_order, instance_id, execution_id)
+            VALUES (:jobOrderId, :version, CAST(:jobOrder AS jsonb), :instanceId, :executionId)
+            RETURNING $REVISION_COLUMNS
+            """.trimIndent(),
+        )
+            .param("jobOrderId", jobOrderId)
+            .param("version", version)
+            .param("jobOrder", jobOrder)
+            .param("instanceId", instanceId)
+            .param("executionId", executionId)
+            .query { rs, _ -> revisionRow(rs) }
+            .single()
+
+    /** 그 작업 지시의 가장 높은 판의 받은 개정판. 없으면 `null` 이다(받은 판 그대로). */
+    fun latestRevision(jobOrderId: String): RevisionRow? =
+        jdbc.sql("SELECT $REVISION_COLUMNS FROM mission.execution_journal_revision WHERE job_order_id = :jobOrderId ORDER BY version DESC LIMIT 1")
+            .param("jobOrderId", jobOrderId)
+            .query { rs, _ -> revisionRow(rs) }
+            .optional()
+            .orElse(null)
 
     fun journalRow(jobOrderId: String): JournalRow? =
         jdbc.sql("SELECT $JOURNAL_COLUMNS FROM mission.execution_journal j WHERE job_order_id = :jobOrderId")
@@ -533,6 +570,17 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             .query { rs, _ -> cancelRow(rs) }
             .single()
 
+    /**
+     * 그 작업 지시의 처음 운영자 취소(인스턴스 무관). 없으면 `null` 이다. 취소는 그 실행에 붙어 다시 돌아도 풀리지 않으므로(picasso
+     * `cancel`), 기동 복원이 다시 지은 실행에 다시 건다.
+     */
+    fun cancelOf(jobOrderId: String): CancelRow? =
+        jdbc.sql("SELECT $CANCEL_COLUMNS FROM mission.execution_cancel WHERE job_order_id = :jobOrderId ORDER BY cancel_id LIMIT 1")
+            .param("jobOrderId", jobOrderId)
+            .query { rs, _ -> cancelRow(rs) }
+            .optional()
+            .orElse(null)
+
     /** 그 인스턴스의 운영자 취소. 적은 순서다. */
     fun cancels(instanceId: String): List<CancelRow> =
         jdbc.sql("SELECT $CANCEL_COLUMNS FROM mission.execution_cancel WHERE instance_id = :instanceId ORDER BY cancel_id")
@@ -690,6 +738,16 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
         recordedAt = instant(rs, "recorded_at"),
     )
 
+    private fun revisionRow(rs: ResultSet) = RevisionRow(
+        revisionId = rs.getLong("revision_id"),
+        jobOrderId = rs.getString("job_order_id"),
+        version = rs.getInt("version"),
+        jobOrder = rs.getString("job_order"),
+        instanceId = rs.getString("instance_id"),
+        executionId = rs.getString("execution_id"),
+        recordedAt = instant(rs, "recorded_at"),
+    )
+
     private fun cancelRow(rs: ResultSet) = CancelRow(
         cancelId = rs.getLong("cancel_id"),
         instanceId = rs.getString("instance_id"),
@@ -784,6 +842,12 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
         const val JOURNAL_COLUMNS =
             "journal_id, job_order_id, robot_id, job_order, work_master_id, mission_version, instance_id, execution_id, received_at"
         const val EVENT_COLUMNS = "event_id, job_order_id, kind, instance_id, execution_id, detail, recorded_at"
+        const val REVISION_COLUMNS = "revision_id, job_order_id, version, job_order, instance_id, execution_id, recorded_at"
+
+        /** 일지 행 `j` 의 정착·다시 돎·포기 이벤트 가운데 마지막의 종류(없으면 NULL). */
+        const val LAST_TURN =
+            "(SELECT e.kind FROM mission.execution_journal_event e WHERE e.job_order_id = j.job_order_id " +
+                "AND e.kind IN ('SETTLED', 'REOPENED', 'GAVE_UP') ORDER BY e.event_id DESC LIMIT 1)"
         const val LOG_COLUMNS =
             "log_id, instance_id, job_response_id, job_order_id, execution_id, version, physical_state, required_evidence, " +
                 "reached_evidence, completed_units, unverified_units, incomplete_units, in_doubt_units, operator_required, " +

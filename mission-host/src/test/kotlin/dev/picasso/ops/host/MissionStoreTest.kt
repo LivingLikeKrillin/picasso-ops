@@ -23,7 +23,7 @@ class MissionStoreTest {
     @BeforeTest
     fun freshSchema() {
         PostgresSupport.execute("DROP SCHEMA IF EXISTS mission CASCADE")
-        assertEquals(9, HostSchema.flyway(dataSource).migrate().migrationsExecuted)
+        assertEquals(10, HostSchema.flyway(dataSource).migrate().migrationsExecuted)
     }
 
     private fun draft(workMaster: String = PSR) = store.saveDraft(workMaster, "{}", "lee", UUID.randomUUID())
@@ -37,7 +37,8 @@ class MissionStoreTest {
         ) { it.getString(1) }
         assertEquals(
             listOf(
-                "draft", "execution_cancel", "execution_journal", "execution_journal_event", "execution_judgment_record", "flyway_schema_history",
+                "draft", "execution_cancel", "execution_journal", "execution_journal_event", "execution_journal_revision", "execution_judgment_record",
+                "flyway_schema_history",
                 "host_instance", "incident_copy", "incident_copy_resolution", "job_response_log", "mission_version", "mock_run", "result_outbox",
                 "result_producer", "robot_residual_hold", "robot_residual_hold_clearing",
             ),
@@ -89,7 +90,7 @@ class MissionStoreTest {
                 assertTrue("실행 일지·송신 기록·인시던트 사본은 덧붙이기만 한다" in e.message!!, "$sql: ${e.message}")
             }
         }
-        // 같은 인스턴스·응답 id 는 두 번 적지 못한다. 일지 이벤트 종류는 넷뿐이다.
+        // 같은 인스턴스·응답 id 는 두 번 적지 못한다. 일지 이벤트 종류는 다섯뿐이다(V10 이 REOPENED 를 더했다).
         assertFailsWith<SQLException> {
             PostgresSupport.execute(
                 "INSERT INTO mission.job_response_log (instance_id, job_response_id, job_order_id, execution_id, version, physical_state, required_evidence, " +
@@ -100,6 +101,36 @@ class MissionStoreTest {
         assertFailsWith<SQLException> {
             PostgresSupport.execute("INSERT INTO mission.execution_journal_event (job_order_id, kind, instance_id, detail) VALUES ('JO-1', 'FORGOTTEN', 'mw-1', 'x')")
         }
+    }
+
+    @Test
+    fun `V10 받은 개정판 표는 덧붙이기만 하고 판마다 한 행이며 다시 돎 이벤트는 실행 id 와 상세를 든다`() {
+        PostgresSupport.execute(
+            "INSERT INTO mission.execution_journal (job_order_id, robot_id, job_order, work_master_id, instance_id, execution_id) " +
+                "VALUES ('JO-1', 'r', '{}', 'PrepareSequencedRack', 'mw-1', 'exec-1')",
+        )
+        val revision = "INSERT INTO mission.execution_journal_revision (job_order_id, version, job_order, instance_id, execution_id) " +
+            "VALUES ('JO-1', 2, '{}', 'mw-1', 'exec-1')"
+        PostgresSupport.execute(revision)
+        PostgresSupport.execute("INSERT INTO mission.execution_journal_event (job_order_id, kind, instance_id, execution_id, detail) VALUES ('JO-1', 'REOPENED', 'mw-1', 'exec-1', 'RUNNING')")
+        listOf("UPDATE mission.execution_journal_revision SET version = 3", "DELETE FROM mission.execution_journal_revision", "TRUNCATE mission.execution_journal_revision CASCADE")
+            .forEach { sql ->
+                val e = assertFailsWith<SQLException>(sql) { PostgresSupport.execute(sql) }
+                assertTrue("덧붙이기만 한다" in e.message!!, "$sql: ${e.message}")
+            }
+        listOf(
+            // 같은 판은 두 번 적지 못한다.
+            revision,
+            // 일지에 없는 작업 지시의 개정판은 없다.
+            revision.replace("'JO-1'", "'JO-X'"),
+            // 다시 돎은 실행 id 와 상세(물리 상태)를 든다.
+            "INSERT INTO mission.execution_journal_event (job_order_id, kind, instance_id, detail) VALUES ('JO-1', 'REOPENED', 'mw-1', 'RUNNING')",
+            "INSERT INTO mission.execution_journal_event (job_order_id, kind, instance_id, execution_id) VALUES ('JO-1', 'REOPENED', 'mw-1', 'exec-1')",
+            // 미룸·포기는 여전히 실행 id 가 없다.
+            "INSERT INTO mission.execution_journal_event (job_order_id, kind, instance_id, execution_id, detail) VALUES ('JO-1', 'GAVE_UP', 'mw-1', 'exec-1', 'x')",
+        ).forEach { sql -> assertFailsWith<SQLException>(sql) { PostgresSupport.execute(sql) } }
+        assertEquals(1, PostgresSupport.queryOne("SELECT count(*) FROM mission.execution_journal_revision") { it.getInt(1) })
+        assertEquals(1, PostgresSupport.queryOne("SELECT count(*) FROM mission.execution_journal_event") { it.getInt(1) })
     }
 
     @Test

@@ -50,7 +50,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 |---|---|---|---|
 | `ui/` | React·Vite·TypeScript 관리 화면, 운영 서비스만 호출, 메뉴 아홉(운영 개요, 작업 요청, 공유 자원, 운영, 로봇, 임무, 현장 설정, 이력, 검증 도구) | dev 5173, Playwright preview 4173 | 없음 |
 | `ops-service/` | 화면의 유일한 백엔드, 외부 주문 API(`/integration/v1/...`), 작업 요청 영속 저장·결과 버전·수신 확인·콜백 전달, 공유 스테이션 조정, registry·실행 호스트 REST 호출, picasso 모듈 미사용(빌드가 `checkNoPicassoOnMain` 으로 집행) | `OPS_PORT=8782`, 루프백(`server.address=127.0.0.1`) | 스키마 `ops`, 마이그레이션 V1~V21, 표 18개와 뷰 1개 |
-| `mission-host/` | picasso 미들웨어로 작업 지시 실행, 임무 정의 검증·모의 실행·활성화, 250ms 마다 셀 대역 읽기·pump, 현장이 작업 허가 대응을 선언하면 pump 마다 같은 셀 대역 스냅숏으로 작업 허가를 비춰 미들웨어 허가 포트에 넘김, `GET /host/work-permits` 로 지금의 작업 허가를 내줌, 내보낸 작업 응답을 결과 outbox 에 기록하고 `GET /host/result-events` 로 내줌, 판단 기록을 영속하고 기동 복원에 넘김, 인스턴스 심장박동, 호출자는 운영 서비스뿐 | `HOST_PORT=8785`, 루프백 | 스키마 `mission`, 마이그레이션 V1~V9, 표 15개 |
+| `mission-host/` | picasso 미들웨어로 작업 지시 실행, 임무 정의 검증·모의 실행·활성화, 250ms 마다 셀 대역 읽기·pump, 현장이 작업 허가 대응을 선언하면 pump 마다 같은 셀 대역 스냅숏으로 작업 허가를 비춰 미들웨어 허가 포트에 넘김, `GET /host/work-permits` 로 지금의 작업 허가를 내줌, 내보낸 작업 응답을 결과 outbox 에 기록하고 `GET /host/result-events` 로 내줌, 판단 기록을 영속하고 기동 복원에 넘김, 인스턴스 심장박동, 호출자는 운영 서비스뿐 | `HOST_PORT=8785`, 루프백 | 스키마 `mission`, 마이그레이션 V1~V10, 표 16개 |
 | `site/` | registry·mimic·`site-runner`·셀 대역을 한 프로세스에서 구동 | 아래 세부 구성 요소 참조 | registry 마이그레이션을 런처가 실행 |
 | `registry` | 기체 원장, 어댑터·리비전·바인딩·명칭·생존 보고 | `REGISTRY_PORT=8781`, 루프백 | Postgres public |
 | `mimic` | `humanoid-01`·`quadruped-01` 가상 기체, 가상 시계, seed 0 | `MIMIC_GRPC_PORT=8783`, 모든 인터페이스 | 메모리 |
@@ -85,6 +85,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - V7: `host_instance`(실행 호스트 인스턴스와 심장박동). 인스턴스마다 한 행이고 그 인스턴스만 고침. 칸은 ops V21 의 `service_instance` 와 같은 다섯(`instance_id`·`started_at`·`last_seen_at`·`expires_at`·`stopped_at`). 덧붙이기 전용 표가 아님.
 - V8: `execution_journal_event` 에 `snapshot JSON`(NULL 가능) 칸 추가. 새 표 없이 표 수는 15 개 유지. CHECK(`execution_journal_event_snapshot_settled`: `snapshot IS NULL OR kind = 'SETTLED'`)로 정착 이벤트에만 `GET /host/executions` 실행 행(`ExecutionView` JSON) 본문을 남김. V8 이전 행과 다른 모든 이벤트는 NULL. 인시던트 사본과 마찬가지로 적힌 본문 글자 그대로라 키 순서를 보존하는 JSON(JSONB 아님) 사용. 정착 이력 페이징을 위한 부분 인덱스는 `execution_journal_event_settled`(`(event_id) WHERE kind = 'SETTLED'`, 커서는 `event_id`). 화면의 실행 목록은 미들웨어 메모리가 아니라 이 정착 이력에서 정착된 실행을 읽음(HA 설계 기록 §10, S3a JSON 계약 §5.8). 여전히 덧붙이기 전용 표(`UPDATE`·`DELETE` 만 막는 행 트리거 변경 없음).
 - V9: 부분 색인 `execution_journal_event_settled_execution` `(instance_id, execution_id, event_id) WHERE kind = 'SETTLED'` 추가. 새 표나 칸 없이 표 수는 15 개 유지. 이 인스턴스가 놓은 실행을 인자 없는 `GET /host/executions` 와 좁힌 `GET /host/executions` 에 채우는 데(실행별 가장 최근 정착 본문) 씀. 여전히 덧붙이기 전용.
+- V10: `execution_journal_revision`(받은 리비전). 이미 있던 실행의 `revise` 가 ACCEPTED 를 낸 버전마다 한 행이고 `(job_order_id, version)` 유일. 칸 `revision_id`(기본 키), `job_order_id`(실행 일지 작업 지시 id 외래 키), `version`, `job_order`(JSONB, 일지의 작업 지시와 같은 모양), `instance_id`, `execution_id`, `recorded_at`. 변경·삭제·통째 비우기 금지(V2 의 `mission_record_append_only()` 트리거). 시각은 DB `clock_timestamp()`. 표 수는 16 개. `execution_journal_event` 의 이벤트 종류에 `REOPENED`(정착을 적은 실행이 다시 실행됨, 실행 id 필수, `detail` 은 그때의 물리 상태)를 더함. CHECK `execution_journal_event_kind_check` 는 다섯 종류로 다시 만들고, 실행 id CHECK 는 `execution_journal_event_check` 를 `execution_journal_event_execution_check`(`RESTORED`·`SETTLED`·`REOPENED` 에만 실행 id)로 바꿈.
 
 마이그레이션 수와 표 수는 `ops-service/src/main/resources/db/ops/` 와 `mission-host/src/main/resources/db/mission/` 의 SQL 파일을 세고 `CREATE TABLE`·`CREATE VIEW` 를 세어 얻은 값입니다.
 
@@ -137,7 +138,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - 기록 시점: 화면의 작업 지시 폼은 `POST /api/work-requests/manual` 로 작업 요청을 만듭니다. 운영 서비스는 실행 호스트를 부르기 전에 `ops.work_request` 행을 `RECEIVED` 로 따로 커밋하고, 입력을 작업 지시로 변환해 저장한 뒤 `DISPATCHING` 으로 바꾸고 나서 `POST /host/job-orders` 를 부릅니다. 작업 지시 id 는 `JO-<작업 요청 id>` 로 작업 요청마다 고정됩니다. 실행 호스트는 새 실행 정보를 응답하기 전에 실행 일지에 먼저 기록합니다. 운영 서비스는 응답을 받은 뒤 조작 기록에 남기고 작업 요청 상태를 `ACCEPTED`, `UNASSIGNED`, `REJECTED`, `IN_DOUBT` 가운데 하나로 정합니다.
 - 작업 응답 처리: 실행 호스트가 작업 지시를 받은 시점(`ACCEPTED`)에는 작업 응답을 만들지 않습니다. pump 가 mimic 에서 태스크를 시작하고, 실행이 정착하거나 보류될 때 작업 응답을 송신 기록(`job_response_log`)에 남깁니다. 처분이 송신인 작업 응답은 같은 트랜잭션에서 결과 outbox(`result_outbox`)에도 순번과 함께 기록됩니다.
 - 재조회 동작: 응답이 없으면 운영 서비스가 1초 뒤 그 작업 지시로 좁힌 실행 목록인 `GET /host/executions?jobOrderId=<그 작업 지시>`를 한 번 재조회합니다. 목록에 그 작업 지시가 보이면 `ACCEPTED` 이고, 보이지 않아도 보내지 않았다는 증거로 보지 않아 `IN_DOUBT` 로 둡니다. 좁힌 재조회는 호스트가 이미 놓은 실행도 정착 본문에서 찾습니다.
-- 같은 작업 지시 id 재제출: 재기동 전후 모두 picasso 메모리에 실행이 없더라도 실행 일지에 행이 있으면 호스트가 새 실행을 짓지 않고 거부합니다. 정착 이벤트가 있는 행이면 사유가 `FORGOTTEN_JOB_ORDER` 로 시작하고 `forgottenJobOrder` 가 true 인 `REJECTED` 로 거부합니다. 정착 이벤트가 없는 행이면 사유가 `JOURNALED_JOB_ORDER` 로 시작하고 `forgottenJobOrder` 가 false 인 `REJECTED` 로 거부합니다. 새 실행을 짓지 않으므로 실행 일지 쓰기 실패가 발생하지 않습니다. 제출마다 실행 일지 기본키 조회로 DB 문 1개가 추가되고, 행이 있을 때 이벤트 읽기 1회가 추가됩니다. 운영 서비스는 작업 요청마다 작업 지시 id 를 하나만 유지하므로 다시 할 작업은 새 작업 요청으로 나갑니다.
+- 같은 작업 지시 id 재제출: 재기동 전후 모두 picasso 메모리에 실행이 없더라도 실행 일지에 행이 있으면 호스트가 새 실행을 짓지 않고 거부합니다. 가르는 기준은 그 작업 지시의 정착·다시 실행·포기 이벤트 가운데 마지막 것입니다. 마지막이 정착이면 사유가 `FORGOTTEN_JOB_ORDER` 로 시작하고 `forgottenJobOrder` 가 true 인 `REJECTED` 로 거부하고, 그 밖의 행(정착하지 않은 행, 정착 뒤 다시 실행된 행)이면 사유가 `JOURNALED_JOB_ORDER` 로 시작하고 false 인 `REJECTED` 로 거부합니다. 새 실행을 짓지 않으므로 실행 일지 쓰기 실패가 발생하지 않습니다. 제출마다 실행 일지 기본키 조회로 DB 문 1개가 추가되고, 행이 있을 때 이벤트 읽기 1회가 추가됩니다. 운영 서비스는 작업 요청마다 작업 지시 id 를 하나만 유지하므로 다시 할 작업은 새 작업 요청으로 나갑니다.
 
 ### 보류와 운영자 판단
 
@@ -266,13 +267,13 @@ DB 잠금(스테이션 행 `FOR UPDATE`, 임무별 advisory 잠금 `pg_advisory_
 
 운영 서비스는 실행 호스트를 부르기 전에 작업 요청을 먼저 커밋하므로, 운영 서비스가 재기동해도 같은 키의 재전송은 기존 작업 요청을 돌려주고 다시 제출하지 않습니다. 새로운 실행이 시작되면 응답을 반환하기 전에 작업 지시와 배정 기체를 실행 일지에 먼저 기록합니다.
 
-복원은 pump 호출 전에 진행됩니다. 아직 정착하지 않은 일지 행을 수신 순서와 수신 당시의 임무 버전 그대로 복원하며, 동일한 태스크 id로 다시 연결되므로 새로운 명령은 생성되지 않습니다.
+복원은 pump 호출 전에 진행됩니다. 대상은 그 작업 지시의 정착(`SETTLED`)·다시 실행(`REOPENED`)·포기(`GAVE_UP`) 이벤트 가운데 마지막이 `REOPENED` 이거나 셋 다 없는 일지 행이며, 정착 뒤 리비전 수락이나 운영자 판단으로 다시 실행된 실행도 듭니다. 수신 순서로, 일지 행의 기체와 수신 당시의 임무 버전으로 다시 지으며(작업 지시는 받은 리비전 가운데 가장 높은 버전이고 리비전이 없으면 일지 행의 작업 지시), 동일한 태스크 id 로 다시 연결되므로 새로운 명령은 생성되지 않습니다. 정착 뒤 다시 실행된 행을 다시 짓지 못해 포기(`GAVE_UP`)하면 그 기체는 판정에서 빠진 채로 남고(재기동을 거듭해도), 같은 작업 지시 id 를 다시 내면 `JOURNALED_JOB_ORDER` 로 거부합니다.
 
 스냅숏 읽기에 실패하면 해당 행의 처리를 미루고 매 pump마다 재시도를 수행합니다. 해당 기체는 «복원 못 한 실행이 있다» 상태로 분류되어 배정 대상에서 제외됩니다.
 
 살아 있는 다른 인스턴스가 든 행도 미룹니다(`DEFERRED`, 사유 앞머리 `살아 있는 다른 인스턴스가 든 실행이라 다시 짓지 않는다`, 뒤에 `: instance=<id>`). 그 기체는 판정에서 빠지고, 그 인스턴스의 심장박동이 끊기면 pump 가 다시 짓습니다. 행을 든 인스턴스는 그 작업 지시의 마지막 `RESTORED` 이벤트의 인스턴스이며, 없으면 일지의 `instance_id`(받은 인스턴스)입니다. 판단 기록을 못 읽으면 `GAVE_UP`(사유 `판단 기록을 읽지 못해 다시 짓지 않는다: record=<행 번호>, <picasso 거부 문장>`)입니다. picasso 가 기록을 거부하면 `GAVE_UP`(사유 = picasso `RESUME_RECORD_MISMATCH` 문장 `판단 기록이 이 작업 지시의 것이 아니어서 다시 짓지 않는다` 로 시작하고 끝에 ` (record=<행 번호>)`)입니다. 둘 다 기록 없이 다시 짓지 않습니다. 근거: `HostInstanceTest` 의 `살아 있는 다른 인스턴스가 든 일지 행은 다시 짓지 않고 미루며 그 기체를 판정에서 빼고 그 심장박동이 끊기면 다시 짓는다`, `JudgmentRecordHostTest` 의 `판단 기록을 읽지 못하면 기록 없이 다시 짓지 않고 기록 행 번호와 함께 포기로 보고한다`, `다른 버전의 작업 지시에 선 기록이면 picasso 의 RESUME_RECORD_MISMATCH 거부를 기록 행 번호와 함께 포기로 보고한다`.
 
-미해소 잔여 파지 표시는 기동 복원 때 `mission.robot_residual_hold` 에서 해소 행이 없는 것을 다시 읽어 판정에 씁니다(재기동 뒤에도 그 기체를 빼고, 해소도 재기동 뒤까지 남습니다). 운영자 취소는 이 인스턴스의 실행 id 에 묶여 있어, 취소를 적은 뒤 다음 pump 가 `ABORTED` 로 정착시키기 전에 재기동하면 다시 지은 실행(새 실행 id)에 다시 걸지 않습니다. 그 취소 행은 기록으로만 남고 새 인스턴스 실행 목록의 `cancel` 칸에도 실리지 않습니다(이전 인스턴스 취소는 싣지 않습니다). 사람이 새 실행 id 로 다시 취소해야 합니다.
+미해소 잔여 파지 표시는 기동 복원 때 `mission.robot_residual_hold` 에서 해소 행이 없는 것을 다시 읽어 판정에 씁니다(재기동 뒤에도 그 기체를 빼고, 해소도 재기동 뒤까지 남습니다). 그 작업 지시에 운영자 취소가 적혀 있으면(예: 취소를 적은 뒤 다음 pump 가 `ABORTED` 로 정착시키기 전에 재기동) 기동 복원이 다시 지은 실행(새 실행 id)에 그 취소를 한 번 다시 겁니다. 취소 행은 새로 적지 않으며, 새 인스턴스 실행 목록의 `cancel` 칸에는 그 작업 지시의 처음 취소 행이 실리고 그 실행에 운영자 취소를 다시 내면 «이미 취소를 건 실행이다» 로 받지 않습니다. 기체에 그 작업 지시의 끝나지 않은 태스크가 있으면(또는 기체 스냅숏을 못 읽으면) 첫 pump 가 그 태스크에 다시 붙은 뒤 걸고, 없으면 곧바로 겁니다. 다시 붙지 못하는 경우와 곧바로 건 경우의 한계는 운영 보장 명세 «잔여 파지 표시의 범위» 에 있습니다.
 
 재기동 후에도 활성 임무 버전은 그대로 유지되며, 이전 인스턴스의 인시던트는 사본을 통해 조회합니다.
 
@@ -288,9 +289,9 @@ DB 잠금(스테이션 행 `FOR UPDATE`, 임무별 advisory 잠금 `pg_advisory_
 
 기록 없는 행(판단 기록 표 V6 이전에 받은 일지 행)만 옛 거동입니다: 앞선 단위 E0, 작업 응답 도달 E0, 기한은 재기동 때부터 새로. 근거: 통합 시험 `RestartRecoveryTest` 단계 1(E2), 단계 4(보류 그대로, 재기동 중복), 단계 5(기한 이어 잼, 재기동 뒤 20초 전에 보류), `JudgmentRecordHostTest` 의 `운영자가 확인한 로봇 단위의 보류는 재기동 뒤 다시 묻지 않고 확인한 근거 등급 그대로다`, `재작업 판단 뒤 재기동해도 설비 대기 기한은 재기동 때가 아니라 재작업으로 다시 기다리기 시작한 때부터 이어 잰다`.
 
-실행 일지, 송신 기록, 사본, 운영자 취소(`execution_cancel`), 잔여 파지 표시와 그 해소(`robot_residual_hold`, `robot_residual_hold_clearing`)에는 별도의 보존 기한이 없습니다. 결과 outbox와 운영 서비스의 작업 요청·결과 버전·스테이션 작업 기록에도 보존 기한이나 삭제 코드가 없습니다.
+실행 일지와 받은 리비전(`execution_journal_revision`), 송신 기록, 사본, 운영자 취소(`execution_cancel`), 잔여 파지 표시와 그 해소(`robot_residual_hold`, `robot_residual_hold_clearing`)에는 별도의 보존 기한이 없습니다. 결과 outbox와 운영 서비스의 작업 요청·결과 버전·스테이션 작업 기록에도 보존 기한이나 삭제 코드가 없습니다.
 
-`mission` 스키마의 표는 이제 15개입니다(임무 버전 표 3, S4b 표 5, V4의 `result_producer`·`result_outbox`, V5의 `execution_cancel`·`robot_residual_hold`·`robot_residual_hold_clearing`, V6의 `execution_judgment_record`, V7의 `host_instance`). 이 가운데 `result_producer`와 `host_instance`는 갱신하는 표이고(`host_instance`는 인스턴스마다 한 행을 심장박동마다 고침), 나머지 13개는 트리거가 UPDATE·DELETE·TRUNCATE를 막습니다. 데이터를 지우려면 스키마째 지웁니다.
+`mission` 스키마의 표는 이제 16개입니다(임무 버전 표 3, S4b 표 5, V4의 `result_producer`·`result_outbox`, V5의 `execution_cancel`·`robot_residual_hold`·`robot_residual_hold_clearing`, V6의 `execution_judgment_record`, V7의 `host_instance`, V10의 `execution_journal_revision`). 이 가운데 `result_producer`와 `host_instance`는 갱신하는 표이고(`host_instance`는 인스턴스마다 한 행을 심장박동마다 고침), 나머지 14개는 트리거가 UPDATE·DELETE·TRUNCATE를 막습니다. 데이터를 지우려면 스키마째 지웁니다.
 
 셀 신호 값은 런처 재기동 시 처음 값으로 재설정됩니다.
 
@@ -432,16 +433,16 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-15에 `feat/forget-settled` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 이 브랜치에서 변경되어 2026-10-15 이 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2`로 실행해 28개 파일 258개 통과를 확인한 기록을 씁니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-16에 `fix/restore-rerun-and-cancel` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 이 브랜치에서 바뀌지 않아 2026-10-15 `feat/forget-settled` 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 258개 통과를 확인한 기록을 그대로 씁니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 442(440 에서 2 늘어남: `HostClientTest` 1, `WorkRequestsTest` 1) | 로컬 시험 결과 XML 442건, 실패 0 |
-| `mission-host` | 159(148 에서 11 늘어남: `ForgetSettledTest` 10, `SubmitOutcomeTest` 1) | 로컬 시험 결과 XML 159건, 실패 0 |
+| `ops-service` | 442(그대로) | 로컬 시험 결과 XML 442건, 실패 0 |
+| `mission-host` | 165(159 에서 6 늘어남: `RerunRestoreTest` 5, `MissionStoreTest` 1) | 로컬 시험 결과 XML 165건, 실패 0 |
 | `site` | 39 | 로컬 시험 결과 XML 39건, 실패 0 |
 | `e2e` | 73(시험 클래스 18개 그대로) | 로컬 시험 결과 XML 73건, 실패 0 |
-| `ui`(vitest) | 258(255 에서 3 늘어남: `ExecutionList.test.tsx` 1, `JobOrderNotice.test.tsx` 1, `WorkRequests.test.tsx` 1, 시험 파일 28개) | 2026-10-15 이 브랜치 로컬 실행, 실패 0 |
-| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 이 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
+| `ui`(vitest) | 258(255 에서 3 늘어남: `ExecutionList.test.tsx` 1, `JobOrderNotice.test.tsx` 1, `WorkRequests.test.tsx` 1, 시험 파일 28개) | 2026-10-15 `feat/forget-settled` 브랜치 로컬 실행, 실패 0 |
+| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `feat/forget-settled` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
 
