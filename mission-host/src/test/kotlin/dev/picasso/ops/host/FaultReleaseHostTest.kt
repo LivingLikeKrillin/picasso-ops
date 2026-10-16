@@ -81,7 +81,7 @@ class FaultReleaseHostTest {
     private fun HostBench.latestRecord(jobOrderId: String) = JudgmentRecordWire.decode(bean(HostRecords::class.java).judgmentRecords(jobOrderId).last().record)
 
     @Test
-    fun `본 결함대로 감수하면 감수 행과 판단 기록을 곧바로 적고 다음 단위를 내며 작업 응답은 다음 작업 응답까지 감수 전 그대로다`() {
+    fun `본 결함대로 감수하면 감수 행과 판단 기록을 곧바로 적고 다음 단위를 내며 막힘이 걷힌 작업 응답 하나를 곧바로 낸다`() {
         HostBench().use { bench ->
             val blocked = bench.blocked()
             val executionId = blocked["executionId"].asText()
@@ -103,6 +103,9 @@ class FaultReleaseHostTest {
                 assertEquals(ReleaseView(ReleaseResult.RELEASED, executionId, "RUNNING", null, requestId), released)
                 assertEquals(before + 1, bench.recordCount("JO-1"), "감수 직후 pump 없이 적는다")
                 assertEquals(listOf("LOCALIZATION_LOST[]"), bench.latestRecord("JO-1").acknowledgedFaults)
+                // 막는 결함이 없어진 뒤 다시 감수하면 NOT_BLOCKED 이고 작업 응답을 더 내지 않는다(아래 outbox 가 한 줄뿐이다).
+                val repeated = bench.host.release(executionId, Approver("kim", ApproverKind.PERSON), "다시", sightings, UUID.randomUUID().toString())
+                assertEquals(ReleaseResult.NOT_BLOCKED, repeated.result, repeated.toString())
             }
 
             val running = bench.execution(executionId)!!
@@ -119,16 +122,28 @@ class FaultReleaseHostTest {
                 ) { rs -> (1..6).map { rs.getString(it) } },
             )
 
-            // picasso release 는 작업 응답을 내지 않는다. 다음 단위가 돌고 끝나도 마지막 작업 응답은 감수 전의 것이다.
-            assertEquals(heldResponse, running["jobResponse"], running.toString())
+            // picasso release 가 작업 응답 하나를 곧바로 낸다(RUNNING, 빈 blockedBy). 단위 시작·완료는 작업 응답을 내지 않는다.
+            val releasedResponse = running["jobResponse"]
+            assertTrue(releasedResponse["jobResponseId"] != heldResponse["jobResponseId"], running.toString())
+            assertEquals(
+                listOf("RUNNING", "[]", "false"),
+                listOf(releasedResponse["physicalState"].asText(), releasedResponse["blockedBy"].toString(), releasedResponse["operatorRequired"].asText()),
+            )
             val midway = bench.driveUntilUnit(executionId, "T1", "DONE")
             assertEquals("RUNNING", midway["physicalState"].asText(), midway.toString())
-            assertEquals(heldResponse, midway["jobResponse"], midway.toString())
+            assertEquals(releasedResponse, midway["jobResponse"], midway.toString())
+            // 송신 기록과 결과 outbox 에 그 응답이 한 줄로 들고, 막힌 줄 뒤에 다른 줄은 없다.
+            assertEquals(listOf("OPERATOR_HOLD" to "[\"LOCALIZATION_LOST\"]", "RUNNING" to "[]"), outbox("JO-1").takeLast(2))
+            assertEquals(listOf("SENT", "RUNNING"), sentLog(releasedResponse["jobResponseId"].asText()))
             // 정착하면 picasso 가 새 작업 응답을 낸다. 감수한 결함은 더 막지 않는다.
             val done = bench.driveUntil(executionId, settled)
             assertEquals("PARTIAL", done["physicalState"].asText(), done.toString())
             assertEquals(listOf("PARTIAL", "[]"), listOf(done["jobResponse"]["physicalState"].asText(), done["jobResponse"]["blockedBy"].toString()))
             assertEquals(listOf("FAILED", "DONE", "DONE", "DONE"), done["units"].map { it["state"].asText() })
+            assertEquals(
+                listOf("OPERATOR_HOLD" to "[\"LOCALIZATION_LOST\"]", "RUNNING" to "[]", "PARTIAL" to "[]"),
+                outbox("JO-1").dropWhile { it.first != "OPERATOR_HOLD" },
+            )
 
             // 더 막는 결함이 없다. 같은 요청 id 가 아니면 NOT_BLOCKED 이고 아무것도 적지 않는다.
             val again = bench.release(executionId, saw(blocked), UUID.randomUUID().toString()).body!!
@@ -360,6 +375,19 @@ class FaultReleaseHostTest {
 
     private companion object {
         fun releaseRows(): Int = PostgresSupport.queryOne("SELECT count(*) FROM mission.execution_fault_release") { it.getInt(1) }
+
+        /** 결과 outbox 의 그 작업 지시 줄(작업 응답의 물리 상태, `blockedBy`), 적은 순서. */
+        fun outbox(jobOrderId: String): List<Pair<String, String>> = PostgresSupport.queryAll(
+            """
+            SELECT snapshot->'jobResponse'->>'physicalState', (snapshot->'jobResponse'->'blockedBy')::text
+            FROM mission.result_outbox WHERE snapshot->>'jobOrderId' = '$jobOrderId' ORDER BY sequence
+            """.trimIndent(),
+        ) { it.getString(1) to it.getString(2).replace(" ", "") }
+
+        /** 그 작업 응답의 송신 기록 줄(처분, 물리 상태). 줄마다 이어 붙인다. */
+        fun sentLog(jobResponseId: String): List<String> = PostgresSupport.queryAll(
+            "SELECT disposition, physical_state FROM mission.job_response_log WHERE job_response_id = '$jobResponseId' ORDER BY log_id",
+        ) { listOf(it.getString(1), it.getString(2)) }.flatten()
 
         /** `guard_closed` 가 [robots] 를 맡는 작업 허가 대응 파일. */
         fun permitMapping(vararg robots: String): Path = Files.createTempFile("work-permits", ".json").also {

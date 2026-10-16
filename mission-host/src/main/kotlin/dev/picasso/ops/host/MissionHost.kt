@@ -866,10 +866,16 @@ class MissionHost(
                 )
             }
         }
+        val passed = judged.filter { it.passed }.map { it.robotId }
+        // picasso 메모리에 이미 실행이 있는 작업 지시이고 호스트 판정을 통과한 후보가 없으면 `assign`을 부르지 않고 UNASSIGNED를 반환한다.
+        // picasso PR #106부터 `adopt`는 이미 실행이 있는 작업 지시의 후보 목록을 읽지 않고 곧바로 리비전 경로로 보내므로, 이 규칙이 없으면
+        // 호스트가 제외한 기체(잔여 파지 표시, 기체를 점유 중인 `PARTIAL` 실행, 현장 시간값 미적용)로 리비전이 도달한다. PR #106 이전에는
+        // 후보가 없는 `adopt`가 Unassigned를 반환하여 같은 경우가 UNASSIGNED가 되었다.
+        if (existed && passed.isEmpty()) return@withLock SubmitOutcome(SubmitResult.UNASSIGNED, null, null, null, emptyList(), excluded)
         val searched = middleware.remedySearches().size
         signals.confirmations = confirmations.associateBy { it.source }
         val assigned = try {
-            middleware.assign(order, judged.filter { it.passed }.map { it.robotId })
+            middleware.assign(order, passed)
         } finally {
             signals.confirmations = emptyMap()
         }
@@ -888,7 +894,8 @@ class MissionHost(
             is Middleware.Submission.Idempotent -> SubmitOutcome(
                 SubmitResult.IDEMPOTENT, submission.execution.executionId, submission.execution.robotId, null, emptyList(), excluded,
             )
-            // 같은 잠금 안이라 이번 assign 뒤에 조치 탐색 기록에 붙은 줄은 이 제출의 것이다. 한 번의 작업 수락은 많아야 한 줄을 남긴다.
+            // 같은 잠금 안이라 이번 `assign` 뒤에 조치 탐색 기록에 붙은 줄은 이 제출의 것이며, 거절된 작업 수락(`submit` 또는 리비전)은 많아야
+            // 한 줄을 남긴다. picasso PR #109부터 UNASSIGNED로 끝난 `assign`은 후보당 한 줄씩 덧붙일 수 있지만, UNASSIGNED 분기는 조치 탐색 기록을 읽지 않는다.
             is Middleware.Submission.Rejected -> SubmitOutcome.rejected(
                 submission,
                 middleware.remedySearches().drop(searched).lastOrNull { it.jobOrderId == order.jobOrderId }?.outcome,
@@ -1400,8 +1407,9 @@ class MissionHost(
      * 정착 상태를 싣는다. 둘 다 없으면 NOT_FOUND 다. 작업 허가만 막고 있으면 NOT_BLOCKED 이고 사유가 [PERMIT_WAIT] 로 시작한다 — 허가는
      * 감수할 값이 아니다(ADR 52, picasso `release` 가 걷지 않는다).
      *
-     * picasso `release` 는 `notify` 를 부르지 않는다. 그래서 그 실행의 마지막 작업 응답은 picasso 가 다음 작업 응답을 낼 때까지 감수 전의
-     * 것(`OPERATOR_HOLD`, `blockedBy`)이다. 실행 목록의 `physicalState`·`blockedFaults` 는 곧바로 바뀐다.
+     * picasso `release`는 true를 반환할 때 `notify`를 한 번 부르고 새 작업 응답(`physicalState` `RUNNING`, `blockedBy` `[]`)을 낸다.
+     * [release] 직후 실행 목록의 마지막 작업 응답(`jobResponse`)과 `physicalState`·`blockedFaults`는 곧바로 바뀐다. 다음 pump가 이를
+     * 송신 기록과 결과 outbox에 한 번 기록한다.
      */
     fun release(executionId: String, approver: Approver, reason: String, saw: List<FaultSighting>, requestId: String?): ReleaseView = lock.withLock {
         if (approver.kind != ApproverKind.PERSON) {
