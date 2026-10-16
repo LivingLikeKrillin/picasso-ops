@@ -37,7 +37,7 @@ data class HostMissionRefusal(
  *   현장 일이고 엔지니어가 화면에서 풀 수 없다.
  * - [Finding.checkedAt] 은 호스트가 검증한 시각이고, [Finding.basisVersion] 은 호스트 값을 `Long` 그대로 옮긴다.
  *
- * 종류 이름은 picasso `MissionRefusalKind` 9종 그대로다. 화면이 종류 이름표로 한국어 이름을 붙인다.
+ * 종류 이름은 picasso `MissionRefusalKind` 11종 그대로다. 화면이 종류 이름표로 한국어 이름을 붙인다.
  */
 object MissionFindings {
 
