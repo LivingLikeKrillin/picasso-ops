@@ -155,7 +155,7 @@ InspectAsset 예:
 
 - `candidates` 필수, 비어 있지 않은 문자열 배열.
 - `sourceConfirmations` 선택, `[{source, identity, confirmedBy, confirmedAt}]`(`confirmedAt` 은 ISO-8601 시각). 없거나 null 이면 빈 목록이다. 원소가 객체가 아니거나, 문자열 칸이 비었거나, `confirmedAt` 이 시각이 아니거나, 같은 `source` 가 두 번 오면 400 `BAD_REQUEST` 다. 호스트는 이 칸을 저장하지 않고 그 제출의 `assign` 한 번 동안만 셀 관측으로 쓴다(§7). 운영 서비스는 사람이 기록한 출발 자리 확인이 있을 때만 이 칸을 싣는다. 근거: `SourceObservationHostTest` 의 `출발 자리 확인 칸이 틀리면 400 이다`, `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `HostClientTest` 의 `출발 자리 확인은 있을 때만 제출 본문에 싣고 출발 미관측 답은 결품 칸과 따로 읽는다`.
-- 호스트가 같은 판정을 다시 해 `passed` 인 기체만 `Middleware.assign` 에 넘긴다. 통과한 기체가 없어도 `assign` 을 빈 목록으로 부른다(결과 UNASSIGNED, `refusals` 빈 배열).
+- 호스트가 같은 판정을 다시 해 `passed` 인 기체만 `Middleware.assign` 에 넘긴다. 통과한 기체가 없어도 `assign` 을 빈 목록으로 부른다(결과 UNASSIGNED, `refusals` 빈 배열). 이미 같은 작업 지시 id의 실행이 picasso에 있을 때는 후보 목록을 무시하고 해당 실행의 기체(현재 기체)로 보낸다. 같은 버전은 `IDEMPOTENT`, 낮은 버전은 거부, 높은 버전은 그 기체에서의 리비전이다. 리비전 판정 시 실행 호스트는 후보가 아닌 현재 기체만 판정하며, 이때 해당 실행 자체는 제 기체의 도는 실행으로 세지 않고 다른 실행의 점유만 계산한다. 현재 기체가 호스트 판정을 통과하면 그 기체만으로 `assign` 을 호출하며 `excluded` 는 빈 배열이다. 현재 기체가 호스트 판정에서 제외되면(잔여 파지 표시, 다른 실행 점유, 현장 시간값 미적용, 모자란 스킬 등) `assign` 을 부르지 않고 결과는 `UNASSIGNED` 이며 `excluded` 에 그 기체의 판정 행이 실린다. picasso가 개정하지 않는 제출(같은 버전, 낮은 버전, 종착한 `ABORTED` 또는 `PHYSICALLY_DONE` 실행, WorkMaster 변경, 실행이 쥔 케이퍼빌리티를 넘는 요구 근거 등급)은 호스트 판정 없이 현재 기체의 `assign` 으로 넘겨 picasso의 `IDEMPOTENT` 나 거부가 그대로 반환되고 `excluded` 는 빈 배열이다. 단위 id 중복과 사슬 검사는 계획을 지은 뒤에만 알 수 있어 리비전으로 취급되며, 현재 기체가 판정에서 제외되면 해당 거부 대신 `UNASSIGNED` 가 반환된다. 근거: `ExecutionControlTest` 의 `기존 실행의 기체가 호스트 판정으로 빠지면 통과하는 다른 후보가 있어도 개정하지 않고 UNASSIGNED 에 그 기체의 판정을 실으며 같은 판 재제출은 판정 없이 IDEMPOTENT 다`, `부분 완료 실행의 개정판은 제 실행이 쥔 기체로 빠지지 않아 후보가 다 빠져도 그 기체에서 개정한다`.
 
 응답 200(결과가 무엇이든 200 이다. 상태 코드로 결과를 가르지 말 것):
 
@@ -179,11 +179,11 @@ InspectAsset 예:
 | `result` | 미들웨어 | `executionId`·`robotId` | `rejectionReason` | `refusals` |
 |---|---|---|---|---|
 | `ACCEPTED` | `Submission.Accepted` | 새 실행 | null | `[]` |
-| `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 그 실행이 끝났고 후보가 판정을 통과해야 `assign` 까지 간다. 실행이 아직 picasso 메모리에 남아 있을 때만 성립한다(보존 폭 안의 `FAILED`·`UNVERIFIED` 실행). 정착해 놓은 실행의 같은 id는 `forgottenJobOrder: true`인 REJECTED이다) | 기존 실행과 그 기체 | null | `[]` |
+| `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 실행이 도는 중에도 호스트 판정 없이 `assign` 까지 간다. 실행이 아직 picasso 메모리에 남아 있을 때만 성립한다(보존 폭 안의 `FAILED`·`UNVERIFIED` 실행). 정착해 놓은 실행의 같은 id는 `forgottenJobOrder: true`인 REJECTED이다) | 기존 실행과 그 기체 | null | `[]` |
 | `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과, picasso의 놓은 작업 지시 거부 등), 실행 일지 가드(실행 일지에 이미 있는 작업 지시. 그 작업 지시의 정착(`SETTLED`)·다시 실행(`REOPENED`)·포기(`GAVE_UP`) 이벤트 가운데 마지막이 정착이면 `FORGOTTEN_JOB_ORDER`, 그 밖이면 `JOURNALED_JOB_ORDER`), 실행 일지 차단 | null | 사유(한국어) | `[]` |
 | `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "...", "alternativeLocations": [...], "sourceMissing": {...}, "sourceUnobserved": {...}}]`, `assign` 이 기체마다 낸 관문 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
 
-- `excluded`: 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행(2.2). 결과와 무관하게 늘 있다(없으면 `[]`).
+- `excluded`: 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행(2.2). 결과와 무관하게 늘 있다(없으면 `[]`). 리비전에서 현재 기체가 호스트 판정으로 빠지면 그 기체의 판정 행이 실리며, 현재 기체가 통과하거나 호스트 판정 없이 `assign` 에 넘긴 제출에서는 `[]` 이다.
 - `remedy`: 미들웨어 `Rejected.remedy`(조치 탐색 응답). null = 탐색 안 함 또는 보류. `{"kind":"FOUND","steps":[{skillType, requires:[{subject, requires}], expectedHold, onFailureHold}]}` 또는 `{"kind":"NONE","cause":"NO_CAPABILITY"|"DEPTH_LIMIT","unmet":[{subject, required, observed, detail}]}`. 파지·조건 값은 계약 enum 이름(`HOLD_KIND_EMPTY`, `PRECONDITION_SUBJECT_HOLD` 등).
 - `remedyWithheld`: 조치 시퀀스를 계산했으나 사람이 먼저 진단하도록 보류. 참이면 `remedy` 는 null(보류한 단계는 싣지 않음). «대안 없음»(`NONE`)과 다르다.
 - `alternativeLocations`: 맨 위 칸은 REJECTED 전용, UNASSIGNED 는 `refusals[]` 기체별 칸에 같은 의미. 출발 결품일 때 그 자재를 든 다른 자리. `[]` = 든 자리 없음, null = 셀이 답하지 않았거나 출발 결품 거부가 아님. 둘을 접지 않는다. 두 null 은 `sourceMissing` 으로 가른다.
