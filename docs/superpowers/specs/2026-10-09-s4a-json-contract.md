@@ -40,8 +40,10 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 
 - `SKILL_EXECUTION_FAILED`: 그 기체의 진행 중(`RUNNING`·`PAUSED`·`CANCELLING`) `pick_place` 태스크를 site 가 스스로 찾아(여럿이면 마지막에 시작한 것) mimic `tasks.forceFault("SKILL_EXECUTION_FAILED", taskId)` 로 강제한다. 호출자는 태스크 id 를 모른다. 이 실패 모드는 picasso 프로파일에서 `failure_class` GRASP_FAILED, 스스로 재시도 가능, 새 태스크까지 유지다. 태스크는 곧바로 `RETRIABLE` 이 된다.
 - `CONNECTION`: mimic `events.setConnection` 으로 연결 상태를 바꾼다. `ONLINE` 이 아니면 그 기체의 주기 상태 발행(생존 보고)이 멈춘다. 바꾸는 순간 연결 메시지 하나가 registry 로 나간다.
+- `CONTROL_AUTHORITY_LOST`: mimic `tasks.forceControlAuthorityLoss()` 를 호출하여 기체 단위 결함인 `CONTROL_AUTHORITY_LOST` 를 세운다. 진행 중인 태스크가 있으면 엔진이 실패 처리하며, 태스크가 없어도 결함이 선다. 선 결함은 지울 때까지 유지되어 기체가 새 태스크를 수락할 수 없으므로 실행 호스트가 다음 로봇 단위 시작 전에 실행을 막는다. 결함 감수로 해당 실행의 막힘을 풀더라도 기체 결함 자체는 유지되어 다음 실행이 다시 막힌다. 프로파일이 배타 제어 모델이 아니면(`exclusive_control_required=false`) 엔진이 거부하여 현장이 409 `FAULT_REFUSED` 로 응답한다.
+- `CONTROL_AUTHORITY_REGAINED`: 엔진의 결함 목록에서 `CONTROL_AUTHORITY_LOST` 결함을 지우고 실제로 지운 것에 대해서만 결함 해소 이벤트를 낸다. picasso 내에 결함을 지우는 호출이 없으므로 현장이 엔진의 결함 목록과 이벤트 스트림을 직접 부른다. 해당 결함이 서 있지 않더라도 요청은 받아들이며 아무것도 지우지 않는다.
 - 모든 엔진 호출은 `MimicServer.exclusive` 아래에서 한다. 부른 뒤 밀거나 정착시키지 않는다. 열린 `WatchTask` 스트림에는 다음 시계 진행(런처는 1초 주기, 통합 시험은 시계 밀기)이 민다. 그래서 미들웨어는 다음 시계 진행 뒤에야 스킬 실패를 본다.
-- 받지 않는 것: `PAYLOAD_LOST`, `LOCALIZATION_LOST`, `CONTROL_AUTHORITY_LOST` 등 지울 때까지 유지되는 결함, 전송 장애(`DISCONNECT`, `DELAY`, `EVENT_LOSS`, `DUPLICATE`, `REORDER`), 연결 상태 `HIBERNATING`. 모두 400 `UNSUPPORTED_FAULT` 다. 연결 상태 이름은 접두사 없는 이름만 받는다(`CONNECTION_STATE_OFFLINE` 은 400).
+- 받지 않는 것: `PAYLOAD_LOST`, `LOCALIZATION_LOST` 등 그 밖의 지울 때까지 유지되는 결함, 전송 장애(`DISCONNECT`, `DELAY`, `EVENT_LOSS`, `DUPLICATE`, `REORDER`), 연결 상태 `HIBERNATING`. 모두 400 `UNSUPPORTED_FAULT` 다. 연결 상태 이름은 접두사 없는 이름만 받는다(`CONNECTION_STATE_OFFLINE` 은 400).
 
 ### 1.2 받아들임(200)
 
@@ -65,6 +67,25 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 
 `changed` 는 상태가 실제로 바뀌었는가다. 같은 상태를 다시 넣으면 `false` 이고 아무것도 발행하지 않는다(200 그대로).
 
+제어권 상실:
+
+```json
+{"robotId": "humanoid-01", "kind": "CONTROL_AUTHORITY_LOST", "raised": true, "terminated": []}
+```
+
+| 칸 | 뜻 |
+|---|---|
+| `raised` | 결함이 새로 섰는가. 이미 서 있었으면 `false` |
+| `terminated` | 엔진이 실패 처리한 진행 중 태스크 id 목록. 도는 태스크가 없었으면 빈 배열 |
+
+제어권 회복:
+
+```json
+{"robotId": "humanoid-01", "kind": "CONTROL_AUTHORITY_REGAINED", "cleared": true}
+```
+
+`cleared` 는 결함을 실제로 지웠는가다. 지울 결함이 없었으면 `false` 다.
+
 ### 1.3 거부
 
 판정 순서: 415 → 400 `BAD_REQUEST` → 400 `UNSUPPORTED_FAULT` → 404 `UNKNOWN_ROBOT` → 409.
@@ -72,11 +93,11 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 | 상태 | `error` | 언제 |
 |---|---|---|
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | `Content-Type` 이 `application/json` 이 아님 |
-| 400 | `BAD_REQUEST` | JSON 객체가 아님, `robotId`·`kind` 가 비어 있지 않은 문자열이 아님, `state` 가 문자열이 아닌 값, `CONNECTION` 인데 `state` 없음, `SKILL_EXECUTION_FAILED` 인데 `state` 있음 |
-| 400 | `UNSUPPORTED_FAULT` | `kind` 가 두 값이 아님, 또는 `CONNECTION` 의 `state` 가 세 값이 아님 |
+| 400 | `BAD_REQUEST` | JSON 객체가 아님, `robotId`·`kind` 가 비어 있지 않은 문자열이 아님, `state` 가 문자열이 아닌 값, `CONNECTION` 인데 `state` 없음, `CONNECTION` 이 아닌데 `state` 있음 |
+| 400 | `UNSUPPORTED_FAULT` | `kind` 가 네 값이 아님, 또는 `CONNECTION` 의 `state` 가 세 값이 아님 |
 | 404 | `UNKNOWN_ROBOT` | 이 현장에 없는 기체 |
 | 409 | `NO_RUNNING_TASK` | 그 기체에 진행 중인 `pick_place` 태스크가 없음. 유휴, 이미 끝난 태스크, `pick_place` 가 없는 기체(`quadruped-01`) 모두 이것이다 |
-| 409 | `FAULT_REFUSED` | mimic 엔진이 강제를 거부함(엔진이 그 태스크를 못 찾음, 또는 엔진의 거부 사유를 `detail` 에 그대로). 잠금 아래에서 진행 중 태스크를 골랐으므로 정상 흐름에서는 나지 않는다(방어용). |
+| 409 | `FAULT_REFUSED` | mimic 엔진이 강제를 거부함(엔진이 그 태스크를 못 찾음, 또는 엔진의 거부 사유를 `detail` 에 그대로). 프로파일이 배타 제어 모델이 아닌(`exclusive_control_required=false`) 기체에 `CONTROL_AUTHORITY_LOST` 를 주입한 경우에도 이와 같이 거부됨. 스킬 실패는 잠금 아래에서 진행 중 태스크를 골랐으므로 정상 흐름에서는 나지 않는다(방어용). |
 | 405 | 본문 없음 | `POST` 가 아님(`Allow: POST`) |
 | 404 | 본문 없음 | `/faults/...` 처럼 다른 경로 |
 
@@ -305,7 +326,7 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 | `UNSUPPORTED_FAULT` | 400 | site `/faults`(호스트가 중계) |
 | `UNKNOWN_ROBOT` | 404 | site `/faults`(호스트가 중계) |
 | `NO_RUNNING_TASK` | 409 | site `/faults`(호스트가 중계) |
-| `FAULT_REFUSED` | 409 | site `/faults`(정상 흐름에서 안 남) |
+| `FAULT_REFUSED` | 409 | site `/faults`(배타 제어 모델이 아닌 기체의 제어권 상실) |
 | `CELL_SILENT` | 503 | 호스트 `/host/faults`(신호 중계와 같은 이름) |
 | `INCIDENT_NOT_FOUND` | 404 | 호스트 `/host/incidents/{incidentId}` |
 
@@ -376,7 +397,7 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 | 칸 | 규칙 |
 |---|---|
 | `robotId` | 필수, 공백이 아닌 문자열 |
-| `kind` | 필수, 공백이 아닌 문자열. 값(두 종류)은 운영 서비스가 보지 않는다 |
+| `kind` | 필수, 공백이 아닌 문자열. 값(네 종류)은 운영 서비스가 보지 않는다 |
 | `state` | 없거나 `null` 이거나 문자열. 값(세 상태)과 `kind` 와의 짝은 운영 서비스가 보지 않는다 |
 | `reason` | 필수(§9.1) |
 

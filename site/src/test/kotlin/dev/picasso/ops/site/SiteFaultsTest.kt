@@ -87,6 +87,14 @@ class SiteFaultsTest {
         fun inject(robotId: String, kind: String, state: String? = null): HttpResponse<String> =
             post(json.writeValueAsString(linkedMapOf("robotId" to robotId, "kind" to kind, "state" to state).filterValues { it != null }))
 
+        fun activeFaults(robotId: String): List<String> =
+            mimic.server.exclusive { mimic.instance(robotId)!!.faults.active().map { it.errorType } }
+
+        /** 그 기체의 이벤트 버퍼에 든 결함 이벤트(오류 종류, 해소 여부). */
+        fun faultEvents(robotId: String): List<Pair<String, Boolean>> = mimic.server.exclusive {
+            mimic.instance(robotId)!!.events.buffered.filter { it.hasFaultEvent() }.map { it.faultEvent.fault.errorType to it.faultEvent.cleared }
+        }
+
         override fun close() {
             channel.shutdownNow()
             cell.close()
@@ -145,12 +153,12 @@ class SiteFaultsTest {
     }
 
     @Test
-    fun `지울 때까지 유지되는 결함과 전송 장애와 HIBERNATING 은 400 UNSUPPORTED_FAULT 이고 모르는 기체는 404 다`() {
+    fun `제어권 상실 밖의 지울 때까지 유지되는 결함과 전송 장애와 HIBERNATING 은 400 UNSUPPORTED_FAULT 이고 모르는 기체는 404 다`() {
         Bench().use { bench ->
             bench.pickPlace("JO-1#$S01")
             bench.advance(Duration.ofSeconds(1))
 
-            listOf("PAYLOAD_LOST", "LOCALIZATION_LOST", "CONTROL_AUTHORITY_LOST", "DISCONNECT", "DELAY", "EVENT_LOSS").forEach { kind ->
+            listOf("PAYLOAD_LOST", "LOCALIZATION_LOST", "DISCONNECT", "DELAY", "EVENT_LOSS").forEach { kind ->
                 val reply = bench.inject(HUMANOID, kind)
                 assertEquals(400, reply.statusCode(), kind)
                 assertEquals(SiteFaults.UNSUPPORTED_FAULT, reply.error(), kind)
@@ -163,10 +171,70 @@ class SiteFaultsTest {
             assertEquals(TaskState.RUNNING, bench.state("JO-1#$S01"))
             assertEquals(ConnectionState.CONNECTION_STATE_ONLINE, bench.connection(HUMANOID))
 
-            listOf(bench.inject(GHOST, SKILL), bench.inject(GHOST, SiteFaults.CONNECTION, "OFFLINE")).forEach { reply ->
+            listOf(
+                bench.inject(GHOST, SKILL),
+                bench.inject(GHOST, SiteFaults.CONNECTION, "OFFLINE"),
+                bench.inject(GHOST, SiteFaults.CONTROL_AUTHORITY_LOST),
+                bench.inject(GHOST, SiteFaults.CONTROL_AUTHORITY_REGAINED),
+            ).forEach { reply ->
                 assertEquals(404, reply.statusCode(), reply.body())
                 assertEquals(SiteFaults.UNKNOWN_ROBOT, reply.error())
             }
+        }
+    }
+
+    @Test
+    fun `제어권 상실은 진행 중 태스크를 실패로 보내고 지울 때까지 남으며 제어권 회복이 지우고 해소 이벤트를 낸다`() {
+        Bench().use { bench ->
+            bench.pickPlace("JO-1#$S01")
+            bench.advance(Duration.ofSeconds(1))
+            assertEquals(TaskState.RUNNING, bench.state("JO-1#$S01"))
+
+            val lost = bench.inject(HUMANOID, SiteFaults.CONTROL_AUTHORITY_LOST)
+            assertEquals(200, lost.statusCode(), lost.body())
+            assertEquals(
+                mapOf("robotId" to HUMANOID, "kind" to AUTHORITY, "raised" to true, "terminated" to listOf("JO-1#$S01")),
+                json.convertValue(lost.json(), Map::class.java),
+            )
+            assertEquals(listOf("robotId", "kind", "raised", "terminated"), lost.json().fieldNames().asSequence().toList())
+            assertEquals(TaskState.FAILED, bench.state("JO-1#$S01"))
+            assertEquals(listOf(AUTHORITY), bench.activeFaults(HUMANOID))
+
+            // 지울 때까지 남는다. 다시 넣으면 새로 서지 않고 끝낼 태스크도 없다.
+            bench.advance(Duration.ofMinutes(5))
+            assertEquals(listOf(AUTHORITY), bench.activeFaults(HUMANOID))
+            val again = bench.inject(HUMANOID, SiteFaults.CONTROL_AUTHORITY_LOST)
+            assertEquals(listOf(false, emptyList<String>()), listOf(again.json()["raised"].asBoolean(), again.json()["terminated"].map { it.asText() }))
+
+            val regained = bench.inject(HUMANOID, SiteFaults.CONTROL_AUTHORITY_REGAINED)
+            assertEquals(200, regained.statusCode(), regained.body())
+            assertEquals(
+                mapOf("robotId" to HUMANOID, "kind" to "CONTROL_AUTHORITY_REGAINED", "cleared" to true),
+                json.convertValue(regained.json(), Map::class.java),
+            )
+            assertEquals(listOf("robotId", "kind", "cleared"), regained.json().fieldNames().asSequence().toList())
+            assertTrue(bench.activeFaults(HUMANOID).isEmpty())
+            // 세운 이벤트와 지운 이벤트가 한 번씩 나간다. 서 있지 않은 것을 지우면 cleared 가 거짓이고 이벤트를 더 내지 않는다.
+            assertEquals(listOf(AUTHORITY to false, AUTHORITY to true), bench.faultEvents(HUMANOID))
+            assertEquals(false, bench.inject(HUMANOID, SiteFaults.CONTROL_AUTHORITY_REGAINED).json()["cleared"].asBoolean())
+            assertEquals(listOf(AUTHORITY to false, AUTHORITY to true), bench.faultEvents(HUMANOID))
+        }
+    }
+
+    @Test
+    fun `진행 중 태스크가 없어도 제어권 상실은 서고 배타 제어 모델이 아닌 기체는 409 FAULT_REFUSED 다`() {
+        Bench().use { bench ->
+            val idle = bench.inject(HUMANOID, SiteFaults.CONTROL_AUTHORITY_LOST)
+            assertEquals(200, idle.statusCode(), idle.body())
+            assertEquals(listOf(true, emptyList<String>()), listOf(idle.json()["raised"].asBoolean(), idle.json()["terminated"].map { it.asText() }))
+            assertEquals(listOf(AUTHORITY), bench.activeFaults(HUMANOID))
+
+            // quadruped-b 는 exclusive_control_required 가 거짓이라 빼앗길 권한이 없다. 엔진의 거부 이유를 그대로 낸다.
+            val refused = bench.inject(QUADRUPED, SiteFaults.CONTROL_AUTHORITY_LOST)
+            assertEquals(409, refused.statusCode(), refused.body())
+            assertEquals(SiteFaults.FAULT_REFUSED, refused.error())
+            assertTrue(refused.json()["detail"].asText().contains("exclusive_control_required=false"), refused.body())
+            assertTrue(bench.activeFaults(QUADRUPED).isEmpty())
         }
     }
 
@@ -203,6 +271,7 @@ class SiteFaultsTest {
                 """{"robotId":"$HUMANOID","kind":"CONNECTION"}""",
                 """{"robotId":"$HUMANOID","kind":"CONNECTION","state":true}""",
                 """{"robotId":"$HUMANOID","kind":"$SKILL","state":"OFFLINE"}""",
+                """{"robotId":"$HUMANOID","kind":"CONTROL_AUTHORITY_LOST","state":"OFFLINE"}""",
                 """["$HUMANOID"]""",
                 "{not json",
             ).forEach { body ->
@@ -255,6 +324,7 @@ class SiteFaultsTest {
         const val QUADRUPED = "quadruped-01"
         const val GHOST = "ghost-01"
         const val SKILL = "SKILL_EXECUTION_FAILED"
+        const val AUTHORITY = "CONTROL_AUTHORITY_LOST"
         const val SOURCE = "SEQ-IN-02.BIN-A"
         const val S01 = "RACK-204.S01"
         val START: Instant = Instant.parse("2026-10-08T00:00:00Z")
