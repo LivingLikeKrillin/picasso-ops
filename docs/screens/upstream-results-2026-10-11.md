@@ -30,7 +30,7 @@ Ops가 접수 상세 또는 최신 결과를 조회할 때, 호스트의 jobResp
 
 ## Mock MES 시연
 
-`node scripts/mock-mes.mjs order.json --poll --ack`는 한 번 접수하고 정착 상태의 저장 결과를 출력한 뒤, 명시한 --ack 옵션에 따라 해당 버전·해시를 확인한다. ACK와 주문 제출은 자동 재시도하지 않는다. 이 옵션은 PoC 시연용이며 실제 MES는 자체 결과 저장을 완료한 뒤 ACK해야 한다.
+`node scripts/mock-mes.mjs order.json --poll --ack`는 한 번 접수하고 종결 상태의 저장 결과를 출력한 뒤, 명시한 --ack 옵션에 따라 해당 버전·해시를 확인한다. ACK와 주문 제출은 자동 재시도하지 않는다. 이 옵션은 PoC 시연용이며 실제 MES는 자체 결과 저장을 완료한 뒤 ACK해야 한다.
 
 ## 화면
 

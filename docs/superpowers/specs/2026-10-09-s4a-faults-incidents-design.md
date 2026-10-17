@@ -85,7 +85,7 @@ picasso-ops `e482c33`, picasso `195c1ee` 에서 확인했습니다.
 | 항목 | 확인한 사실 |
 |---|---|
 | mimic 제어 채널 | `ControlServer`(`control.proto` 의 `ControlService`)는 picasso-ops 어디에서도 기동되지 않습니다. site 는 `MimicCli().start(...)` 로 계약 서비스만 엽니다. 제어 채널을 통째로 열면 시계 밀기·시계 모드·시드 RPC 가 함께 열려 site 의 1:1 실제 시간 시계를 깨뜨릴 수 있습니다 |
-| 엔진 객체 | `RobotInstance` 의 `tasks.forceFault`, `events.setConnection` 등은 public 이라 site 가 같은 프로세스 안에서 직접 부를 수 있습니다. 엔진 잠금 `MimicServer.exclusive` 아래에서 불러야 합니다. 부른 뒤 따로 밀지 않고 다음 시계 진행의 정착(런처는 1초 주기, 통합 시험은 시계 밀기)에 맡깁니다 |
+| 엔진 객체 | `RobotInstance` 의 `tasks.forceFault`, `events.setConnection` 등은 public 이라 site 가 같은 프로세스 안에서 직접 부를 수 있습니다. 엔진 잠금 `MimicServer.exclusive` 아래에서 불러야 합니다. 부른 뒤 따로 밀지 않고 다음 시계 진행의 종결(런처는 1초 주기, 통합 시험은 시계 밀기)에 맡깁니다 |
 | 현장 기체 `humanoid-01` | 프로파일 humanoid-a. 실패 모드 둘이 모두 `pick_place` 스킬 수준입니다. `SKILL_EXECUTION_FAILED`(GRASP_FAILED)는 스스로 재시도 가능하고 새 태스크까지 유지됩니다. `PAYLOAD_LOST` 는 개입이 필요하고 지울 때까지 유지됩니다 |
 | 현장 기체 `quadruped-01` | 실패 모드 `LOCALIZATION_LOST` 는 로봇 수준이고 지울 때까지 유지됩니다. pick_place 가 없고, 실제 명부에서는 명칭 미티칭이라 시운전이 막혀 있습니다. 통합 시험의 공용 시운전 픽스처(`Commissioned.complete`)는 선언 전에 명칭을 티칭해 두 기체를 모두 시운전 완료로 만듭니다 |
 | 스킬 수준 고장 강제 | 그 태스크 id 가 있어야 하고 태스크가 RUNNING·PAUSED·CANCELLING 이어야 합니다 |
@@ -95,7 +95,7 @@ picasso-ops `e482c33`, picasso `195c1ee` 에서 확인했습니다.
 | 전송 장애 | DISCONNECT·DELAY·EVENT_LOSS·DUPLICATE·REORDER 는 발행 축(registry HTTP 보고)에만 걸리고 미들웨어의 gRPC 에는 영향이 없습니다 |
 | 스킬 실패 강제의 결과 | `pick_place` 진행 중 `SKILL_EXECUTION_FAILED` 를 강제하면 mimic 의 태스크는 RETRIABLE(비종료)이고 손은 HOLDING 으로 남으며, 미들웨어가 그것을 종료로 보고 근거를 확인합니다. 셀 대역은 성공일 때만 슬롯을 채우되 슬롯을 비우지는 않으므로, 같은 슬롯이 근거 윈도우 앞 폭 안에 채워진 적이 없으면 근거 없음으로 단위 FAILED 와 인시던트(`failureClass` GRASP_FAILED)가 남고 라인은 다음 단위로 갑니다. 채워진 적이 있으면 설비 근거가 있어 운영자 보류가 될 수 있습니다. 이때 인시던트의 확인 결과는 NOT_REQUESTED 로 남지만 설비 확인은 실제로 한 것입니다 |
 | 운영자 보류(단위 수준)로 가는 길 | `IN_DOUBT` 가 유예를 넘김(제어 채널로 재현 불가), 하위가 전제 조건 미충족으로 거부, 설비 대기 기한에서 `onDeadline=OPERATOR_HOLD`, 실패 보고인데 설비 근거가 있음. 결정적으로 재현할 수 있는 것은 설비 대기 기한입니다. 실행 호스트 템플릿 `ARRIVAL_WAIT` 는 기한 120초 뒤 ABORTED 입니다 |
-| `Middleware.resolve` | 서명은 `resolve(executionId, unitId, OperatorDecision{CONFIRM_DONE, REWORK}, Approver)` 입니다. 에이전트는 Refused, 보류 단위가 없으면 NotHeld. 판단을 그 단위의 가장 최근 미해결 인시던트에 `resolution`(decision, at, decidedBy)으로 붙이며 사유 칸과 note 는 없습니다. CONFIRM_DONE 은 설비 근거가 있었으면 E2, 없으면 근거 등급을 올리지 않습니다. 설비 근거 없이 완료 확인한 것은 판단이 CONFIRM_DONE 이고 봉인 때 확인 결과(`verification`)가 MATCHED 가 아닌 것으로 미들웨어의 판단 규칙과 같습니다. `unresolved` 는 봉인할 때 한 번 정해지고 판단 뒤에도 그대로입니다. REWORK 는 그 단위를 새 정체성(새 task id)으로 다시 계획하고 실행이 이어갑니다. 아무도 판단하지 않으면 실행은 정착하지 않고 그 기체는 배정 불가로 남습니다. `resolve` 뒤 작업 응답 갱신(`notify`)은 부르지 않습니다 |
+| `Middleware.resolve` | 서명은 `resolve(executionId, unitId, OperatorDecision{CONFIRM_DONE, REWORK}, Approver)` 입니다. 에이전트는 Refused, 보류 단위가 없으면 NotHeld. 판단을 그 단위의 가장 최근 미해결 인시던트에 `resolution`(decision, at, decidedBy)으로 붙이며 사유 칸과 note 는 없습니다. CONFIRM_DONE 은 설비 근거가 있었으면 E2, 없으면 근거 등급을 올리지 않습니다. 설비 근거 없이 완료 확인한 것은 판단이 CONFIRM_DONE 이고 봉인 때 확인 결과(`verification`)가 MATCHED 가 아닌 것으로 미들웨어의 판단 규칙과 같습니다. `unresolved` 는 봉인할 때 한 번 정해지고 판단 뒤에도 그대로입니다. REWORK 는 그 단위를 새 정체성(새 task id)으로 다시 계획하고 실행이 이어갑니다. 아무도 판단하지 않으면 실행은 종결하지 않고 그 기체는 배정 불가로 남습니다. `resolve` 뒤 작업 응답 갱신(`notify`)은 부르지 않습니다 |
 | 실행 호스트 인시던트 | 목록 `GET /host/incidents`(S3c, 14칸: 설정 버전·시간값·임무 버전 포함)에 fault·blockedBy·근거 윈도우·unresolved·resolution 이 없습니다. 단건 조회와 판단 엔드포인트가 없습니다. 잠금 하나와 250ms pump 입니다. 신호 중계 `POST /host/cell/signals/{name}` 이 잠금 밖에서 site 로 넘기고 site 가 응답하지 않으면 503 `CELL_SILENT` 를 내는 선례입니다 |
 | 운영 서비스 | 행위자 헤더 `X-Ops-Mode`(engineer 또는 operator)·`X-Ops-User`. 없으면 400 `ACTOR_REQUIRED`, 모드가 맞지 않으면 403. 조작 기록 실행기 `HostOperationRunner` 는 NO_RESPONSE 뒤 재조회합니다. 기존 op 이름은 `WRITE_CELL_SIGNAL`, `SUBMIT_JOB_ORDER`, `CHANGE_SITE_SETTINGS`. S3a 작업 지시는 호스트 결과 UNASSIGNED 를 조작 기록에 REJECTED 로 기록하고 본문에 원래 이름을 남깁니다. 운영 서비스는 picasso 코드를 쓰지 못합니다(`checkNoPicassoOnMain`) |
 | 화면 | 운영 영역(작업 지시, 배정 가능, 실행, 셀 대역, 5초 폴링)과 현장·자원 영역(현장 설정, 엔지니어만 편집)입니다 |
@@ -112,7 +112,7 @@ site 는 루프백 엔드포인트 `POST /faults` 하나를 엽니다. mimic 제
 | 본문 | 기체 id, 주입 종류, 종류별 값(연결 상태일 때 목표 상태). 정확한 모양은 JSON 계약에 둡니다 |
 | 스킬 실패 | site 가 그 기체의 진행 중(RUNNING·PAUSED·CANCELLING) 태스크를 스스로 찾아 `tasks.forceFault` 로 `SKILL_EXECUTION_FAILED` 를 강제합니다. 호출자는 태스크 id 를 알 필요가 없습니다. 진행 중 태스크가 없으면 거부하고 그 이유를 응답에 적습니다 |
 | 연결 상태 | `events.setConnection` 으로 `OFFLINE`·`CONNECTION_BROKEN`·`ONLINE` 가운데 하나로 바꿉니다. `HIBERNATING` 은 이번에 쓰지 않습니다(스파이크에서 정함) |
-| 잠금과 밀기 | 모든 엔진 호출은 `MimicServer.exclusive` 아래에서 합니다. 엔진을 부른 뒤 따로 밀지 않고 다음 시계 진행의 정착(런처는 1초 주기, 통합 시험은 시계 밀기)에 맡깁니다 |
+| 잠금과 밀기 | 모든 엔진 호출은 `MimicServer.exclusive` 아래에서 합니다. 엔진을 부른 뒤 따로 밀지 않고 다음 시계 진행의 종결(런처는 1초 주기, 통합 시험은 시계 밀기)에 맡깁니다 |
 | 허용하지 않는 것 | `PAYLOAD_LOST`, `LOCALIZATION_LOST`, 제어권 상실, 전송 장애(DISCONNECT·DELAY·EVENT_LOSS·DUPLICATE·REORDER)는 종류 목록에 두지 않습니다. 보내면 거부합니다 |
 | 응답 | 받아들임, 거부(이유 코드), 알 수 없는 기체. 정확한 코드는 JSON 계약에 둡니다 |
 

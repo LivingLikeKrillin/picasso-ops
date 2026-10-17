@@ -22,7 +22,7 @@
 | `11-stations-review-required.png` | 공유 자원 | 운영자 | 단계 기한 초과로 현장 확인 필요, 판단 근거 입력·확인 체크(보내기 전) | 1440px · 구역 | 실제 스택 | «현장 확인 필요 · 작업 시간 초과», «현장 확인 후 자원 해제», «재실행 없이 관측 재개» |
 | `12-operations-executions.png` | 운영 | 운영자 | 수동 작업 요청(InspectAsset) 배정 직후, 수동 작업 요청 추적과 실행 목록 | 1440px · 전체 페이지 | 실제 스택 | «InspectAsset 작업 지시: 배정됨», «작업 요청 기록 저장됨», «<작업 지시 id>», «코드 정의» |
 | `13-operations-incident-hold.png` | 운영 | 운영자 | 설비 대기 기한 초과로 보류 중인 인시던트 상세와 보류 해소 폼(사유 입력, 보내기 전) | 1440px · 구역 | 실제 스택 | «SIGNAL_DEADLINE», «보류 중», «보류 해소 방식(완료 확인 또는 재작업)을 결정합니다. 결정자는 local입니다.», «사람의 판단 없음. 아래 값은 모두 관측입니다» |
-| `14-operations-restart-restored-mock.png` | 운영 | 운영자 | 실행 호스트 재기동 뒤 복원 보고와 «이전 exec-k» 행 | 1440px · 구역 | 대역: GET /api/executions?recent= 를 재기동 뒤 모양(restore, restoredFrom, 정착 이력 없음)으로. 바탕은 같은 실행의 실제 PrepareSequencedRack 실행 | «재기동: 이전 인스턴스의 실행 1건을 다시 지었습니다», «<작업 지시 id>(humanoid-01): 이전 <실행 id> → exec-1», «exec-1 (이전 <실행 id>)» |
+| `14-operations-restart-restored-mock.png` | 운영 | 운영자 | 실행 호스트 재기동 뒤 복원 보고와 «이전 exec-k» 행 | 1440px · 구역 | 대역: GET /api/executions?recent= 를 재기동 뒤 모양(restore, restoredFrom, 종결 이력 없음)으로. 바탕은 같은 실행의 실제 PrepareSequencedRack 실행 | «재기동: 이전 인스턴스의 실행 1건을 리빌드했습니다», «<작업 지시 id>(humanoid-01): 이전 <실행 id> → exec-1», «exec-1 (이전 <실행 id>)» |
 | `15-site-settings.png` | 현장 설정 | 엔지니어 | 버전 2 반영, 변경 폼과 버전 이력 | 1440px · 전체 페이지 | 실제 스택 | «연결 기준 시간 120초로 변경: 반영됨», «실행 호스트 반영: 버전 2», «연결 기준 늘림» |
 | `16-history.png` | 이력 | 운영자 | 흐름을 돈 뒤 조작 기록 | 1440px · 전체 페이지 | 실제 스택 | «조작 기록», «운영자/local», «엔지니어/local», «랙 재배치 뒤 재작업», «연결 기준 늘림» |
 | `17-validation-fault.png` | 검증 도구 | 엔지니어 | quadruped-01 연결 상태 OFFLINE 주입 받아들임 | 1440px · 구역 | 실제 스택 | «quadruped-01 연결 상태 OFFLINE: 받아들임(연결 상태 OFFLINE)», «장애 넣기» |

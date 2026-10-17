@@ -218,7 +218,7 @@ describe('운영자 결함 감수', () => {
     expect(posts(fake, RELEASE).map((call) => call.body)).toEqual([
       { instanceId: 'mw-1', reason: '재측위 뒤 계속', sawFaults: [{ errorType: 'LOCALIZATION_LOST', references: [{ key: 'KEY_TASK_ID', value: 'JO-2#T1' }] }] },
     ])
-    expect(await within(form).findByRole('status', { name: '결함 감수 결과' })).toHaveTextContent(
+    expect(await within(form).findByRole('status', { name: '결함 수용 결과' })).toHaveTextContent(
       `exec-2(JO-2) ${TEXT.releaseHeading}: ${RELEASE_RESULT_LABEL.RELEASED}`,
     )
     expect(within(form).getByLabelText(TEXT.releaseTarget)).toHaveValue('')
@@ -229,8 +229,8 @@ describe('운영자 결함 감수', () => {
     fake.executions = executionsView({ executions: blockedPair() })
     open()
     const form = await screen.findByRole('form', { name: TEXT.releaseHeading })
-    const status = () => within(form).getByRole('status', { name: '결함 감수 결과' })
-    const permit = '작업 허가 대기 중이다. 감수로 풀리지 않는다: T2 (START)'
+    const status = () => within(form).getByRole('status', { name: '결함 수용 결과' })
+    const permit = '작업 허가 대기 중이다. 수용으로 풀리지 않는다: T2 (START)'
     const changed = '본 결함과 지금 막는 결함이 다르다. 다시 읽고 판단한다: PAYLOAD_LOST[]'
     const base = released().answer!
     const cases: [ExecutionReleaseOutcome, string][] = [
@@ -240,8 +240,8 @@ describe('운영자 결함 감수', () => {
       [released({ result: 'REJECTED', outcome: 'NOT_FOUND', answer: { ...base, result: 'NOT_FOUND' } }), RELEASE_RESULT_LABEL.NOT_FOUND],
       [released({ result: 'REJECTED', outcome: 'REFUSED', answer: { ...base, result: 'REFUSED' } }), RELEASE_RESULT_LABEL.REFUSED],
       [
-        released({ result: 'REJECTED', outcome: null, answer: null, rejection: { status: 409, error: 'REQUEST_ID_REUSED', detail: '결함 감수의 요청 id 가 이미 쓰였다' } }),
-        '실행 호스트가 거부함(요청 id 재사용). 결함 감수의 요청 id 가 이미 쓰였다',
+        released({ result: 'REJECTED', outcome: null, answer: null, rejection: { status: 409, error: 'REQUEST_ID_REUSED', detail: '결함 수용의 요청 id 가 이미 쓰였다' } }),
+        '실행 호스트가 거부함(요청 id 재사용). 결함 수용의 요청 id 가 이미 쓰였다',
       ],
     ]
     for (const [answer, text] of cases) {
@@ -251,7 +251,7 @@ describe('운영자 결함 감수', () => {
     }
     fake.answers.set(RELEASE, { status: 400, body: { error: 'RELEASE_BAD_REQUEST', detail: 'sawFaults 가 틀리다' } })
     await release(form)
-    await waitFor(() => expect(status()).toHaveTextContent('보내지 않음(감수 본문 오류). sawFaults 가 틀리다'))
+    await waitFor(() => expect(status()).toHaveTextContent('보내지 않음(수용 본문 오류). sawFaults 가 틀리다'))
   })
 
   it('응답이 없으면 다시 읽은 결과 셋을 가르고 운영 서비스가 답하지 않으면 결과 모름이다', async () => {
@@ -259,7 +259,7 @@ describe('운영자 결함 감수', () => {
     fake.executions = executionsView({ executions: blockedPair() })
     open()
     const form = await screen.findByRole('form', { name: TEXT.releaseHeading })
-    const status = () => within(form).getByRole('status', { name: '결함 감수 결과' })
+    const status = () => within(form).getByRole('status', { name: '결함 수용 결과' })
     const silent = { result: 'NO_RESPONSE' as const, outcome: null, answer: null }
     const cases: [ExecutionReleaseOutcome, string][] = [
       [released({ ...silent, confirmation: 'CONFIRMED_APPLIED' }), TEXT.releaseApplied],

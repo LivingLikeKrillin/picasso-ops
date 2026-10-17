@@ -72,11 +72,11 @@ object ListLoad {
                 ticks += StationTickLoad.measure(stack, stations, listOf("active"), rounds, " (호스트 실행 $size)") { host.pumpOnce() }.first
             }
         }
-        report.table(listOf("실행 E(정착)", "메모리 실행", "아웃박스(responses)", "호스트 맵(정착 표시/일지/판단 기록/복원/취소)"), memory)
+        report.table(listOf("실행 E(종결)", "메모리 실행", "아웃박스(responses)", "호스트 맵(종결 표시/일지/판단 기록/복원/취소)"), memory)
         report.line()
         report.table(listOf("실행 E", "읽기", "p50 ms", "p95 ms", "max ms", "응답 bytes", "응답 실행 수"), gets)
         report.line()
-        report.line("화면 읽기(운영 서비스 `/api` 아래 경로를 거침), 각 10회. 실행 수는 남은 실행 + 정착 이력 줄이다.")
+        report.line("화면 읽기(운영 서비스 `/api` 아래 경로를 거침), 각 10회. 실행 수는 남은 실행 + 종결 이력 줄이다.")
         report.line()
         report.table(listOf("실행 E", "읽기", "p50 ms", "p95 ms", "max ms", "응답 bytes", "응답 실행 수"), screens)
         StationTickLoad.table(report, ticks)

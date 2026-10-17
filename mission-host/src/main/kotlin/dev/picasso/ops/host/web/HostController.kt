@@ -90,7 +90,7 @@ class HostController(private val host: MissionHost, private val json: ObjectMapp
             return ResponseEntity.ok(host.executionsRecent(count))
         }
         if (before == null) return badRequest("limit 은 before 와 함께 준다")
-        val cursor = before.toLongOrNull()?.takeIf { it > 0 } ?: return badRequest("before 는 양의 정수다(정착 이력의 settleSeq·nextBefore): $before")
+        val cursor = before.toLongOrNull()?.takeIf { it > 0 } ?: return badRequest("before 는 양의 정수다(종결 이력의 settleSeq·nextBefore): $before")
         val limit = single[LIMIT]?.let { count(it) ?: return badRequest("limit 은 1~${ExecutionPages.MAX} 의 정수다: $it") }
             ?: ExecutionPages.DEFAULT_LIMIT
         return ResponseEntity.ok(host.executionsBefore(cursor, limit))

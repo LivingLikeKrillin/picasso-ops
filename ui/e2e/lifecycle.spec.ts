@@ -551,23 +551,23 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   const lostOutcome = await lost.json()
   expect([lostOutcome.result, lostOutcome.fault?.raised, lostOutcome.fault?.terminated]).toEqual(['SUCCEEDED', true, []])
   await signals.getByRole('button', { name: 'rack_present 켜기' }).click()
-  await expect(blockRun).toContainText('결함 막음 1건')
+  await expect(blockRun).toContainText('결함 차단 1건')
   await expect(blockRun).toContainText('OPERATOR_HOLD')
   await expect(blockRun).toContainText('RACK-204.S03 pick_place: PENDING')
   const blockExecution = (await blockRun.getByRole('cell').first().textContent())!.trim()
-  const releaseForm = page.getByRole('form', { name: '결함 감수' })
-  await releaseForm.getByLabel('감수할 실행').selectOption(blockExecution)
-  const faultCard = releaseForm.getByRole('group', { name: '감수할 결함' }).getByLabel('감수할 결함 1')
+  const releaseForm = page.getByRole('form', { name: '결함 수용' })
+  await releaseForm.getByLabel('수용할 실행').selectOption(blockExecution)
+  const faultCard = releaseForm.getByRole('group', { name: '수용할 결함' }).getByLabel('수용할 결함 1')
   await expect(faultCard).toContainText('CONTROL_AUTHORITY_LOST(CONTROL_AUTHORITY_LOST)')
   await expect(faultCard).toContainText('다른 클라이언트가 제어 권한을 가져갔다')
-  await releaseForm.getByLabel('감수 사유').fill('현장에서 제어권 회복 절차 확인')
+  await releaseForm.getByLabel('수용 사유').fill('현장에서 제어권 회복 절차 확인')
   await releaseForm.getByLabel('기체 상태를 현장에서 확인했고 이 결함을 안고 계속합니다').check()
-  await releaseForm.getByRole('button', { name: '현장 확인 후 결함 감수' }).click()
-  await expect(releaseForm.getByRole('status', { name: '결함 감수 결과' })).toHaveText(
-    `${blockExecution}(${blockJobOrder}) 결함 감수: 감수했습니다. 실행 호스트의 다음 pump 에서 다음 단위를 냅니다`,
+  await releaseForm.getByRole('button', { name: '현장 확인 후 결함 수용' }).click()
+  await expect(releaseForm.getByRole('status', { name: '결함 수용 결과' })).toHaveText(
+    `${blockExecution}(${blockJobOrder}) 결함 수용: 수용했습니다. 실행 호스트의 다음 pump 에서 다음 단위를 냅니다`,
   )
-  await expect(blockRun).toContainText('(결함 감수: local, 현장에서 제어권 회복 절차 확인)')
-  await expect(blockRun).not.toContainText('결함 막음')
+  await expect(blockRun).toContainText('(결함 수용: local, 현장에서 제어권 회복 절차 확인)')
+  await expect(blockRun).not.toContainText('결함 차단')
   await expect(blockRun).toContainText('PHYSICALLY_DONE', { timeout: 90_000 })
   const releasedHost = (await (await page.request.get('http://127.0.0.1:8785/host/executions')).json()).executions
     .find((execution: { jobOrderId: string }) => execution.jobOrderId === blockJobOrder)

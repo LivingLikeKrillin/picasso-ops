@@ -372,7 +372,7 @@ data class JobResponseLogView(
 data class JobResponsesView(val instanceId: String, val total: Int, val responses: List<JobResponseLogView>)
 
 /** 결함 감수의 요청 id 가 이미 감수 행에 있다(V11). 아무것도 바꾸지 않았다. REST 는 409 `REQUEST_ID_REUSED` 다. */
-class ReleaseRequestReused(val requestId: String) : RuntimeException("결함 감수의 요청 id 가 이미 쓰였다: $requestId")
+class ReleaseRequestReused(val requestId: String) : RuntimeException("결함 수용의 요청 id 가 이미 쓰였다: $requestId")
 
 /** 일지 쓰기가 실패했다(S4b 스펙 §9). 실행은 미들웨어에 남는다. 제출은 500 이다. */
 class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeException("실행 일지를 적지 못했다: $executionId", cause)
@@ -1390,11 +1390,11 @@ class MissionHost(
         }
         val execution = middleware.executions().firstOrNull { it.executionId == executionId }
             ?: return@withLock records.settledSnapshots(instanceId, executionIds = setOf(executionId)).singleOrNull()
-                ?.let { CancelView(CancelResult.NOT_CANCELABLE, executionId, it.physicalState, "정착한 실행은 취소하지 않는다: ${it.physicalState}", requestId) }
+                ?.let { CancelView(CancelResult.NOT_CANCELABLE, executionId, it.physicalState, "종결한 실행은 취소하지 않는다: ${it.physicalState}", requestId) }
                 ?: CancelView(CancelResult.NOT_FOUND, executionId, null, "그 실행이 지금 인스턴스에 없다", requestId)
         val state = execution.physicalState
         val refusal = when {
-            !state.pumps -> "정착한 실행은 취소하지 않는다: ${state.name}"
+            !state.pumps -> "종결한 실행은 취소하지 않는다: ${state.name}"
             state == PhysicalState.CANCELING || executionId in cancels -> "이미 취소를 건 실행이다"
             execution.order.jobOrderId !in journaled -> "실행 일지에 없는 실행이다"
             else -> null
@@ -1626,7 +1626,7 @@ class MissionHost(
                 SkillFit.MISSING -> add("모자란 스킬: ${missing.joinToString(", ")}")
                 SkillFit.UNKNOWN -> add("기체 케이퍼빌리티를 못 물어봤다")
             }
-            if (running != null) add("도는 실행이 있다: $running")
+            if (running != null) add("진행 중인 실행이 있다: $running")
             unrestoredOn(robotId).takeIf { it.isNotEmpty() }?.let { add("$UNRESTORED_REASON: ${it.joinToString(", ")}") }
             openHolds.filter { it.robotId == robotId }.takeIf { it.isNotEmpty() }
                 ?.let { holds -> add("$RESIDUAL_HOLD_REASON: ${holds.joinToString(", ") { "${it.jobOrderId} ${it.unitId}" }}") }
@@ -1758,13 +1758,13 @@ class MissionHost(
         /** 에이전트 승인자의 취소·해소 거부 사유의 앞부분. 뒤에 승인자 id 가 붙는다. */
         const val AGENT_CANCEL_REFUSED = "에이전트는 실행을 취소하지 못한다. 실행 중단은 사람의 것이다"
         const val AGENT_CLEAR_REFUSED = "에이전트는 잔여 파지 표시를 해소하지 못한다. 기체가 빈손인지는 사람이 현장에서 확인한다"
-        const val AGENT_RELEASE_REFUSED = "에이전트는 결함을 감수하지 못한다. 결함을 안고 계속할지는 사람이 현장에서 정한다"
+        const val AGENT_RELEASE_REFUSED = "에이전트는 결함을 수용하지 못한다. 결함을 안고 계속할지는 사람이 현장에서 정한다"
 
         /** 결함 감수 NOT_BLOCKED·RELEASED 의 작업 허가 사유 앞부분. 뒤에 `: 막힌 단위 (막은 명령)` 이 붙는다. 허가는 감수로 풀리지 않는다. */
-        const val PERMIT_WAIT = "작업 허가 대기 중이다. 감수로 풀리지 않는다"
+        const val PERMIT_WAIT = "작업 허가 대기 중이다. 수용으로 풀리지 않는다"
 
         /** 결함 감수 NOT_BLOCKED 의 정착 사유 앞부분. 뒤에 정착 상태가 붙는다. */
-        const val SETTLED_NOT_BLOCKED = "정착한 실행이다"
+        const val SETTLED_NOT_BLOCKED = "종결한 실행이다"
 
         /** 결함 감수 NOT_BLOCKED 의 사유. 도는 실행에 막는 결함도 작업 허가 막음도 없다. */
         const val NO_BLOCKING_FAULT = "막는 결함이 없다"

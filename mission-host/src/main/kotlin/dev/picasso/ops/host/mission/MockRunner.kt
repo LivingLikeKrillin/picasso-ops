@@ -167,7 +167,7 @@ class MockRunner(
                 middleware.pump()
                 if (execution.physicalState.isSettled) break
                 if (virtual() >= virtualLimit) {
-                    return result(MockRunFailure.NOT_SETTLED, "가상 시간 ${virtualLimit.seconds}초 안에 정착하지 않았다", execution)
+                    return result(MockRunFailure.NOT_SETTLED, "가상 시간 ${virtualLimit.seconds}초 안에 종결하지 않았다", execution)
                 }
                 if (wall() >= wallLimit) {
                     return result(MockRunFailure.WALL_CLOCK_LIMIT, "실제 시간 ${wallLimit.toMillis()}밀리초 안에 끝나지 않았다", execution)
@@ -182,7 +182,7 @@ class MockRunner(
             } else {
                 val stuck = execution.units.filter { it.state != UnitState.DONE }
                     .joinToString(", ") { "${it.unitId}=${it.state.name}${it.failureClass?.let { c -> "($c)" } ?: ""}" }
-                result(MockRunFailure.EXECUTION_FAILED, "실행이 ${execution.physicalState.name} 로 정착했다: $stuck", execution)
+                result(MockRunFailure.EXECUTION_FAILED, "실행이 ${execution.physicalState.name} 로 종결했다: $stuck", execution)
             }
         }
     }

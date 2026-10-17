@@ -107,7 +107,7 @@ export const KIND_LABEL: Record<string, string> = {
   RESIDUAL_HOLD_NOT_FOUND: '없는 잔여 파지 표시',
   RESIDUAL_HOLD_ALREADY_CLEARED: '이미 해소한 잔여 파지 표시',
   // 운영자 결함 감수(S3a JSON 계약 §9.8). 요청 id 재사용(REQUEST_ID_REUSED)과 인스턴스 다름은 위의 이름을 같이 쓴다.
-  RELEASE_BAD_REQUEST: '감수 본문 오류',
+  RELEASE_BAD_REQUEST: '수용 본문 오류',
 }
 
 /** «시운전» 칸(P2·S1d 스펙 §8.5). 연결 칸과 합치지 않는다. */
@@ -161,7 +161,7 @@ export const SUBMIT_RESULT_LABEL: Record<HostSubmitResult, string> = {
 export const MOCK_RUN_FAILURE_LABEL: Record<MockRunFailure, string> = {
   DEFINITION: '정의(같은 신호에 다른 기대 값)',
   SUBMISSION_REJECTED: '표본 작업 지시 거부',
-  NOT_SETTLED: '정착하지 않음',
+  NOT_SETTLED: '종결하지 않음',
   WALL_CLOCK_LIMIT: '실제 시간 상한 초과',
   EXECUTION_FAILED: '실행 실패',
 }
@@ -200,7 +200,7 @@ export const DECISION_LABEL: Record<HoldDecision, string> = {
 
 /** 실행 호스트 취소 결과(P0-b2). */
 export const CANCEL_RESULT_LABEL: Record<CancelResult, string> = {
-  CANCELED: '취소를 걸었습니다. 실행 호스트의 다음 pump 에서 중단(ABORTED)으로 정착합니다',
+  CANCELED: '취소를 걸었습니다. 실행 호스트의 다음 pump 에서 중단(ABORTED)으로 종결합니다',
   NOT_CANCELABLE: '취소할 수 없는 실행입니다',
   NOT_FOUND: '지금 실행 호스트 인스턴스에 없는 실행입니다',
   REFUSED: '에이전트는 실행을 취소하지 못합니다',
@@ -208,34 +208,34 @@ export const CANCEL_RESULT_LABEL: Record<CancelResult, string> = {
 
 /** 실행 호스트 결함 감수 결과(S3a JSON 계약 §5.10). */
 export const RELEASE_RESULT_LABEL: Record<ReleaseResult, string> = {
-  RELEASED: '감수했습니다. 실행 호스트의 다음 pump 에서 다음 단위를 냅니다',
+  RELEASED: '수용했습니다. 실행 호스트의 다음 pump 에서 다음 단위를 냅니다',
   NOT_BLOCKED: '막는 결함이 없습니다',
   BLOCK_CHANGED: '본 결함과 지금 막는 결함이 다릅니다. 실행 목록을 다시 읽고 결함을 확인한 뒤 다시 판단하십시오',
   NOT_FOUND: '지금 실행 호스트 인스턴스에 없는 실행입니다',
-  REFUSED: '에이전트는 결함을 감수하지 못합니다',
+  REFUSED: '에이전트는 결함을 수용하지 못합니다',
 }
 
 /** 실행 목록의 «활성 + 최근 N, 이력은 페이지»(HA 설계 기록 §10) 글자. */
 export const EXECUTION_LIST_TEXT = {
-  scope: (recent: number) => `진행 중이거나 판단이 필요한 실행과 최근 정착한 실행 ${recent}건을 표시합니다. 그보다 오래된 실행은 이전 실행에서 확인합니다.`,
-  settledAt: (at: string) => `정착 ${at}`,
+  scope: (recent: number) => `진행 중이거나 판단이 필요한 실행과 최근 종결한 실행 ${recent}건을 표시합니다. 그보다 오래된 실행은 이전 실행에서 확인합니다.`,
+  settledAt: (at: string) => `종결 ${at}`,
   /** 정착 이력 줄의 작업 지시 버전(그 정착을 알린 작업 응답의 버전). 한 작업 지시가 다시 정착하면 줄이 여럿이다. */
   orderVersion: (version: number) => `작업 지시 버전 ${version}`,
   /** 같은 작업 지시가 이 정착 뒤에 다시 정착한 줄. */
-  superseded: '이후 다시 정착',
+  superseded: '이후 다시 종결',
   otherInstance: (instanceId: string) => `이전 인스턴스 ${instanceId}`,
-  noSnapshot: '정착 기록에 단위·작업 응답이 없습니다',
+  noSnapshot: '종결 기록에 단위·작업 응답이 없습니다',
   historyHeading: '이전 실행',
   historyTable: '이전 실행 목록',
   olderCount: (count: number) => `이전 실행 ${count}건이 더 있습니다`,
   loadOlder: '이전 실행 더 보기',
   collapse: '이전 실행 접기',
   historyError: (error: string) => `이전 실행을 읽지 못했습니다: ${error}`,
-  historyReset: '정착 기록이 크게 바뀌어 이전 실행을 다시 읽어야 합니다',
+  historyReset: '종결 기록이 크게 바뀌어 이전 실행을 다시 읽어야 합니다',
 } as const
 
 /** 이미 끝나 놓은 작업 지시를 실행 호스트가 거부했을 때의 안내(picasso `FORGOTTEN_JOB_ORDER`). */
-export const FORGOTTEN_JOB_ORDER_TEXT = '이미 끝나 놓은 작업 지시입니다. 같은 작업 지시는 다시 받지 않으므로 다시 할 일은 새 작업 지시로 냅니다.'
+export const FORGOTTEN_JOB_ORDER_TEXT = '이미 끝나 이빅션한 작업 지시입니다. 같은 작업 지시는 다시 받지 않으므로 다시 할 일은 새 작업 지시로 냅니다.'
 
 /** 운영자 실행 취소와 잔여 파지 확인 문구(P0-b2). */
 export const EXECUTION_CONTROL_TEXT = {
@@ -264,23 +264,23 @@ export const EXECUTION_CONTROL_TEXT = {
   emptyOperatorOnly: '기체 빈손 확인은 운영자 모드에서 합니다',
   emptyDone: '빈손 확인이 기록되었습니다. 그 기체는 다음 배정 판정부터 다시 판정됩니다',
   // 운영자 결함 감수(S3a JSON 계약 §5.10·§9.8).
-  releaseHeading: '결함 감수',
-  releaseIntro: '감수는 결함을 지우지 않으며, 이 결함들이 다음 단위를 막지 않게 하고 다음 로봇 단위를 냅니다. 기체 상태를 현장에서 확인한 뒤 결정하세요.',
+  releaseHeading: '결함 수용',
+  releaseIntro: '수용은 결함을 지우지 않으며, 이 결함들이 다음 단위를 막지 않게 하고 다음 로봇 단위를 냅니다. 기체 상태를 현장에서 확인한 뒤 결정하세요.',
   releaseRepeat: '같은 결함은 다시 막지 않고 새 결함은 다시 막습니다.',
-  releasePermitNote: '작업 허가 대기는 감수로 풀리지 않습니다.',
-  releaseTarget: '감수할 실행',
+  releasePermitNote: '작업 허가 대기는 수용으로 풀리지 않습니다.',
+  releaseTarget: '수용할 실행',
   releaseChoose: '실행 선택',
-  releaseFaults: '감수할 결함',
-  releaseReason: '감수 사유',
+  releaseFaults: '수용할 결함',
+  releaseReason: '수용 사유',
   releaseConfirm: '기체 상태를 현장에서 확인했고 이 결함을 안고 계속합니다',
-  releaseButton: '현장 확인 후 결함 감수',
-  releaseOperatorOnly: '결함 감수는 운영자 모드에서 합니다',
-  blockedCount: (count: number) => `결함 막음 ${count}건`,
-  releasedBy: '결함 감수',
-  incidentPointer: '이 실행은 지금도 결함으로 막혀 있습니다. 감수는 운영 영역의 실행 구역에서 합니다.',
-  releaseApplied: '응답은 없었으나 다시 읽어 보니 감수가 걸림',
-  releaseNotApplied: '응답 없음. 다시 읽어 보니 감수가 걸리지 않음. 실행 목록에서 확인하십시오',
-  releaseUnconfirmed: '응답 없음. 감수가 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오',
+  releaseButton: '현장 확인 후 결함 수용',
+  releaseOperatorOnly: '결함 수용은 운영자 모드에서 합니다',
+  blockedCount: (count: number) => `결함 차단 ${count}건`,
+  releasedBy: '결함 수용',
+  incidentPointer: '이 실행은 지금도 결함으로 막혀 있습니다. 수용은 운영 영역의 실행 구역에서 합니다.',
+  releaseApplied: '응답은 없었으나 다시 읽어 보니 수용이 걸림',
+  releaseNotApplied: '응답 없음. 다시 읽어 보니 수용이 걸리지 않음. 실행 목록에서 확인하십시오',
+  releaseUnconfirmed: '응답 없음. 수용이 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오',
 } as const
 
 /** 조치 탐색이 대안을 못 찾은 종류(picasso `Remedy.None.Cause`). 「없다」와 「덜 봤다」를 가른다. */
@@ -348,8 +348,8 @@ export const PERMIT_BLOCK_TEXT = {
 /** 작업 허가 값. */
 export const WORK_PERMIT_LABEL: Record<string, string> = {
   PERMITTED: '허가',
-  INHIBITED: '막음',
-  UNKNOWN: '모름(막음)',
+  INHIBITED: '차단',
+  UNKNOWN: '모름(차단)',
 }
 
 /** 막힌 명령의 종류(picasso WithheldIssue). */

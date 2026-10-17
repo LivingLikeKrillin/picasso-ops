@@ -95,7 +95,7 @@ class MissionHostTest {
             assertEquals("FIT", judged["skillFit"].asText())
             assertEquals(executionId, judged["runningExecutionId"].asText())
             assertEquals(false, judged["passed"].asBoolean())
-            assertEquals(listOf("도는 실행이 있다: $executionId"), judged["reasons"].map { it.asText() })
+            assertEquals(listOf("진행 중인 실행이 있다: $executionId"), judged["reasons"].map { it.asText() })
 
             val second = bench.post("/host/job-orders", request(inspect("JO-2", "T2" to "dock-3"), "candidates", HUMANOID))
             assertEquals("UNASSIGNED", second.body!!["result"].asText(), second.body.toString())
@@ -128,7 +128,7 @@ class MissionHostTest {
             val judged = bench.post("/host/eligibility", request(rack("JO-2", "RACK-204.S03"), "robotIds", HUMANOID)).body!!["robots"].single()
             assertEquals(executionId, judged["runningExecutionId"].asText(), judged.toString())
             assertEquals(false, judged["passed"].asBoolean())
-            assertEquals(listOf("도는 실행이 있다: $executionId"), judged["reasons"].map { it.asText() })
+            assertEquals(listOf("진행 중인 실행이 있다: $executionId"), judged["reasons"].map { it.asText() })
 
             val second = bench.post("/host/job-orders", request(rack("JO-2", "RACK-204.S03"), "candidates", HUMANOID)).body!!
             assertEquals("UNASSIGNED", second["result"].asText(), second.toString())

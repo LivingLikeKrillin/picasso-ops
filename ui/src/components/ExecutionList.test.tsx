@@ -67,7 +67,7 @@ describe('실행 목록 — 활성과 최근 정착, 이력은 페이지', () =>
     const rows = within(table).getAllByRole('row')
     expect(rows[3]).toHaveTextContent(`PHYSICALLY_DONE (${TEXT.settledAt('s14')})`)
     expect(rows[4]).toHaveTextContent(TEXT.noSnapshot)
-    expect(rows[1]).not.toHaveTextContent('정착')
+    expect(rows[1]).not.toHaveTextContent('종결')
     expect(within(region).getByText(TEXT.scope(20))).toBeInTheDocument()
     expect(within(region).getByText(TEXT.olderCount(2))).toBeInTheDocument()
     expect(gets(fake).filter((url) => url.startsWith('/api/executions'))).toEqual([EXECUTIONS_RECENT_PATH])

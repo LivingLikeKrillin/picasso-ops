@@ -162,7 +162,7 @@ export function ReleaseFaultForm({ instanceId, executions, session, onReleased }
     <form aria-label={TEXT.releaseHeading} onSubmit={(event) => event.preventDefault()}>
       <h3>{TEXT.releaseHeading}</h3>
       {last !== null && (
-        <p role="status" aria-label="결함 감수 결과">
+        <p role="status" aria-label="결함 수용 결과">
           {last.what}: {describeRelease(last.sent)}
         </p>
       )}
