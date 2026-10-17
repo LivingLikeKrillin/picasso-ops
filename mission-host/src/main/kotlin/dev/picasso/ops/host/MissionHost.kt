@@ -561,12 +561,6 @@ class MissionHost(
     private val cancels = mutableMapOf<String, CancelRow>()
 
     /**
-     * 기동 복원이 운영자 취소를 다시 걸 실행 id 가운데, 그 작업 지시의 태스크가 기체에 아직 끝나지 않아 다시 붙은 뒤에 걸 것([carryCancel]).
-     * 다시 지은 뒤 첫 미들웨어 pump 가 그 태스크에 다시 붙고, 그 직후 [reapplyCancels] 가 건다.
-     */
-    private val cancelOnAttach = mutableSetOf<String>()
-
-    /**
      * 이 인스턴스가 작업 지시마다 마지막으로 적은(또는 복원에 넘긴) 판단 기록 글자. 같은 글자는 다시 적지 않는다. 적기가 실패하면
      * 갱신하지 않으므로 다음 pump 가 다시 적는다. 놓은 실행의 것은 지운다.
      */
@@ -759,27 +753,17 @@ class MissionHost(
      * 취소 요청은 그 실행에 붙어 다시 돌아도 풀리지 않는다. 그래서 다시 지은 실행은 그 작업 지시의 처음 취소 행을 싣고([ExecutionView.cancel])
      * 운영자 취소는 이미 건 실행으로 받지 않는다.
      *
-     * 언제 거는지는 기체에 그 작업 지시의 끝나지 않은 태스크가 있는가로 가른다. 없으면 지금 건다 — 첫 pump 가 새 명령 없이 멈춘다. 있거나
-     * 스냅숏을 못 읽으면 첫 pump 가 그 태스크에 다시 붙은 뒤 건다([reapplyCancels]) — 지금 걸면 붙지 않은 채 멈춰 기체가 그 태스크를 하는
-     * 동안 실행이 정착하고 판정이 그 기체를 다시 내준다. 붙은 뒤 걸면 그 태스크에 취소가 다시 가고 끝날 때까지 실행이 기체를 쥔다.
+     * 다시 지은 직후, 첫 pump 전에 건다. 기체에 그 작업 지시의 끝나지 않은 태스크가 있으면 첫 pump 가 `StartTask` 없이 그 태스크에 붙어
+     * 취소를 보내고 그 종료를 본 뒤 정착한다. 이미 끝난 태스크면 취소를 보내지 않고 그 종료로 판정하며, 스냅숏을 못 읽으면 정착하지 않고
+     * 기다린다(picasso `Middleware.resume`·`attachForCancel`, §15.231). 첫 pump 가 붙은 뒤로 미루면 첫 pump 가 그 태스크에 `StartTask` 를 다시
+     * 보낸다 — 그 사이 끝난 태스크를 들지 않는 하위에서는 새 접수가 되어 기체가 다시 움직인다.
+     *
+     * picasso 가 붙는 것은 로봇 단위의 태스크뿐이다. 플릿 운반이 돌던 실행은 첫 pump 가 플릿에 취소를 보내지 않고 정착한다. 기체에 끝나지
+     * 않은 태스크가 없는 경우라 앞 방식(기체에 끝나지 않은 태스크가 있을 때만 미룸)에서도 곧바로 걸었고 거동이 같다.
      */
     private fun carryCancel(cancel: CancelRow, execution: Middleware.Execution) {
         cancels[execution.executionId] = cancel
-        val jobOrderId = execution.order.jobOrderId
-        val inFlight = robots.snapshot(execution.robotId)
-            ?.tasks?.any { (taskId, state) -> taskId.startsWith("$jobOrderId#") && state !in TERMINAL_TASK_STATES }
-            ?: true
-        if (inFlight) cancelOnAttach += execution.executionId else middleware.cancel(execution.executionId)
-    }
-
-    /** 다시 붙은 뒤 걸 취소를 건다([carryCancel]). 미들웨어 pump 뒤에 부른다. 이미 정착했거나 취소 중이면 걸지 않는다. 한 번뿐이다. */
-    private fun reapplyCancels() {
-        if (cancelOnAttach.isEmpty()) return
-        val waiting = cancelOnAttach.toList()
-        cancelOnAttach.clear()
-        middleware.executions().filter { it.executionId in waiting }.forEach { execution ->
-            if (execution.physicalState.pumps && execution.physicalState != PhysicalState.CANCELING) middleware.cancel(execution.executionId)
-        }
+        middleware.cancel(execution.executionId)
     }
 
     private fun restoreView(): RestoreView? = restoredAt?.let { RestoreView(it, restoreRows.toList()) }
@@ -801,7 +785,6 @@ class MissionHost(
                 if (journalBlocked().isNotEmpty()) return@withLock
                 middleware.pump()
                 pumpedAt = at
-                reapplyCancels()
                 recordAfterPump()
             }
         } catch (e: Exception) {
@@ -1370,6 +1353,9 @@ class MissionHost(
      * 운영자 판단(S4a 스펙 T4, T6). 호스트 잠금 아래에서 `Middleware.resolve` 를 부르고 결과 이름을 picasso 그대로 돌려준다.
      * 판단은 그 단위의 판단 없는 가장 최근 인시던트에 붙는다(picasso `IncidentLog.noteResolution`). Resolved 이면 그 인시던트 id 를
      * 같이 낸다. REST 는 늘 `PERSON` 승인자를 만들므로 Refused 는 이 메서드를 직접 부를 때만 난다.
+     *
+     * picasso `resolve` 는 판단으로 실행의 보류가 걷히면 그 자리에서 작업 응답 하나(`physicalState` `RUNNING`)를 낸다. 다른 단위가 아직
+     * 보류이면 실행은 보류 그대로이고 내지 않는다. 다음 pump 가 그 응답을 송신 기록과 결과 outbox 에 한 번 적는다([release] 와 같다).
      */
     fun resolve(executionId: String, unitId: String, decision: OperatorDecision, approver: Approver, requestId: String?): ResolveView =
         lock.withLock {

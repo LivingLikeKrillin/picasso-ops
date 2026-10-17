@@ -250,15 +250,19 @@ class RestartRecoveryTest {
         assertEquals(reopened["incidentId"].asText(), reworked.body["answer"]["incidentId"].asText(), "${reworked.body}")
         val decided = stack.get("/api/incidents/${reopened["incidentId"].asText()}")
         assertEquals("REWORK" to false, decided["resolution"]["decision"].asText() to decided["held"].asBoolean(), "$decided")
+        // 판단으로 보류가 걷히면 그 자리에서 응답 하나가 나간다(picasso `resolve`). 시계를 밀기 전이라 대기는 기한 전이다.
+        val cleared = waitLogged(third, 2)
+        assertEquals(Triple(third, "RUNNING", "SENT"), cleared.first(), "$cleared")
+        assertEquals(false, responses(jobOrderId).first()["operatorRequired"].asBoolean(), "${responses(jobOrderId)}")
         pushUntilHeld(heldExecution())
-        val again = waitLogged(third, 2)
-        assertEquals(Triple(third, "OPERATOR_HOLD", "SENT"), again.first(), "$again")
-        assertEquals(2, again.count { it.third == "SENT" }, "$again")
+        val again = waitLogged(third, 3)
+        assertEquals(listOf(Triple(third, "OPERATOR_HOLD", "SENT"), Triple(third, "RUNNING", "SENT")), again.take(2), "$again")
+        assertEquals(3, again.count { it.third == "SENT" }, "$again")
     }
 
     @Test
     @Order(5)
-    fun `단계 5 설비 대기 보류를 재작업으로 판단한 뒤 다시 띄우면 대기가 재작업 때 시작한 기한을 이어 재고 그 보류 응답은 재기동 중복이며 옛 인시던트와 그 판단은 earlier 에만 있다`() {
+    fun `단계 5 설비 대기 보류를 재작업으로 판단한 뒤 다시 띄우면 대기가 재작업 때 시작한 기한을 이어 재고 재작업 판단 뒤 응답과 내용이 다른 그 보류 응답은 송신이며 옛 인시던트와 그 판단은 earlier 에만 있다`() {
         val executionId = executionOf(heldOrder)
         val hold = incidents()["incidents"].single { it["executionId"].asText() == executionId && it["held"].asBoolean() }
         reworkIncident = hold["incidentId"].asText()
@@ -267,6 +271,8 @@ class RestartRecoveryTest {
         assertEquals(listOf("SUCCEEDED", "Resolved"), listOf(reply.body!!["result"].asText(), reply.body["outcome"].asText()), "${reply.body}")
         // 시계를 밀기 전에 재작업한 대기가 다시 기다리기 시작하게 둔다. 그 시각이 판단 기록의 대기 시작이다.
         awaitUnits(executionId, listOf(WAIT_UNIT to "RUNNING", S04 to "PENDING"))
+        // 판단으로 보류가 걷힌 응답을 이 인스턴스가 송신한다. 상위가 재기동 전에 마지막으로 받는 것이 이것이다.
+        assertEquals(Triple(reworkInstance, "RUNNING", "SENT"), waitLogged(reworkInstance, 4).first())
         // 재작업으로 다시 선 대기가 도는 중에 기한 전까지만 민다. 이 pump 들이 판단 행을 사본에 적는다.
         driver.push(Duration.ofSeconds(10))
         assertEquals("RUNNING", unitState(heldOrder, WAIT_UNIT), "${driver.executions()}")
@@ -280,8 +286,11 @@ class RestartRecoveryTest {
         val held = pushUntilHeld(executionOf(heldOrder))
         assertTrue(Duration.between(restartedAt, stack.site.now()) < DEADLINE, "기한을 재기동 때부터 다시 쟀다: ${stack.site.now()}")
         assertEquals("OPERATOR_HOLD", held["physicalState"].asText(), "$held")
-        // 상위가 마지막으로 받은 것은 재작업 뒤 보류(단계 4 끝의 SENT)다. 내용 키가 같아 송신하지 않는다.
-        assertEquals(Triple(instance, "OPERATOR_HOLD", "RESTART_DUPLICATE"), waitLogged(instance, 1).first())
+        // 상위가 마지막으로 받은 것은 재작업 판단 뒤 응답(`RUNNING`)이다. 내용 키가 달라 새 인스턴스의 첫 보류 응답이라도 송신한다.
+        assertEquals(
+            listOf(Triple(instance, "OPERATOR_HOLD", "SENT"), Triple(reworkInstance, "RUNNING", "SENT")),
+            waitLogged(instance, 1).take(2),
+        )
 
         val list = incidents()
         assertEquals(instance, list["instanceId"].asText(), "$list")
