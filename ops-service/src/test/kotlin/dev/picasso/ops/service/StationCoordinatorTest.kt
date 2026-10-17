@@ -52,6 +52,8 @@ class StationCoordinatorTest {
   var onReceipt:(()->Unit)?=null
   /** The host's work permit (ADR 52). Undeclared keeps today's behaviour. */
   var permit:StationPermit=StationPermit.Undeclared;var permitThrows=false
+  /** The work permit block of the receipt's execution (`permitBlock` of the host execution read). */
+  var permitBlock:JsonNode?=null
   override fun permit():StationPermit {if(permitThrows)error("host down");return permit}
   override fun validate(payload:JsonNode){require(valid)}
   override fun signals()=signals
@@ -67,11 +69,14 @@ class StationCoordinatorTest {
    return r
   }
   /** A changed [physical] is a new stored result version; the latest stored result is what the port reports. */
+  /** The receipt read fails, as when the host execution read and the store are both down. */
+  var receiptFails=false
   override fun receipt(id:UUID):StationReceipt {
    onReceipt?.let{onReceipt=null;it()}
+   if(receiptFails)error("host down")
    physical?.let{if(written[id]!=it){result(id,it);written[id]=it}}
    val latest=jdbc.sql("SELECT version,snapshot->'jobResponse'->>'physicalState' FROM ops.work_result WHERE receipt_id=:id ORDER BY version DESC LIMIT 1").param("id",id).query{r,_->r.getInt(1) to r.getString(2)}.optional().orElse(null)
-   return receipts.getValue(id).copy(physicalState=latest?.second,resultVersion=latest?.first)
+   return receipts.getValue(id).copy(physicalState=latest?.second,resultVersion=latest?.first,permitBlock=permitBlock)
   }
   /** Closed without executing, as the ops port judges it: UNASSIGNED or REJECTED with no stored result. [unsentFails]: the read fails. */
   var unsentFails=false
@@ -163,8 +168,25 @@ class StationCoordinatorTest {
   val run=enqueue();service.tick();jdbc.sql("UPDATE ops.station_run SET state='DISPATCHING' WHERE run_id=:id").param("id",run.runId).update()
   coordinator().tick();assertEquals(1,port.sends);assertEquals("RUNNING",service.get(run.runId).state)
  }
+ /** 셀 신호 읽기 실패가 유예 시간 넘게 이어지면 확인 필요로 넘기고, 그 뒤 증명된 정상 완료는 운영자 완료 확인으로 받는다. */
  @Test fun `실행 중 신호 단절은 확인 필요로 전환하고 점유를 유지한다`() {
-  val run=enqueue();service.tick();port.signals=null;service.tick();assertEquals("REVIEW_REQUIRED",service.get(run.runId).state);assertEquals(run.runId,service.stations().single().owner);assertEquals(1,port.sends)
+  plain(60);val run=enqueue();service.tick();port.signals=null;service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  now=now.plus(StationCoordinator.SIGNAL_GRACE).minusMillis(1);service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  now=now.plusMillis(1);service.tick()
+  val review=service.get(run.runId);assertEquals(listOf("REVIEW_REQUIRED",StationCoordinator.SIGNALS_UNOBSERVED),listOf(review.state,review.reason));assertEquals(run.runId,service.stations().single().owner);assertEquals(1,port.sends)
+  now=now.plusSeconds(1);result(run.runId,"PHYSICALLY_DONE");signal(complete=true)
+  assertEquals(409,assertFailsWith<RequestRejected>{decide(run.runId,"RESUME_OBSERVATION")}.status)
+  assertEquals("COMPLETED",decide(run.runId,"CONFIRM_COMPLETION").state);assertNull(service.stations().single().owner)
+ }
+ /** 셀 신호 읽기 실패는 일시 장애로 본다. 유예 동안 그 작업을 판정하지 않고, 다시 읽히면 그대로 관측한다. */
+ @Test fun `셀 신호를 한 번 못 읽어도 유예 안에서는 확인 필요로 넘기지 않고 다시 읽히면 그대로 관측해 완료한다`() {
+  val run=enqueue();service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  now=now.plusSeconds(1);port.signals=null;service.tick();now=now.plusSeconds(5);service.tick()
+  val held=service.get(run.runId);assertEquals(listOf("RUNNING",StationCoordinator.SIGNALS_GRACE),listOf(held.state,held.reason));assertEquals(run.runId,service.stations().single().owner)
+  assertEquals(1,service.events(run.runId).count{it["reason"]==StationCoordinator.SIGNALS_GRACE})
+  now=now.plusSeconds(1);signal();service.tick();assertEquals(listOf("RUNNING",StationCoordinator.RUN_WAITING),service.get(run.runId).let{listOf(it.state,it.reason)})
+  now=now.plusSeconds(1);result(run.runId,"PHYSICALLY_DONE");signal(complete=true);service.tick()
+  assertEquals("COMPLETED",service.get(run.runId).state);assertEquals(1,port.sends)
  }
  @Test fun `재평가 중 재기동은 자동 재전송 없이 현장 확인으로 넘긴다`() {
   val run=enqueue();service.tick();jdbc.sql("UPDATE ops.station_run SET state='RETRYING' WHERE run_id=:id").param("id",run.runId).update();coordinator().tick();assertEquals("REVIEW_REQUIRED",service.get(run.runId).state);assertEquals(1,port.sends)
@@ -387,6 +409,8 @@ class StationCoordinatorTest {
  private val clearedReason="현장 확인에 의한 자원 해제: 현장 상태 확인"
  private fun station()=service.stations().single()
  private fun echoing(){jdbc.sql("DELETE FROM ops.rf_station").update();service.createStation(engineer,json.readTree("""{"stationId":"inspection-1","name":"번호 검사","readySignal":"ready","completeSignal":"complete","timeoutSeconds":10,"jobSignal":"job","jobEchoSignal":"echo"}"""))}
+ /** The station again with a run deadline of [timeout] seconds. */
+ private fun plain(timeout:Int){jdbc.sql("DELETE FROM ops.rf_station").update();service.createStation(engineer,json.readTree("""{"stationId":"inspection-1","name":"공유 검사","readySignal":"ready","completeSignal":"complete","timeoutSeconds":$timeout}"""))}
  private fun echo(value:String){port.texts=port.texts+("echo" to StationText(value,now))}
  private fun context(id:UUID,state:String,reason:String?=null)=service.events(id).last{it["state"]==state && (reason==null || it["reason"]==reason)}["context"] as JsonNode
  private fun decideIdle(id:UUID,revision:Int=service.get(id).revision)=decide(id,"CONFIRM_STATION_IDLE",revision)
@@ -625,5 +649,61 @@ class StationCoordinatorTest {
   port.physical="FAILED";val run=enqueue();service.tick()
   val after=service.get(run.runId)
   assertEquals(listOf("REVIEW_REQUIRED","로봇 FAILED; 자동 재실행 없이 점유 유지"),listOf(after.state,after.reason));assertEquals(1,port.sends)
+ }
+
+ // 작업 허가 차단(ADR 52)은 기다림이다. 실행의 단위가 막힌 동안 실행 기한은 멈추고, 풀리면 그때부터 다시 센다(설비 준비 대기와 같은 규칙).
+ private val block get()=json.readTree("""{"unitId":"T1.travel","withheld":"START","robots":[{"robotId":"humanoid-01","permit":"INHIBITED","reasons":[]}],"since":"2026-10-12T00:00:02Z"}""")
+ @Test fun `실행 단위가 작업 허가로 막힌 동안 실행 기한은 멈추고 허가가 돌아오면 그때부터 다시 센다`() {
+  val run=enqueue();service.tick();val entered=service.get(run.runId).phaseAt
+  now=now.plusSeconds(2);port.permitBlock=block;service.tick()
+  val held=service.get(run.runId);assertEquals(listOf("RUNNING",StationCoordinator.RUN_PERMIT_HELD),listOf(held.state,held.reason));assertEquals(entered,held.phaseAt)
+  assertEquals(block,context(run.runId,"RUNNING",StationCoordinator.RUN_PERMIT_HELD)["permitBlock"])
+  now=now.plusSeconds(30);service.tick();service.tick()
+  assertEquals("RUNNING",service.get(run.runId).state);assertEquals(1,service.events(run.runId).count{it["reason"]==StationCoordinator.RUN_PERMIT_HELD})
+  port.permitBlock=null;service.tick()
+  val resumed=service.get(run.runId);assertEquals(listOf("RUNNING",StationCoordinator.RUN_PERMIT_RESUMED),listOf(resumed.state,resumed.reason));assertEquals(now,resumed.phaseAt)
+  now=now.plusSeconds(9);service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  now=now.plusSeconds(1);service.tick();assertEquals(listOf("REVIEW_REQUIRED",StationCoordinator.RUN_TIMED_OUT),service.get(run.runId).let{listOf(it.state,it.reason)})
+ }
+ @Test fun `실행을 읽지 못해도 실행 기한은 흘러 확인 필요로 넘긴다`() {
+  val run=enqueue();service.tick();port.receiptFails=true;now=now.plusSeconds(9);service.tick();assertEquals("RUNNING",service.get(run.runId).state)
+  now=now.plusSeconds(1);service.tick();assertEquals(listOf("REVIEW_REQUIRED",StationCoordinator.RUN_TIMED_OUT),service.get(run.runId).let{listOf(it.state,it.reason)})
+ }
+ @Test fun `기한이 지난 처리 주기에 로봇 완료와 새 완료 신호가 함께 보이면 확인 필요가 아니라 완료로 판정한다`() {
+  val run=enqueue();service.tick();now=now.plusSeconds(10);result(run.runId,"PHYSICALLY_DONE");signal(complete=true);service.tick()
+  assertEquals("COMPLETED",service.get(run.runId).state);assertNull(station().owner)
+ }
+ @Test fun `작업 허가 차단이 풀려 기한을 다시 세도 차단 중 저장된 로봇 완료는 이번 실행의 완료 근거로 남는다`() {
+  val run=enqueue();service.tick();now=now.plusSeconds(1);port.permitBlock=block;service.tick()
+  result(run.runId,"PHYSICALLY_DONE");service.tick();assertEquals(StationCoordinator.RUN_PERMIT_HELD,service.get(run.runId).reason)
+  now=now.plusSeconds(1);port.permitBlock=null;service.tick();assertEquals(StationCoordinator.RUN_PERMIT_RESUMED,service.get(run.runId).reason)
+  now=now.plusSeconds(1);signal(complete=true);service.tick();assertEquals("COMPLETED",service.get(run.runId).state)
+ }
+ // 기한 초과나 신호 관측 불명으로 확인 필요가 된 작업의 정상 완료. 설비 완료 신호가 켜져 있으면 관측 재개는 409 라, 증명된 완료를 운영자가 받는 판단이다.
+ @Test fun `기한 초과로 확인 필요가 된 작업은 로봇 물리 완료와 켜진 설비 완료 신호가 있으면 운영자 완료 확인으로 완료한다`() {
+  val run=enqueue();service.tick();now=now.plusSeconds(11);service.tick()
+  assertEquals(listOf("REVIEW_REQUIRED",StationCoordinator.RUN_TIMED_OUT),service.get(run.runId).let{listOf(it.state,it.reason)})
+  fun refused(status:Int,message:String)=assertFailsWith<RequestRejected>{decide(run.runId,"CONFIRM_COMPLETION")}.let{assertEquals(status to message,it.status to it.message)}
+  now=now.plusSeconds(1);signal(complete=true);refused(409,StationCoordinator.COMPLETION_ROBOT_NOT_DONE)
+  result(run.runId,"PHYSICALLY_DONE");assertEquals(409,assertFailsWith<RequestRejected>{decide(run.runId,"RESUME_OBSERVATION")}.status)
+  signal();refused(409,StationCoordinator.COMPLETION_SIGNAL_OFF)
+  port.signals=null;refused(503,StationCoordinator.COMPLETION_SIGNALS_UNREAD)
+  assertEquals("REVIEW_REQUIRED",service.get(run.runId).state)
+  signal(complete=true);val done=decide(run.runId,"CONFIRM_COMPLETION")
+  assertEquals(listOf("COMPLETED","${StationCoordinator.COMPLETION_CONFIRMED}: 현장 상태 확인"),listOf(done.state,done.reason));assertNull(station().owner);assertNull(station().quarantinedBy)
+  val seen=context(run.runId,"COMPLETED");assertEquals("PHYSICALLY_DONE",seen["physicalState"].asText());assertEquals(true,seen["signals"]["complete"]["value"].asBoolean())
+  assertEquals("operator/kim",service.events(run.runId).last()["actor"]);assertEquals(1,port.sends)
+ }
+ @Test fun `작업 번호 반환 스테이션의 완료 확인은 반환 번호가 이번 번호여야 하고 판단한 결함으로 확인 필요가 된 작업은 받지 않는다`() {
+  echoing();val x=enqueue();service.tick();now=now.plusSeconds(11);service.tick();assertEquals("REVIEW_REQUIRED",service.get(x.runId).state)
+  result(x.runId,"PHYSICALLY_DONE");now=now.plusSeconds(1);signal(complete=true);echo("other")
+  val mismatch=assertFailsWith<RequestRejected>{decide(x.runId,"CONFIRM_COMPLETION")};assertEquals(409 to StationCoordinator.COMPLETION_ECHO_MISMATCH,mismatch.status to mismatch.message)
+  echo(x.runId.toString());assertEquals("COMPLETED",decide(x.runId,"CONFIRM_COMPLETION").state)
+  assertEquals(x.runId.toString(),context(x.runId,"COMPLETED")["echoed"].asText())
+  now=now.plusSeconds(1);signal();val y=enqueue();service.tick();assertEquals("RUNNING",service.get(y.runId).state)
+  result(y.runId,"OPERATOR_HOLD");service.tick();assertEquals("REVIEW_REQUIRED",service.get(y.runId).state)
+  result(y.runId,"PHYSICALLY_DONE");now=now.plusSeconds(1);echo(y.runId.toString());signal(complete=true)
+  val held=assertFailsWith<RequestRejected>{decide(y.runId,"CONFIRM_COMPLETION")};assertEquals(409 to StationCoordinator.COMPLETION_NOT_REVIEWABLE,held.status to held.message)
+  assertEquals("REVIEW_REQUIRED",service.get(y.runId).state);assertEquals(y.runId,station().owner)
  }
 }

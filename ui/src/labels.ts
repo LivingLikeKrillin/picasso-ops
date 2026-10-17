@@ -302,6 +302,10 @@ export const STATION_TEXT={
   idleWarning:'설비가 비어 있고 이전 작업 로봇이 멈췄는지 현장에서 확인하세요. 설비 완료 신호가 꺼진 것을 확인한 뒤 판단하세요.',
   idleConfirm:'설비·로봇 상태와 격리 해제 가능 여부를 확인했습니다',
   clearNote:'자원을 해제해도 이전 작업은 멈추지 않으며 해당 스테이션은 격리됩니다.',
+  // 기한 초과·신호 관측 불명으로 확인 필요가 된 작업의 운영자 완료 확인(CONFIRM_COMPLETION).
+  completionNote:'완료 확인 시 스테이션 작업을 완료하고 격리 없이 스테이션 점유를 해제합니다. 작업 번호 쌍이 없는 스테이션은 설비 완료 신호가 해당 작업의 것인지 현장 확인해야 합니다.',
+  completionConfirm:'로봇 물리 완료와 설비 완료 신호를 현장에서 확인했습니다',
+  completionButton:'현장 확인 후 완료 확인',
 } as const
 
 /** 출발 결품의 답 하나. REJECTED 의 거부와 UNASSIGNED 의 기체별 사유가 같은 모양이다. */

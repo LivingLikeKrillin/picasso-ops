@@ -99,6 +99,15 @@ class WorkRequestsTest {
   assertEquals(block,(detail["execution"] as com.fasterxml.jackson.databind.JsonNode)["permitBlock"])
   assertEquals(row.state,(detail["receipt"] as Receipt).state)
  }
+ @Test fun `스테이션 포트는 실행의 작업 허가 차단을 작업 요청에 싣고 차단이 없거나 실행 목록을 못 읽으면 싣지 않는다`() {
+  val row=service.receive("mes",body).receipt
+  val port=dev.picasso.ops.service.stations.OpsStationPort(service,interfaces,bench.host)
+  val block=json.readTree("""{"unitId":"T1.travel","withheld":"START","robots":[],"since":"2026-10-14T00:00:00Z"}""")
+  fun executions(extra:String)=HostCall.Ok(json.readTree("""{"instanceId":"mw-1","executions":[${execution("exec-1",row.jobOrderId,extra)}]}"""))
+  bench.executions=executions(""","permitBlock":$block""");assertEquals(block,port.receipt(row.receiptId).permitBlock)
+  bench.executions=executions(""","permitBlock":null""");assertNull(port.receipt(row.receiptId).permitBlock)
+  bench.executions=HostCall.Silent("offline");assertNull(port.receipt(row.receiptId).permitBlock)
+ }
  @Test fun `스테이션 포트는 호스트의 작업 허가를 읽고 선언 없음과 못 읽음을 가른다`() {
   val port=dev.picasso.ops.service.stations.OpsStationPort(service,interfaces,bench.host)
   assertEquals(dev.picasso.ops.service.stations.StationPermit.Undeclared,port.permit())

@@ -106,7 +106,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
     }
     // observe(), rework() and confirmSource() hold this monitor across their host call, so a claim seen here is not in flight in this instance.
     if(run.state in LEFTOVER_STOPPED.keys) leftover(run)
-    if(run.state in setOf("RUNNING","WAITING_ROBOT") && expired(run,current)) transition(run,"REVIEW_REQUIRED","작업 시간 초과; 물리 상태 확인 전 점유를 유지합니다")
+    // The RUNNING deadline is judged in observe(): the execution read there shows whether a work permit block stops it.
+    if(run.state=="WAITING_ROBOT" && expired(run,current)) transition(run,"REVIEW_REQUIRED",RUN_TIMED_OUT)
     null
    }
    val dispatch=if(next?.state=="WAITING_READY") numbered(next,signals) else next
@@ -126,12 +127,12 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   .query{r,i->Board(stationRow(r,i),r.getObject("r_run_id",UUID::class.java)?.let{runRow(r,"r_")},r.getBoolean("queued"))}.list()
  /**
   * True when tick's transaction would write nothing and hand nothing on for [entry] (HA design record §10): no owner and nothing queued, an
-  * owner run in review, or an observed owner run before its deadline. Read without locks: every write that follows judges the run again under
-  * the station lock, and a run that changed since the read is the next tick's.
+  * owner run in review, a RUNNING owner run (its every write is observe's), or a WAITING_ROBOT owner run before its deadline. Read without
+  * locks: every write that follows judges the run again under the station lock, and a run that changed since the read is the next tick's.
   */
  private fun quiet(entry:Board):Boolean {
   val run=entry.run
-  return if(entry.station.owner==null) !entry.queued else run!=null && (run.state=="REVIEW_REQUIRED" || run.state in OBSERVED && !expired(run,entry.station))
+  return if(entry.station.owner==null) !entry.queued else run!=null && (run.state in setOf("REVIEW_REQUIRED","RUNNING") || run.state=="WAITING_ROBOT" && !expired(run,entry.station))
  }
  /**
   * A RETRYING/REWORKING claim found by tick (HA design record §7, §8 stage 0). Left by this instance it is a failed cleanup: the claim and
@@ -166,7 +167,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   }
  }
  private fun received(run:StationRun,receipt:StationReceipt) {when {
-  receipt.state=="ACCEPTED" -> transition(run,"RUNNING","로봇 수락; 저장 결과와 새 설비 완료 신호를 기다립니다",context=receipt.snapshot)
+  receipt.state=="ACCEPTED" -> transition(run,"RUNNING",RUN_WAITING,context=receipt.snapshot)
   receipt.safeToRetry -> transition(run,"WAITING_ROBOT","전송 전 미배정; 가용 기체를 재평가합니다")
   // Never re-evaluated on a timer: the same cell answers the same way, and a retry loop would hide that a person must confirm the source.
   receipt.sourceUnobserved -> transition(run,"REVIEW_REQUIRED",SOURCE_UNOBSERVED)
@@ -174,8 +175,10 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   else -> transition(run,"REVIEW_REQUIRED","작업 요청 ${receipt.state}; 실행 여부 확인 전 점유 유지")
  }}
  private fun observe(run:StationRun,station:RfStation,signals:StationSignals?,readAt:Instant) {
-  val receipt=run.receiptId?.let{runCatching{port.receipt(it)}.getOrNull()} ?: return
+  // Null when the receipt could not be read. RUNNING is still judged on its deadline and its signals then.
+  val receipt=run.receiptId?.let{runCatching{port.receipt(it)}.getOrNull()}
   if(run.state=="WAITING_ROBOT") {
+   receipt ?: return
    if(!receipt.safeToRetry) {tx.execute{lock(run.stationId);if(get(run.runId).state==run.state)received(get(run.runId),receipt)};return}
    if(signals?.flags?.get(station.readySignal)?.value!=true || signals.flags[station.completeSignal]?.value!=false)return
    if(run.attempt>=3 || clock.instant().isBefore(run.phaseAt.plusSeconds(5)))return
@@ -194,30 +197,53 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
    running(current,station,signals,readAt,receipt)?.invoke()
   }
  }
- /** The write the observation of RUNNING [current] makes, or null when it writes nothing. */
- private fun running(current:StationRun,station:RfStation,signals:StationSignals?,readAt:Instant,receipt:StationReceipt):(()->Unit)? {
+ /**
+  * The write the observation of RUNNING [current] makes, or null when it writes nothing. [receipt] is null when it could not be read.
+  * Completion evidence and judged faults come first, then a work permit block (a wait: the deadline does not run), then the deadline, then
+  * an unread cell. A read that fails is a transient fault for [SIGNAL_GRACE]: the run is neither completed nor failed on it and the deadline
+  * keeps running. A read that succeeds without the station's declared signals is the site's declaration, not a lost read: reviewed at once.
+  */
+ private fun running(current:StationRun,station:RfStation,signals:StationSignals?,readAt:Instant,receipt:StationReceipt?):(()->Unit)? {
   val echo=station.jobEchoSignal
-  if(signals?.flags?.get(station.readySignal)==null || signals.flags[station.completeSignal]==null || echo!=null && signals.texts[echo]==null) return {transition(current,"REVIEW_REQUIRED","현장 신호 관측 불명; 점유를 유지하고 현장 확인을 기다립니다")}
-  // Every (re)entry to RUNNING required the completion signal off. A true read after that entry is new; one read before it is not judged.
-  // Both instants are on the ops clock. The signal's own observedAt is the field clock and is not compared.
-  val on=signals.flags.getValue(station.completeSignal).value && !readAt.isBefore(current.phaseAt)
-  val token=current.runId.toString();val echoed=echo?.let{signals.texts.getValue(it).value}
+  val read=signals?.takeIf{it.flags[station.readySignal]!=null && it.flags[station.completeSignal]!=null && (echo==null || it.texts[echo]!=null)}
+  if(signals!=null && read==null) return {transition(current,"REVIEW_REQUIRED",SIGNALS_UNOBSERVED)}
   // A result stored before this attempt (re)entered RUNNING is the previous attempt's: keep waiting, the timeout still applies.
   // A resume re-observes the same execution, so a completion stored during review still counts; a stale hold does not.
-  val fresh=(receipt.resultVersion?:0)>(current.resultBaseline?:0);val physical=receipt.physicalState?.takeIf{fresh}
-  return when {
-   on && echo!=null && echoed!=token -> {{transition(current,"REVIEW_REQUIRED",ECHO_MISMATCH,context=json.createObjectNode().put("expected",token).put("echoed",echoed).set("signals",snapshot(signals)))}}
-   receipt.physicalState=="PHYSICALLY_DONE" && (fresh || current.baselineReviewOnly) && on ->
-    {{transition(current,"COMPLETED","로봇 물리 완료와 이번 작업의 설비 완료 신호 확인; 자원 해제",release=true,context=json.createObjectNode().apply{set<JsonNode>("execution",receipt.snapshot?:json.nullNode());set<JsonNode>("signals",snapshot(signals))})}}
-   physical in REVIEW_PHYSICAL_STATES -> {{transition(current,"REVIEW_REQUIRED","로봇 $physical; 자동 재실행 없이 점유 유지",context=receipt.snapshot)}}
-   else -> null
+  val fresh=(receipt?.resultVersion?:0)>(current.resultBaseline?:0);val physical=receipt?.physicalState?.takeIf{fresh}
+  if(read!=null) {
+   // Every (re)entry to RUNNING required the completion signal off. A true read after that entry is new; one read before it is not judged.
+   // A permit resume moves the phase clock without an entry: the signal was off at the entry before it and the station stayed this run's.
+   // Both instants are on the ops clock. The signal's own observedAt is the field clock and is not compared.
+   val on=read.flags.getValue(station.completeSignal).value && !readAt.isBefore(current.phaseAt)
+   val token=current.runId.toString();val echoed=echo?.let{read.texts.getValue(it).value}
+   if(on && echo!=null && echoed!=token) return {transition(current,"REVIEW_REQUIRED",ECHO_MISMATCH,context=json.createObjectNode().put("expected",token).put("echoed",echoed).set("signals",snapshot(read)))}
+   if(receipt!=null && receipt.physicalState=="PHYSICALLY_DONE" && (fresh || current.baselineReviewOnly) && on)
+    return {transition(current,"COMPLETED","로봇 물리 완료와 이번 작업의 설비 완료 신호 확인; 자원 해제",release=true,context=json.createObjectNode().apply{set<JsonNode>("execution",receipt.snapshot?:json.nullNode());set<JsonNode>("signals",snapshot(read))})}
   }
+  if(physical in REVIEW_PHYSICAL_STATES) return {transition(current,"REVIEW_REQUIRED","로봇 $physical; 자동 재실행 없이 점유 유지",context=receipt?.snapshot)}
+  // Same rule as WAITING_READY on the work permit (ADR 52): a unit held on the permit is a wait, never a failure. The deadline does not run
+  // while the execution read shows the block and starts again once a read shows none. An unread execution is no block: the deadline runs.
+  val block=receipt?.permitBlock
+  if(block!=null) return if(current.reason==RUN_PERMIT_HELD) null else {{hold(current,RUN_PERMIT_HELD,json.createObjectNode().set("permitBlock",block))}}
+  if(current.reason==RUN_PERMIT_HELD) return {restart(current,RUN_PERMIT_RESUMED)}
+  if(expired(current,station)) return {transition(current,"REVIEW_REQUIRED",RUN_TIMED_OUT)}
+  if(read==null) {
+   if(current.reason!=SIGNALS_GRACE) return {hold(current,SIGNALS_GRACE)}
+   // The grace counts from this run's first unread tick: the event the hold recorded. Kept in the database, so a restart does not reset it.
+   val since=graceSince(current) ?: return null
+   return if(clock.instant().isBefore(since.plus(SIGNAL_GRACE))) null else {{transition(current,"REVIEW_REQUIRED",SIGNALS_UNOBSERVED,context=json.createObjectNode().put("unreadSince",since.toString()))}}
+  }
+  if(current.reason==SIGNALS_GRACE) return {hold(current,RUN_WAITING)}
+  return null
  }
+ /** When [run] last entered its [SIGNALS_GRACE] hold, on the ops clock. */
+ private fun graceSince(run:StationRun):Instant? = jdbc.sql("SELECT max(recorded_at) FROM ops.station_event WHERE run_id=:id AND reason=:reason")
+  .param("id",run.runId).param("reason",SIGNALS_GRACE).query{r,_->r.getTimestamp(1)?.toInstant()}.single()
  fun decide(id:UUID,actor:Actor,p:JsonNode):StationRun {
   // Signals and the released run's stored result are read before the station lock, judged under it.
   val asked=p.path("decision").asText()
   val signals=if(actor.mode==Mode.OPERATOR && asked in SIGNAL_DECISIONS) runCatching{port.read()}.getOrNull() else null
-  val released=if(actor.mode==Mode.OPERATOR && asked=="CONFIRM_CLEAR") runCatching{get(id).receiptId?.let(port::receipt)}.getOrNull() else null
+  val released=if(actor.mode==Mode.OPERATOR && asked in setOf("CONFIRM_CLEAR","CONFIRM_COMPLETION")) runCatching{get(id).receiptId?.let(port::receipt)}.getOrNull() else null
   // Read after the released read, which may record an execution. A work request closed unsent proves no robot got it; one not read proves nothing.
   val unsent=actor.mode==Mode.OPERATOR && asked=="CONFIRM_CLEAR" && runCatching{get(id).receiptId?.let(port::unsent)}.getOrNull()==true
   // Nothing was sent for a source-unobserved run: resuming observation would only wait out the deadline and hide the pending confirmation.
@@ -244,6 +270,21 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
     transition(current,"MANUALLY_CLEARED","현장 확인에 의한 자원 해제: $reason",release=true,by=actor.header(),context=context);cleared(current,reason)
     if(quarantine) {jdbc.sql("UPDATE ops.rf_station SET quarantined_by=:id,quarantined_at=:at WHERE station_id=:station").param("id",current.runId).param("at",java.sql.Timestamp.from(clock.instant())).param("station",station.stationId).update()
      event(get(id),QUARANTINE,actor.header(),context.deepCopy().put("stationId",station.stationId))}}
+   // A run reviewed on its deadline or on unseen signals whose normal completion is now proven: the robot evidence of a RUNNING completion
+   // and the completion signal on, at a station with the job-number pair this run's number echoed. Its completion signal still on is why
+   // RESUME_OBSERVATION refuses. A person's decision because a station without the pair cannot tell whose completion the signal is.
+   "CONFIRM_COMPLETION" -> {if(current.state!="REVIEW_REQUIRED" || current.receiptId==null || current.reason !in CONFIRMABLE_REVIEWS)reject(COMPLETION_NOT_REVIEWABLE,409)
+    val stored=released ?: reject(COMPLETION_RESULT_UNREAD,503)
+    val fresh=(stored.resultVersion?:0)>(current.resultBaseline?:0)
+    if(stored.physicalState!="PHYSICALLY_DONE" || !(fresh || current.baselineReviewOnly))reject(COMPLETION_ROBOT_NOT_DONE,409)
+    val station=station(current.stationId);val token=current.runId.toString()
+    val complete=signals?.flags?.get(station.completeSignal);val echoed=station.jobEchoSignal?.let{signals?.texts?.get(it)}
+    if(complete==null || station.jobEchoSignal!=null && echoed==null)reject(COMPLETION_SIGNALS_UNREAD,503)
+    if(!complete.value)reject(COMPLETION_SIGNAL_OFF,409)
+    if(echoed!=null && echoed.value!=token)reject(COMPLETION_ECHO_MISMATCH,409)
+    val context=json.createObjectNode().apply{set<JsonNode>("execution",stored.snapshot?:json.nullNode());set<JsonNode>("signals",snapshot(signals));put("receiptId",current.receiptId.toString())
+     put("physicalState",stored.physicalState);put("resultVersion",stored.resultVersion);put("review",current.reason);if(echoed!=null){put("expected",token);put("echoed",echoed.value)}}
+    transition(current,"COMPLETED","$COMPLETION_CONFIRMED: $reason",release=true,by=actor.header(),context=context)}
    "CONFIRM_STATION_IDLE" -> {val station=station(current.stationId)
     if(station.quarantinedBy==null || station.owner!=current.runId || current.state!="WAITING_READY")reject("격리된 스테이션을 점유해 설비 준비를 기다리는 작업만 격리를 해제합니다",409)
     val complete=signals?.flags?.get(station.completeSignal) ?: reject("현장 신호를 확인할 수 없어 격리를 해제하지 않습니다",503)
@@ -333,6 +374,12 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   jdbc.sql("UPDATE ops.station_run SET reason=:reason,revision=revision+1,instance_id=:instance WHERE run_id=:id").param("reason",reason).param("instance",instance.instanceId).param("id",run.runId).update()
   event(get(run.runId),reason,"system/station",context)
  }
+ /** Keeps the state, its result baseline and dispatch time, records [reason] and starts the phase clock again: a paused deadline counts from now. */
+ private fun restart(run:StationRun,reason:String) {
+  jdbc.sql("UPDATE ops.station_run SET reason=:reason,revision=revision+1,phase_at=:at,instance_id=:instance WHERE run_id=:id").param("reason",reason)
+   .param("at",java.sql.Timestamp.from(clock.instant())).param("instance",instance.instanceId).param("id",run.runId).update()
+  event(get(run.runId),reason,"system/station")
+ }
  private fun expired(run:StationRun,station:RfStation)=!clock.instant().isBefore(run.phaseAt.plusSeconds(station.timeoutSeconds.toLong()))
  /** Every (re)entry to RUNNING records the receipt's latest stored result version: only newer results speak for this attempt. */
  private fun transition(run:StationRun,state:String,reason:String,release:Boolean=false,dispatch:Boolean=false,by:String="system/station",context:JsonNode?=null,baseline:Boolean=state=="RUNNING",reviewOnly:Boolean=false) {
@@ -372,7 +419,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   private val RUN_COLUMNS=listOf("run_id","station_id","payload","actor","state","reason","receipt_id","attempt","revision","created_at","phase_at","dispatched_at","result_baseline","baseline_review_only","instance_id")
   const val REWORK_HELD="자원 관리 작업의 재작업은 스테이션 점유를 유지한 확인 필요 상태에서만 할 수 있습니다"
   val JOB_FIELDS=listOf("jobSignal","jobEchoSignal")
-  val SIGNAL_DECISIONS=setOf("RESUME_OBSERVATION","CONFIRM_CLEAR","CONFIRM_STATION_IDLE")
+  val SIGNAL_DECISIONS=setOf("RESUME_OBSERVATION","CONFIRM_CLEAR","CONFIRM_STATION_IDLE","CONFIRM_COMPLETION")
   const val JOB_PAIR="작업 번호 송신·반환 신호는 둘 다 연결하거나 둘 다 비워야 합니다."
   const val TEXT_REQUIRED="현장에 선언된 TEXT 신호가 필요합니다."
   const val ECHO_MISMATCH="설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다"
@@ -386,6 +433,34 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   /** Prefix of a WAITING_READY hold on the work permit. Robots, their permit, cause, blocking subject and what lifts it follow. */
   const val PERMIT_HELD="작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다"
   const val PERMIT_RESUMED="작업 허가 복귀; 설비 준비 기한을 다시 셉니다"
+  /** RUNNING reasons: the run's own wait, a run deadline past, and declared signals missing from a read or unread past [SIGNAL_GRACE]. */
+  const val RUN_WAITING="로봇 수락; 저장 결과와 새 설비 완료 신호를 기다립니다"
+  const val RUN_TIMED_OUT="작업 시간 초과; 물리 상태 확인 전 점유를 유지합니다"
+  const val SIGNALS_UNOBSERVED="현장 신호 관측 불명; 점유를 유지하고 현장 확인을 기다립니다"
+  /** RUNNING hold while the cell signals cannot be read, within [SIGNAL_GRACE]. */
+  const val SIGNALS_GRACE="셀 신호 읽기 실패; 유예 시간 동안 관측을 계속합니다"
+  /** RUNNING hold while the run's execution has a work permit block (ADR 52). The run deadline does not run. */
+  const val RUN_PERMIT_HELD="작업 허가 차단; 실행 기한을 일시 정지합니다"
+  /** The block lifted: the run deadline starts again. */
+  const val RUN_PERMIT_RESUMED="작업 허가 복귀; 실행 기한을 다시 계산하며 저장 결과와 설비 완료 신호를 기다립니다"
+  /** Prefix of COMPLETED by a person's completion confirmation; the person's reason follows. */
+  const val COMPLETION_CONFIRMED="운영자 현장 확인 후 완료 확인"
+  /** Review reasons a completion confirmation accepts: the review came from time or sight, never from a judged fault. */
+  val CONFIRMABLE_REVIEWS=setOf(RUN_TIMED_OUT,SIGNALS_UNOBSERVED)
+  /** Refusals of CONFIRM_COMPLETION. */
+  const val COMPLETION_NOT_REVIEWABLE="작업 시간 초과나 현장 신호 관측 불명으로 확인 필요 상태가 된 작업만 완료 확인할 수 있습니다"
+  const val COMPLETION_RESULT_UNREAD="로봇 저장 결과를 읽을 수 없습니다. 다시 시도하십시오"
+  const val COMPLETION_ROBOT_NOT_DONE="해당 작업의 로봇 물리 완료 저장 결과가 없습니다"
+  const val COMPLETION_SIGNALS_UNREAD="셀 신호를 읽을 수 없습니다. 다시 시도하십시오"
+  const val COMPLETION_SIGNAL_OFF="설비 완료 신호가 꺼져 있습니다"
+  const val COMPLETION_ECHO_MISMATCH="반환 번호가 해당 작업의 작업 번호와 일치하지 않습니다"
+  /**
+   * How long a RUNNING run waits on unreadable cell signals before review. A read fails on the host read limit
+   * (`HostClient.REQUEST_TIMEOUT`, 5 s), for instance while a long submission holds the host lock that `GET /host/cell` takes, or when the
+   * host's own site read failed and it reports no cell. One lost tick (default `ops.stations.poll-ms` 2 s) plus its timeout spans about 7 s, so
+   * 15 s outlasts two lost reads in a row. It never extends the run deadline, which keeps running through the grace.
+   */
+  val SIGNAL_GRACE:java.time.Duration=java.time.Duration.ofSeconds(15)
   /** Reasons for a claim left by another instance that stopped or whose heartbeat expired. */
   val LEFTOVER_STOPPED=mapOf("RETRYING" to "재평가 중 프로세스 중단; 실행 관측과 현장 확인 필요","REWORKING" to "재작업 전달 중 프로세스 중단; 반영 여부는 실행 관측과 현장 확인 필요")
   /** Reasons for a claim this instance failed to clear after its host call. */
