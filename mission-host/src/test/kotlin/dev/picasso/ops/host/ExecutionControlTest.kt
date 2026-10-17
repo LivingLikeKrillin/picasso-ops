@@ -12,7 +12,9 @@ import dev.picasso.mimic.engine.TaskState
 import dev.picasso.ops.host.HostBench.Companion.HUMANOID
 import dev.picasso.ops.host.HostBench.Companion.JSON
 import dev.picasso.ops.host.HostBench.Companion.MATERIAL
+import dev.picasso.ops.host.HostBench.Companion.QUADRUPED
 import dev.picasso.ops.host.HostBench.Companion.SOURCE
+import dev.picasso.ops.host.HostBench.Companion.inspect
 import dev.picasso.ops.host.HostBench.Companion.rack
 import dev.picasso.ops.host.HostBench.Companion.request
 import dev.picasso.registry.PostgresSupport
@@ -215,6 +217,68 @@ class ExecutionControlTest {
         }
     }
 
+    /**
+     * picasso 는 이미 실행이 있는 작업 지시의 후보 목록을 읽지 않고 그 실행의 기체에서 개정한다. 그래서 개정 여부는 후보가 아니라 그
+     * 기체 하나의 호스트 판정으로 가른다. 여기서는 그 기체의 앞 작업 지시에 적은 잔여 파지 표시가 그 기체를 뺀다(표시는 기동 때 읽으므로
+     * 적고 재기동한다). 통과하는 다른 후보가 있어도 개정판은 그 기체로 가지 않는다. 개정이 아닌 같은 판 재제출은 그 판정에 걸리지 않는다.
+     */
+    @Test
+    fun `기존 실행의 기체가 호스트 판정으로 빠지면 통과하는 다른 후보가 있어도 개정하지 않고 UNASSIGNED 에 그 기체의 판정을 실으며 같은 판 재제출은 판정 없이 IDEMPOTENT 다`() {
+        HostBench().use { bench ->
+            val earlier = bench.submit(e0Rack("JO-0", S01))
+            assertEquals("PHYSICALLY_DONE", bench.driveUntil(earlier, SETTLED)["physicalState"].asText())
+            bench.submit(inspect("JO-1", "T1" to "bay-7"))
+            assertEquals(S01, bench.records().markResidualHold(HUMANOID, "JO-0", earlier, bench.host.instanceId, S01, null)!!.unitId)
+            bench.restartHost()
+            val executionId = bench.get("/host/executions")["restore"]["rows"].single()
+                .let { row -> assertEquals("RESTORED", row["result"].asText(), row.toString()); row["executionId"].asText() }
+            val hold = "${MissionHost.RESIDUAL_HOLD_REASON}: JO-0 $S01"
+
+            val revised = bench.post(
+                "/host/job-orders",
+                request(inspect("JO-1", "T1" to "bay-7").replace("\"version\":1", "\"version\":2"), "candidates", QUADRUPED),
+            ).body!!
+            assertEquals("UNASSIGNED", revised["result"].asText(), revised.toString())
+            assertTrue(revised["executionId"].isNull && revised["robotId"].isNull, revised.toString())
+            assertEquals(0, revised["refusals"].size(), revised.toString())
+            val current = revised["excluded"].single()
+            assertEquals(HUMANOID, current["robotId"].asText(), revised.toString())
+            // 그 실행 자신은 도는 실행 사유가 되지 않는다. 사유는 표시 하나다.
+            assertTrue(current["runningExecutionId"].isNull, revised.toString())
+            assertEquals(listOf(hold), current["reasons"].map { it.asText() })
+
+            assertEquals(HUMANOID, bench.execution(executionId)!!["robotId"].asText())
+            assertEquals(0, count("execution_journal_revision"))
+
+            // 같은 판은 개정이 아니라 로봇 명령이 없다. 그 기체가 빠져 있어도 판정 없이 picasso 의 IDEMPOTENT 를 그대로 낸다.
+            val same = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7"), "candidates", QUADRUPED)).body!!
+            assertEquals(listOf("IDEMPOTENT", executionId, HUMANOID), listOf("result", "executionId", "robotId").map { same[it].asText() }, same.toString())
+            assertEquals(0, same["excluded"].size(), same.toString())
+        }
+    }
+
+    /**
+     * 기존 실행 자신이 쥔 기체는 그 실행의 개정을 막지 않는다. 운영 서비스는 판정에서 빠진 기체를 후보로 넘기지 않으므로 후보가 그 기체를
+     * 빼거나 다 빠져도 개정은 그 실행의 기체에서 이어진다.
+     */
+    @Test
+    fun `부분 완료 실행의 개정판은 제 실행이 쥔 기체로 빠지지 않아 후보가 다 빠져도 그 기체에서 개정한다`() {
+        HostBench().use { bench ->
+            val executionId = bench.submit(partialOrder("JO-1"))
+            assertEquals("PARTIAL", bench.driveUntil(executionId, SETTLED)["physicalState"].asText())
+
+            val revised = bench.post(
+                "/host/job-orders",
+                request(partialOrder("JO-1").replace("\"version\":1", "\"version\":2"), "candidates", QUADRUPED),
+            ).body!!
+            assertEquals(listOf("ACCEPTED", executionId, HUMANOID), listOf("result", "executionId", "robotId").map { revised[it].asText() }, revised.toString())
+            assertEquals(0, revised["excluded"].size(), revised.toString())
+            assertEquals(listOf(2), PostgresSupport.queryAll(
+                "SELECT version FROM mission.execution_journal_revision WHERE job_order_id = 'JO-1' ORDER BY revision_id",
+            ) { it.getInt(1) })
+        }
+    }
+
     @Test
     fun `취소는 정착한 실행과 없는 실행을 받지 않고 다른 인스턴스는 409 이며 에이전트 승인자는 거부한다`() {
         HostBench().use { bench ->
@@ -281,9 +345,10 @@ class ExecutionControlTest {
         assertNull(MissionHost.residualHoldUnit(emptyList()))
     }
 
+    private fun HostBench.records() = bean(dev.picasso.ops.host.store.HostRecords::class.java)
+
     private fun HostBench.recordsMark(jobOrderId: String, executionId: String) =
-        bean(dev.picasso.ops.host.store.HostRecords::class.java)
-            .markResidualHold(HUMANOID, jobOrderId, executionId, host.instanceId, S01, "C-1")
+        records().markResidualHold(HUMANOID, jobOrderId, executionId, host.instanceId, S01, "C-1")
 
     private companion object {
         const val S01 = "RACK-204.S01"

@@ -415,7 +415,7 @@ data class HostFootprint(
  *
  * 호스트는 스킬 적합과 도는 실행 없음만 본다. 시운전 완료와 연결 신선은 운영 서비스가 본다. 미들웨어의 배정 관문은 이
  * 넷을 보지 않으므로 제출 때 호스트가 다시 판정해 통과한 기체만 `assign` 에 넘긴다. 미해소 잔여 파지 표시가 있는 기체도 뺀다
- * (P0-b2, [cancel]·[clearResidualHold]).
+ * (P0-b2, [cancel]·[clearResidualHold]). 이미 실행이 있는 작업 지시의 개정판은 후보 대신 그 실행의 기체 하나를 판정한다([submit]).
  *
  * ## 작업 응답과 재기동(S4b 스펙)
  *
@@ -831,8 +831,12 @@ class MissionHost(
      * 판정을 다시 해 통과한 기체만 `assign` 에 넘긴다. 통과한 기체가 없어도 `assign` 을 부른다. 그때 결과는 사유 없는
      * UNASSIGNED 이고 이유는 [SubmitOutcome.excluded] 에 있다.
      *
-     * 도는 실행과 같은 작업 지시 id 로 다시 내면 판정이 그 기체를 도는 실행으로 빼므로 IDEMPOTENT 가 아니라 UNASSIGNED 다.
-     * 운영 서비스는 작업 지시 id 를 다시 쓰지 않는다.
+     * 미들웨어에 그 작업 지시의 실행이 이미 있으면 후보 목록을 판정하지 않는다. picasso 는 그 작업 지시를 후보와 무관하게 그 실행의
+     * 기체로 보낸다(같은 버전이면 IDEMPOTENT, 낮으면 거부, 높으면 개정). picasso 가 실제로 개정할 제출([revises])이면 그 기체 하나를
+     * 판정하고, 그 실행 자신은 그 기체를 쥐어도 도는 실행으로 세지 않는다. 통과하면 그 기체만 `assign` 에 넘기고 [SubmitOutcome.excluded]
+     * 는 비어 있다. 빠지면(잔여 파지 표시, 다른 실행의 점유, 현장 시간값 미적용 등) `assign` 을 부르지 않고 사유 없는 UNASSIGNED 이며
+     * [SubmitOutcome.excluded] 에 그 기체의 판정 하나가 있다. 개정이 아닌 제출(같은 판, 낮은 판, 종착한 실행, WorkMaster 바꿈, 근거 등급
+     * 초과)은 판정 없이 그 기체로 `assign` 에 넘겨 picasso 의 IDEMPOTENT·거부를 그대로 낸다. 운영 서비스는 작업 지시 id 를 다시 쓰지 않는다.
      *
      * 미적용 판단은 한 번만 읽어 모든 기체의 판정에 같은 값을 쓴다. 미적용이면 통과한 기체가 없어 UNASSIGNED 다. 미들웨어의 채택은
      * 기체마다 관문을 걸므로 기체가 없으면 요구 근거 등급 검사도 하지 않는다.
@@ -855,9 +859,21 @@ class MissionHost(
     private fun submitCurrent(order: JobOrder, candidates: List<String>, confirmations: List<SourceConfirmation>): SubmitOutcome = lock.withLock {
         if (journalBlocked().isNotEmpty()) return@withLock SubmitOutcome(SubmitResult.REJECTED, null, null, "실행 일지 저장 실패: 호스트 복구 전 제출 차단", emptyList(), emptyList())
         val applied = siteTimings.current() != null
-        val judged = candidates.distinct().map { judge(order, it, applied) }
+        // picasso 메모리의 실행은 작업 지시마다 많아야 하나다(`submit`·`adopt`·`resume` 이 같은 작업 지시 id 를 개정으로 보낸다).
+        val existing = middleware.executions().firstOrNull { it.order.jobOrderId == order.jobOrderId }
+        val existed = existing != null
+        // 이미 실행이 있는 작업 지시는 후보를 판정하지 않는다. picasso PR #106 부터 `adopt` 는 그런 작업 지시의 후보 목록을 읽지 않고 곧바로
+        // 개정 경로로 보내 그 실행의 기체에서 개정한다. 후보로 판정하면 통과한 다른 후보가 호스트가 뺀 그 기체(잔여 파지 표시, 다른 실행의
+        // 점유, 현장 시간값 미적용 등)로 개정을 들이고, 그 실행 자신의 점유가 정상 개정을 막는다. 그래서 picasso 가 실제로 개정할 제출
+        // ([revises])만 그 기체 하나로 판정하고(그 실행 자신은 도는 실행으로 세지 않는다) 빠지면 `assign` 을 부르지 않는다. 개정이 아닌 제출은
+        // 판정 없이 그 기체로 넘겨 picasso 의 IDEMPOTENT·거부를 그대로 낸다.
+        val revising = existing?.takeIf { revises(it, order) }
+        val judged = when {
+            existing == null -> candidates.distinct().map { judge(order, it, applied) }
+            revising != null -> listOf(judge(order, revising.robotId, applied, revising = revising.executionId))
+            else -> emptyList()
+        }
         val excluded = judged.filter { !it.passed }
-        val existed = middleware.executions().any { it.order.jobOrderId == order.jobOrderId }
         if (!existed) {
             journalRefusal(order.jobOrderId)?.let { reason ->
                 return@withLock SubmitOutcome(
@@ -866,11 +882,8 @@ class MissionHost(
                 )
             }
         }
-        val passed = judged.filter { it.passed }.map { it.robotId }
-        // picasso 메모리에 이미 실행이 있는 작업 지시이고 호스트 판정을 통과한 후보가 없으면 `assign`을 부르지 않고 UNASSIGNED를 반환한다.
-        // picasso PR #106부터 `adopt`는 이미 실행이 있는 작업 지시의 후보 목록을 읽지 않고 곧바로 리비전 경로로 보내므로, 이 규칙이 없으면
-        // 호스트가 제외한 기체(잔여 파지 표시, 기체를 점유 중인 `PARTIAL` 실행, 현장 시간값 미적용)로 리비전이 도달한다. PR #106 이전에는
-        // 후보가 없는 `adopt`가 Unassigned를 반환하여 같은 경우가 UNASSIGNED가 되었다.
+        val passed = if (existing != null && revising == null) listOf(existing.robotId) else judged.filter { it.passed }.map { it.robotId }
+        // 개정할 기존 실행의 기체가 빠졌다. 개정은 그 기체에서만 일어나므로 `assign` 을 부르지 않는다.
         if (existed && passed.isEmpty()) return@withLock SubmitOutcome(SubmitResult.UNASSIGNED, null, null, null, emptyList(), excluded)
         val searched = middleware.remedySearches().size
         signals.confirmations = confirmations.associateBy { it.source }
@@ -910,6 +923,20 @@ class MissionHost(
             )
         }
     }
+
+    /**
+     * picasso 가 [order] 로 [execution] 을 실제로 개정하는가. picasso `Middleware.revise` 가 개정 전에 돌려보내는 조건을 그 순서대로 옮긴
+     * 것이다: WorkMaster 를 바꾸는 리비전 거부(«리비전이 WorkMaster 를 바꾼다»), `evidenceRefusal`(요구 근거 등급이 실행이 쥔
+     * 케이퍼빌리티의 `maxEvidence` 를 넘음), 같은 판 `Submission.Idempotent`, 낮은 판 거부(«이미 지난 버전이다»), 종착 거부
+     * (`PhysicalState.ABORTED`·`PHYSICALLY_DONE`, «종착한 실행에는 새 버전이 붙지 않는다»). 이 거부들은 실행을 바꾸지 않고 로봇 명령도
+     * 내지 않는다. 그 뒤의 단위 id 중복(`duplicateUnitIdRefusal`)과 사슬 검사(`gate.chainRefusal`)는 계획을 지어야 알 수 있어 여기서는
+     * 개정으로 센다 — 그 기체가 빠졌으면 그 거부 대신 UNASSIGNED 다.
+     */
+    private fun revises(execution: Middleware.Execution, order: JobOrder): Boolean =
+        order.workMasterId == execution.order.workMasterId &&
+            order.requiredEvidence <= execution.capability.maxEvidence &&
+            order.version > execution.order.version &&
+            execution.physicalState != PhysicalState.ABORTED && execution.physicalState != PhysicalState.PHYSICALLY_DONE
 
     /**
      * 미들웨어에 실행이 없는 작업 지시가 실행 일지에 이미 있으면 거부 사유, 없으면 `null`. 마지막으로 정착을 적은 작업 지시(이 인스턴스가
@@ -1541,7 +1568,7 @@ class MissionHost(
      * 스킬 적합은 지금 활성 정의로 작업 지시를 계획해, 경로가 로봇인 단위의 스킬이 기체가 선언한 스킬에 다 있는가다.
      * 도는 실행은 그 기체를 쥔 실행이다(picasso `PhysicalState.occupiesRobot`). 정착하지 않은 실행과 부분 완료(`PARTIAL`) 실행이고,
      * 운영자 보류에 선 실행도 도는 실행이다(스펙 §12). 부분 완료는 리비전으로 남은 단위가 다시 돌 수 있어 그 기체가 아직 비지 않았다.
-     * 부분 완료 실행은 운영자 취소([cancel])로 닫는다. 같은 작업 지시 id 의 리비전은 이 판정에 걸려 UNASSIGNED 다.
+     * 부분 완료 실행은 운영자 취소([cancel])로 닫는다. 같은 작업 지시 id 의 개정판은 그 실행 자신을 빼고 판정한다([submit]).
      */
     private fun journalBlocked(among: List<Middleware.Execution> = middleware.executions()): List<String> =
         among.filter { it.order.jobOrderId !in journaled || rerunOf(it) != null }.map { it.executionId }
@@ -1593,7 +1620,8 @@ class MissionHost(
         return null
     }
 
-    private fun judge(order: JobOrder, robotId: String, applied: Boolean): HostEligibility {
+    /** [revising] 은 개정할 기존 실행이다. 그 실행 자신은 그 기체를 쥐어도 도는 실행으로 세지 않는다([submit]). */
+    private fun judge(order: JobOrder, robotId: String, applied: Boolean, revising: String? = null): HostEligibility {
         val active = requireNotNull(catalog.active(order.workMasterId)) { "카탈로그에 없는 WorkMaster 다: ${order.workMasterId}" }
         val needed = active.capability.plan(order).filter { it.route == Route.ROBOT }.map { it.skillType }.toSortedSet()
         val declared = robots.capabilities(robotId)?.skillsList?.map { it.skillType }?.toSet()
@@ -1603,7 +1631,8 @@ class MissionHost(
             missing.isEmpty() -> SkillFit.FIT
             else -> SkillFit.MISSING
         }
-        val running = middleware.executions().firstOrNull { it.robotId == robotId && it.physicalState.occupiesRobot }?.executionId
+        val running = middleware.executions()
+            .firstOrNull { it.robotId == robotId && it.physicalState.occupiesRobot && it.executionId != revising }?.executionId
 
         val reasons = buildList {
             when (fit) {

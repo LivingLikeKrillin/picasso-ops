@@ -204,7 +204,7 @@ PrepareSequencedRack 의 E2 가 서는 순서는 이렇습니다. `pick_place` �
 | 엔드포인트 | 입력 | 출력 |
 |---|---|---|
 | `POST /host/eligibility` | 작업 지시 본문과 기체 id 목록 | 기체마다 스킬 적합(모자란 스킬 목록, 기체 케이퍼빌리티를 못 물어보면 «모름»), 도는 실행(있으면 실행 id) |
-| `POST /host/job-orders` | 작업 지시 본문과 후보 목록 | 같은 판정을 다시 해 통과한 기체만 `assign` 에 넘깁니다. 출력은 결과(ACCEPTED·IDEMPOTENT·REJECTED·UNASSIGNED), 실행 id, 기체 id, 거부 사유, 기체별 미배정 사유, 호스트가 판정에서 뺀 기체와 이유 |
+| `POST /host/job-orders` | 작업 지시 본문과 후보 목록 | 같은 판정을 다시 해 통과한 기체만 `assign` 에 넘기되, 리비전은 제 실행을 도는 실행으로 세지 않고 현재 기체만 판정하여 통과 시에만 `assign` 에 넘기고 제외 시 `UNASSIGNED` 를 반환합니다. 출력은 결과(ACCEPTED·IDEMPOTENT·REJECTED·UNASSIGNED), 실행 id, 기체 id, 거부 사유, 기체별 미배정 사유, 호스트가 판정에서 뺀 기체와 이유 |
 | `GET /host/executions` | 없음 | `instanceId`, 마지막 pump 의 시각 `pumpedAt`, 실행 목록 |
 | `GET /host/cell` | 없음 | 마지막 셀 스냅숏(화면의 셀 표시와 폼의 자재·슬롯 선택용) |
 
