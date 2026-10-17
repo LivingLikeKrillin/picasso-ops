@@ -121,7 +121,7 @@ class HostClientTest {
     fun `놓은 작업 지시 거부는 그 칸을 읽고 칸이 없던 본문은 거짓이다`() {
         val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
         val type = dev.picasso.ops.service.host.HostSubmitOutcome::class.java
-        val forgotten = mapper.readValue("""{"result":"REJECTED","rejectionReason":"이미 끝나 놓은 작업 지시라 다시 받지 않는다: JO-1","forgottenJobOrder":true}""", type)
+        val forgotten = mapper.readValue("""{"result":"REJECTED","rejectionReason":"이미 끝나 이빅션한 작업 지시라 다시 받지 않는다: JO-1","forgottenJobOrder":true}""", type)
         assertTrue(forgotten.forgottenJobOrder)
         assertFalse(mapper.readValue("""{"result":"REJECTED","rejectionReason":"r"}""", type).forgottenJobOrder)
     }

@@ -149,7 +149,7 @@ data class Refusal(
  *   옮긴다. 아니면 `null` 이다.
  * @param sourceUnobserved 이 거부가 출발 미관측이면 그 자리와 설비가 말한 것(picasso `Submission.Rejected.sourceUnobserved`). 아니면
  *   `null` 이다. 조치 탐색 기록에는 적히지 않으므로 거부 값에서 바로 옮긴다. 출발 결품이 아니므로 그때 [alternativeLocations] 는 `null` 이다.
- * @param forgottenJobOrder 이미 끝나 놓은 작업 지시라 받지 않은 REJECTED 다. 사유가 picasso `Middleware.FORGOTTEN_JOB_ORDER` 로 시작한다.
+ * @param forgottenJobOrder 이미 끝나 이빅션한 작업 지시라 받지 않은 REJECTED 다. 사유가 picasso `Middleware.FORGOTTEN_JOB_ORDER` 로 시작한다.
  *   이 인스턴스가 picasso 메모리에서 놓은 실행이면 picasso 가, 재기동 뒤라 picasso 가 모르는 정착한 작업 지시면 실행 일지가 거부한다
  *   ([MissionHost.submit]). 다시 해도 같다 — 다시 할 일은 새 작업 지시 id 로 낸다. 그 밖에는 거짓이다
  */
@@ -818,7 +818,7 @@ class MissionHost(
      * 기체로 보낸다(같은 버전이면 IDEMPOTENT, 낮으면 거부, 높으면 개정). picasso 가 실제로 개정할 제출([revises])이면 그 기체 하나를
      * 판정하고, 그 실행 자신은 그 기체를 쥐어도 도는 실행으로 세지 않는다. 통과하면 그 기체만 `assign` 에 넘기고 [SubmitOutcome.excluded]
      * 는 비어 있다. 빠지면(잔여 파지 표시, 다른 실행의 점유, 현장 시간값 미적용 등) `assign` 을 부르지 않고 사유 없는 UNASSIGNED 이며
-     * [SubmitOutcome.excluded] 에 그 기체의 판정 하나가 있다. 개정이 아닌 제출(같은 판, 낮은 판, 종착한 실행, WorkMaster 바꿈, 근거 등급
+     * [SubmitOutcome.excluded] 에 그 기체의 판정 하나가 있다. 개정이 아닌 제출(같은 판, 낮은 판, 종료한 실행, WorkMaster 바꿈, 근거 등급
      * 초과)은 판정 없이 그 기체로 `assign` 에 넘겨 picasso 의 IDEMPOTENT·거부를 그대로 낸다. 운영 서비스는 작업 지시 id 를 다시 쓰지 않는다.
      *
      * 미적용 판단은 한 번만 읽어 모든 기체의 판정에 같은 값을 쓴다. 미적용이면 통과한 기체가 없어 UNASSIGNED 다. 미들웨어의 채택은
@@ -910,8 +910,8 @@ class MissionHost(
     /**
      * picasso 가 [order] 로 [execution] 을 실제로 개정하는가. picasso `Middleware.revise` 가 개정 전에 돌려보내는 조건을 그 순서대로 옮긴
      * 것이다: WorkMaster 를 바꾸는 리비전 거부(«리비전이 WorkMaster 를 바꾼다»), `evidenceRefusal`(요구 근거 등급이 실행이 쥔
-     * 케이퍼빌리티의 `maxEvidence` 를 넘음), 같은 판 `Submission.Idempotent`, 낮은 판 거부(«이미 지난 버전이다»), 종착 거부
-     * (`PhysicalState.ABORTED`·`PHYSICALLY_DONE`, «종착한 실행에는 새 버전이 붙지 않는다»). 이 거부들은 실행을 바꾸지 않고 로봇 명령도
+     * 케이퍼빌리티의 `maxEvidence` 를 넘음), 같은 판 `Submission.Idempotent`, 낮은 판 거부(«이미 지난 버전이다»), 종료 거부
+     * (`PhysicalState.ABORTED`·`PHYSICALLY_DONE`, «종료한 실행에는 새 버전이 붙지 않는다»). 이 거부들은 실행을 바꾸지 않고 로봇 명령도
      * 내지 않는다. 그 뒤의 단위 id 중복(`duplicateUnitIdRefusal`)과 사슬 검사(`gate.chainRefusal`)는 계획을 지어야 알 수 있어 여기서는
      * 개정으로 센다 — 그 기체가 빠졌으면 그 거부 대신 UNASSIGNED 다.
      */
@@ -1741,10 +1741,10 @@ class MissionHost(
          * 살아 있는 다른 인스턴스가 든 일지 행을 미룬 DEFERRED 사유의 앞부분(HA 설계 기록 §7 단계 0). 뒤에 `: instance=<id>` 가 붙는다.
          * 그 인스턴스의 심장박동이 끊기면 pump 가 다시 짓는다.
          */
-        const val HELD_BY_LIVE_INSTANCE = "살아 있는 다른 인스턴스가 든 실행이라 다시 짓지 않는다"
+        const val HELD_BY_LIVE_INSTANCE = "살아 있는 다른 인스턴스가 든 실행이라 리빌드하지 않는다"
 
         /** 판단 기록을 못 읽은 GAVE_UP 사유의 앞부분. 뒤에 `: record=<기록 행 번호>, <picasso 의 읽기 거부 문장>` 이 붙는다. */
-        const val RECORD_UNREADABLE = "판단 기록을 읽지 못해 다시 짓지 않는다"
+        const val RECORD_UNREADABLE = "판단 기록을 읽지 못해 리빌드하지 않는다"
 
         /** 다시 짓지 못한 실행이 있는 기체에 판정이 더하는 이유의 앞부분(S4b 스펙 T4). 뒤에 작업 지시 id 가 붙는다. */
         const val UNRESTORED_REASON = "복원 못 한 실행이 있다"

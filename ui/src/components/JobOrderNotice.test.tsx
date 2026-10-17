@@ -58,7 +58,7 @@ it('출발 미관측 거부의 제출 결과는 거부 사유 아래에 출발 �
 })
 
 it('이미 끝나 놓은 작업 지시라는 거부는 거부 사유와 함께 새 작업 지시로 내라는 안내를 보이고 다른 거부는 보이지 않는다', () => {
-  const reason = '이미 끝나 놓은 작업 지시라 다시 받지 않는다: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE'
+  const reason = '이미 끝나 이빅션한 작업 지시라 다시 받지 않는다: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE'
   const { unmount } = render(<JobOrderNotice what="InspectAsset 작업 지시" sent={{ kind: 'outcome', outcome: {
     requestId: 'q1', jobOrderId: 'JO-1', result: 'REJECTED', confirmation: null,
     outcome: { result: 'REJECTED', executionId: null, robotId: null, rejectionReason: reason, refusals: [], excluded: [], forgottenJobOrder: true },
