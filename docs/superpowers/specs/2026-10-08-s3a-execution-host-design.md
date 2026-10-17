@@ -7,7 +7,7 @@
 
 ## 1. 목적과 범위
 
-P3 스펙 §10 과 S2 스펙 §1 이 S3 로 넘긴 것은 미들웨어 실행 호스트, 임무 버전 저장과 활성화, JSON 편집기와 모의 실행, 도는 실행의 버전 표시, 배정 가능, 미들웨어 시간값 셋과 인시던트의 현장 설정 버전입니다. 사용자 결정으로 S3 는 셋으로 나눕니다. S3a 는 실행, S3b 는 편집, 그 뒤 S3c 는 시간값 셋과 인시던트의 현장 설정 버전이며, 장애 주입은 S4 입니다.
+P3 스펙 §10 과 S2 스펙 §1 이 S3 로 넘긴 것은 미들웨어 실행 호스트, 임무 버전 저장과 활성화, JSON 편집기와 모의 실행, 진행 중인 실행의 버전 표시, 배정 가능, 미들웨어 시간값 셋과 인시던트의 현장 설정 버전입니다. 사용자 결정으로 S3 는 셋으로 나눕니다. S3a 는 실행, S3b 는 편집, 그 뒤 S3c 는 시간값 셋과 인시던트의 현장 설정 버전이며, 장애 주입은 S4 입니다.
 
 S3a 가 입증하는 흐름은 하나입니다. 운영자가 화면의 작업 지시 폼으로 코드 정의 임무(InspectAsset, PrepareSequencedRack)의 작업 지시를 냅니다. 운영 서비스가 기체마다 배정 가능 여부와 이유를 보이고, 배정 가능한 기체만 후보로 실행 호스트에 넘깁니다. 실행 호스트의 picasso 미들웨어가 후보 중 하나를 고르고(`assign`) mimic 기체에서 실행합니다. 화면의 실행 목록이 실행 상태와 단위 상태, 임무 버전(코드 정의는 «코드 정의»)을 보입니다. PrepareSequencedRack 은 셀 대역이 배치 직후 슬롯을 기대 자재로 채워 E2 근거로 끝납니다.
 
@@ -42,7 +42,7 @@ S3a 가 입증하지 않는 것은 7가지입니다.
 |---|---|---|---|
 | T1 | 시계 | mimic 가상 시계를 기동 직후 실제 시각으로 한 번 밀고, 런처가 1초마다 실제 시각까지 따라잡게 밉니다. picasso 의 시계 코드는 바꾸지 않습니다 | 미들웨어는 E2 시간 윈도우의 기준 시각을 mimic 응답 헤더의 `state_as_of` 에서 가져오고 마감은 자기 `now()` 로 봅니다. 지금 mimic 은 EPOCH 에서 시작해 둘이 어긋납니다 |
 | T2 | 스트림과 엔진 직렬화 | picasso PR(P4)로 셋을 고칩니다. `ClientRobotPort` 가 끊긴 `WatchTask` 스트림을 이어 붙이고, `TaskFollower` 를 스레드 안전하게 하고, mimic 서버가 RPC 와 시간 흘리기를 잠금 하나로 줄 세웁니다 | 스트림에 10초 기한이 걸리고 스킬 소요 시간은 12~45초인데 지금은 다시 붙지 않습니다. 받는 목록은 gRPC 스레드가 쓰고 pump 스레드가 읽는데 동기화가 없습니다. mimic 엔진에는 잠금이 없고, S3a 에서 처음으로 현장의 시계 스레드와 호스트의 gRPC 호출이 동시에 엔진을 만집니다(§5.3) |
-| T3 | 배정 가능 판정 나눔 | 운영 서비스가 시운전 완료와 연결 신선을, 호스트가 스킬 적합과 도는 실행 없음을 판정합니다 | 시운전·연결 판정 코드와 기준 시간은 운영 서비스와 ops DB 에 있고, 스킬과 실행은 미들웨어 쪽에 있습니다. 관문(`AdmissionGate`)은 이 넷을 보지 않습니다 |
+| T3 | 배정 가능 판정 나눔 | 운영 서비스가 시운전 완료와 연결 신선을, 호스트가 스킬 적합과 진행 중인 실행 없음을 판정합니다 | 시운전·연결 판정 코드와 기준 시간은 운영 서비스와 ops DB 에 있고, 스킬과 실행은 미들웨어 쪽에 있습니다. 게이트(`AdmissionGate`)는 이 넷을 보지 않습니다 |
 | T4 | 셀 대역 자리 | site 프로세스입니다. mimic 과 같은 프로세스에서 태스크 상태를 직접 읽고, 호스트에는 루프백 HTTP 로 냅니다 | 발행 경로를 감싸지 않으므로 S4 의 전송 장애 주입과 무관합니다(§6.3) |
 | T5 | 호스트 모양 | Spring Boot(운영 서비스와 같은 관례), 잠금 하나, pump 주기 250ms, S3a 는 DB 없음 | 운영 서비스의 관례를 따르고, 미들웨어가 스레드와 잠금을 갖지 않으므로 호스트가 잠금 하나로 지킵니다(§4) |
 
@@ -68,7 +68,7 @@ picasso `8f0cc04` 와 picasso-ops `f7ca937` 기준입니다.
 | `Execution` 의 `executionId`·`order`·`robotId`·`missionVersion`·`units`(단위마다 `state`·`reached`)·`physicalState` 는 공개입니다. 실행은 가변 객체입니다 | `Middleware.kt:162-241` |
 | 코드 정의는 버전이 `null` 입니다. `MissionCatalog.codeCapabilities()` 는 PrepareSequencedRack·DeliverContainer·InspectAsset 입니다. `MissionCatalog.active(workMasterId)` 가 케이퍼빌리티를 줍니다 | `Ports.kt:260-268`, `mission/InMemoryMissionCatalog.kt:37-49` |
 | `instanceId` 는 무작위이고, `exec-N` 은 재기동하면 1부터 시작합니다 | `Middleware.kt:97-103` |
-| 관문 `AdmissionGate.admits` 는 작업 지시 정합·연쇄·점유·바닥·작업 구역만 봅니다. 스킬·시운전·연결은 보지 않습니다. 정합 검사는 `materialRequirements` 가 비어 있지 않으면 자재별 수가 단위의 기대 자재 수와 같아야 통과입니다 | `AdmissionGate.kt:155-170,246-252` |
+| 게이트 `AdmissionGate.admits` 는 작업 지시 정합·연쇄·점유·바닥·작업 구역만 봅니다. 스킬·시운전·연결은 보지 않습니다. 정합 검사는 `materialRequirements` 가 비어 있지 않으면 자재별 수가 단위의 기대 자재 수와 같아야 통과입니다 | `AdmissionGate.kt:155-170,246-252` |
 | `PicassoClient.follow` 는 스트림에 `withDeadlineAfter(deadlineSeconds)`(기본 10초)를 겁니다. `TaskFollower.received` 는 일반 `mutableListOf` 입니다. `ClientRobotPort.watch` 는 `followers.getOrPut(taskId){ follow(from = 0) }.updates` 라 다시 붙지 않습니다 | `client/src/main/kotlin/dev/picasso/client/PicassoClient.kt:63,195-205,237-256`, `Ports.kt:91-92` |
 | 미들웨어는 `watch` 가 매번 누적 전체 목록을 준다고 전제하고 마지막 원소만 상태로 옮깁니다. 중복은 무해합니다 | `Middleware.kt:808-813` |
 | `WatchTaskResponse` 에는 거부 칸이 없습니다. 스트림의 실패는 gRPC 상태로 `onError` 에 옵니다 | `contracts/proto/picasso/v1/task.proto:174` |
@@ -76,7 +76,7 @@ picasso `8f0cc04` 와 picasso-ops `f7ca937` 기준입니다.
 | mimic 엔진에는 잠금이 없습니다. 열린 스트림 표는 일반 `mutableMapOf`, 태스크 표는 `LinkedHashMap`, `VirtualClock.instant` 는 일반 `var` 입니다. 모든 태스크 RPC 가 들어올 때 `settle()` 을 부릅니다 | `TaskServiceImpl.kt:50,193-208`, `TaskHost.kt:187`, `Clock.kt:28-35` |
 | 스킬 소요 시간은 `navigate_to 20s`, `pick_place 45s`, `inspect 12s` 이고 ±10% 지터가 있습니다. `pick_place` 에는 실패 모드(GRASP_FAILED 0.05, PAYLOAD_LOST 0.01)가 있고 기체별 시드로 추첨합니다 | `profile/profiles/humanoid-a.json`, `TaskHost.kt:393` |
 | E2 판정: `doneAt` 은 mimic 응답 헤더 `state_as_of` 입니다. 신호 시각이 `[doneAt - 30s, doneAt + 15s]` 안이고 점유이면서 자재가 기대와 같으면 E2 완료입니다. 윈도우 안 신호를 마감보다 먼저 보며, 마감(`doneAt + 15s`)을 미들웨어 `now()` 가 넘으면 UNVERIFIED 입니다 | `Middleware.kt:1298-1344,1707-1708`, `LogicalCapability.kt:21` |
-| mimic CLI 는 `VirtualClock(Instant.EPOCH)` 에서 시작합니다. `MimicServer.advance(d)` 는 시계 전진·정착·상태 발행을 한 번에 하며, 한 번에 크게 밀어도 됩니다 | `mimic/.../cli/Main.kt:165`, `MimicServer.kt:42-46` |
+| mimic CLI 는 `VirtualClock(Instant.EPOCH)` 에서 시작합니다. `MimicServer.advance(d)` 는 시계 전진·종결·상태 발행을 한 번에 하며, 한 번에 크게 밀어도 됩니다 | `mimic/.../cli/Main.kt:165`, `MimicServer.kt:42-46` |
 | registry 의 `lastReportedAt` 은 registry 수신 시각이고 헤더 시각을 읽지 않습니다. 그래서 mimic 시계를 밀어도 registry 판정은 그대로입니다 | `registry/.../LivenessService.kt:112` |
 | PrepareSequencedRack 은 `equipmentRequirements` 의 `destination`(슬롯, `material` 속성)과 `source`(제시 자리, `material` 속성)로 단위를 만듭니다. 기체에 가는 파라미터는 `object_id`(제시 자리)·`destination`(슬롯)·`verify_grasp` 입니다 | `LogicalCapability.kt:101-138` |
 | InspectAsset 은 `inspection_target` 마다 `navigate_to(location)`·`inspect(target)` 두 단위를 만듭니다. 대상의 `id` 가 `inspect` 단위의 id 이자 `target` 파라미터(64자 한도)이고, 이동 단위의 id 는 `<id>.travel` 입니다. 단위 id 가 같으면 태스크 id(`jobOrderId#unitId`)가 같아져 같은 핸들로 접힙니다(`Middleware.kt:1179`). `location` 속성이 갈 곳입니다. `item` 속성은 계획에 쓰이지 않습니다. 최고 근거는 E0 입니다 | `LogicalCapability.kt:239-284` |
@@ -111,7 +111,7 @@ picasso `8f0cc04` 와 picasso-ops `f7ca937` 기준입니다.
 ### 5.4 picasso 문서
 
 - 설계 문서 §15 변경 이력에 §15.210 한 항목을 더합니다.
-- `docs/limits.md` 머리의 «번호가 209 까지 갔고» 를 210 으로 고칩니다. §15.176 행(«실제 호스트가 생길 때»)은 열린 채 두고, picasso-ops 의 실행 호스트가 승인 창구·플릿 포트 없이 선다는 문장을 붙입니다. 스트림 재부착에 해당하는 오픈 항목 행은 없습니다.
+- `docs/limits.md` 머리의 «번호가 209 까지 갔고» 를 210 으로 고칩니다. §15.176 행(«실제 호스트가 생길 때»)은 열린 채 두고, picasso-ops 의 실행 호스트가 승인 호스트·플릿 포트 없이 선다는 문장을 붙입니다. 스트림 재부착에 해당하는 오픈 항목 행은 없습니다.
 - `docs/verification.md` 의 표 3행 «실 회선 셋» 을 다섯으로 고치고 근거 열에 `mimic/StartedInstanceTest`(#81 이 더했는데 고쳐지지 않음)와 `harness/ConcurrentEngineTest` 를 더합니다.
 - 시험 수가 5 늘어 `CLAUDE.md` 와 `docs/verification.md` 의 총수를 1,977 에서 1,982 로, 한계 행이 둘 늘어 `README.md` 의 오픈 항목 수를 70(내부 29)에서 72(내부 31)로 고칩니다. 넷 다 스탬프 문서라 `tools/stamp.py` 를 다시 돌립니다.
 - 한계 행 둘(`§15.210 · 재부착`, `§15.210 · 적재 잠금`)을 내부 오픈 항목에 더합니다. 문구에 정답표 용어(`handoff/narrator/ground-truth.jsonl`)가 들어가면 `GroundTruthTest` 가 막습니다.
@@ -203,16 +203,16 @@ PrepareSequencedRack 의 E2 가 서는 순서는 이렇습니다. `pick_place` �
 
 | 엔드포인트 | 입력 | 출력 |
 |---|---|---|
-| `POST /host/eligibility` | 작업 지시 본문과 기체 id 목록 | 기체마다 스킬 적합(모자란 스킬 목록, 기체 케이퍼빌리티를 못 물어보면 «모름»), 도는 실행(있으면 실행 id) |
-| `POST /host/job-orders` | 작업 지시 본문과 후보 목록 | 같은 판정을 다시 해 통과한 기체만 `assign` 에 넘기되, 리비전은 제 실행을 도는 실행으로 세지 않고 현재 기체만 판정하여 통과 시에만 `assign` 에 넘기고 제외 시 `UNASSIGNED` 를 반환합니다. 출력은 결과(ACCEPTED·IDEMPOTENT·REJECTED·UNASSIGNED), 실행 id, 기체 id, 거부 사유, 기체별 미배정 사유, 호스트가 판정에서 뺀 기체와 이유 |
+| `POST /host/eligibility` | 작업 지시 본문과 기체 id 목록 | 기체마다 스킬 적합(모자란 스킬 목록, 기체 케이퍼빌리티를 못 물어보면 «모름»), 진행 중인 실행(있으면 실행 id) |
+| `POST /host/job-orders` | 작업 지시 본문과 후보 목록 | 같은 판정을 다시 해 통과한 기체만 `assign` 에 넘기되, 리비전은 제 실행을 진행 중인 실행으로 세지 않고 현재 기체만 판정하여 통과 시에만 `assign` 에 넘기고 제외 시 `UNASSIGNED` 를 반환합니다. 출력은 결과(ACCEPTED·IDEMPOTENT·REJECTED·UNASSIGNED), 실행 id, 기체 id, 거부 사유, 기체별 미배정 사유, 호스트가 판정에서 뺀 기체와 이유 |
 | `GET /host/executions` | 없음 | `instanceId`, 마지막 pump 의 시각 `pumpedAt`, 실행 목록 |
 | `GET /host/cell` | 없음 | 마지막 셀 스냅숏(화면의 셀 표시와 폼의 자재·슬롯 선택용) |
 
 - 스킬 적합: `MissionCatalog.active(workMasterId)` 의 케이퍼빌리티로 작업 지시를 `plan` 해, 경로가 `ROBOT` 인 단위의 `skillType` 이 기체가 선언한 스킬(`RobotPort.capabilities`)에 다 있는가입니다.
-- 도는 실행: 그 기체의 실행 중 `physicalState` 가 정착하지 않은 것입니다.
+- 진행 중인 실행: 그 기체의 실행 중 `physicalState` 가 종결하지 않은 것입니다.
 - 실행 목록의 칸: 실행 id, 작업 지시 id, WorkMaster, 임무 버전(null 이면 코드 정의), 기체, 물리 상태, 단위 목록(단위 id, 스킬, 상태, 근거 등급), 작업 응답(그 실행의 마지막 작업 응답과 그 칸들, 없으면 null).
 - WorkMaster 는 InspectAsset·PrepareSequencedRack 만 받습니다. 그 밖은 400 입니다.
-- IDEMPOTENT 는 운영 서비스가 매번 새 id 를 만들어 실제로는 나오지 않습니다. 매핑은 두고, IDEMPOTENT 는 두는 폭 안의 `FAILED` 실행에 같은 버전을 다시 내 확인합니다(`ForgetSettledTest` 의 `FAILED 는 두는 폭 동안 메모리에 남아 같은 판은 IDEMPOTENT 이고 폭이 지나면 놓아 같은 작업 지시는 판과 무관하게 놓은 작업 지시로 거부한다`). 끝난 InspectAsset(`PHYSICALLY_DONE`)은 바로 놓으므로 같은 id 를 다시 내면 REJECTED(`forgottenJobOrder`)가 되며, 이는 `MissionHostTest` 의 `끝난 InspectAsset 를 같은 id 로 다시 내면 놓은 작업 지시로 REJECTED 이고 실행에 마지막 작업 응답이 붙는다` 로 확인합니다.
+- IDEMPOTENT 는 운영 서비스가 매번 새 id 를 만들어 실제로는 나오지 않습니다. 매핑은 두고, IDEMPOTENT 는 두는 폭 안의 `FAILED` 실행에 같은 버전을 다시 내 확인합니다(`ForgetSettledTest` 의 `FAILED 는 두는 폭 동안 메모리에 남아 같은 판은 IDEMPOTENT 이고 폭이 지나면 놓아 같은 작업 지시는 판과 무관하게 놓은 작업 지시로 거부한다`). 끝난 InspectAsset(`PHYSICALLY_DONE`)은 바로 이빅션하므로 같은 id 를 다시 내면 REJECTED(`forgottenJobOrder`)가 되며, 이는 `MissionHostTest` 의 `끝난 InspectAsset 를 같은 id 로 다시 내면 놓은 작업 지시로 REJECTED 이고 실행에 마지막 작업 응답이 붙는다` 로 확인합니다.
 
 ### 7.7 작업 응답 아웃박스
 
@@ -224,7 +224,7 @@ PrepareSequencedRack 의 E2 가 서는 순서는 이렇습니다. `pick_place` �
 
 | 엔드포인트 | 모드 | 내용 |
 |---|---|---|
-| `POST /api/job-orders/eligibility` | 모드 검사 없음(읽기, `GET /api/robots` 와 같음) | 폼 초안을 받아 기체마다 시운전(완료 여부), 연결(`FRESH`·`STALE`·`NO_REPORT`, 근거 버전), 도는 실행, 스킬 적합, 배정 가능(넷 다 통과), 이유 목록을 돌려줍니다. 시운전·연결은 S1·S2 의 기존 판정을 그대로 씁니다. registry 가 안 닿으면(`registry != OK`) 시운전·연결 칸은 «모름» 이고, 호스트가 안 닿으면 호스트 판정 칸이 «모름» 입니다. 어느 쪽이든 «모름» 이 있으면 배정 가능은 거짓입니다 |
+| `POST /api/job-orders/eligibility` | 모드 검사 없음(읽기, `GET /api/robots` 와 같음) | 폼 초안을 받아 기체마다 시운전(완료 여부), 연결(`FRESH`·`STALE`·`NO_REPORT`, 근거 버전), 진행 중인 실행, 스킬 적합, 배정 가능(넷 다 통과), 이유 목록을 돌려줍니다. 시운전·연결은 S1·S2 의 기존 판정을 그대로 씁니다. registry 가 안 닿으면(`registry != OK`) 시운전·연결 칸은 «모름» 이고, 호스트가 안 닿으면 호스트 판정 칸이 «모름» 입니다. 어느 쪽이든 «모름» 이 있으면 배정 가능은 거짓입니다 |
 | `POST /api/job-orders` | 운영자 모드만. 엔지니어 모드는 403, 행위자 헤더가 없으면 400 `ACTOR_REQUIRED`(기존 관례) | 폼에서 작업 지시 본문을 만들고 배정 가능을 다시 판정해 후보를 넘깁니다. 후보가 없으면 호스트를 부르지 않고 400 `NO_ELIGIBLE_ROBOT`(기존 사전 거부 모양 `PreRejection(error, detail)`, detail 에 기체별 이유)을 돌려주며 기록하지 않습니다(상태를 바꾸는 쪽에 닿지 않은 요청은 조작이 아니라는 관례). 단위 id 겹침도 같은 모양의 400 입니다 |
 | `GET /api/executions` | 모드 검사 없음 | 호스트 것을 그대로 전달합니다. 호스트가 안 닿으면 503 과 이유 |
 | `GET /api/cell` | 모드 검사 없음 | 호스트 것을 그대로 전달합니다. 호스트가 안 닿으면 503 과 이유 |
@@ -277,7 +277,7 @@ PrepareSequencedRack 의 E2 가 서는 순서는 이렇습니다. `pick_place` �
 | 단위 id 겹침(대상·슬롯 중복, `.travel` 충돌) | 운영 서비스 400 |
 | 모르는 WorkMaster | 운영 서비스의 폼 검사가 400 `UNKNOWN_WORK_MASTER`, 기록 없음. 호스트의 400 은 두 쪽의 임무 목록이 어긋날 때만 나며 운영 서비스는 REJECTED 로 기록 |
 | mimic 스트림 끊김 | P4 가 다음 `watch` 에서 이어 붙입니다. 기체가 태스크를 모르는(`NOT_FOUND`) 것처럼 늘 실패하는 경우도 pump 마다 다시 붙으려 합니다(§12) |
-| 실행이 운영자 보류에 섬 | 해소 수단이 없어 그 기체는 도는 실행이 있는 것으로 남아 배정 불가(§12) |
+| 실행이 운영자 보류에 섬 | 해소 수단이 없어 그 기체는 진행 중인 실행이 있는 것으로 남아 배정 불가(§12) |
 | 호스트 재기동 | 실행이 사라집니다. `instanceId` 가 바뀌어 화면이 구별합니다 |
 
 ## 11. 시험
@@ -286,7 +286,7 @@ PrepareSequencedRack 의 E2 가 서는 순서는 이렇습니다. `pick_place` �
 |---|---|---|
 | 스트림 이어 붙이기, 팔로워 잠금, 엔진 직렬화 | P4(picasso, §5.5) | §5.5 의 7건 |
 | `advanceTo` 가 앞으로만 밈, 셀 대역이 `pick_place` 성공 뒤 슬롯을 채우고 같은 태스크를 두 번 채우지 않음, `holding` 이 제시 자리만, `GET /cell` 형식 | site | 관측 시각을 EPOCH 로, 이미 본 태스크 재처리 |
-| 스킬 모자람·도는 실행 판정, 제출 결과 네 가지 매핑(IDEMPOTENT 는 두는 폭 안 `FAILED` 실행의 같은 버전 재제출, 끝난 실행 재제출은 REJECTED), 실행 목록의 임무 버전 null, WorkMaster 400 | mission-host | 스킬 적합 반전, 도는 실행 무시 |
+| 스킬 모자람·진행 중인 실행 판정, 제출 결과 네 가지 매핑(IDEMPOTENT 는 두는 폭 안 `FAILED` 실행의 같은 버전 재제출, 끝난 실행 재제출은 REJECTED), 실행 목록의 임무 버전 null, WorkMaster 400 | mission-host | 스킬 적합 반전, 진행 중인 실행 무시 |
 | 배정 가능 네 칸 합성, registry 불통이면 «모름», 운영자 모드 403, 후보 없음 400 `NO_ELIGIBLE_ROBOT`, 조작 기록 result 매핑과 재조회, 호스트 불통 NO_RESPONSE | 운영 서비스 | registry 불통을 신선으로 접기, 운영자 모드 검사 제거, result 매핑 뒤바꾸기 |
 | InspectAsset 끝까지, PrepareSequencedRack 이 셀 대역으로 E2, 배정 불가 기체가 후보에서 빠짐 | 통합(e2e 모듈의 한 JVM 스택에 호스트를 더함) | 셀 대역 채우기 끄기(UNVERIFIED 로 끝나는지), 호스트의 스킬 적합 판정을 늘 적합으로 |
 | 운영자 모드로 작업 지시를 내면 실행 목록에 «코드 정의» 행 | Playwright | 없음(통합 시험이 맡음) |

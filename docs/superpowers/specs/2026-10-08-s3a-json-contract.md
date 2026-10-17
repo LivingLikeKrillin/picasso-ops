@@ -100,7 +100,7 @@ InspectAsset 예:
 | `version` | 정수 | 예 | 1 이상(S3a 는 1 고정) |
 | `requiredEvidence` | 문자열 | 예 | `E0`·`E1`·`E2`·`E3`. 호스트는 임무별 고정을 검사하지 않는다(운영 서비스가 InspectAsset `E0`, PrepareSequencedRack `E2` 로 넣는다). InspectAsset 에 `E2` 를 넣으면 REJECTED 다 |
 | `parameters` | 객체(값은 문자열) | 아니오 | 없거나 null 이면 `{}` |
-| `materialRequirements` | 배열 `{materialDefinitionId: 문자열, quantity: 0 이상 정수}` | 아니오 | 없거나 null 이면 `[]`. 비어 있지 않으면 자재별 수가 단위의 기대 자재 수와 같아야 미들웨어 관문을 지난다 |
+| `materialRequirements` | 배열 `{materialDefinitionId: 문자열, quantity: 0 이상 정수}` | 아니오 | 없거나 null 이면 `[]`. 비어 있지 않으면 자재별 수가 단위의 기대 자재 수와 같아야 미들웨어 게이트를 지난다 |
 | `equipmentRequirements` | 배열 `{id: 문자열, equipmentUse: 문자열, properties?: 객체(값은 문자열)}` | 아니오 | 없거나 null 이면 `[]` |
 
 단위 id 겹침(대상·슬롯 중복, `<id>.travel` 충돌)은 호스트가 검사하지 않는다. 운영 서비스가 400 으로 막는다(스펙 §7.5).
@@ -122,9 +122,9 @@ InspectAsset 예:
 |---|---|
 | `skillFit` | `FIT`(경로가 로봇인 단위의 스킬이 기체 선언에 다 있음) · `MISSING`(모자람) · `UNKNOWN`(기체 케이퍼빌리티를 못 물어봄, 예: mimic 이 모르는 기체, mimic 불통) |
 | `missingSkills` | `MISSING` 일 때 모자란 스킬(이름순). 그 밖에는 `[]` |
-| `runningExecutionId` | 이 기체를 쥔 실행 id(picasso `PhysicalState.occupiesRobot` = `!isSettled \|\| PARTIAL`): 정착하지 않은 실행과 부분 완료(`PARTIAL`) 실행. `OPERATOR_HOLD` 도 포함. 없으면 null. 잔여 파지 표시만 있으면 null |
-| `passed` | `reasons` 가 비었을 때만 참(`skillFit == FIT`, `runningExecutionId == null`, 복원 못 한 실행 없음, 미해소 잔여 파지 표시 없음, 현장 시간값 적용됨, 실행 일지 차단 없음). 코드: `HostEligibility.passed` KDoc «스킬 적합이고 도는 실행이 없으며 판정 이유가 하나도 없다» |
-| `reasons` | 통과 못 한 이유(한국어, 화면 표시용). 순서: 스킬(`모자란 스킬: a, b` 또는 `기체 케이퍼빌리티를 못 물어봤다`) → `도는 실행이 있다: exec-N` → `복원 못 한 실행이 있다: <jobOrderId>[, …]`(S4b H2) → `잔여 파지 확인 필요: <jobOrderId> <unitId>[, <jobOrderId> <unitId>…]`(P0-b2, 미해소 표시마다) → `현장 시간값 미적용: 실행 호스트가 현장 설정을 아직 읽지 못했다`(S3c §8.3) → `실행 일지 저장 실패: 호스트 복구 전 배정 차단`. 통과면 `[]` |
+| `runningExecutionId` | 이 기체를 쥔 실행 id(picasso `PhysicalState.occupiesRobot` = `!isSettled \|\| PARTIAL`): 종결하지 않은 실행과 부분 완료(`PARTIAL`) 실행. `OPERATOR_HOLD` 도 포함. 없으면 null. 잔여 파지 표시만 있으면 null |
+| `passed` | `reasons` 가 비었을 때만 참(`skillFit == FIT`, `runningExecutionId == null`, 복원 못 한 실행 없음, 미해소 잔여 파지 표시 없음, 현장 시간값 적용됨, 실행 일지 차단 없음). 코드: `HostEligibility.passed` KDoc «스킬 적합이고 진행 중인 실행이 없으며 판정 이유가 하나도 없다» |
+| `reasons` | 통과 못 한 이유(한국어, 화면 표시용). 순서: 스킬(`모자란 스킬: a, b` 또는 `기체 케이퍼빌리티를 못 물어봤다`) → `진행 중인 실행이 있다: exec-N` → `복원 못 한 실행이 있다: <jobOrderId>[, …]`(S4b H2) → `잔여 파지 확인 필요: <jobOrderId> <unitId>[, <jobOrderId> <unitId>…]`(P0-b2, 미해소 표시마다) → `현장 시간값 미적용: 실행 호스트가 현장 설정을 아직 읽지 못했다`(S3c §8.3) → `실행 일지 저장 실패: 호스트 복구 전 배정 차단`. 통과면 `[]` |
 
 ## 3. `POST /host/eligibility`
 
@@ -155,7 +155,7 @@ InspectAsset 예:
 
 - `candidates` 필수, 비어 있지 않은 문자열 배열.
 - `sourceConfirmations` 선택, `[{source, identity, confirmedBy, confirmedAt}]`(`confirmedAt` 은 ISO-8601 시각). 없거나 null 이면 빈 목록이다. 원소가 객체가 아니거나, 문자열 칸이 비었거나, `confirmedAt` 이 시각이 아니거나, 같은 `source` 가 두 번 오면 400 `BAD_REQUEST` 다. 호스트는 이 칸을 저장하지 않고 그 제출의 `assign` 한 번 동안만 셀 관측으로 쓴다(§7). 운영 서비스는 사람이 기록한 출발 자리 확인이 있을 때만 이 칸을 싣는다. 근거: `SourceObservationHostTest` 의 `출발 자리 확인 칸이 틀리면 400 이다`, `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `HostClientTest` 의 `출발 자리 확인은 있을 때만 제출 본문에 싣고 출발 미관측 답은 결품 칸과 따로 읽는다`.
-- 호스트가 같은 판정을 다시 해 `passed` 인 기체만 `Middleware.assign` 에 넘긴다. 통과한 기체가 없어도 `assign` 을 빈 목록으로 부른다(결과 UNASSIGNED, `refusals` 빈 배열). 이미 같은 작업 지시 id의 실행이 picasso에 있을 때는 후보 목록을 무시하고 해당 실행의 기체(현재 기체)로 보낸다. 같은 버전은 `IDEMPOTENT`, 낮은 버전은 거부, 높은 버전은 그 기체에서의 리비전이다. 리비전 판정 시 실행 호스트는 후보가 아닌 현재 기체만 판정하며, 이때 해당 실행 자체는 제 기체의 도는 실행으로 세지 않고 다른 실행의 점유만 계산한다. 현재 기체가 호스트 판정을 통과하면 그 기체만으로 `assign` 을 호출하며 `excluded` 는 빈 배열이다. 현재 기체가 호스트 판정에서 제외되면(잔여 파지 표시, 다른 실행 점유, 현장 시간값 미적용, 모자란 스킬 등) `assign` 을 부르지 않고 결과는 `UNASSIGNED` 이며 `excluded` 에 그 기체의 판정 행이 실린다. picasso가 개정하지 않는 제출(같은 버전, 낮은 버전, 종착한 `ABORTED` 또는 `PHYSICALLY_DONE` 실행, WorkMaster 변경, 실행이 쥔 케이퍼빌리티를 넘는 요구 근거 등급)은 호스트 판정 없이 현재 기체의 `assign` 으로 넘겨 picasso의 `IDEMPOTENT` 나 거부가 그대로 반환되고 `excluded` 는 빈 배열이다. 단위 id 중복과 사슬 검사는 계획을 지은 뒤에만 알 수 있어 리비전으로 취급되며, 현재 기체가 판정에서 제외되면 해당 거부 대신 `UNASSIGNED` 가 반환된다. 근거: `ExecutionControlTest` 의 `기존 실행의 기체가 호스트 판정으로 빠지면 통과하는 다른 후보가 있어도 개정하지 않고 UNASSIGNED 에 그 기체의 판정을 실으며 같은 판 재제출은 판정 없이 IDEMPOTENT 다`, `부분 완료 실행의 개정판은 제 실행이 쥔 기체로 빠지지 않아 후보가 다 빠져도 그 기체에서 개정한다`.
+- 호스트가 같은 판정을 다시 해 `passed` 인 기체만 `Middleware.assign` 에 넘긴다. 통과한 기체가 없어도 `assign` 을 빈 목록으로 부른다(결과 UNASSIGNED, `refusals` 빈 배열). 이미 같은 작업 지시 id의 실행이 picasso에 있을 때는 후보 목록을 무시하고 해당 실행의 기체(현재 기체)로 보낸다. 같은 버전은 `IDEMPOTENT`, 낮은 버전은 거부, 높은 버전은 그 기체에서의 리비전이다. 리비전 판정 시 실행 호스트는 후보가 아닌 현재 기체만 판정하며, 이때 해당 실행 자체는 제 기체의 진행 중인 실행으로 세지 않고 다른 실행의 점유만 계산한다. 현재 기체가 호스트 판정을 통과하면 그 기체만으로 `assign` 을 호출하며 `excluded` 는 빈 배열이다. 현재 기체가 호스트 판정에서 제외되면(잔여 파지 표시, 다른 실행 점유, 현장 시간값 미적용, 모자란 스킬 등) `assign` 을 부르지 않고 결과는 `UNASSIGNED` 이며 `excluded` 에 그 기체의 판정 행이 실린다. picasso가 개정하지 않는 제출(같은 버전, 낮은 버전, 종료한 `ABORTED` 또는 `PHYSICALLY_DONE` 실행, WorkMaster 변경, 실행이 쥔 케이퍼빌리티를 넘는 요구 근거 등급)은 호스트 판정 없이 현재 기체의 `assign` 으로 넘겨 picasso의 `IDEMPOTENT` 나 거부가 그대로 반환되고 `excluded` 는 빈 배열이다. 단위 id 중복과 연쇄 검사는 계획을 지은 뒤에만 알 수 있어 리비전으로 취급되며, 현재 기체가 판정에서 제외되면 해당 거부 대신 `UNASSIGNED` 가 반환된다. 근거: `ExecutionControlTest` 의 `기존 실행의 기체가 호스트 판정으로 빠지면 통과하는 다른 후보가 있어도 개정하지 않고 UNASSIGNED 에 그 기체의 판정을 실으며 같은 판 재제출은 판정 없이 IDEMPOTENT 다`, `부분 완료 실행의 개정판은 제 실행이 쥔 기체로 빠지지 않아 후보가 다 빠져도 그 기체에서 개정한다`.
 
 응답 200(결과가 무엇이든 200 이다. 상태 코드로 결과를 가르지 말 것):
 
@@ -179,15 +179,15 @@ InspectAsset 예:
 | `result` | 미들웨어 | `executionId`·`robotId` | `rejectionReason` | `refusals` |
 |---|---|---|---|---|
 | `ACCEPTED` | `Submission.Accepted` | 새 실행 | null | `[]` |
-| `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 실행이 도는 중에도 호스트 판정 없이 `assign` 까지 간다. 실행이 아직 picasso 메모리에 남아 있을 때만 성립한다(보존 폭 안의 `FAILED`·`UNVERIFIED` 실행). 정착해 놓은 실행의 같은 id는 `forgottenJobOrder: true`인 REJECTED이다) | 기존 실행과 그 기체 | null | `[]` |
-| `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과, picasso의 놓은 작업 지시 거부 등), 실행 일지 가드(실행 일지에 이미 있는 작업 지시. 그 작업 지시의 정착(`SETTLED`)·다시 실행(`REOPENED`)·포기(`GAVE_UP`) 이벤트 가운데 마지막이 정착이면 `FORGOTTEN_JOB_ORDER`, 그 밖이면 `JOURNALED_JOB_ORDER`), 실행 일지 차단 | null | 사유(한국어) | `[]` |
-| `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "...", "alternativeLocations": [...], "sourceMissing": {...}, "sourceUnobserved": {...}}]`, `assign` 이 기체마다 낸 관문 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
+| `IDEMPOTENT` | `Submission.Idempotent`(같은 `jobOrderId`·같은 `version`. 실행이 도는 중에도 호스트 판정 없이 `assign` 까지 간다. 실행이 아직 picasso 메모리에 남아 있을 때만 성립한다(보존 폭 안의 `FAILED`·`UNVERIFIED` 실행). 종결해 이빅션한 실행의 같은 id는 `forgottenJobOrder: true`인 REJECTED이다) | 기존 실행과 그 기체 | null | `[]` |
+| `REJECTED` | `Submission.Rejected`(요구 근거 등급 초과, picasso의 이빅션한 작업 지시 거부 등), 실행 일지 가드(실행 일지에 이미 있는 작업 지시. 그 작업 지시의 종결(`SETTLED`)·다시 실행(`REOPENED`)·포기(`GAVE_UP`) 이벤트 가운데 마지막이 종결이면 `FORGOTTEN_JOB_ORDER`, 그 밖이면 `JOURNALED_JOB_ORDER`), 실행 일지 차단 | null | 사유(한국어) | `[]` |
+| `UNASSIGNED` | `Unassigned` | null | null | `[{"robotId": "...", "reason": "...", "alternativeLocations": [...], "sourceMissing": {...}, "sourceUnobserved": {...}}]`, `assign` 이 기체마다 낸 게이트 사유. 호스트가 먼저 뺀 기체는 여기 없다 |
 
 - `excluded`: 호스트가 판정에서 빼 `assign` 에 넘기지 않은 기체의 판정 행(2.2). 결과와 무관하게 늘 있다(없으면 `[]`). 리비전에서 현재 기체가 호스트 판정으로 빠지면 그 기체의 판정 행이 실리며, 현재 기체가 통과하거나 호스트 판정 없이 `assign` 에 넘긴 제출에서는 `[]` 이다.
 - `remedy`: 미들웨어 `Rejected.remedy`(조치 탐색 응답). null = 탐색 안 함 또는 보류. `{"kind":"FOUND","steps":[{skillType, requires:[{subject, requires}], expectedHold, onFailureHold}]}` 또는 `{"kind":"NONE","cause":"NO_CAPABILITY"|"DEPTH_LIMIT","unmet":[{subject, required, observed, detail}]}`. 파지·조건 값은 계약 enum 이름(`HOLD_KIND_EMPTY`, `PRECONDITION_SUBJECT_HOLD` 등).
 - `remedyWithheld`: 조치 시퀀스를 계산했으나 사람이 먼저 진단하도록 보류. 참이면 `remedy` 는 null(보류한 단계는 싣지 않음). «대안 없음»(`NONE`)과 다르다.
 - `alternativeLocations`: 맨 위 칸은 REJECTED 전용, UNASSIGNED 는 `refusals[]` 기체별 칸에 같은 의미. 출발 결품일 때 그 자재를 든 다른 자리. `[]` = 든 자리 없음, null = 셀이 답하지 않았거나 출발 결품 거부가 아님. 둘을 접지 않는다. 두 null 은 `sourceMissing` 으로 가른다.
-- `sourceMissing`: 출발 결품 거부이면 `{material, source, observed}`(`observed` null = 빈 자리, 아니면 거기 있던 다른 식별 정보, `material` 은 단위가 자재를 지정하지 않았으면 null). REJECTED 의 맨 위 `sourceMissing` 은 이번 제출로 미들웨어 조치 탐색 기록(`remedySearches()`)에 새로 붙은 `SOURCE_MISSING` 줄에서 옮긴다. UNASSIGNED 의 기체별 `sourceMissing` 은 picasso `Unassigned.sourceMissing[robotId]`(관문이 계산한 답)에서 옮기며 조치 탐색 기록에는 적히지 않는다. 아니면 null.
+- `sourceMissing`: 출발 결품 거부이면 `{material, source, observed}`(`observed` null = 빈 자리, 아니면 거기 있던 다른 식별 정보, `material` 은 단위가 자재를 지정하지 않았으면 null). REJECTED 의 맨 위 `sourceMissing` 은 이번 제출로 미들웨어 조치 탐색 기록(`remedySearches()`)에 새로 붙은 `SOURCE_MISSING` 줄에서 옮긴다. UNASSIGNED 의 기체별 `sourceMissing` 은 picasso `Unassigned.sourceMissing[robotId]`(게이트가 계산한 답)에서 옮기며 조치 탐색 기록에는 적히지 않는다. 아니면 null.
 - `sourceUnobserved`: 출발 미관측이면 picasso `SourceUnobserved` 의 `{material, source, occupied}`. `occupied` null = 설비가 말이 없음, true = 설비가 «있다» 고만 함(신원 없음). 출발 결품과 접지 않는다: 그 기체의 `sourceMissing`·`alternativeLocations` 는 null 이다(대체 자리를 계산하지 않음). REJECTED 의 맨 위 칸은 picasso `Submission.Rejected.sourceUnobserved` 에서, UNASSIGNED 의 기체별 칸은 `Unassigned.sourceUnobserved[robotId]` 에서 옮긴다. 조치 탐색 기록에는 적히지 않는다. 출발 관측을 요구한(`REQUIRED`) 단위에서만 나온다. 지금 `assign` 경로에서는 UNASSIGNED 로만 오고, REJECTED 모양은 `SubmitOutcomeTest` 가 picasso 값을 직접 세워 고정한다. 아니면 null. 근거: `SubmitOutcomeTest` 의 `출발 미관측 거부는 그 자리와 설비가 말한 것을 싣고 결품과 대체 자리를 싣지 않는다`, `미배정의 기체별 사유는 출발 미관측일 때만 그 자리를 싣고 결품 칸과 대체 자리는 비었다`, `SourceObservationHostTest` 의 `출발 관측을 요구한 버전은 설비가 말이 없거나 있다고만 하면 미배정이고 기체별 사유에 출발 미관측이 실리며 결품 칸은 비었다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`.
 - `forgottenJobOrder`: boolean. `POST /host/job-orders` 본문의 마지막 칸이며 기본값은 false이다. 거부 사유가 `FORGOTTEN_JOB_ORDER`로 시작하는 REJECTED일 때만 true이다. 운영 서비스는 이를 `/api/job-orders` 결과와 작업 요청 상세 `rejection`에 전달한다. 근거: `SubmitOutcomeTest` 의 `picasso 가 놓은 작업 지시로 거부하면 놓은 작업 지시 칸이 참이고 그 밖의 거부는 거짓이다`, `ForgetSettledTest` 의 `FAILED 는 두는 폭 동안 메모리에 남아 같은 판은 IDEMPOTENT 이고 폭이 지나면 놓아 같은 작업 지시는 판과 무관하게 놓은 작업 지시로 거부한다`, `재기동해 picasso 가 놓은 작업 지시를 몰라도 실행 일지가 같은 작업 지시를 놓은 작업 지시로 거부하고 일지 막힘이 없다`, `정착하지 않은 일지 행이 있는 작업 지시를 다시 내면 일지 쓰기 전에 거부해 호스트가 막히지 않는다`, `MissionHostTest` 의 `끝난 InspectAsset 를 같은 id 로 다시 내면 놓은 작업 지시로 REJECTED 이고 실행에 마지막 작업 응답이 붙는다`.
 - 맨 위 다섯 칸(`sourceUnobserved` 포함)은 미들웨어가 거부한 REJECTED 일 때만 값이 있다. ACCEPTED·IDEMPOTENT·UNASSIGNED·일지 차단 REJECTED 는 null·false. UNASSIGNED 의 출발 결품은 맨 위가 아니라 `refusals[]` 의 기체별 칸에 실린다. `forgottenJobOrder`는 REJECTED(picasso의 거부이거나 실행 일지의 거부)일 때만 true일 수 있고 그 밖에는 false이다.
@@ -290,9 +290,9 @@ InspectAsset 예:
 |---|---|
 | `instanceId` | 미들웨어 인스턴스(`mw-<UUID>`). 호스트를 재기동하면 바뀌고 `exec-N` 은 1부터 다시 센다 |
 | `pumpedAt` | 마지막 pump 를 **시작할 때**의 호스트 시계 값. 아직 한 번도 안 돌았으면 null. 통합 시험은 밀 때마다 `pumpedAt >= Site.now()` 를 기다린다. 다만 mimic 스트림 갱신은 gRPC 스레드로 비동기로 오므로, 그 pump 가 방금 민 전이를 못 볼 수 있다. 한 주기(250ms) 더 기다리거나 상태로 폴링할 것 |
-| `executions` | 생성 순(`exec-N`의 N 순). 끝난 실행도 남는다. 이 인스턴스가 놓은 실행은 가장 최근 정착 이벤트 본문(정착 당시의 행)이다. 화면은 이 인자 없는 목록을 읽지 않고 §5.8의 페이지 형식을 읽는다. |
+| `executions` | 생성 순(`exec-N`의 N 순). 끝난 실행도 남는다. 이 인스턴스가 이빅션한 실행은 가장 최근 종결 이벤트 본문(종결 당시의 행)이다. 화면은 이 인자 없는 목록을 읽지 않고 §5.8의 페이지 형식을 읽는다. |
 | `missionVersion` | 정수 또는 null. null 이면 코드 정의(화면 표시 «코드 정의»). S3a 는 늘 null |
-| `physicalState` | `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`CANCELING`·`ABORTED`. 정착은 `PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`ABORTED`·`PARTIAL` |
+| `physicalState` | `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`CANCELING`·`ABORTED`. 종결은 `PHYSICALLY_DONE`·`UNVERIFIED`·`FAILED`·`ABORTED`·`PARTIAL` |
 | `units[].state` | `PENDING`·`IN_DOUBT`·`RUNNING`·`VERIFYING`·`OPERATOR_HOLD`·`DONE`·`UNVERIFIED`·`FAILED`·`ABORTED` |
 | `units[].reached` | 근거 등급 `E0`~`E3`. PrepareSequencedRack 이 셀 대역으로 확인되면 `E2` |
 | `units[].skillType` | `navigate_to`·`inspect`·`pick_place` |
@@ -305,7 +305,7 @@ InspectAsset 예:
 
 ### 5.1 실행의 `cancel` 칸(P0-b2)
 
-실행마다 끝에 `cancel`(S4b H1 의 `restoredFrom` 뒤, 열째 칸). 이 인스턴스에서 그 실행에 건 운영자 취소. 없으면 null. 기동 복원이 다시 지은 실행이면 그 작업 지시의 처음 취소 행(이전 인스턴스가 적은 것)을 실음. 기동 복원이 그 취소를 다시 건 것이고 취소 행은 새로 적지 않으며(브랜치 `fix/restore-rerun-and-cancel`), 그 밖의 이전 인스턴스 취소는 싣지 않음. 칸 5개 이 순서. `physicalState` 는 취소를 건 때의 물리 상태, `recordedAt` 은 DB 시각.
+실행마다 끝에 `cancel`(S4b H1 의 `restoredFrom` 뒤, 열째 칸). 이 인스턴스에서 그 실행에 건 운영자 취소. 없으면 null. 기동 복원이 리빌드한 실행이면 그 작업 지시의 처음 취소 행(이전 인스턴스가 적은 것)을 실음. 기동 복원이 그 취소를 다시 건 것이고 취소 행은 새로 적지 않으며(브랜치 `fix/restore-rerun-and-cancel`), 그 밖의 이전 인스턴스 취소는 싣지 않음. 칸 5개 이 순서. `physicalState` 는 취소를 건 때의 물리 상태, `recordedAt` 은 DB 시각.
 
 ```json
 "cancel": {"approverId": "kim", "approverKind": "PERSON", "reason": "둘째 슬롯 결품으로 부분 완료를 닫는다", "physicalState": "PARTIAL", "recordedAt": "2026-10-14T01:02:03.456789Z"}
@@ -317,9 +317,9 @@ InspectAsset 예:
 
 | `result` | 언제 | `physicalState` | `detail` |
 |---|---|---|---|
-| `CANCELED` | 물리 상태가 `pumps`(정착하지 않음 또는 `PARTIAL`)이고 아직 취소를 안 걸었고 실행 일지에 있음 | 건 때의 상태 | null |
-| `NOT_CANCELABLE` | 정착함(놓은 실행도 정착으로 치며 상태는 마지막 정착 이벤트의 상태다. `정착한 실행은 취소하지 않는다: <상태>`), 이미 취소를 건 실행(`CANCELING` 이거나 이 인스턴스의 취소 행이 있음, `이미 취소를 건 실행이다`), 실행 일지에 없음(`실행 일지에 없는 실행이다`). 근거 시험: `ForgetSettledTest` 의 `정착을 적고 응답을 ack 한 뒤 끝난 실행을 놓으면 호스트 메모리가 비고 목록과 좁힌 목록은 정착 본문으로 같은 줄을 싣는다` | 지금 상태 | 사유 |
-| `NOT_FOUND` | 지금 인스턴스에 그 실행도 정착 기록도 없음 | null | `그 실행이 지금 인스턴스에 없다` |
+| `CANCELED` | 물리 상태가 `pumps`(종결하지 않음 또는 `PARTIAL`)이고 아직 취소를 안 걸었고 실행 일지에 있음 | 건 때의 상태 | null |
+| `NOT_CANCELABLE` | 종결함(이빅션한 실행도 종결로 치며 상태는 마지막 종결 이벤트의 상태다. `종결한 실행은 취소하지 않는다: <상태>`), 이미 취소를 건 실행(`CANCELING` 이거나 이 인스턴스의 취소 행이 있음, `이미 취소를 건 실행이다`), 실행 일지에 없음(`실행 일지에 없는 실행이다`). 근거 시험: `ForgetSettledTest` 의 `정착을 적고 응답을 ack 한 뒤 끝난 실행을 놓으면 호스트 메모리가 비고 목록과 좁힌 목록은 정착 본문으로 같은 줄을 싣는다` | 지금 상태 | 사유 |
+| `NOT_FOUND` | 지금 인스턴스에 그 실행도 종결 기록도 없음 | null | `그 실행이 지금 인스턴스에 없다` |
 | `REFUSED` | 승인자가 사람이 아님. REST 는 늘 사람 승인자라 호스트 메서드를 직접 부를 때만 | null | `에이전트는 실행을 취소하지 못한다. 실행 중단은 사람의 것이다: <approverId>` |
 
 ```json
@@ -328,7 +328,7 @@ InspectAsset 예:
 
 ```json
 {"result": "CANCELED", "executionId": "exec-1", "physicalState": "PARTIAL", "detail": null, "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
-{"result": "NOT_CANCELABLE", "executionId": "exec-1", "physicalState": "ABORTED", "detail": "정착한 실행은 취소하지 않는다: ABORTED", "requestId": null}
+{"result": "NOT_CANCELABLE", "executionId": "exec-1", "physicalState": "ABORTED", "detail": "종결한 실행은 취소하지 않는다: ABORTED", "requestId": null}
 ```
 
 ### 5.3 `GET /host/robots/residual-holds`(P0-b2)
@@ -363,7 +363,7 @@ InspectAsset 예:
 
 ### 5.5 실행의 `permitBlock` 칸(ADR 52)
 
-실행마다 끝에 `permitBlock`(`cancel` 뒤, 열한째 칸). 이 실행의 새 로봇 명령을 지금 막고 있는 작업 허가다. 없거나 현장이 대응을 선언하지 않았으면 null. 칸 4개 이 순서 `unitId`, `withheld`, `robots`, `since`. `withheld` 는 `START`·`REVISION_UPDATE`·`IN_DOUBT_LOOKUP`. `robots` 는 막은 기체만, 원소 칸 3개 `robotId`, `permit`(`PERMITTED`·`INHIBITED`·`UNKNOWN`), `reasons`. `reasons` 원소 칸 5개 `source`, `cause`, `subject`, `resumeBasis`, `observedAt`. `cause` 는 `REPORTED`·`EXPIRED`·`SESSION_CHANGED`·`SCOPE_UNKNOWN`·`NOT_COVERED`·`PORT_FAILED`. `source`·`observedAt` 은 `NOT_COVERED`·`PORT_FAILED` 면 null, `subject` 는 원천이 말하지 않았으면 null. `since` 는 같은 단위의 같은 종류가 처음 막힌 호스트 시각. 시각은 ISO-8601. 운영자 보류(`OPERATOR_HOLD`)·결함 막음(`jobResponse.blockedBy`)과 다른 칸이고 작업 응답에는 싣지 않는다. 근거 시험: `WorkPermitHostTest`, 칸 순서는 `HostRestoreTest` 의 `EXECUTION_FIELDS`.
+실행마다 끝에 `permitBlock`(`cancel` 뒤, 열한째 칸). 이 실행의 새 로봇 명령을 지금 막고 있는 작업 허가다. 없거나 현장이 대응을 선언하지 않았으면 null. 칸 4개 이 순서 `unitId`, `withheld`, `robots`, `since`. `withheld` 는 `START`·`REVISION_UPDATE`·`IN_DOUBT_LOOKUP`. `robots` 는 막은 기체만, 원소 칸 3개 `robotId`, `permit`(`PERMITTED`·`INHIBITED`·`UNKNOWN`), `reasons`. `reasons` 원소 칸 5개 `source`, `cause`, `subject`, `resumeBasis`, `observedAt`. `cause` 는 `REPORTED`·`EXPIRED`·`SESSION_CHANGED`·`SCOPE_UNKNOWN`·`NOT_COVERED`·`PORT_FAILED`. `source`·`observedAt` 은 `NOT_COVERED`·`PORT_FAILED` 면 null, `subject` 는 원천이 말하지 않았으면 null. `since` 는 같은 단위의 같은 종류가 처음 막힌 호스트 시각. 시각은 ISO-8601. 운영자 보류(`OPERATOR_HOLD`)·결함 차단(`jobResponse.blockedBy`)과 다른 칸이고 작업 응답에는 싣지 않는다. 근거 시험: `WorkPermitHostTest`, 칸 순서는 `HostRestoreTest` 의 `EXECUTION_FIELDS`.
 
 ```json
 "permitBlock": {"unitId": "T1.travel", "withheld": "START", "robots": [{"robotId": "humanoid-01", "permit": "INHIBITED", "reasons": [{"source": "cell/guard_closed", "cause": "REPORTED", "subject": "guard_closed=false", "resumeBasis": "안전 계통이 guard_closed 을 true 으로 되돌릴 때", "observedAt": "2026-10-14T01:02:03.250Z"}]}], "since": "2026-10-14T01:02:03.500Z"}
@@ -375,7 +375,7 @@ InspectAsset 예:
 
 ### 5.6 `GET /host/work-permits`(ADR 52)
 
-늘 200. 본문 칸 6개 이 순서 `declared`, `evaluatedAt`, `session`, `validFor`(ISO-8601 기간 문자열), `mappings`(원소 `{signal, permittedWhen, robots}`), `robots`(대응이 맡은 기체마다 원소 `{robotId, permit, reasons}`, 5.5 와 같은 모양, 통과한 기체도 실림). 선언하지 않았으면 `declared` false, `session`·`validFor` null, 두 배열은 빈 것. 판정은 발행 관문과 같은 규칙으로 같은 판독을 본다. 읽기만 하고 기체를 세우거나 풀지 않는다. 호스트 잠금을 잡지 않는다. 운영 서비스 스테이션 조정이 `tick` 마다 읽는다(운영 서비스 화면 경로는 없음). 근거 시험: `WorkPermitHostTest` 의 첫째·둘째 시험, 운영 서비스 `HostClientTest` 의 `작업 허가는 GET host work-permits 본문 그대로이고 200 아님은 모름이다`.
+늘 200. 본문 칸 6개 이 순서 `declared`, `evaluatedAt`, `session`, `validFor`(ISO-8601 기간 문자열), `mappings`(원소 `{signal, permittedWhen, robots}`), `robots`(대응이 맡은 기체마다 원소 `{robotId, permit, reasons}`, 5.5 와 같은 모양, 통과한 기체도 실림). 선언하지 않았으면 `declared` false, `session`·`validFor` null, 두 배열은 빈 것. 판정은 발행 게이트와 같은 규칙으로 같은 판독을 본다. 읽기만 하고 기체를 세우거나 풀지 않는다. 호스트 잠금을 잡지 않는다. 운영 서비스 스테이션 조정이 `tick` 마다 읽는다(운영 서비스 화면 경로는 없음). 근거 시험: `WorkPermitHostTest` 의 첫째·둘째 시험, 운영 서비스 `HostClientTest` 의 `작업 허가는 GET host work-permits 본문 그대로이고 200 아님은 모름이다`.
 
 ```json
 {
@@ -399,21 +399,21 @@ InspectAsset 예:
 
 ### 5.7 좁히는 인자
 
-`GET /host/executions?jobOrderId=…&executionId=…`. 두 인자 모두 되풀이 가능하며 값은 쉼표로 가르지 않는다. 인자를 주면 같은 모양이고 `instanceId`·`pumpedAt`·`restore`는 그대로이며, `executions`와 `journalBlockedExecutionIds`는 고른 실행만 담는다. 두 인자는 합집합이다(작업 지시나 실행 id 중 하나라도 맞으면 든다). 빈 값은 400 `BAD_REQUEST`다. 인자가 없으면 전과 같은 전체 목록이다. 모르는 인자는 버린다. 좁히는 인자는 운영 서비스 스테이션 조정과 작업 요청 상세·재작업 관문, 응답 누락 뒤의 두 다시 읽기(작업 지시 제출은 `jobOrderId`, 실행 취소는 `executionId`로 읽는다)가 쓴다. 운영 서비스 `GET /api/executions`는 이 인자들을 호스트에 넘기지 않는다(무시한다. 9.4 참고). 좁힌 읽기 역시 이 인스턴스가 놓은 실행을(정착 본문에서) 가져오며, 결과는 같은 시점의 전체 목록을 해당 실행으로 거른 것과 여전히 같다. 근거 시험: 실행 호스트 `ExecutionsNarrowedTest`의 `작업 지시나 실행 id 로 좁힌 실행 목록은 같은 순간의 전체 목록에서 그 실행만 남긴 것과 같다`, `일지에 막힌 실행은 좁힌 목록에 그 실행이 들 때만 막힘으로 나온다`, `인자 없는 실행 목록은 정착한 실행까지 전과 같은 본문이고 좁히는 값은 쉼표로 가르지 않으며 빈 값은 400 이다`, `ForgetSettledTest`의 `정착을 적고 응답을 ack 한 뒤 끝난 실행을 놓으면 호스트 메모리가 비고 목록과 좁힌 목록은 정착 본문으로 같은 줄을 싣는다`.
+`GET /host/executions?jobOrderId=…&executionId=…`. 두 인자 모두 되풀이 가능하며 값은 쉼표로 가르지 않는다. 인자를 주면 같은 모양이고 `instanceId`·`pumpedAt`·`restore`는 그대로이며, `executions`와 `journalBlockedExecutionIds`는 고른 실행만 담는다. 두 인자는 합집합이다(작업 지시나 실행 id 중 하나라도 맞으면 든다). 빈 값은 400 `BAD_REQUEST`다. 인자가 없으면 전과 같은 전체 목록이다. 모르는 인자는 버린다. 좁히는 인자는 운영 서비스 스테이션 조정과 작업 요청 상세·재작업 게이트, 응답 누락 뒤의 두 다시 읽기(작업 지시 제출은 `jobOrderId`, 실행 취소는 `executionId`로 읽는다)가 쓴다. 운영 서비스 `GET /api/executions`는 이 인자들을 호스트에 넘기지 않는다(무시한다. 9.4 참고). 좁힌 읽기 역시 이 인스턴스가 이빅션한 실행을(종결 본문에서) 가져오며, 결과는 같은 시점의 전체 목록을 해당 실행으로 거른 것과 여전히 같다. 근거 시험: 실행 호스트 `ExecutionsNarrowedTest`의 `작업 지시나 실행 id 로 좁힌 실행 목록은 같은 순간의 전체 목록에서 그 실행만 남긴 것과 같다`, `일지에 막힌 실행은 좁힌 목록에 그 실행이 들 때만 막힘으로 나온다`, `인자 없는 실행 목록은 정착한 실행까지 전과 같은 본문이고 좁히는 값은 쉼표로 가르지 않으며 빈 값은 400 이다`, `ForgetSettledTest`의 `정착을 적고 응답을 ack 한 뒤 끝난 실행을 놓으면 호스트 메모리가 비고 목록과 좁힌 목록은 정착 본문으로 같은 줄을 싣는다`.
 
 ### 5.8 화면 페이지
 
-화면의 실행 목록은 활성 실행과 최근 정착 실행 N개를 읽고, 그보다 이전 이력은 페이지로 읽는다. 정착한 실행은 미들웨어 메모리가 아니라 실행 호스트의 정착 기록(DB)에서 읽으므로, 실행 호스트가 picasso `forget`을 불러 실제로 메모리에서 사라지거나 호스트 재기동 뒤에도 남는다.
+화면의 실행 목록은 활성 실행과 최근 종결 실행 N개를 읽고, 그보다 이전 이력은 페이지로 읽는다. 종결한 실행은 미들웨어 메모리가 아니라 실행 호스트의 종결 기록(DB)에서 읽으므로, 실행 호스트가 picasso `forget`을 불러 실제로 메모리에서 사라지거나 호스트 재기동 뒤에도 남는다.
 
 `GET /host/executions?recent=N`. N은 1~200 정수다. 본문 칸은 `{instanceId, pumpedAt, executions, restore, journalBlockedExecutionIds, settled, nextBefore, olderTotal}` 순서다. 앞 다섯 칸은 §5와 이름과 뜻이 같다.
-- `executions`: 현재 인스턴스의 남은 실행만 담는다(메모리, 생성 순). 남은 실행은 활성이거나, 정착했으나 이번 정착 기록(`SETTLED` 이벤트)이 아직 커밋되지 않은 실행이다(다시 돌아 다시 정착한 실행도 든다). 활성은 `PhysicalState.pumps`(아직 정착하지 않았거나 `PARTIAL`: `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`CANCELING`), 적어도 한 단위가 `OPERATOR_HOLD`나 `IN_DOUBT`, 일지에 막힘 중 하나에 해당한다.
+- `executions`: 현재 인스턴스의 남은 실행만 담는다(메모리, 생성 순). 남은 실행은 활성이거나, 종결했으나 이번 종결 기록(`SETTLED` 이벤트)이 아직 커밋되지 않은 실행이다(재실행해 다시 종결한 실행도 든다). 활성은 `PhysicalState.pumps`(아직 종결하지 않았거나 `PARTIAL`: `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`CANCELING`), 적어도 한 단위가 `OPERATOR_HOLD`나 `IN_DOUBT`, 일지에 막힘 중 하나에 해당한다.
 - `journalBlockedExecutionIds`: 남은 실행 가운데 막힌 실행이다. 막힌 실행은 늘 활성이고 따라서 늘 남은 실행이므로 전체 목록과 같다.
-- `settled`: 인스턴스를 가리지 않고 가장 최근 정착 이력 N개 행이며 최신 순이다. 정착마다 한 행이라 한 작업 지시가 여러 행을 가질 수 있다. 각 원소는 `{settleSeq, instanceId, settledAt, snapshot, execution, superseded}`이다. `execution`은 §5의 실행 한 행과 모양이 같다.
-  - `settleSeq`: `execution_journal_event`의 `SETTLED` 이벤트 `event_id`다. 정렬 키이자 커서다. 클수록 나중에 정착한 것이다. 다른 일지 이벤트가 같은 식별자를 나누므로 연속적이지 않다.
-  - `instanceId`: 정착 기록을 쓴 인스턴스다(재기동 전 인스턴스일 수 있다).
+- `settled`: 인스턴스를 가리지 않고 가장 최근 종결 이력 N개 행이며 최신 순이다. 종결마다 한 행이라 한 작업 지시가 여러 행을 가질 수 있다. 각 원소는 `{settleSeq, instanceId, settledAt, snapshot, execution, superseded}`이다. `execution`은 §5의 실행 한 행과 모양이 같다.
+  - `settleSeq`: `execution_journal_event`의 `SETTLED` 이벤트 `event_id`다. 정렬 키이자 커서다. 클수록 나중에 종결한 것이다. 다른 일지 이벤트가 같은 식별자를 나누므로 연속적이지 않다.
+  - `instanceId`: 종결 기록을 쓴 인스턴스다(재기동 전 인스턴스일 수 있다).
   - `settledAt`: 기록의 DB 시각이다.
-  - `snapshot`: `execution`이 정착할 때 쓴 실행 본문이면 true다(마이그레이션 V8). V8 전에 쓰인 행은 `snapshot: false`이며 일지 행으로 만든 `execution`이다(`units` 빈 목록, `jobResponse`와 `cancel` null, 접수 당시 기체).
-  - `superseded`: 같은 작업 지시의 더 뒤 정착 이벤트가 있으면 true이다.
+  - `snapshot`: `execution`이 종결할 때 쓴 실행 본문이면 true다(마이그레이션 V8). V8 전에 쓰인 행은 `snapshot: false`이며 일지 행으로 만든 `execution`이다(`units` 빈 목록, `jobResponse`와 `cancel` null, 접수 당시 기체).
+  - `superseded`: 같은 작업 지시의 더 뒤 종결 이벤트가 있으면 true이다.
 - `nextBefore`: 이전 이력이 있으면 이 페이지에서 가장 오래된 `settleSeq`이고, 없으면 null이다.
 - `olderTotal`: `nextBefore`보다 오래된 이력 행의 수다(null이면 0).
 
@@ -421,7 +421,7 @@ InspectAsset 예:
 
 `GET /host/executions/summary`. 본문은 `{instanceId, pumpedAt, live, states, journalBlockedExecutionIds}`다. `live`는 남은 실행 수다. `states`는 열한 가지 `PhysicalState` 이름을 모두 담고(0 포함) 남은 실행만 센다. 늘 200이다.
 
-읽기 순서는 메모리가 먼저이고(호스트 잠금 아래) DB가 나중이다(잠금 밖). 남은 실행이 아닌 실행은 이미 정착 기록이 커밋되었으므로 빠뜨리지 않는다. 그 사이에 정착 기록이 쓰인 실행은 양쪽에 모두 나타날 수 있으며, 화면은 (인스턴스, 실행 id) 기준 남은 실행 쪽에 한 번만 표시한다. 호스트는 호스트 잠금 아래 단일 트랜잭션 안에서만 정착 기록을 쓰므로 `event_id` 할당 순서는 커밋 순서와 같다(단일 호스트 전제).
+읽기 순서는 메모리가 먼저이고(호스트 잠금 아래) DB가 나중이다(잠금 밖). 남은 실행이 아닌 실행은 이미 종결 기록이 커밋되었으므로 빠뜨리지 않는다. 그 사이에 종결 기록이 쓰인 실행은 양쪽에 모두 나타날 수 있으며, 화면은 (인스턴스, 실행 id) 기준 남은 실행 쪽에 한 번만 표시한다. 호스트는 호스트 잠금 아래 단일 트랜잭션 안에서만 종결 기록을 쓰므로 `event_id` 할당 순서는 커밋 순서와 같다(단일 호스트 전제).
 
 값이 잘못되었거나(정수가 아님, 범위 벗어남, 빈 값, 되풀이됨), `recent`를 `before`나 `limit`와 섞어 쓰거나, `before` 없이 `limit`를 주거나, 페이지 인자를 좁히는 인자(`jobOrderId`·`executionId`)와 섞어 쓰면 400 `BAD_REQUEST`다. `instanceId`는 이 엔드포인트들의 인자가 아니며 다른 모르는 인자처럼 버린다.
 
@@ -429,7 +429,7 @@ InspectAsset 예:
 
 ### 5.9 실행의 `blockedFaults`·`releases` 칸
 
-실행마다 끝에 `blockedFaults`(`permitBlock` 뒤, 열두째 칸)와 `releases`(마지막 열셋째 칸). 실행 행은 칸 13개 이 순서 `executionId, jobOrderId, workMasterId, missionVersion, robotId, physicalState, units, jobResponse, restoredFrom, cancel, permitBlock, blockedFaults, releases`. `blockedFaults` 는 결함 객체의 배열. 지금 다음 단위를 막고 있는 기체 결함 전부(picasso `Execution.blockedBy`). 없으면 `[]`. 결함 객체 칸은 S4a JSON 계약 §4 의 결함 객체 9칸과 같다(`failureClass, errorType, vendorDetail, errorHint, references[{key, value}], canContinueCurrentTask, canAcceptNewTask, activeUntilKind, activeUntilTime`), 같은 결함이면 인시던트 상세 `blockedBy` 와 칸마다 같다. `failureClass` 는 분류 이름(접두사 `FAILURE_CLASS_` 를 뗀 것, 분류가 없거나 모르면 picasso `Middleware.UNCLASSIFIED`), 그 목록은 작업 응답 `blockedBy` 의 이름들과 같다. 참조 `key` 는 계약 열거형 이름(예 `KEY_TASK_ID`). 작업 응답의 `blockedBy` 는 분류 이름뿐이고 picasso 가 새 작업 응답을 낼 때만 바뀌지만 `blockedFaults` 는 지금의 값이다. 결함 감수(§5.10)가 이것과 대조한다. 작업 허가 막음(`permitBlock`)과 다른 칸이다. `releases` 는 그 작업 지시에 건 운영자 결함 감수(V11 `execution_fault_release`, 적은 순서). 없으면 `[]`. 원소 칸 5개 이 순서 `requestId`, `approverId`, `reason`, `faults`, `recordedAt`. `requestId` 는 없으면 null. `faults` 는 감수할 때의 `blockedFaults` 그대로(결함 객체 배열). `recordedAt` 은 DB 시각. 작업 지시 id 로 읽으므로 재기동 전 인스턴스가 적은 감수도 싣는다. 이 인스턴스가 놓은 실행의 줄과 정착 이력의 `execution`(§5.8)은 정착할 때 적은 본문이라 두 칸도 정착할 때의 값이다. V11 전에 적은 정착 본문에는 두 칸이 없다. 놓은 실행의 줄로 읽으면 두 칸이 `[]` 로 나오고, 정착 이력의 `execution` 은 적힌 글자 그대로라 두 칸이 빠진다. 근거 시험: `FaultReleaseHostTest` 의 `본 결함대로 감수하면 감수 행과 판단 기록을 곧바로 적고 다음 단위를 내며 막힘이 걷힌 작업 응답 하나를 곧바로 낸다`(실행 목록 `blockedFaults` 가 인시던트 상세 `blockedBy` 와 같음, `releases` 칸 순서), `JudgmentRecordHostTest` 의 `감수한 결함을 실은 기록으로 다시 지으면 그 결함이 다음 단위를 다시 막지 않는다`(재기동한 인스턴스의 `releases` 가 앞 인스턴스의 감수를 실음), 칸 순서는 `HostRestoreTest` 의 `EXECUTION_FIELDS`.
+실행마다 끝에 `blockedFaults`(`permitBlock` 뒤, 열두째 칸)와 `releases`(마지막 열셋째 칸). 실행 행은 칸 13개 이 순서 `executionId, jobOrderId, workMasterId, missionVersion, robotId, physicalState, units, jobResponse, restoredFrom, cancel, permitBlock, blockedFaults, releases`. `blockedFaults` 는 결함 객체의 배열. 지금 다음 단위를 막고 있는 기체 결함 전부(picasso `Execution.blockedBy`). 없으면 `[]`. 결함 객체 칸은 S4a JSON 계약 §4 의 결함 객체 9칸과 같다(`failureClass, errorType, vendorDetail, errorHint, references[{key, value}], canContinueCurrentTask, canAcceptNewTask, activeUntilKind, activeUntilTime`), 같은 결함이면 인시던트 상세 `blockedBy` 와 칸마다 같다. `failureClass` 는 분류 이름(접두사 `FAILURE_CLASS_` 를 뗀 것, 분류가 없거나 모르면 picasso `Middleware.UNCLASSIFIED`), 그 목록은 작업 응답 `blockedBy` 의 이름들과 같다. 참조 `key` 는 계약 열거형 이름(예 `KEY_TASK_ID`). 작업 응답의 `blockedBy` 는 분류 이름뿐이고 picasso 가 새 작업 응답을 낼 때만 바뀌지만 `blockedFaults` 는 지금의 값이다. 결함 수용(§5.10)이 이것과 대조한다. 작업 허가 차단(`permitBlock`)과 다른 칸이다. `releases` 는 그 작업 지시에 건 운영자 결함 수용(V11 `execution_fault_release`, 적은 순서). 없으면 `[]`. 원소 칸 5개 이 순서 `requestId`, `approverId`, `reason`, `faults`, `recordedAt`. `requestId` 는 없으면 null. `faults` 는 수용할 때의 `blockedFaults` 그대로(결함 객체 배열). `recordedAt` 은 DB 시각. 작업 지시 id 로 읽으므로 재기동 전 인스턴스가 적은 수용도 싣는다. 이 인스턴스가 이빅션한 실행의 줄과 종결 이력의 `execution`(§5.8)은 종결할 때 적은 본문이라 두 칸도 종결할 때의 값이다. V11 전에 적은 종결 본문에는 두 칸이 없다. 이빅션한 실행의 줄로 읽으면 두 칸이 `[]` 로 나오고, 종결 이력의 `execution` 은 적힌 글자 그대로라 두 칸이 빠진다. 근거 시험: `FaultReleaseHostTest` 의 `본 결함대로 감수하면 감수 행과 판단 기록을 곧바로 적고 다음 단위를 내며 막힘이 걷힌 작업 응답 하나를 곧바로 낸다`(실행 목록 `blockedFaults` 가 인시던트 상세 `blockedBy` 와 같음, `releases` 칸 순서), `JudgmentRecordHostTest` 의 `감수한 결함을 실은 기록으로 다시 지으면 그 결함이 다음 단위를 다시 막지 않는다`(재기동한 인스턴스의 `releases` 가 앞 인스턴스의 수용을 실음), 칸 순서는 `HostRestoreTest` 의 `EXECUTION_FIELDS`.
 
 ```json
 "blockedFaults": [{"failureClass": "LOCALIZATION_LOST", "errorType": "LOCALIZATION_LOST", "vendorDetail": "", "errorHint": "로봇을 알려진 랜드마크 앞으로 옮기고 재측위를 실행하십시오.", "references": [], "canContinueCurrentTask": false, "canAcceptNewTask": false, "activeUntilKind": "KIND_UNTIL_CLEARED", "activeUntilTime": ""}]
@@ -441,19 +441,19 @@ InspectAsset 예:
 
 ### 5.10 `POST /host/executions/{executionId}/release`
 
-운영자 결함 감수다. picasso `Middleware.release` 는 승인자와 사유를 받지 않고 지금 막는 결함 전부를 감수한다. 그래서 사람 승인자 판정과 «본 결함» 대조를 실행 호스트가 한다. 요청 본문은 `{approverId, reason, instanceId, sawFaults, requestId?}` 다. `approverId`·`reason`·`instanceId` 는 비어 있지 않은 문자열(공백만이면 안 됨)이고, 사유는 앞뒤 공백을 떼며 길이 제한은 호스트에 없다. `sawFaults` 는 운영자가 본 막는 결함이며 비어 있지 않은 객체 배열이다(원소 `{errorType, references}`, `errorType` 비어 있지 않은 문자열, `references` 필수이고 빈 배열 가능한 객체 배열, 원소 `{key, value}`, `key` 비어 있지 않은 문자열, `value` 빈 문자열 가능한 문자열). `requestId` 는 없음·`null`·UUID 문자열이다. 400 은 본문이 객체가 아님(«본문이 JSON 객체가 아니다»), `approverId`·`reason`·`instanceId` 와 `errorType`·`key` 가 비어 있지 않은 문자열이 아님(«<칸> 가 비어 있지 않은 문자열이 아니다»), `sawFaults` 가 비어 있지 않은 객체 배열이 아님(«sawFaults 가 비어 있지 않은 객체의 배열이 아니다»), `references` 가 객체 배열이 아님(«sawFaults 의 references 가 객체의 배열이 아니다»), 참조 `value` 가 문자열이 아님(«sawFaults 의 참조 value 가 문자열이 아니다»), `requestId` 가 UUID 문자열이 아님(«requestId 가 UUID 문자열이 아니다»). 판정 순서 본문(400) → `instanceId` 가 지금 인스턴스인가(아니면 409 `INSTANCE_MISMATCH`, `detail` «감수 요청의 인스턴스(<요청>)가 지금 인스턴스(<지금>)가 아니다», 감수하지 않음) → (여기서부터 호스트 잠금 안) 사람 승인자 → 요청 id 재사용 → 실행 찾기 → 막는 결함 유무 → 본 결함 대조 → 감수 행 적기(V11 `execution_fault_release`) → picasso `release` → 판단 기록 적기 → 결과. 결과는 늘 200 본문 `{result, executionId, physicalState, detail, requestId}` (5칸, 이 순서) 다. `requestId` 는 요청 값 그대로다. §5 공통과 달리 `requestId` 는 감수 행에 적는다. 같은 `requestId` 의 감수 행이 이미 있으면 409 `REQUEST_ID_REUSED`(`detail` «결함 감수의 요청 id 가 이미 쓰였다: <requestId>»)이고 아무것도 바꾸지 않는다. 실행 상태와 무관하게 실행을 찾기 전에 가른다(감수해서 더는 막히지 않은 실행에 같은 요청을 다시 보내도 409). S3b JSON 계약 §3 과 같은 이름이다. 요청 id 의 UNIQUE 는 DB 의 둘째 담이다. 잠금 안에서 먼저 묻고 적으므로 이 인스턴스에서는 거기 걸리지 않고, 걸리면 500 `RECORD_WRITE_FAILED` 다(409 아님). 감수 행을 못 적으면 500 `RECORD_WRITE_FAILED` 다. picasso `release` 를 부르지 않는다. 실행은 막힌 그대로, 판단 기록도 늘지 않는다. 감수 직후 pump 없이 판단 기록을 적는다. 그 기록의 `acknowledgedFaults` 에 감수한 결함의 열쇠(실측 `LOCALIZATION_LOST[]`)가 들어 재기동을 넘는다. 판단 기록 쓰기가 실패하면 경고만 남기고 다음 pump 뒤 기록이 같은 글자를 다시 적는다(운영자 판단과 같다).
+운영자 결함 수용이다. picasso `Middleware.release` 는 승인자와 사유를 받지 않고 지금 막는 결함 전부를 수용한다. 그래서 사람 승인자 판정과 «본 결함» 대조를 실행 호스트가 한다. 요청 본문은 `{approverId, reason, instanceId, sawFaults, requestId?}` 다. `approverId`·`reason`·`instanceId` 는 비어 있지 않은 문자열(공백만이면 안 됨)이고, 사유는 앞뒤 공백을 떼며 길이 제한은 호스트에 없다. `sawFaults` 는 운영자가 본 막는 결함이며 비어 있지 않은 객체 배열이다(원소 `{errorType, references}`, `errorType` 비어 있지 않은 문자열, `references` 필수이고 빈 배열 가능한 객체 배열, 원소 `{key, value}`, `key` 비어 있지 않은 문자열, `value` 빈 문자열 가능한 문자열). `requestId` 는 없음·`null`·UUID 문자열이다. 400 은 본문이 객체가 아님(«본문이 JSON 객체가 아니다»), `approverId`·`reason`·`instanceId` 와 `errorType`·`key` 가 비어 있지 않은 문자열이 아님(«<칸> 가 비어 있지 않은 문자열이 아니다»), `sawFaults` 가 비어 있지 않은 객체 배열이 아님(«sawFaults 가 비어 있지 않은 객체의 배열이 아니다»), `references` 가 객체 배열이 아님(«sawFaults 의 references 가 객체의 배열이 아니다»), 참조 `value` 가 문자열이 아님(«sawFaults 의 참조 value 가 문자열이 아니다»), `requestId` 가 UUID 문자열이 아님(«requestId 가 UUID 문자열이 아니다»). 판정 순서 본문(400) → `instanceId` 가 지금 인스턴스인가(아니면 409 `INSTANCE_MISMATCH`, `detail` «수용 요청의 인스턴스(<요청>)가 지금 인스턴스(<지금>)가 아니다», 수용하지 않음) → (여기서부터 호스트 잠금 안) 사람 승인자 → 요청 id 재사용 → 실행 찾기 → 막는 결함 유무 → 본 결함 대조 → 수용 행 적기(V11 `execution_fault_release`) → picasso `release` → 판단 기록 적기 → 결과. 결과는 늘 200 본문 `{result, executionId, physicalState, detail, requestId}` (5칸, 이 순서) 다. `requestId` 는 요청 값 그대로다. §5 공통과 달리 `requestId` 는 수용 행에 적는다. 같은 `requestId` 의 수용 행이 이미 있으면 409 `REQUEST_ID_REUSED`(`detail` «결함 수용의 요청 id 가 이미 쓰였다: <requestId>»)이고 아무것도 바꾸지 않는다. 실행 상태와 무관하게 실행을 찾기 전에 가른다(수용해서 더는 막히지 않은 실행에 같은 요청을 다시 보내도 409). S3b JSON 계약 §3 과 같은 이름이다. 요청 id 의 UNIQUE 는 DB 의 둘째 담이다. 잠금 안에서 먼저 묻고 적으므로 이 인스턴스에서는 거기 걸리지 않고, 걸리면 500 `RECORD_WRITE_FAILED` 다(409 아님). 수용 행을 못 적으면 500 `RECORD_WRITE_FAILED` 다. picasso `release` 를 부르지 않는다. 실행은 막힌 그대로, 판단 기록도 늘지 않는다. 수용 직후 pump 없이 판단 기록을 적는다. 그 기록의 `acknowledgedFaults` 에 수용한 결함의 열쇠(실측 `LOCALIZATION_LOST[]`)가 들어 재기동을 넘는다. 판단 기록 쓰기가 실패하면 경고만 남기고 다음 pump 뒤 기록이 같은 글자를 다시 적는다(운영자 판단과 같다).
 
 | `result` | 언제 | `physicalState` | `detail` | 바뀐 것 |
 |---|---|---|---|---|
-| `RELEASED` | 막는 결함이 있고 본 결함과 같음 | 감수 뒤 상태 `RUNNING` | 작업 허가가 아직 이 실행의 새 로봇 명령을 막고 있으면 `작업 허가 대기 중이다. 감수로 풀리지 않는다: <unitId> (<withheld>)`, 아니면 null | 감수 행 하나, picasso `acknowledgedFaults`, 실행 `RUNNING`, 작업 응답 하나(`RUNNING`, `blockedBy` `[]`), 판단 기록 한 행. 다음 pump가 이를 송신 기록·결과 outbox에 기록하고 다음 단위를 낸다. |
-| `NOT_BLOCKED` | 실행은 있으나 막는 결함이 없음 | 지금 상태(이 인스턴스가 놓은 실행이면 마지막 정착 본문의 상태) | 작업 허가만 막고 있으면 `작업 허가 대기 중이다. 감수로 풀리지 않는다: <unitId> (<withheld>)`(허가는 감수할 값이 아니다, ADR 52, picasso `release` 가 허가 막음을 걷지 않는다). 정착한 실행(이 인스턴스가 놓은 실행 포함)이면 `정착한 실행이다: <상태>`. 그 밖(도는데 막는 결함 없음, `PARTIAL` 포함)은 `막는 결함이 없다`. | 없음 |
+| `RELEASED` | 막는 결함이 있고 본 결함과 같음 | 수용 뒤 상태 `RUNNING` | 작업 허가가 아직 이 실행의 새 로봇 명령을 막고 있으면 `작업 허가 대기 중이다. 수용으로 풀리지 않는다: <unitId> (<withheld>)`, 아니면 null | 수용 행 하나, picasso `acknowledgedFaults`, 실행 `RUNNING`, 작업 응답 하나(`RUNNING`, `blockedBy` `[]`), 판단 기록 한 행. 다음 pump가 이를 송신 기록·결과 outbox에 기록하고 다음 단위를 낸다. |
+| `NOT_BLOCKED` | 실행은 있으나 막는 결함이 없음 | 지금 상태(이 인스턴스가 이빅션한 실행이면 마지막 종결 본문의 상태) | 작업 허가만 막고 있으면 `작업 허가 대기 중이다. 수용으로 풀리지 않는다: <unitId> (<withheld>)`(허가는 수용할 값이 아니다, ADR 52, picasso `release` 가 허가 차단을 걷지 않는다). 종결한 실행(이 인스턴스가 이빅션한 실행 포함)이면 `종결한 실행이다: <상태>`. 그 밖(도는데 막는 결함 없음, `PARTIAL` 포함)은 `막는 결함이 없다`. | 없음 |
 | `BLOCK_CHANGED` | 본 결함과 지금 막는 결함이 다름 | 지금 상태(`OPERATOR_HOLD`) | `본 결함과 지금 막는 결함이 다르다. 다시 읽고 판단한다: <errorType[KEY=value,…]>, …`(지금 막는 결함을 `, ` 로 이음, 참조가 없으면 `[]`) | 없음 |
-| `NOT_FOUND` | 지금 인스턴스에 그 실행이 없음(메모리에도 정착 본문에도) | null | `그 실행이 지금 인스턴스에 없다` | 없음 |
-| `REFUSED` | 승인자가 사람이 아님. REST 는 늘 사람 승인자라 호스트 메서드를 직접 부를 때만 | null | `에이전트는 결함을 감수하지 못한다. 결함을 안고 계속할지는 사람이 현장에서 정한다: <approverId>` | 없음 |
+| `NOT_FOUND` | 지금 인스턴스에 그 실행이 없음(메모리에도 종결 본문에도) | null | `그 실행이 지금 인스턴스에 없다` | 없음 |
+| `REFUSED` | 승인자가 사람이 아님. REST 는 늘 사람 승인자라 호스트 메서드를 직접 부를 때만 | null | `에이전트는 결함을 수용하지 못한다. 결함을 안고 계속할지는 사람이 현장에서 정한다: <approverId>` | 없음 |
 
-대조는 (`errorType`, 참조 (key, value) 모음)의 다중집합으로 한다. 참조 순서와 결함 순서는 보지 않는다. 같은 결함을 둘 보내면 지금 하나일 때 다르다. 참조 `key` 는 계약 열거형 이름(예 `KEY_TASK_ID`)이고 §5.9 `blockedFaults` 의 `references` 와 같다. picasso 의 결함 열쇠 문자열은 호스트가 만들지 않는다. picasso `release` 가 막는 결함 전부를 감수하므로 이 대조가 본 적 없는 결함의 감수를 막는 자리다. 대조와 감수가 같은 잠금 안이라 그 사이에 막는 결함이 바뀌지 않는다. 감수는 결함을 지우지 않는다. 같은 결함은 다시 막지 않고 새 결함은 다시 막는다.
+대조는 (`errorType`, 참조 (key, value) 모음)의 다중집합으로 한다. 참조 순서와 결함 순서는 보지 않는다. 같은 결함을 둘 보내면 지금 하나일 때 다르다. 참조 `key` 는 계약 열거형 이름(예 `KEY_TASK_ID`)이고 §5.9 `blockedFaults` 의 `references` 와 같다. picasso 의 결함 열쇠 문자열은 호스트가 만들지 않는다. picasso `release` 가 막는 결함 전부를 수용하므로 이 대조가 본 적 없는 결함의 수용을 막는 자리다. 대조와 수용이 같은 잠금 안이라 그 사이에 막는 결함이 바뀌지 않는다. 수용은 결함을 지우지 않는다. 같은 결함은 다시 막지 않고 새 결함은 다시 막는다.
 
-picasso `ddca127`(PR #109)부터 `release`는 true를 반환할 때 `notify`를 한 번 부르고 새 작업 응답(`physicalState` `RUNNING`, `blockedBy` `[]`, `operatorRequired` false)을 낸다. RELEASED 감수 직후 실행 목록의 `jobResponse`(마지막 작업 응답)는 곧바로 이 `RUNNING` 응답이 된다. 다음 pump가 이를 송신 기록과 결과 outbox에 한 번 기록하므로 상위도 이를 본다. 반복된 감수 요청은 `NOT_BLOCKED`를 반환하며 응답을 추가하지 않는다. 단위 시작과 단위 완료는 여전히 작업 응답을 내지 않으므로, 이 `RUNNING` 응답은 실행이 정착(실측 `blockedBy` `[]`인 `PARTIAL`)할 때까지 마지막 응답으로 유지된다. 실행 목록의 `physicalState`·`blockedFaults`·`releases`는 곧바로 바뀐다. 운영자 판단(picasso `resolve`)은 여전히 `notify`를 부르지 않아 판단 뒤 다음 작업 응답 전까지 작업 응답이 갱신되지 않는 반면(S4a JSON 계약 §5.2), 감수는 이와 다르다.
+picasso `ddca127`(PR #109)부터 `release`는 true를 반환할 때 `notify`를 한 번 부르고 새 작업 응답(`physicalState` `RUNNING`, `blockedBy` `[]`, `operatorRequired` false)을 낸다. RELEASED 수용 직후 실행 목록의 `jobResponse`(마지막 작업 응답)는 곧바로 이 `RUNNING` 응답이 된다. 다음 pump가 이를 송신 기록과 결과 outbox에 한 번 기록하므로 상위도 이를 본다. 반복된 수용 요청은 `NOT_BLOCKED`를 반환하며 응답을 추가하지 않는다. 단위 시작과 단위 완료는 여전히 작업 응답을 내지 않으므로, 이 `RUNNING` 응답은 실행이 종결(실측 `blockedBy` `[]`인 `PARTIAL`)할 때까지 마지막 응답으로 유지된다. 실행 목록의 `physicalState`·`blockedFaults`·`releases`는 곧바로 바뀐다. 운영자 판단(picasso `resolve`)은 여전히 `notify`를 부르지 않아 판단 뒤 다음 작업 응답 전까지 작업 응답이 갱신되지 않는 반면(S4a JSON 계약 §5.2), 수용은 이와 다르다.
 
 ```json
 {"approverId": "kim", "reason": "현장에서 기체 상태를 확인했다", "instanceId": "mw-3f0c...", "sawFaults": [{"errorType": "LOCALIZATION_LOST", "references": []}], "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
@@ -461,10 +461,10 @@ picasso `ddca127`(PR #109)부터 `release`는 true를 반환할 때 `notify`를 
 ```json
 {"result": "RELEASED", "executionId": "exec-1", "physicalState": "RUNNING", "detail": null, "requestId": "6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
 {"result": "BLOCK_CHANGED", "executionId": "exec-1", "physicalState": "OPERATOR_HOLD", "detail": "본 결함과 지금 막는 결함이 다르다. 다시 읽고 판단한다: LOCALIZATION_LOST[]", "requestId": null}
-{"result": "NOT_BLOCKED", "executionId": "exec-1", "physicalState": "PHYSICALLY_DONE", "detail": "정착한 실행이다: PHYSICALLY_DONE", "requestId": null}
+{"result": "NOT_BLOCKED", "executionId": "exec-1", "physicalState": "PHYSICALLY_DONE", "detail": "종결한 실행이다: PHYSICALLY_DONE", "requestId": null}
 ```
 ```json
-{"error": "REQUEST_ID_REUSED", "detail": "결함 감수의 요청 id 가 이미 쓰였다: 6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
+{"error": "REQUEST_ID_REUSED", "detail": "결함 수용의 요청 id 가 이미 쓰였다: 6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a"}
 ```
 
 (예의 id 값은 보기다. 근거 시험: `FaultReleaseHostTest` 의 첫째~여덟째 시험, `본 결함대로 감수하면 감수 행과 판단 기록을 곧바로 적고 다음 단위를 내며 막힘이 걷힌 작업 응답 하나를 곧바로 낸다`, `본 결함과 지금 막는 결함이 다르면 BLOCK_CHANGED 이고 감수 행 없이 막힌 그대로다`.)
@@ -502,7 +502,7 @@ picasso `ddca127`(PR #109)부터 `release`는 true를 반환할 때 `notify`를 
 | `POST /host/robots/{robotId}/residual-holds/{markerId}/clear` | 해소함 | `BAD_REQUEST`(그 밖 404 `RESIDUAL_HOLD_NOT_FOUND`, 409 `RESIDUAL_HOLD_ALREADY_CLEARED`, 403 `APPROVER_REFUSED`(REST 로는 안 남), 500 `RECORD_WRITE_FAILED`) | JSON 아님 |
 | 현장 `GET /cell` | 늘 | 없음(405·404 는 위 1절) | 없음 |
 
-호스트가 안 닿으면(연결 실패) 운영 서비스가 503·NO_RESPONSE 로 다룬다(스펙 §8). 취소·해소(P0-b2)·결함 감수(5.10) 기록 실패는 500 `RECORD_WRITE_FAILED`, 실행 일지 쓰기 실패는 500 `JOURNAL_WRITE_FAILED`(S4b H6, 이 PR 전부터)다. 운영 서비스는 호스트 5xx 를 응답 없음으로 다루고 재조회한다.
+호스트가 안 닿으면(연결 실패) 운영 서비스가 503·NO_RESPONSE 로 다룬다(스펙 §8). 취소·해소(P0-b2)·결함 수용(5.10) 기록 실패는 500 `RECORD_WRITE_FAILED`, 실행 일지 쓰기 실패는 500 `JOURNAL_WRITE_FAILED`(S4b H6, 이 PR 전부터)다. 운영 서비스는 호스트 5xx 를 응답 없음으로 다루고 재조회한다.
 
 ---
 
@@ -602,9 +602,9 @@ picasso `ddca127`(PR #109)부터 `release`는 true를 반환할 때 `notify`를 
 | 퇴역 | `퇴역한 기체다` |
 | 연결 오래됨 | `연결이 오래됐다(기준 90초, 현장 설정 버전 1)` |
 | 보고 없음 | `생존 보고가 없다` |
-| 호스트 불통 | `실행 호스트가 답하지 않아 스킬 적합·도는 실행을 모른다` |
+| 호스트 불통 | `실행 호스트가 답하지 않아 스킬 적합·진행 중인 실행을 모른다` |
 | 호스트가 그 기체 행을 안 줌 | `실행 호스트가 이 기체를 판정하지 않았다` |
-| 호스트 판정 | 2.2 의 `reasons` 그대로(`모자란 스킬: a, b`, `기체 케이퍼빌리티를 못 물어봤다`, `도는 실행이 있다: exec-N`, `잔여 파지 확인 필요: <jobOrderId> <unitId>`, 그 밖 S4b·S3c 이유도 그대로 옴) |
+| 호스트 판정 | 2.2 의 `reasons` 그대로(`모자란 스킬: a, b`, `기체 케이퍼빌리티를 못 물어봤다`, `진행 중인 실행이 있다: exec-N`, `잔여 파지 확인 필요: <jobOrderId> <unitId>`, 그 밖 S4b·S3c 이유도 그대로 옴) |
 
 400 은 9.1 의 셋뿐이다. 403·`ACTOR_REQUIRED` 는 없다.
 
@@ -738,14 +738,14 @@ picasso `ddca127`(PR #109)부터 `release`는 true를 반환할 때 `notify`를 
 
 (근거 시험: `ExecutionControlsTest` 여섯.)
 
-### 9.8 운영자 결함 감수
+### 9.8 운영자 결함 수용
 
-- `POST /api/executions/{executionId}/release`: 운영자 모드만. 본문 `{instanceId, reason, sawFaults}`. 판정 순서 1) 400 `ACTOR_REQUIRED` 2) 403 `MODE_NOT_ALLOWED` 3) 본문(본문이 객체가 아니거나 `instanceId` 가 비어 있지 않은 문자열이 아니면 400 `RELEASE_BAD_REQUEST` «instanceId 는 비어 있지 않은 문자열이다(실행 목록의 instanceId)», `sawFaults` 가 비어 있지 않은 배열이 아니거나 원소의 `errorType` 이 비어 있지 않은 문자열이 아니거나 `references` 가 배열이 아니거나 참조의 `key` 가 비어 있지 않은 문자열·`value` 가 문자열이 아니면 400 `RELEASE_BAD_REQUEST` «sawFaults 는 비어 있지 않은 배열이고 원소마다 errorType 은 비어 있지 않은 문자열, references 는 {key, value} 객체의 배열이다») 4) 사유(앞뒤 공백을 뗀 뒤 비면 400 `REASON_REQUIRED` «결함 감수 사유가 없다»). 1~4 는 조작 기록에 남지 않음. 그 뒤는 실행 호스트가 무엇을 답했든 200. 승인자는 본문에 없고 `X-Ops-User`. 요청 id 는 운영 서비스가 만들어 실행 호스트에 넘기고, 실행 호스트는 그 id 를 감수 행에 적음.
+- `POST /api/executions/{executionId}/release`: 운영자 모드만. 본문 `{instanceId, reason, sawFaults}`. 판정 순서 1) 400 `ACTOR_REQUIRED` 2) 403 `MODE_NOT_ALLOWED` 3) 본문(본문이 객체가 아니거나 `instanceId` 가 비어 있지 않은 문자열이 아니면 400 `RELEASE_BAD_REQUEST` «instanceId 는 비어 있지 않은 문자열이다(실행 목록의 instanceId)», `sawFaults` 가 비어 있지 않은 배열이 아니거나 원소의 `errorType` 이 비어 있지 않은 문자열이 아니거나 `references` 가 배열이 아니거나 참조의 `key` 가 비어 있지 않은 문자열·`value` 가 문자열이 아니면 400 `RELEASE_BAD_REQUEST` «sawFaults 는 비어 있지 않은 배열이고 원소마다 errorType 은 비어 있지 않은 문자열, references 는 {key, value} 객체의 배열이다») 4) 사유(앞뒤 공백을 뗀 뒤 비면 400 `REASON_REQUIRED` «결함 수용 사유가 없다»). 1~4 는 조작 기록에 남지 않음. 그 뒤는 실행 호스트가 무엇을 답했든 200. 승인자는 본문에 없고 `X-Ops-User`. 요청 id 는 운영 서비스가 만들어 실행 호스트에 넘기고, 실행 호스트는 그 id 를 수용 행에 적음.
 - 실행 호스트(5.10)에는 `errorType` 과 `references` 의 `key`·`value` 만 옮겨 보냄. 결함 객체의 다른 칸(`failureClass` 등)은 버림.
 - 200 칸 7개 이 순서 `requestId`·`executionId`·`result`·`confirmation`·`outcome`(실행 호스트 `result` 이름, 실행 호스트가 200 으로 답했을 때만)·`answer`(실행 호스트 200 본문)·`rejection`(실행 호스트 4xx 일 때 `{status, error, detail}`). 취소와 같은 칸. `result`: `RELEASED` → `SUCCEEDED`. `NOT_BLOCKED`·`BLOCK_CHANGED`·`NOT_FOUND`·`REFUSED` 와 실행 호스트 4xx(409 `INSTANCE_MISMATCH`, 409 `REQUEST_ID_REUSED`, 400 `BAD_REQUEST`) → `REJECTED`. 연결 실패·시간 초과·5xx·200 인데 본문을 못 읽음 → `NO_RESPONSE` 와 1초 뒤 재조회 한 번.
 - 재조회: `GET /host/executions?executionId=<그 실행>`. 목록의 인스턴스가 요청한 인스턴스와 같고 그 실행의 `releases` 에 이 요청 id 가 있으면 `CONFIRMED_APPLIED`, 실행이 없거나 그 요청 id 가 없으면 `CONFIRMED_NOT_APPLIED`, 인스턴스가 다르거나(같은 실행 id 가 다른 실행일 수 있음) 못 읽으면 null(확인 행 없음). 취소의 재조회와 달리 시각을 견주지 않음(요청 id 로 찾음).
 - 조작 기록: `target` = 실행 id, `request` = `{"op":"RELEASE_FAULT_BLOCK","executionId","approverId","instanceId","sawFaults"}`, `reason` = 입력 사유. 재조회 행의 `observed` 는 그 실행 또는 null.
-- 재작업 관문(스테이션 조정)은 거치지 않음. 감수는 끝난 단위를 다시 돌리지 않고 계획의 다음 단위로 감.
+- 재작업 게이트(스테이션 조정)는 거치지 않음. 수용은 끝난 단위를 다시 돌리지 않고 계획의 다음 단위로 감.
 
 ```json
 {"instanceId": "mw-3f0c...", "reason": "현장에서 기체 상태를 확인했다", "sawFaults": [{"errorType": "LOCALIZATION_LOST", "references": []}]}

@@ -81,7 +81,7 @@ class JobOrderEligibilityTest {
         assertEquals(Connection.STALE, view.row("stale-01").connection)
         assertEquals(listOf("연결이 오래됐다(기준 90초, 현장 설정 버전 3)"), view.row("stale-01").reasons)
         assertEquals("exec-4", view.row("busy-01").host!!.runningExecutionId)
-        assertEquals(listOf("도는 실행이 있다: exec-4"), view.row("busy-01").reasons)
+        assertEquals(listOf("진행 중인 실행이 있다: exec-4"), view.row("busy-01").reasons)
         assertEquals(CommissioningState.RETIRED, view.row("retired-01").commissioning)
         assertEquals(listOf("퇴역한 기체다"), view.row("retired-01").reasons)
     }
@@ -119,7 +119,7 @@ class JobOrderEligibilityTest {
         assertEquals(Connection.FRESH, humanoid.connection)
         assertNull(humanoid.host)
         assertEquals(false, humanoid.eligible)
-        assertEquals(listOf("실행 호스트가 답하지 않아 스킬 적합·도는 실행을 모른다"), humanoid.reasons)
+        assertEquals(listOf("실행 호스트가 답하지 않아 스킬 적합·진행 중인 실행을 모른다"), humanoid.reasons)
     }
 
     @Test

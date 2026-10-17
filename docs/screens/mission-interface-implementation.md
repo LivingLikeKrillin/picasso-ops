@@ -76,7 +76,7 @@ Flyway V5__mission_interfaces.sql이 ops.mission_interface를 추가한다. 새 
 - 미공개 계약 호출: 409 INTERFACE_NOT_ENABLED.
 - 없는 계약: 404 INTERFACE_NOT_FOUND.
 - 잘못된 포인터/필드/샘플: 400. 실제 업무 검증 거절은 기존 오류 코드를 유지한다.
-- JSON 본문은 64KiB 이하다. 엔지니어/운영자 쓰기는 기존 X-Ops-Mode·X-Ops-User 관문과 application/json 제한을 따른다.
+- JSON 본문은 64KiB 이하다. 엔지니어/운영자 쓰기는 기존 X-Ops-Mode·X-Ops-User 게이트와 application/json 제한을 따른다.
 - 저장·공개 실패 시 입력과 사유를 유지한다. 응답 불명은 실제 상태를 다시 조회하도록 안내한다.
 - 호출 응답 불명 시 화면에서 재호출을 막고 실행 이력 확인을 안내한다. 4xx로 확인된 거절은 입력 수정 후 다시 시도할 수 있다.
 

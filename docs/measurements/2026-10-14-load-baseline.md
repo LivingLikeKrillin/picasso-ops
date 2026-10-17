@@ -36,7 +36,7 @@ HA 권위 설계 §10(`docs/superpowers/specs/2026-10-14-ha-authority-design.md`
 | 2 전달 주기 | ops-service/.../requests/WorkResultDelivery.kt:30-37 | 2초마다 `INSERT INTO ops.work_result_delivery … SELECT … FROM ops.work_result v JOIN ops.work_request r … ON CONFLICT DO NOTHING`, 그 뒤 많아야 10건 전송(:38) |
 | 1·2 스케줄 풀 | ops-service/src/main/resources/ops-service.properties:29 | `spring.task.scheduling.pool.size=2` (주기 작업 셋: 스테이션 tick·결과 수집·결과 전달) |
 | 3 pump 주기 | mission-host/.../MissionHost.kt:1096, :486-488 | `PUMP_PERIOD = 250ms`, `scheduleWithFixedDelay(::pumpOnce …)` |
-| 3 실행 전체 | picasso/.../middleware/Middleware.kt:829-834 | `pump()` 가 `executions.values.forEach { pump(it) }` (정착한 실행도 남아 매번 돈다) |
+| 3 실행 전체 | picasso/.../middleware/Middleware.kt:829-834 | `pump()` 가 `executions.values.forEach { pump(it) }` (종결한 실행도 남아 매번 돈다) |
 | 3 인시던트·실행 훑기 | MissionHost.kt:820-826, :1009 | `recordAfterPump` 가 `incidents()` 전체 복사·`filter`, `executions()` `filter`; `journalBlocked()` 가 실행 전체 `filter` |
 | 3 실행 목록 응답 | MissionHost.kt:717-731 | `GET /host/executions` 가 호스트 잠금 아래에서 실행마다 `responses.lastOrNull{…}` (실행 × 아웃박스) |
 | 4 아웃박스 | Middleware.kt:179, :323, :2003, :2008-2011 | `outbox` 는 더하기만 함; `pending()` 은 매번 전체 `filter`; `ack` 은 `firstOrNull` 선형 탐색 |
@@ -138,7 +138,7 @@ Execution Time: 1989.787 ms
 
 ## 핫스팟 3·4 — 실행 호스트 pump 와 아웃박스
 
-주기 pump 정지(`MissionHost.close`), 하네스가 `pumpOnce()` 직접 호출. 주기 = 기체마다 InspectAsset(E0, 대상 bay-7) 1건 제출 → 가상 시계 5초 밀기마다 pump 2회 → 전부 정착. idle = 정착 뒤 pump 30회. 미들웨어 크기는 반사로 읽음. GET /host/executions 는 10회.
+주기 pump 정지(`MissionHost.close`), 하네스가 `pumpOnce()` 직접 호출. 주기 = 기체마다 InspectAsset(E0, 대상 bay-7) 1건 제출 → 가상 시계 5초 밀기마다 pump 2회 → 전부 종결. idle = 종결 뒤 pump 30회. 미들웨어 크기는 반사로 읽음. GET /host/executions 는 10회.
 
 - 세트(기체 1) — Postgres 16.15, JDBC 왕복 SELECT 1 p50 1.72 ms / p95 2.11 ms / max 2.35 ms
 - 세트(기체 10) — Postgres 16.15, JDBC 왕복 SELECT 1 p50 0.93 ms / p95 1.24 ms / max 1.43 ms

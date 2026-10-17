@@ -683,10 +683,10 @@ class WorkRequestsTest {
   fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-U$n")
   bench.answer=HostWrite.Answered(200,"""{"result":"UNASSIGNED","executionId":null,"robotId":null,"rejectionReason":null,
    "refusals":[{"robotId":"humanoid-01","reason":"출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다"}],
-   "excluded":[{"robotId":"quadruped-01","skillFit":"FIT","missingSkills":[],"runningExecutionId":"exec-3","passed":false,"reasons":["도는 실행이 있다: exec-3","실행 일지 저장 실패: 호스트 복구 전 배정 차단"]}]}""")
+   "excluded":[{"robotId":"quadruped-01","skillFit":"FIT","missingSkills":[],"runningExecutionId":"exec-3","passed":false,"reasons":["진행 중인 실행이 있다: exec-3","실행 일지 저장 실패: 호스트 복구 전 배정 차단"]}]}""")
   val row=service.receive("mes",order(1)).receipt
   assertEquals("UNASSIGNED",row.state)
-  assertEquals("호스트 미배정: humanoid-01: 출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다 / quadruped-01: 도는 실행이 있다: exec-3; 실행 일지 저장 실패: 호스트 복구 전 배정 차단",row.detail)
+  assertEquals("호스트 미배정: humanoid-01: 출발 자리 SEQ-IN-02.BIN-A 에 ENGINE-COVER-A 이 없다 — 비었다 / quadruped-01: 진행 중인 실행이 있다: exec-3; 실행 일지 저장 실패: 호스트 복구 전 배정 차단",row.detail)
   assertEquals("UNASSIGNED",row.submission!!["outcome"]["result"].asText());assertEquals(row.detail,(service.detail(row.receiptId)["receipt"] as Receipt).detail)
   assertNull(service.detail(row.receiptId)["rejection"])
   bench.answer=HostWrite.Answered(200,"""{"result":"UNASSIGNED","executionId":null,"robotId":null,"rejectionReason":null,"refusals":[],"excluded":[]}""")

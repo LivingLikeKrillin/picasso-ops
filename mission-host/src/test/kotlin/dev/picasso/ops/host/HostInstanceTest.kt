@@ -73,7 +73,7 @@ class HostInstanceTest {
             val restored = bench.get("/host/executions")["restore"]["rows"].single()
             assertTrue(restored["reason"].isNull, restored.toString())
             assertEquals(listOf("DEFERRED", "RESTORED"), events("JO-1"))
-            assertEquals(listOf("도는 실행이 있다: ${restored["executionId"].asText()}"), reasons(bench, HUMANOID))
+            assertEquals(listOf("진행 중인 실행이 있다: ${restored["executionId"].asText()}"), reasons(bench, HUMANOID))
         }
     }
 

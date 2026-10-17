@@ -40,9 +40,9 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 
 - `SKILL_EXECUTION_FAILED`: 그 기체의 진행 중(`RUNNING`·`PAUSED`·`CANCELLING`) `pick_place` 태스크를 site 가 스스로 찾아(여럿이면 마지막에 시작한 것) mimic `tasks.forceFault("SKILL_EXECUTION_FAILED", taskId)` 로 강제한다. 호출자는 태스크 id 를 모른다. 이 실패 모드는 picasso 프로파일에서 `failure_class` GRASP_FAILED, 스스로 재시도 가능, 새 태스크까지 유지다. 태스크는 곧바로 `RETRIABLE` 이 된다.
 - `CONNECTION`: mimic `events.setConnection` 으로 연결 상태를 바꾼다. `ONLINE` 이 아니면 그 기체의 주기 상태 발행(생존 보고)이 멈춘다. 바꾸는 순간 연결 메시지 하나가 registry 로 나간다.
-- `CONTROL_AUTHORITY_LOST`: mimic `tasks.forceControlAuthorityLoss()` 를 호출하여 기체 단위 결함인 `CONTROL_AUTHORITY_LOST` 를 세운다. 진행 중인 태스크가 있으면 엔진이 실패 처리하며, 태스크가 없어도 결함이 선다. 선 결함은 지울 때까지 유지되어 기체가 새 태스크를 수락할 수 없으므로 실행 호스트가 다음 로봇 단위 시작 전에 실행을 막는다. 결함 감수로 해당 실행의 막힘을 풀더라도 기체 결함 자체는 유지되어 다음 실행이 다시 막힌다. 프로파일이 배타 제어 모델이 아니면(`exclusive_control_required=false`) 엔진이 거부하여 현장이 409 `FAULT_REFUSED` 로 응답한다.
+- `CONTROL_AUTHORITY_LOST`: mimic `tasks.forceControlAuthorityLoss()` 를 호출하여 기체 단위 결함인 `CONTROL_AUTHORITY_LOST` 를 세운다. 진행 중인 태스크가 있으면 엔진이 실패 처리하며, 태스크가 없어도 결함이 선다. 선 결함은 지울 때까지 유지되어 기체가 새 태스크를 수락할 수 없으므로 실행 호스트가 다음 로봇 단위 시작 전에 실행을 막는다. 결함 수용으로 해당 실행의 막힘을 풀더라도 기체 결함 자체는 유지되어 다음 실행이 다시 막힌다. 프로파일이 배타 제어 모델이 아니면(`exclusive_control_required=false`) 엔진이 거부하여 현장이 409 `FAULT_REFUSED` 로 응답한다.
 - `CONTROL_AUTHORITY_REGAINED`: 엔진의 결함 목록에서 `CONTROL_AUTHORITY_LOST` 결함을 지우고 실제로 지운 것에 대해서만 결함 해소 이벤트를 낸다. picasso 내에 결함을 지우는 호출이 없으므로 현장이 엔진의 결함 목록과 이벤트 스트림을 직접 부른다. 해당 결함이 서 있지 않더라도 요청은 받아들이며 아무것도 지우지 않는다.
-- 모든 엔진 호출은 `MimicServer.exclusive` 아래에서 한다. 부른 뒤 밀거나 정착시키지 않는다. 열린 `WatchTask` 스트림에는 다음 시계 진행(런처는 1초 주기, 통합 시험은 시계 밀기)이 민다. 그래서 미들웨어는 다음 시계 진행 뒤에야 스킬 실패를 본다.
+- 모든 엔진 호출은 `MimicServer.exclusive` 아래에서 한다. 부른 뒤 밀거나 종결시키지 않는다. 열린 `WatchTask` 스트림에는 다음 시계 진행(런처는 1초 주기, 통합 시험은 시계 밀기)이 민다. 그래서 미들웨어는 다음 시계 진행 뒤에야 스킬 실패를 본다.
 - 받지 않는 것: `PAYLOAD_LOST`, `LOCALIZATION_LOST` 등 그 밖의 지울 때까지 유지되는 결함, 전송 장애(`DISCONNECT`, `DELAY`, `EVENT_LOSS`, `DUPLICATE`, `REORDER`), 연결 상태 `HIBERNATING`. 모두 400 `UNSUPPORTED_FAULT` 다. 연결 상태 이름은 접두사 없는 이름만 받는다(`CONNECTION_STATE_OFFLINE` 은 400).
 
 ### 1.2 받아들임(200)
@@ -183,7 +183,7 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 | `incidentId`, `executionId`, `jobOrderId`, `robotId`, `unitId`, `at` | | 목록과 같다 |
 | `wallClockAt` | 시각 | 봉인한 실제 시각 |
 | `failureClass`, `route`, `unresolved`, `resolution`, `held`, `confirmedWithoutEvidence` | | 목록과 같다(`resolution` 모양 포함) |
-| `unitState` | 문자열 또는 `null` | 그 단위의 **지금** 상태(`PENDING`, `IN_DOUBT`, `RUNNING`, `VERIFYING`, `OPERATOR_HOLD`, `DONE`, `UNVERIFIED`, `FAILED`, `ABORTED`). 이 인스턴스가 놓은 실행은 마지막 정착 본문의 그 단위 상태이다(더는 바뀌지 않는다). 실행과 정착 본문이 모두 없을 때만 `null`이다. 근거: `ForgetSettledTest` 의 `FAILED 는 두는 폭 동안 메모리에 남아 같은 판은 IDEMPOTENT 이고 폭이 지나면 놓아 같은 작업 지시는 판과 무관하게 놓은 작업 지시로 거부한다`(인시던트 상세 `unitState` 가 `FAILED`) |
+| `unitState` | 문자열 또는 `null` | 그 단위의 **지금** 상태(`PENDING`, `IN_DOUBT`, `RUNNING`, `VERIFYING`, `OPERATOR_HOLD`, `DONE`, `UNVERIFIED`, `FAILED`, `ABORTED`). 이 인스턴스가 이빅션한 실행은 마지막 종결 본문의 그 단위 상태이다(더는 바뀌지 않는다). 실행과 종결 본문이 모두 없을 때만 `null`이다. 근거: `ForgetSettledTest` 의 `FAILED 는 두는 폭 동안 메모리에 남아 같은 판은 IDEMPOTENT 이고 폭이 지나면 놓아 같은 작업 지시는 판과 무관하게 놓은 작업 지시로 거부한다`(인시던트 상세 `unitState` 가 `FAILED`) |
 | `fault` | 결함 객체 또는 `null` | 이 단위를 실패로 만든 결함의 전부(아래) |
 | `blockedBy` | 결함 객체의 배열 | 봉인 때 실행 전체를 막던 결함. 없으면 빈 배열 |
 | `requiredEvidence` | 문자열 | 작업 지시가 요구한 근거 등급 `E0`~`E3` |
@@ -247,7 +247,7 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 
 - 이름은 picasso `ResolveOutcome` 그대로 대소문자를 섞은 `Resolved`, `NotHeld`, `Refused` 다. 운영 서비스는 `Resolved` 를 SUCCEEDED, 나머지 둘을 REJECTED 로 기록하고 본문에 이 이름을 남긴다(스펙 T7).
 - **Refused 는 호스트 REST 로는 나지 않는다.** 호스트는 늘 `PERSON` 을 만든다. 호스트 시험은 호스트 빈을 직접 불러 Refused 이름을 확인한다. 운영 서비스와 화면은 Refused 를 처리하되 통합 시험에서 만들 수단은 없다.
-- 실행 수준 막힘(`blockedBy`)은 단위 보류가 아니므로 `NotHeld` 다(실행 수준 막힘을 푸는 것은 운영자 결함 감수 `POST /host/executions/{executionId}/release`(S3a JSON 계약 §5.10)다).
+- 실행 수준 막힘(`blockedBy`)은 단위 보류가 아니므로 `NotHeld` 다(실행 수준 막힘을 푸는 것은 운영자 결함 수용 `POST /host/executions/{executionId}/release`(S3a JSON 계약 §5.10)다).
 - 판단 뒤 작업 응답은 갱신되지 않는다(picasso `resolve` 가 `notify` 를 부르지 않음, 스펙 T10). 실행 목록 `GET /host/executions` 의 실행 상태·단위 상태와 인시던트는 곧바로 바뀐다. `jobResponse` 칸은 다음 갱신까지 옛 값이다.
 
 ### 5.3 거부
@@ -354,7 +354,7 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 - POST 는 `Content-Type: application/json` 만 받는다. 그 밖은 415(스프링 기본 본문, 모양 보장 없음).
 - 행위자 헤더 `X-Ops-Mode`(`engineer`·`operator`)와 `X-Ops-User`(`[A-Za-z0-9._-]{1,64}`)는 S3a·S3b 와 같다. 두 읽기는 헤더를 보지 않는다.
 - 사전 거부(400·403, 읽기의 503)의 본문은 `{"error": "...", "detail": "..."}` 이다. 사전 거부는 호스트에 닿지 않았으므로 조작 기록에 남지 않는다.
-- 쓰기 판정 순서: 관문(400 `ACTOR_REQUIRED` → 403 `MODE_NOT_ALLOWED`) → 본문(400 `FAULT_BAD_REQUEST`·`RESOLVE_BAD_REQUEST`) → 사유(400 `REASON_REQUIRED`) → 호스트. 관문이 먼저라 모드가 틀린 깨진 본문은 403 이다.
+- 쓰기 판정 순서: 게이트(400 `ACTOR_REQUIRED` → 403 `MODE_NOT_ALLOWED`) → 본문(400 `FAULT_BAD_REQUEST`·`RESOLVE_BAD_REQUEST`) → 사유(400 `REASON_REQUIRED`) → 호스트. 게이트가 먼저라 모드가 틀린 깨진 본문은 403 이다.
 - 사유는 문자열이고 앞뒤 공백을 깎은 뒤 비어 있지 않아야 한다. 없음, `null`, 문자열 아님(숫자 등), 공백뿐이면 400 `REASON_REQUIRED`. 깎은 값이 조작 기록의 `reason` 칸에 남는다.
 - 호스트를 부르는 요청 제한은 5초, 연결 제한은 2초다(S3a 그대로).
 - 쓰기는 호스트에 보냈으면 무엇을 답했든 **200** 이다. 결과는 본문에 있다(S3b 계약 §10.1 의 조작 응답 공통 규칙 그대로). 쓰기에서 호스트 불통은 503 이 아니라 200 의 `NO_RESPONSE` 다.
@@ -639,7 +639,7 @@ S4a 설계 스펙(`docs/superpowers/specs/2026-10-09-s4a-faults-incidents-design
 
 ### 11.2 시간
 
-- 스킬 실패: 작업 지시 뒤 가상 시계를 5초 한 번 밀면 태스크가 `RUNNING` 이고 그때 넣으면 200 이다. 다음 밀기부터 미들웨어가 보고, 공용 진행기로 밀면 단위 `FAILED`, 실행 `FAILED` 로 정착한다.
+- 스킬 실패: 작업 지시 뒤 가상 시계를 5초 한 번 밀면 태스크가 `RUNNING` 이고 그때 넣으면 200 이다. 다음 밀기부터 미들웨어가 보고, 공용 진행기로 밀면 단위 `FAILED`, 실행 `FAILED` 로 종결한다.
 - 단계 2a: 시계를 밀지 않아도 OFFLINE 주입 뒤 실제 시간 수 초 안(시험 상한 5초, pump 250ms)에 실행이 `IN_DOUBT` 이고 단위는 `RUNNING` 그대로다. ONLINE 도 같이 곧바로 `RUNNING` 으로 돌아온다. 그 뒤 진행기로 밀면 `PHYSICALLY_DONE`, 단위 `DONE`·`E2` 다.
 - 단계 2b: 연결 기준 60초에서 OFFLINE 주입부터 오래됨까지 실측 약 62초(실제 시간)다. 5초마다 가상 시계를 31초 밀어 quadruped-01 은 내내 신선했다. 배정 가능 표의 이유는 `연결이 오래됐다(기준 60초, 현장 설정 버전 2)` 다. ONLINE 주입은 시계를 밀지 않아도 실제 시간 수 초 안에 신선으로 돌아온다(연결 메시지가 registry 의 마지막 보고 시각을 새로 세운다).
 - 단계 3: 대기 시작 뒤 5초씩 밀어 다섯 번 안(가상 20초 이상)에 단위와 실행이 `OPERATOR_HOLD` 다. 판단 없이 더 밀어도 보류 그대로다.

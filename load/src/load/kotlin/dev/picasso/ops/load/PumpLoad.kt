@@ -21,7 +21,7 @@ object PumpLoad {
     fun run(report: Report, plans: List<Plan>, idleRounds: Int, combinedStations: Int = 0, combinedRounds: Int = 10) {
         report.line("## 핫스팟 3·4 — 실행 호스트 pump (`MissionHost.pumpOnce`) 와 미들웨어 아웃박스")
         report.line()
-        report.line("작업 지시: InspectAsset E0, 대상 하나(bay-7), 기체마다 한 주기에 하나. 가상 시계 5초 밀기마다 pump 2회(사이 20 ms). idle 은 실행이 모두 정착한 뒤 pump $idleRounds 회.")
+        report.line("작업 지시: InspectAsset E0, 대상 하나(bay-7), 기체마다 한 주기에 하나. 가상 시계 5초 밀기마다 pump 2회(사이 20 ms). idle 은 실행이 모두 종결한 뒤 pump $idleRounds 회.")
         report.line()
         val active = mutableListOf<List<String>>()
         val idle = mutableListOf<List<String>>()
@@ -102,7 +102,7 @@ object PumpLoad {
             }
             if (stack.ops != null) {
                 // 핫스팟 1×3: 실행이 쌓인 호스트에 대고 스테이션 tick. 활성 스테이션마다 GET /host/executions 전체를 읽는다.
-                val (r, _) = StationTickLoad.measure(stack, combinedStations, listOf("active"), combinedRounds, " (호스트 정착 실행 $order)") { host.pumpOnce() }
+                val (r, _) = StationTickLoad.measure(stack, combinedStations, listOf("active"), combinedRounds, " (호스트 종결 실행 $order)") { host.pumpOnce() }
                 combined += r
             }
         }
@@ -113,7 +113,7 @@ object PumpLoad {
         report.line()
         report.table(
             listOf(
-                "기체 M", "실행 E(정착)", "메모리 실행", "아웃박스(responses)", "pending", "인시던트", "호스트 맵(정착 표시/일지/판단 기록/복원/취소)",
+                "기체 M", "실행 E(종결)", "메모리 실행", "아웃박스(responses)", "pending", "인시던트", "호스트 맵(종결 표시/일지/판단 기록/복원/취소)",
                 "idle p50 ms", "p95 ms", "max ms", "DB 문장/pump",
                 "pending() p50 µs", "incidents() p50 µs", "GET /host/executions p50 ms", "p95 ms", "max ms", "그 응답 bytes",
             ),

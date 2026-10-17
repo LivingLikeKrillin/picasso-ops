@@ -347,7 +347,7 @@ describe('임무·정책 영역', () => {
     const fake = installFakeOps(emptyList)
     const failed = mockRunRow({
       passed: false,
-      result: { ...mockRunRow().result, passed: false, failure: 'NOT_SETTLED', detail: '정착하지 않았다' },
+      result: { ...mockRunRow().result, passed: false, failure: 'NOT_SETTLED', detail: '종결하지 않았다' },
     })
     fake.answers.set(draftPath(7, 'activate'), {
       status: 200,
@@ -363,7 +363,7 @@ describe('임무·정책 영역', () => {
     expect(shown).toHaveTextContent(
       '초안 7 활성화: 막힘. 이 초안에 통과한 모의 실행이 없습니다. 모의 실행을 먼저 하십시오',
     )
-    expect(shown).toHaveTextContent('마지막 모의 실행: 실패(정착하지 않음)')
+    expect(shown).toHaveTextContent('마지막 모의 실행: 실패(종결하지 않음)')
     expect(shown).not.toHaveTextContent('거부')
     expect(shown).not.toHaveTextContent('활성화됨')
   })
@@ -377,7 +377,7 @@ describe('임무·정책 영역', () => {
         ...mockRunRow().result,
         passed: false,
         failure: 'NOT_SETTLED',
-        detail: '가상 시간 상한 PT10M 안에 정착하지 않았다',
+        detail: '가상 시간 상한 PT10M 안에 종결하지 않았다',
         physicalState: 'RUNNING',
         units: [
           { unitId: 'rack-arrival', route: 'SIGNAL', skillType: 'equipment_wait', state: 'RUNNING', reached: 'E0', failureClass: null },
@@ -392,8 +392,8 @@ describe('임무·정책 영역', () => {
     fake.mission = missionOverview({ drafts: [draftRow({ lastMockRun: failed })] })
     await click('모의 실행')
     const shown = await notice()
-    expect(shown).toHaveTextContent('초안 7 모의 실행: 실패(정착하지 않음)')
-    expect(shown).toHaveTextContent('모의 실행 6: 실패(정착하지 않음). 가상 시간 상한 PT10M 안에 정착하지 않았다')
+    expect(shown).toHaveTextContent('초안 7 모의 실행: 실패(종결하지 않음)')
+    expect(shown).toHaveTextContent('모의 실행 6: 실패(종결하지 않음). 가상 시간 상한 PT10M 안에 종결하지 않았다')
     expect(cells(within(within(shown).getByRole('table', { name: '모의 실행 6 단위' })).getAllByRole('row')[1])).toEqual([
       'rack-arrival',
       '설비 대기',
@@ -403,8 +403,8 @@ describe('임무·정책 영역', () => {
       '-',
     ])
     const drafts = screen.getByRole('table', { name: '임무 초안 목록' })
-    expect(await within(drafts).findByText('실패(정착하지 않음) t3')).toBeInTheDocument()
-    expect(screen.getByText('대상: 초안 7, 마지막 모의 실행 실패(정착하지 않음)')).toBeInTheDocument()
+    expect(await within(drafts).findByText('실패(종결하지 않음) t3')).toBeInTheDocument()
+    expect(screen.getByText('대상: 초안 7, 마지막 모의 실행 실패(종결하지 않음)')).toBeInTheDocument()
   })
 
   it.each([

@@ -68,7 +68,7 @@ class ExecutionControlController(private val controls: ExecutionControls) {
             ?: return@guarded reject(HttpStatus.BAD_REQUEST, RELEASE_BAD_REQUEST, "instanceId 는 비어 있지 않은 문자열이다(실행 목록의 instanceId)")
         val saw = sawFaults(node?.get("sawFaults"))
             ?: return@guarded reject(HttpStatus.BAD_REQUEST, RELEASE_BAD_REQUEST, SAW_FAULTS_SHAPE)
-        val reason = reason(node) ?: return@guarded reject(HttpStatus.BAD_REQUEST, REASON_REQUIRED, "결함 감수 사유가 없다")
+        val reason = reason(node) ?: return@guarded reject(HttpStatus.BAD_REQUEST, REASON_REQUIRED, "결함 수용 사유가 없다")
         ResponseEntity.ok(controls.release(actor, executionId, instanceId, reason, saw))
     }
 

@@ -356,7 +356,7 @@ S3a 의 §2~§5(작업 지시 REST)와 §9.1~§9.4 는 그대로다.
 
 | `result` | 뜻 | `mockRun` | 남는 행 |
 |---|---|---|---|
-| `PASSED` | 검증을 지나 돌았고 실행이 모든 단위 완료로 정착 | 그 행(`passed: true`) | 모의 실행 행 |
+| `PASSED` | 검증을 지나 돌았고 실행이 모든 단위 완료로 종결 | 그 행(`passed: true`) | 모의 실행 행 |
 | `FAILED` | 검증을 지나 돌았으나 실패(아래 하위 범주) | 그 행(`passed: false`) | 모의 실행 행 |
 | `REFUSED` | 검증 거부. 돌지 않았다 | null | 없음(요청 id 재조회는 404) |
 | `INPUT_UNKNOWN` | 입력 모름(`SAMPLE_ORDER` 포함). 돌지 않았다 | null | 없음(요청 id 재조회는 404) |
@@ -389,7 +389,7 @@ S3a 의 §2~§5(작업 지시 REST)와 §9.1~§9.4 는 그대로다.
 
 | 칸 | 값 |
 |---|---|
-| `failure` | 통과면 null. 실패 하위 범주: `DEFINITION`(같은 신호를 기대 값이 다른 대기 노드 둘이 씀, 돌지 않음) · `SUBMISSION_REJECTED`(표본 작업 지시를 미들웨어가 받지 않음, 예: 정의의 `maxEvidence` 가 E2 미만) · `NOT_SETTLED`(가상 시간 상한 안에 정착하지 않음) · `WALL_CLOCK_LIMIT`(실제 시간 30초 초과) · `EXECUTION_FAILED`(정착했으나 모든 단위 완료가 아님) |
+| `failure` | 통과면 null. 실패 하위 범주: `DEFINITION`(같은 신호를 기대 값이 다른 대기 노드 둘이 씀, 돌지 않음) · `SUBMISSION_REJECTED`(표본 작업 지시를 미들웨어가 받지 않음, 예: 정의의 `maxEvidence` 가 E2 미만) · `NOT_SETTLED`(가상 시간 상한 안에 종결하지 않음) · `WALL_CLOCK_LIMIT`(실제 시간 30초 초과) · `EXECUTION_FAILED`(종결했으나 모든 단위 완료가 아님) |
 | `detail` | 실패의 화면용 한국어. 통과면 null |
 | `robotId` | 모의 실행 기체 id `mock-01`(현장 기체와 겹치지 않음) |
 | `sample` | 표본 작업 지시: 마지막 셀 스냅숏의 슬롯 앞 둘, 자재를 든 첫 제시 자리, 자재 수 = 슬롯 수, 요구 근거 E2. id 는 `MOCK-<draftId>` |
@@ -410,7 +410,7 @@ S3a 의 §2~§5(작업 지시 REST)와 §9.1~§9.4 는 그대로다.
 
 `actor`·`reason` 은 비어 있지 않은 문자열(빈 사유는 400 `BAD_REQUEST`, 운영 서비스가 먼저 `REASON_REQUIRED` 로 막는다).
 
-호스트 잠금 아래에서: 다시 검증(지금의 신호 사양·현장 스킬) → 그 초안의 마지막 모의 실행이 통과인지 → 버전 번호 = 그 WorkMaster 의 최대 + 1 로 버전 행 → 카탈로그. 활성화한 버전은 **다음 작업 지시부터** 쓰이고, 도는 실행은 쥔 버전으로 끝난다.
+호스트 잠금 아래에서: 다시 검증(지금의 신호 사양·현장 스킬) → 그 초안의 마지막 모의 실행이 통과인지 → 버전 번호 = 그 WorkMaster 의 최대 + 1 로 버전 행 → 카탈로그. 활성화한 버전은 **다음 작업 지시부터** 쓰이고, 진행 중인 실행은 쥔 버전으로 끝난다.
 
 응답 200:
 
@@ -533,7 +533,7 @@ S3a §9.6 의 네 행은 그대로다. 임무 엔드포인트(`GET /api/missions
 - POST 는 `Content-Type: application/json` 만 받는다. 그 밖은 **415**(스프링 기본 본문, 모양 보장 없음). 본문을 읽지 않는 검증·모의 실행도 같다(화면은 `{}` 를 싣는다).
 - 행위자 헤더 `X-Ops-Mode`(`engineer`·`operator`)와 `X-Ops-User`(`[A-Za-z0-9._-]{1,64}`). S3a §9.3 과 같다.
 - 사전 거부(400·403·503, 검증의 호스트 4xx)의 본문은 늘 `PreRejection` `{"error": "...", "detail": "..."}` 이다. 사전 거부는 호스트에 닿지 않았으므로 조작 기록에 남지 않는다.
-- 판정 순서(쓰기): 관문(400 `ACTOR_REQUIRED` → 403 `MODE_NOT_ALLOWED`) → WorkMaster(400 `UNKNOWN_WORK_MASTER`) → 초안 id(400 `MISSION_BAD_REQUEST`) → 본문(400 `MISSION_BAD_REQUEST`, 활성화는 400 `REASON_REQUIRED`) → 시운전 완료 기체(503 `COMMISSIONED_ROBOTS_UNKNOWN`) → 호스트. 관문이 먼저라 운영자 모드의 깨진 본문은 403 이다.
+- 판정 순서(쓰기): 게이트(400 `ACTOR_REQUIRED` → 403 `MODE_NOT_ALLOWED`) → WorkMaster(400 `UNKNOWN_WORK_MASTER`) → 초안 id(400 `MISSION_BAD_REQUEST`) → 본문(400 `MISSION_BAD_REQUEST`, 활성화는 400 `REASON_REQUIRED`) → 시운전 완료 기체(503 `COMMISSIONED_ROBOTS_UNKNOWN`) → 호스트. 게이트가 먼저라 운영자 모드의 깨진 본문은 403 이다.
 - WorkMaster 는 `PrepareSequencedRack` 만 받는다(T6). 그 밖(`InspectAsset`·`DeliverContainer` 포함)은 읽기·쓰기 모두 400 `UNKNOWN_WORK_MASTER`(detail `편집하지 않는 임무다: InspectAsset (편집하는 것: [PrepareSequencedRack])`).
 - 초안 id 는 경로의 양의 정수다. 그 밖은 400 `MISSION_BAD_REQUEST`(detail `초안 id 가 양의 정수가 아니다: x`).
 - 운영 서비스가 호스트를 부르는 요청 제한: 5초. **모의 실행만 60초**(T10). 연결 제한 2초.

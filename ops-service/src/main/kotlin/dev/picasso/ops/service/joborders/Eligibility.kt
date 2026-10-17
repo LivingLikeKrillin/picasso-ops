@@ -115,7 +115,7 @@ class JobOrderEligibility(
                 }
             }
             when {
-                hostRows == null -> add("실행 호스트가 답하지 않아 스킬 적합·도는 실행을 모른다")
+                hostRows == null -> add("실행 호스트가 답하지 않아 스킬 적합·진행 중인 실행을 모른다")
                 hostRow == null -> add("실행 호스트가 이 기체를 판정하지 않았다")
                 else -> addAll(hostRow.reasons)
             }
