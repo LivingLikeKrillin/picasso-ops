@@ -148,7 +148,7 @@ class JobOrderBench {
         )
 
         fun running(id: String, executionId: String) =
-            HostEligibility(id, HostSkillFit.FIT, emptyList(), executionId, false, listOf("도는 실행이 있다: $executionId"))
+            HostEligibility(id, HostSkillFit.FIT, emptyList(), executionId, false, listOf("진행 중인 실행이 있다: $executionId"))
 
         fun accepted(robotId: String) =
             """{"result":"ACCEPTED","executionId":"exec-1","robotId":"$robotId","rejectionReason":null,"refusals":[],"excluded":[]}"""

@@ -315,10 +315,10 @@ function RestoreReport({ at, rows }: { at: string; rows: RestoreRow[] }) {
   return (
     <section aria-label="재기동 복원 보고" className="restore">
       <p>
-        <strong>재기동: 이전 인스턴스의 실행 {restored.length}건을 다시 지었습니다</strong>(복원 시각 {at})
+        <strong>재기동: 이전 인스턴스의 실행 {restored.length}건을 리빌드했습니다</strong>(복원 시각 {at})
       </p>
       {restored.length > 0 && (
-        <ul aria-label="다시 지은 실행">
+        <ul aria-label="리빌드한 실행">
           {restored.map((row) => (
             <li key={row.jobOrderId}>
               {row.jobOrderId}({row.robotId}): 이전 {row.previousExecutionId} → {row.executionId}

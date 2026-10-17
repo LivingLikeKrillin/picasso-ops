@@ -194,7 +194,7 @@ class HostRestoreTest {
             assertEquals(listOf("exec-1", before, "exec-1"), listOf(row["executionId"].asText(), row["previousInstanceId"].asText(), row["previousExecutionId"].asText()))
             assertTrue(row["reason"].isNull)
             assertEquals(JSON.readTree("""{"instanceId":"$before","executionId":"exec-1"}"""), bench.execution("exec-1")!!["restoredFrom"])
-            assertEquals(listOf("도는 실행이 있다: exec-1"), reasons(HUMANOID))
+            assertEquals(listOf("진행 중인 실행이 있다: exec-1"), reasons(HUMANOID))
         }
     }
 

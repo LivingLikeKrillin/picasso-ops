@@ -65,8 +65,8 @@ describe('재기동 뒤 실행 목록', () => {
     open()
     const region = screen.getByRole('region', { name: '실행' })
     const band = await within(region).findByRole('region', { name: '재기동 복원 보고' })
-    expect(band).toHaveTextContent('재기동: 이전 인스턴스의 실행 1건을 다시 지었습니다(복원 시각 h1)')
-    expect(within(band).getByRole('list', { name: '다시 지은 실행' })).toHaveTextContent(
+    expect(band).toHaveTextContent('재기동: 이전 인스턴스의 실행 1건을 리빌드했습니다(복원 시각 h1)')
+    expect(within(band).getByRole('list', { name: '리빌드한 실행' })).toHaveTextContent(
       'JO-20261009-aaaaaaaa(humanoid-01): 이전 exec-3 → exec-1',
     )
     expect(band).toHaveTextContent('미룬 실행 1건. 실행 호스트가 다시 시도하며 그동안 그 기체는 배정에서 빠집니다')

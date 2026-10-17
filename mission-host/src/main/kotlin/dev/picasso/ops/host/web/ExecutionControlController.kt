@@ -72,7 +72,7 @@ class ExecutionControlController(private val host: MissionHost, private val json
             return ResponseEntity.status(HttpStatus.CONFLICT).body(
                 HostRejection(
                     IncidentController.INSTANCE_MISMATCH,
-                    "감수 요청의 인스턴스(${request.instanceId})가 지금 인스턴스(${host.instanceId})가 아니다",
+                    "수용 요청의 인스턴스(${request.instanceId})가 지금 인스턴스(${host.instanceId})가 아니다",
                 ),
             )
         }

@@ -59,7 +59,7 @@ it('작업 허가로 막힌 실행은 막은 기체와 주체와 풀릴 근거�
   const notice = notices[0]
   expect(within(notice).getByText('T1.travel')).toBeVisible()
   expect(within(notice).getByText('단위 출발')).toBeVisible()
-  expect(within(notice).getByText('기체 humanoid-01: 막음')).toBeVisible()
+  expect(within(notice).getByText('기체 humanoid-01: 차단')).toBeVisible()
   expect(within(notice).getByText(/막는 주체 guard_closed=false/)).toBeVisible()
   expect(within(notice).getByText(/풀릴 근거 안전 계통이 guard_closed 을 true 으로 되돌릴 때/)).toBeVisible()
   expect(within(notice).getByText(/원천 보고/)).toBeVisible()
@@ -81,7 +81,7 @@ it('모름(UNKNOWN)은 까닭과 원천 없음을 그대로 보인다', () => {
   render(<ExecutionList read={{ value: { instanceId: 'mw-1', pumpedAt: 't', executions: [execution({ permitBlock: unknown })], ...NO_SETTLED }, error: null }} highlight={null} />)
   const notice = screen.getByRole('region', { name: TEXT.heading })
   expect(within(notice).getByText('개정 갱신')).toBeVisible()
-  expect(within(notice).getByText('기체 humanoid-01: 모름(막음)')).toBeVisible()
+  expect(within(notice).getByText('기체 humanoid-01: 모름(차단)')).toBeVisible()
   expect(within(notice).getByText(/까닭 허가 원천 없음 · 막는 주체 없음/)).toBeVisible()
 })
 
@@ -93,6 +93,6 @@ it('작업 요청 상세는 현재 실행의 작업 허가 대기를 보인다',
   await userEvent.click(await screen.findByRole('button', { name: 'M-1 작업 요청 보기' }))
   const article = await screen.findByRole('article', { name: '작업 요청 상세' })
   const notice = await within(article).findByRole('region', { name: TEXT.heading })
-  expect(within(notice).getByText('기체 humanoid-01: 막음')).toBeVisible()
+  expect(within(notice).getByText('기체 humanoid-01: 차단')).toBeVisible()
   expect(within(notice).getByText(/막는 주체 guard_closed=false/)).toBeVisible()
 })

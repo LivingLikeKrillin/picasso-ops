@@ -605,9 +605,9 @@ test('화면 설계서 대표 스크린숏을 찍는다', async ({ page }) => {
     area: '운영',
     mode: '운영자',
     state: '실행 호스트 재기동 뒤 복원 보고와 «이전 exec-k» 행',
-    how: '대역: GET /api/executions?recent= 를 재기동 뒤 모양(restore, restoredFrom, 정착 이력 없음)으로. 바탕은 같은 실행의 실제 PrepareSequencedRack 실행',
+    how: '대역: GET /api/executions?recent= 를 재기동 뒤 모양(restore, restoredFrom, 종결 이력 없음)으로. 바탕은 같은 실행의 실제 PrepareSequencedRack 실행',
     strings: [
-      '재기동: 이전 인스턴스의 실행 1건을 다시 지었습니다',
+      '재기동: 이전 인스턴스의 실행 1건을 리빌드했습니다',
       `${holdJobOrder}(${before.robotId}): 이전 ${before.executionId} → exec-1`,
       `exec-1 (이전 ${before.executionId})`,
     ],

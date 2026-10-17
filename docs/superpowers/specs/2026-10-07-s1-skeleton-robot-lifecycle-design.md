@@ -184,9 +184,9 @@ registry 에는 `X-Actor: <모드>/<사용자>` 로 보냅니다. registry `audi
 
 기체 목록은 항상 `GET /diag/robots?retired=true&site=<SITE_ID>` 로 읽습니다. 기본값(`retired=false`)은 퇴역 기체를 빼므로, 그대로 부르면 퇴역 뒤 보고와 복귀가 보이지 않습니다(§11). S1 의 흐름에서 퇴역 뒤 보고 감지와 복귀는 퇴역 기체가 목록에 있어야 성립하므로 이 질의값은 고정입니다. `site` 값은 §6 의 `.env` `SITE_ID` 입니다.
 
-운영 서비스는 기체 목록을 읽을 때마다 관문 안의 `GET /operations/adapters` 를 함께 불러 운영자 토큰을 확인합니다. 기체 목록 `/diag/robots` 는 운영자 토큰 관문 밖이라(§11) 토큰이 틀려도 목록은 읽히기 때문입니다. 이 확인이 없으면 조작에서 받은 401 이 다음 목록 읽기에서 정상으로 덮입니다. 이 조회가 401 이면 화면 전체 상태는 `REGISTRY_UNAUTHORIZED` 입니다. 이때도 목록은 새로 읽은 값입니다(§7.4).
+운영 서비스는 기체 목록을 읽을 때마다 게이트 안의 `GET /operations/adapters` 를 함께 불러 운영자 토큰을 확인합니다. 기체 목록 `/diag/robots` 는 운영자 토큰 게이트 밖이라(§11) 토큰이 틀려도 목록은 읽히기 때문입니다. 이 확인이 없으면 조작에서 받은 401 이 다음 목록 읽기에서 정상으로 덮입니다. 이 조회가 401 이면 화면 전체 상태는 `REGISTRY_UNAUTHORIZED` 입니다. 이때도 목록은 새로 읽은 값입니다(§7.4).
 
-어댑터 목록은 `GET /diag/adapter-instances?site=<SITE_ID>` 와 `GET /operations/adapters` 를 이 순서로 함께 읽습니다. 둘 다 읽혀야 새 값으로 바꾸고, 하나라도 못 읽으면 둘 다 직전 값을 보입니다. 인스턴스 목록은 빌드를 id 가 아니라 제품 이름과 버전으로만 가리키므로, 다른 시각에 읽은 둘을 섞으면 서로 맞지 않는 목록이 보일 수 있기 때문입니다. 인스턴스를 먼저 읽는 것은 제품과 빌드가 지워지지 않기 때문입니다. 이 순서면 보이는 인스턴스의 빌드가 늘 목록에 있습니다. 제품·빌드 읽기는 운영자 토큰 관문 안이라 토큰이 틀리면 `REGISTRY_UNAUTHORIZED` 입니다.
+어댑터 목록은 `GET /diag/adapter-instances?site=<SITE_ID>` 와 `GET /operations/adapters` 를 이 순서로 함께 읽습니다. 둘 다 읽혀야 새 값으로 바꾸고, 하나라도 못 읽으면 둘 다 직전 값을 보입니다. 인스턴스 목록은 빌드를 id 가 아니라 제품 이름과 버전으로만 가리키므로, 다른 시각에 읽은 둘을 섞으면 서로 맞지 않는 목록이 보일 수 있기 때문입니다. 인스턴스를 먼저 읽는 것은 제품과 빌드가 지워지지 않기 때문입니다. 이 순서면 보이는 인스턴스의 빌드가 늘 목록에 있습니다. 제품·빌드 읽기는 운영자 토큰 게이트 안이라 토큰이 틀리면 `REGISTRY_UNAUTHORIZED` 입니다.
 
 이 쓰기들이 S1 의 조작 전부입니다. 결정 7 에 따라 막힘 판정은 읽기 3개의 결과에서 운영 서비스가 계산하며, 이를 위한 조회를 registry 에 새로 더하지 않습니다.
 
@@ -220,7 +220,7 @@ registry 에는 `X-Actor: <모드>/<사용자>` 로 보냅니다. registry `audi
 
 앞의 2개는 화면 밖에서 풀립니다. 화면은 무엇이 부족한지와 누가 채우는지를 보입니다. `REPORTING_AFTER_RETIREMENT` 만 운영자가 화면 안에서 복귀로 풀 수 있습니다.
 
-화면 전체 상태는 2종입니다. `REGISTRY_SILENT` 는 registry 가 답하지 않을 때이고, `REGISTRY_UNAUTHORIZED` 는 registry 가 401 로 답할 때입니다. 둘 다 기체별이 아니라 전역으로 표시합니다. `REGISTRY_SILENT` 에서 화면은 «없음» 이 아니라 «모름» 을 보이고, 해결 담당은 엔지니어, 후속 행동은 registry 상태 확인입니다. `REGISTRY_UNAUTHORIZED` 의 해결 담당은 엔지니어, 후속 행동은 운영자 토큰 설정 확인입니다. 기체 행마다 이 값을 반복하지 않습니다(§8). picasso `6b1a255` 의 운영자 토큰 관문은 `/operations` 이하만 덮고 `/diag` 이하는 관문 밖입니다(`OperatorToken.kt` 의 `GUARDED`). 그래서 운영 서비스는 목록을 읽을 때마다 관문 안의 `GET /operations/adapters` 로 토큰을 확인합니다(§7.2). `REGISTRY_UNAUTHORIZED` 는 이 확인과 조작 호출에서 나옵니다. 토큰 불일치는 조작을 하지 않아도 목록을 읽을 때 드러납니다.
+화면 전체 상태는 2종입니다. `REGISTRY_SILENT` 는 registry 가 답하지 않을 때이고, `REGISTRY_UNAUTHORIZED` 는 registry 가 401 로 답할 때입니다. 둘 다 기체별이 아니라 전역으로 표시합니다. `REGISTRY_SILENT` 에서 화면은 «없음» 이 아니라 «모름» 을 보이고, 해결 담당은 엔지니어, 후속 행동은 registry 상태 확인입니다. `REGISTRY_UNAUTHORIZED` 의 해결 담당은 엔지니어, 후속 행동은 운영자 토큰 설정 확인입니다. 기체 행마다 이 값을 반복하지 않습니다(§8). picasso `6b1a255` 의 운영자 토큰 게이트는 `/operations` 이하만 덮고 `/diag` 이하는 게이트 밖입니다(`OperatorToken.kt` 의 `GUARDED`). 그래서 운영 서비스는 목록을 읽을 때마다 게이트 안의 `GET /operations/adapters` 로 토큰을 확인합니다(§7.2). `REGISTRY_UNAUTHORIZED` 는 이 확인과 조작 호출에서 나옵니다. 토큰 불일치는 조작을 하지 않아도 목록을 읽을 때 드러납니다.
 
 조작 거부는 조작별입니다. registry 가 응답한 400/404/409 를 아래 대응표로 옮깁니다. 409 는 본문으로 가르며 하나로 다루지 않습니다. 종류 값은 열거형 표기(`WRONG_DOOR` 등)입니다. 대응표에 없는 응답은 `UNCLASSIFIED` 로 둡니다. 해결 담당은 엔지니어(화면 밖)이고 후속 행동은 registry 응답 조사입니다. 아는 종류로 접지 않습니다. 409 를 하나로 다루지 않는 것과 같은 이유입니다. 거부 가운데 화면 밖은 `UNCLASSIFIED` 하나입니다. P1 의 행(제품·빌드)과 어댑터 인스턴스 행의 종류 값은 `ADAPTER_BAD_REQUEST`(제품·빌드 400), `UNKNOWN_ADAPTER`(빌드 404), `VERSION_CONFLICT`(빌드 409), `INSTANCE_BAD_REQUEST`(인스턴스 400)이고, 모두 엔지니어가 화면 안에서 풉니다. 표에 없는 응답은 기체 조작과 같이 `UNCLASSIFIED` 입니다. 409 의 관측값에는 registry 가 준 기존 계약값(`existing_contract_semver`)이 들어갑니다. 다른 버전 번호로 다시 하라는 근거입니다. 어댑터 거부에는 바로 가기가 없습니다. 바로 가기는 기체 상세를 여는 버튼이고, 어댑터 목록은 같은 영역에 늘 보이기 때문입니다.
 
@@ -262,7 +262,7 @@ registry 에는 `X-Actor: <모드>/<사용자>` 로 보냅니다. registry `audi
 
 **퇴역 사유는 화면에서 필수 입력입니다.** 사유 없이는 퇴역 요청을 보내지 않습니다. §7.4 의 퇴역 400(사유 누락 등)은 화면이 먼저 막는 자리이며, 그래도 registry 가 400 으로 답하면 대응표대로 보입니다. 사유는 §7.1 조작 기록의 사유 칸에 남습니다.
 
-화면 전체 상태(`REGISTRY_SILENT`, `REGISTRY_UNAUTHORIZED`)는 상단 같은 자리에 보입니다. 기체 행이나 상세 패널에 기체별로 반복하지 않습니다. registry 가 답하지 않아 직전 목록을 보일 때는 목록을 읽은 시각이 확인 시각과 다르며, 이때 목록에 «직전 값» 을 표시합니다. 운영 서비스에 닿지 않을 때도 «직전 값» 을 표시합니다. 기체 목록의 `REGISTRY_UNAUTHORIZED` 는 목록을 새로 읽었으므로 직전 값으로 표시하지 않습니다. 어댑터 목록은 관문 안에서 읽으므로(§7.2) 토큰이 맞지 않으면 새로 읽지 못해 «직전 값» 으로 보입니다. 화면은 기체 목록, 어댑터 목록, 조작 기록을 한 번에 읽습니다. 셋 중 하나라도 운영 서비스가 답하지 않으면 셋 다 직전 값이 됩니다.
+화면 전체 상태(`REGISTRY_SILENT`, `REGISTRY_UNAUTHORIZED`)는 상단 같은 자리에 보입니다. 기체 행이나 상세 패널에 기체별로 반복하지 않습니다. registry 가 답하지 않아 직전 목록을 보일 때는 목록을 읽은 시각이 확인 시각과 다르며, 이때 목록에 «직전 값» 을 표시합니다. 운영 서비스에 닿지 않을 때도 «직전 값» 을 표시합니다. 기체 목록의 `REGISTRY_UNAUTHORIZED` 는 목록을 새로 읽었으므로 직전 값으로 표시하지 않습니다. 어댑터 목록은 게이트 안에서 읽으므로(§7.2) 토큰이 맞지 않으면 새로 읽지 못해 «직전 값» 으로 보입니다. 화면은 기체 목록, 어댑터 목록, 조작 기록을 한 번에 읽습니다. 셋 중 하나라도 운영 서비스가 답하지 않으면 셋 다 직전 값이 됩니다.
 
 화면 밖 작업을 화면이 명시합니다. 로봇 내부 지도와 웨이포인트 티칭(`commissioning.md` §2 Step 3)과 mimic 기동(`site/`)이 그것입니다. 화면은 이 작업이 있다는 것과 어디서 하는지를 보이고, 완료를 대신 체크하지 않습니다.
 
@@ -339,7 +339,7 @@ Playwright 는 1:1 시계(§6 ③)로 돌므로 보고를 기다리는 단계마
 
 ## 11. 코드로 확인한 사실과 근거
 
-아래 사실 표는 picasso 저장소 2026-10-07 main `cd688ff` 에서 확인했습니다. S1a 부터 서브모듈을 고정한 `6b1a255` 에서도 S1a 의 런처와 운영 서비스가 쓰는 사실인 §6 의 3가지, `/diag/robots` 의 칸, 선언 본문, `PostgresSupport` 를 다시 확인했습니다. 이 문서의 판단은 아래 사실에 기대며, picasso 가 바뀌어 서브모듈 포인터를 옮기면(§3) 그 커밋 기준으로 다시 확인합니다. 그때 `GET /operations/adapters` 가 여전히 운영자 토큰 관문 안에 있는지도 확인합니다. 관문 밖으로 나가면 §7.2 의 토큰 확인이 조용히 꺼지기 때문입니다. 표 아래쪽의 S1b·S1c 에서 더한 행은 서브모듈 `6b1a255` 에서 확인했습니다.
+아래 사실 표는 picasso 저장소 2026-10-07 main `cd688ff` 에서 확인했습니다. S1a 부터 서브모듈을 고정한 `6b1a255` 에서도 S1a 의 런처와 운영 서비스가 쓰는 사실인 §6 의 3가지, `/diag/robots` 의 칸, 선언 본문, `PostgresSupport` 를 다시 확인했습니다. 이 문서의 판단은 아래 사실에 기대며, picasso 가 바뀌어 서브모듈 포인터를 옮기면(§3) 그 커밋 기준으로 다시 확인합니다. 그때 `GET /operations/adapters` 가 여전히 운영자 토큰 게이트 안에 있는지도 확인합니다. 게이트 밖으로 나가면 §7.2 의 토큰 확인이 조용히 꺼지기 때문입니다. 표 아래쪽의 S1b·S1c 에서 더한 행은 서브모듈 `6b1a255` 에서 확인했습니다.
 
 | 사실 | 근거 |
 |---|---|
@@ -362,11 +362,11 @@ Playwright 는 1:1 시계(§6 ③)로 돌므로 보고를 기다리는 단계마
 | 서브프로젝트에 Gradle `group` 없음 | picasso 루트와 모듈 `build.gradle.kts` |
 | 버전: Kotlin 2.4.20, Spring Boot 3.4.0 | `gradle/libs.versions.toml` |
 | registry 의 보고 신선도 기본값 24시간(케이퍼빌리티 축소 판정용) | `registry/.../ledger/RobotObservability.kt` 의 `DEFAULT_FRESHNESS` |
-| `/diag` 이하는 운영자 토큰 관문 밖 | `registry/.../web/OperatorToken.kt` 의 `GUARDED` |
+| `/diag` 이하는 운영자 토큰 게이트 밖 | `registry/.../web/OperatorToken.kt` 의 `GUARDED` |
 | 선언 전 생존 보고 거부는 uplink 가 버림 | `uplink/.../report/IngestBridge.kt` 의 `runCatching` |
 | 퇴역 기체의 생존 보고도 받아 `lastReportedAt` 을 갱신 | `registry/.../ingest/LivenessService.kt` |
 | 선언·퇴역·복귀는 `audit_log` 에 남음(`ROBOT_DECLARED`·`ROBOT_RETIRED`·`ROBOT_REINSTATED`, 행위자는 `X-Actor` 그대로) | `registry/.../binding/RobotRegistration.kt` |
-| `GET /operations/adapters` 는 운영자 토큰 관문 안 | `registry/.../web/AdapterOperationsController.kt`, `OperatorToken.kt` 의 `GUARDED` |
+| `GET /operations/adapters` 는 운영자 토큰 게이트 안 | `registry/.../web/AdapterOperationsController.kt`, `OperatorToken.kt` 의 `GUARDED` |
 | 어댑터 인스턴스 등록은 같은 id 면 빌드·사이트·플릿 주소를 덮어씀, 없는 빌드 id 는 서비스가 거절해 400 | `registry/.../adapter/AdapterInstanceService.kt` 의 `register`, `registry/.../web/OperationsController.kt` 의 `registerInstance` |
 | 같은 제품의 두 번째 선언은 감사 기록을 남기지 않음 | `registry/.../adapter/AdapterService.kt` 의 `declareAdapter` |
 | `/diag/adapter-instances` 의 행에 빌드 id 가 없고 제품 이름과 버전이 있음 | `registry/.../adapter/AdapterInstanceService.kt` 의 `AdapterInstanceRow` |

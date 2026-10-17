@@ -50,7 +50,7 @@ export function EligibilityTable({ read, formKey }: Props) {
               <th>기체</th>
               <th>시운전</th>
               <th>연결</th>
-              <th>도는 실행</th>
+              <th>진행 중인 실행</th>
               <th>요구 스킬</th><th>기체 제공 스킬</th><th>스킬 적합</th>
               <th>배정 가능</th>
               <th>이유</th>

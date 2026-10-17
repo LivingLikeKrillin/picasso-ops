@@ -95,7 +95,7 @@ class ExecutionControlTest {
         HostBench().use { bench ->
             val executionId = bench.submit(partialOrder("JO-1"))
             assertEquals("PARTIAL", bench.driveUntil(executionId, SETTLED)["physicalState"].asText())
-            assertEquals(listOf("도는 실행이 있다: $executionId"), bench.judge()["reasons"].map { it.asText() })
+            assertEquals(listOf("진행 중인 실행이 있다: $executionId"), bench.judge()["reasons"].map { it.asText() })
 
             val canceled = bench.cancel(executionId)
             assertEquals(200, canceled.status, canceled.body.toString())
@@ -126,7 +126,7 @@ class ExecutionControlTest {
 
             val settled = bench.cancel(executionId).body!!
             assertEquals(listOf("NOT_CANCELABLE", "ABORTED"), listOf(settled["result"].asText(), settled["physicalState"].asText()))
-            assertTrue(settled["detail"].asText().startsWith("정착한 실행은 취소하지 않는다"), settled.toString())
+            assertTrue(settled["detail"].asText().startsWith("종결한 실행은 취소하지 않는다"), settled.toString())
             assertEquals(1, count("execution_cancel"))
         }
     }
@@ -135,7 +135,7 @@ class ExecutionControlTest {
     fun `든 채 끝난 부분 완료를 취소하면 정착 때 잔여 파지 표시가 서고 사람이 해소해야 기체가 다시 배정된다`() {
         HostBench().use { bench ->
             val executionId = bench.heldPartial("JO-1")
-            assertEquals(listOf("도는 실행이 있다: $executionId"), bench.judge()["reasons"].map { it.asText() })
+            assertEquals(listOf("진행 중인 실행이 있다: $executionId"), bench.judge()["reasons"].map { it.asText() })
             // 부분 완료는 아직 정착으로 적지 않아 표시도 없다.
             assertEquals(emptyList(), bench.holds())
 

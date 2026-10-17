@@ -88,7 +88,7 @@ class JobOrderController(
             return forwarded(host.executionsRecent(count(recent) ?: return badPage("recent 는 1~$MAX_PAGE 의 정수다: $recent")))
         }
         if (before == null) return badPage("limit 은 before 와 함께 준다")
-        val cursor = before.toLongOrNull()?.takeIf { it > 0 } ?: return badPage("before 는 양의 정수다(정착 이력의 settleSeq·nextBefore): $before")
+        val cursor = before.toLongOrNull()?.takeIf { it > 0 } ?: return badPage("before 는 양의 정수다(종결 이력의 settleSeq·nextBefore): $before")
         val limit = single[LIMIT]?.let { count(it) ?: return badPage("limit 은 1~$MAX_PAGE 의 정수다: $it") }
         return forwarded(host.executionsBefore(cursor, limit))
     }

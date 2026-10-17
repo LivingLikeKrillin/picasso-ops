@@ -24,7 +24,7 @@
     <path d="M527,156 H551 V170 H530" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
     <text x="559" y="167" font-size="10.5" fill="#262626">1. 새 instanceId 로 기동함</text>
     <path d="M527,192 H315" fill="none" stroke="#6f6f6f" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#obs)"/>
-    <text x="420" y="185" font-size="10.5" fill="#6f6f6f" text-anchor="middle">2. 미정착 실행 일지 읽기</text>
+    <text x="420" y="185" font-size="10.5" fill="#6f6f6f" text-anchor="middle">2. 미종결 실행 일지 읽기</text>
     <path d="M527,228 H738" fill="none" stroke="#6f6f6f" stroke-width="1.2" stroke-dasharray="5 3" marker-end="url(#obs)"/>
     <text x="634" y="221" font-size="10.5" fill="#6f6f6f" text-anchor="middle">3. GetSnapshot 스냅숏 읽기</text>
     <path d="M527,264 H315" fill="none" stroke="#262626" stroke-width="1.2" marker-end="url(#data)"/>
