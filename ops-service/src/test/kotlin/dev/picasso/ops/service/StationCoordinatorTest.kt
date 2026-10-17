@@ -73,7 +73,20 @@ class StationCoordinatorTest {
    val latest=jdbc.sql("SELECT version,snapshot->'jobResponse'->>'physicalState' FROM ops.work_result WHERE receipt_id=:id ORDER BY version DESC LIMIT 1").param("id",id).query{r,_->r.getInt(1) to r.getString(2)}.optional().orElse(null)
    return receipts.getValue(id).copy(physicalState=latest?.second,resultVersion=latest?.first)
   }
-  override fun retry(receipt:StationReceipt,attempt:UUID,actor:Actor):StationReceipt {retries++;return receipt.copy(state="ACCEPTED",safeToRetry=false).also{receipts[receipt.id]=it}}
+  /** Closed without executing, as the ops port judges it: UNASSIGNED or REJECTED with no stored result. [unsentFails]: the read fails. */
+  var unsentFails=false
+  override fun unsent(receipt:UUID):Boolean {
+   if(unsentFails)error("store down")
+   val state=receipts[receipt]?.state ?: return false
+   return state in setOf("UNASSIGNED","REJECTED") && jdbc.sql("SELECT count(*) FROM ops.work_result WHERE receipt_id=:id").param("id",receipt).query(Long::class.java).single()==0L
+  }
+  /** A retry whose answer is lost: the receipt is left in this state and the call throws. */
+  var retryLost:String?=null
+  override fun retry(receipt:StationReceipt,attempt:UUID,actor:Actor):StationReceipt {
+   retries++
+   retryLost?.let{state->receipts[receipt.id]=receipt.copy(state=state,safeToRetry=false);jdbc.sql("UPDATE ops.work_request SET state=:state WHERE receipt_id=:id").param("state",state).param("id",receipt.id).update();error("response lost")}
+   return receipt.copy(state="ACCEPTED",safeToRetry=false).also{receipts[receipt.id]=it}
+  }
  }
  private fun result(id:UUID,state:String) {jdbc.sql("""INSERT INTO ops.work_result(receipt_id,version,instance_id,execution_id,response_id,response_version,snapshot,result_hash)
   SELECT :id,COALESCE(max(version),0)+1,'mw-1','exec-1','r-'||(COALESCE(max(version),0)+1),COALESCE(max(version),0)+1,CAST(:snapshot AS JSONB),'hash' FROM ops.work_result WHERE receipt_id=:id""")
@@ -536,6 +549,28 @@ class StationCoordinatorTest {
   signal();port.receiptState="REJECTED";val rejected=enqueue();service.tick();assertEquals("REJECTED",service.get(rejected.runId).state)
   assertNull(station().quarantinedBy);assertNull(station().owner)
   port.receiptState="ACCEPTED";val next=enqueue();service.tick();assertEquals("RUNNING",service.get(next.runId).state)
+ }
+ @Test fun `전송 전 미배정으로 가용 기체를 기다리다 기한이 지나 해제한 작업은 스테이션을 격리하지 않는다`() {
+  // 가용 기체가 없어 호스트에 보내지 않았다. 설비 완료 신호가 켜져 있어 재평가도 하지 않은 채 기한이 지난다.
+  port.receiptState="UNASSIGNED";val x=enqueue();service.tick();assertEquals("WAITING_ROBOT",service.get(x.runId).state)
+  signal(complete=true);now=now.plusSeconds(11);service.tick();assertEquals("REVIEW_REQUIRED",service.get(x.runId).state);assertEquals(0,port.retries)
+  decide(x.runId,"CONFIRM_CLEAR");assertEquals("MANUALLY_CLEARED",service.get(x.runId).state);assertNull(station().owner)
+  assertNull(station().quarantinedBy);assertEquals(false,context(x.runId,"MANUALLY_CLEARED")["quarantined"].asBoolean())
+  assertEquals(0,service.events(x.runId).count{it["reason"]==StationCoordinator.QUARANTINE})
+  now=now.plusSeconds(1);signal();port.receiptState="ACCEPTED";val y=enqueue();service.tick();assertEquals("RUNNING",service.get(y.runId).state);assertEquals(2,port.sends)
+ }
+ @Test fun `재평가 결과가 불명이어도 작업 요청이 보내지 않은 거부로 끝났으면 해제가 스테이션을 격리하지 않는다`() {
+  port.receiptState="UNASSIGNED";val x=enqueue();service.tick();assertEquals("WAITING_ROBOT",service.get(x.runId).state)
+  // 재평가가 호스트를 부르기 전에 작업 요청이 거부로 닫히고 호출은 실패한다(예: 자원 요구가 바뀌어 보내지 않음).
+  port.retryLost="REJECTED";now=now.plusSeconds(5);service.tick()
+  val held=service.get(x.runId);assertEquals("REVIEW_REQUIRED",held.state);assertEquals("재평가 결과 불명; 점유 유지",held.reason);assertEquals(1,port.retries)
+  decide(x.runId,"CONFIRM_CLEAR");assertEquals("MANUALLY_CLEARED",service.get(x.runId).state);assertNull(station().quarantinedBy)
+ }
+ @Test fun `해제 때 작업 요청을 읽지 못하면 보내지 않았다고 단정하지 않고 스테이션을 격리한다`() {
+  port.receiptState="UNASSIGNED";val x=enqueue();service.tick();signal(complete=true);now=now.plusSeconds(11);service.tick()
+  assertEquals("REVIEW_REQUIRED",service.get(x.runId).state)
+  port.unsentFails=true;decide(x.runId,"CONFIRM_CLEAR");assertEquals(x.runId,station().quarantinedBy)
+  assertEquals(true,context(x.runId,"MANUALLY_CLEARED")["quarantined"].asBoolean())
  }
  @Test fun `격리 해제 판단은 격리된 스테이션을 점유한 설비 준비 대기 작업에서 운영자가 조회 버전으로 한다`() {
   signal(ready=false);val run=enqueue();assertEquals(409,assertFailsWith<RequestRejected>{decideIdle(run.runId)}.status)
