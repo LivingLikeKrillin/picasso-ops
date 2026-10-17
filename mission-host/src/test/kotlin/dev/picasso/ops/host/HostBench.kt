@@ -68,9 +68,21 @@ class HostBench(
         return ClientRobotPort(PicassoClient(channel, clientId))
     }
 
+    /** [gated] 일 때 호스트가 하위에 낸 `StartTask`(기체, 태스크 id). 같은 태스크 id 의 재전송도 하나씩 든다. */
+    val starts = CopyOnWriteArrayList<Pair<String, String>>()
+
+    /** [gated] 일 때 호스트가 하위에 낸 취소(기체, 태스크 id). */
+    val cancels = CopyOnWriteArrayList<Pair<String, String>>()
+
     private fun gatedPort(): RobotPort {
         val delegate = clientPort()
         return object : RobotPort by delegate {
+            override fun start(robotId: String, taskId: String, revision: Int, skillType: String, parameters: Map<String, String>) =
+                delegate.start(robotId, taskId, revision, skillType, parameters).also { starts += robotId to taskId }
+
+            override fun cancel(robotId: String, handle: dev.picasso.contracts.v1.TaskHandle) =
+                delegate.cancel(robotId, handle).also { cancels += robotId to handle.taskId }
+
             override fun snapshot(robotId: String): RobotSnapshot? = if (robotId in blockedSnapshots) null else delegate.snapshot(robotId)
         }
     }
@@ -131,6 +143,12 @@ class HostBench(
     @Volatile
     var signalReply: Pair<Int, String> = 200 to """{"name":"rack_present","value":"true"}"""
 
+    /**
+     * 다음 셀 읽기에서 한 번 돌 갈고리. 호스트 pump 는 잠금 밖에서 셀 대역을 먼저 읽고 그 뒤 미들웨어를 돌리므로, 기동 복원 뒤 첫 pump
+     * 의 미들웨어 pump 앞에 현장을 바꿀 때 쓴다([restartHost] 의 `beforeStart` 에서 건다).
+     */
+    val onCellFetch = java.util.concurrent.atomic.AtomicReference<(() -> Unit)?>(null)
+
     /** 셀 대역 대역이 받은 신호 쓰기(경로의 이름, Content-Type, 본문). */
     val signalWrites = CopyOnWriteArrayList<Triple<String, String?, String>>()
 
@@ -161,6 +179,8 @@ class HostBench(
                 )
                 signalReply
             } else {
+                // 셀 읽기는 pump 의 첫 걸음이다. 걸어 둔 갈고리는 그 pump 가 미들웨어를 돌리기 전에 한 번 돈다.
+                onCellFetch.getAndSet(null)?.invoke()
                 200 to cellBody
             }
             val bytes = body.toByteArray()
@@ -203,9 +223,10 @@ class HostBench(
         }.toTypedArray(),
     )
 
-    /** 호스트만 닫고 같은 DB 로 다시 띄운다(재기동). mimic 과 셀 대역은 그대로다. */
-    fun restartHost() {
+    /** 호스트만 닫고 같은 DB 로 다시 띄운다(재기동). mimic 과 셀 대역은 그대로다. [beforeStart] 는 닫은 뒤 띄우기 전에 돈다. */
+    fun restartHost(beforeStart: () -> Unit = {}) {
         context.close()
+        beforeStart()
         context = startHost()
     }
 

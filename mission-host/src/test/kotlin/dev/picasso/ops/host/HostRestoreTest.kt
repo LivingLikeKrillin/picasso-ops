@@ -123,24 +123,37 @@ class HostRestoreTest {
             bench.eventually("셋째 인스턴스의 보류") { log("JO-1").size == 3 }
             assertEquals(third to "RESTART_DUPLICATE", log("JO-1")[2].let { it[0] to it[1] })
 
-            // 같은 인스턴스 안에서 재작업 뒤 다시 선 보류는 같은 내용이어도 새 사건이라 송신한다.
+            // 재작업 판단으로 보류가 걷히면 picasso 가 곧바로 응답 하나를 낸다(`RUNNING`, 운영자 불필요). 이 인스턴스가 이미 적은
+            // 작업 지시라 송신이다. 시계를 밀지 않으므로 대기 단위는 기한 전이고 보류 응답은 아직 없다.
             assertEquals("Resolved", bench.resolve("exec-1", WAIT, "REWORK", "kim").body!!["result"].asText())
+            bench.eventually("재작업 판단 뒤 응답") { log("JO-1").size == 4 }
+            val cleared = log("JO-1")[3]
+            assertEquals(listOf(third, "SENT", "RUNNING", "false"), listOf(cleared[0], cleared[1], cleared[2], cleared[4]))
+            assertEquals(log("JO-1")[0][3], cleared[3])
+            assertEquals(log("JO-1")[0][5], cleared[5])
+
+            // 같은 인스턴스 안에서 재작업 뒤 다시 선 보류는 같은 내용이어도 새 사건이라 송신한다.
             bench.driveToHold("exec-1")
-            bench.eventually("재작업 뒤 보류") { log("JO-1").size == 4 }
-            assertEquals(third to "SENT", log("JO-1")[3].let { it[0] to it[1] })
-            assertEquals(log("JO-1")[0].drop(2), log("JO-1")[3].drop(2))
+            bench.eventually("재작업 뒤 보류") { log("JO-1").size == 5 }
+            assertEquals(third to "SENT", log("JO-1")[4].let { it[0] to it[1] })
+            assertEquals(log("JO-1")[0].drop(2), log("JO-1")[4].drop(2))
 
             val view = bench.get("/host/job-responses?jobOrderId=JO-1")["responses"]
-            assertEquals(listOf("SENT", "RESTART_DUPLICATE", "RESTART_DUPLICATE", "SENT"), view.map { it["disposition"].asText() }.reversed())
-            assertEquals(listOf(first, second, third, third), view.map { it["instanceId"].asText() }.reversed())
+            assertEquals(listOf("SENT", "RESTART_DUPLICATE", "RESTART_DUPLICATE", "SENT", "SENT"), view.map { it["disposition"].asText() }.reversed())
+            assertEquals(listOf(first, second, third, third, third), view.map { it["instanceId"].asText() }.reversed())
+            assertEquals(
+                listOf("OPERATOR_HOLD", "OPERATOR_HOLD", "OPERATOR_HOLD", "RUNNING", "OPERATOR_HOLD"),
+                view.map { it["physicalState"].asText() }.reversed(),
+            )
 
             // 재기동 중복은 결과 피드에 들어가지 않는다. 피드의 JO-1 이벤트는 송신 행과 하나씩 맞는다.
             val sent = PostgresSupport.queryAll(
                 "SELECT instance_id, job_response_id FROM mission.job_response_log WHERE job_order_id = 'JO-1' AND disposition = 'SENT' ORDER BY log_id",
             ) { it.getString(1) to it.getString(2) }
             val feed = bench.get("/host/result-events")["events"].filter { it["snapshot"]["jobOrderId"].asText() == "JO-1" }
-            assertEquals(2, sent.size)
+            assertEquals(3, sent.size)
             assertEquals(sent, feed.map { it["snapshot"]["instanceId"].asText() to it["snapshot"]["jobResponse"]["jobResponseId"].asText() })
+            assertEquals(listOf("OPERATOR_HOLD", "RUNNING", "OPERATOR_HOLD"), feed.map { it["snapshot"]["physicalState"].asText() })
         }
     }
 

@@ -150,8 +150,8 @@ class RerunRestoreTest {
     }
 
     @Test
-    fun `운영자 취소를 적고 반영하기 전에 재기동하면 다시 지은 실행이 도는 태스크에 다시 붙은 뒤 취소를 한 번 다시 걸어 그 태스크가 끝난 뒤 새 태스크 없이 멈춘다`() {
-        HostBench().use { bench ->
+    fun `운영자 취소를 적고 반영하기 전에 재기동하면 다시 지은 실행이 도는 태스크에 StartTask 없이 붙어 취소를 한 번 다시 보내고 그 태스크가 끝난 뒤 새 태스크 없이 멈춘다`() {
+        HostBench(gated = true).use { bench ->
             val accepted = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7"), "candidates", HUMANOID)).body!!
             assertEquals("ACCEPTED", accepted["result"].asText(), accepted.toString())
             val running = bench.runningTask()
@@ -161,22 +161,68 @@ class RerunRestoreTest {
             bench.idlePumps()
             assertEquals(mapOf(running to TaskState.CANCELLING), bench.tasks())
 
-            bench.restartHost()
+            bench.restartHost {
+                bench.starts.clear()
+                bench.cancels.clear()
+            }
             val row = bench.get("/host/executions")["restore"]["rows"].single()
             assertEquals(listOf("JO-1", "RESTORED"), listOf(row["jobOrderId"].asText(), row["result"].asText()), row.toString())
             val rebuilt = row["executionId"].asText()
             assertEquals("kim", bench.execution(rebuilt)!!["cancel"]["approverId"].asText())
-            // 첫 pump 가 도는 태스크에 다시 붙은 뒤 취소를 건다. 실행은 그 태스크의 종착을 본 뒤에야 멈춘다 — 붙기 전에 멈추면 취소 중인
-            // 태스크를 남긴 채 기체를 내준다. 다음 단위는 시작하지 않는다.
+            // 복원 직후 취소를 건다. 첫 pump 가 도는 태스크에 `StartTask` 없이 붙어 취소를 한 번 보내고, 실행은 그 태스크의 종착을 본 뒤에야
+            // 멈춘다 — 붙기 전에 멈추면 취소 중인 태스크를 남긴 채 기체를 내준다. 다음 단위는 시작하지 않는다.
             val aborted = bench.driveUntil(rebuilt, settledStates)
             assertEquals("ABORTED", aborted["physicalState"].asText(), aborted.toString())
             assertEquals(listOf("T1.travel" to "ABORTED", "T1" to "PENDING"), aborted["units"].map { it["unitId"].asText() to it["state"].asText() }, aborted.toString())
             assertEquals(mapOf(running to TaskState.CANCELLED), bench.tasks())
+            assertEquals(emptyList(), bench.starts.toList())
+            assertEquals(listOf(HUMANOID to running), bench.cancels.toList())
             // 취소 행은 그대로 하나다. 다시 지은 실행에 다시 취소를 받지 않는다.
             assertEquals("NOT_CANCELABLE", bench.cancel(rebuilt)["result"].asText())
             assertEquals(1, PostgresSupport.queryOne("SELECT count(*) FROM mission.execution_cancel") { it.getInt(1) })
             assertEquals(listOf("RESTORED", "SETTLED"), events("JO-1").map { it[0] })
             assertTrue(bench.judge()["passed"].asBoolean())
+        }
+    }
+
+    /**
+     * 복원과 첫 pump 사이에 기체가 취소를 끝낸 경우. 취소는 복원 직후 걸리므로, 첫 pump 는 그 태스크에 `StartTask` 없이 붙고 이미 끝난
+     * 태스크에는 취소를 다시 보내지 않으며 그 종료를 요청한 취소의 중단으로 읽는다(picasso `attachForCancel`). 첫 pump 뒤로 미루면 첫
+     * pump 가 끝난 태스크에 `StartTask` 를 다시 보내 붙는다 — 끝난 태스크를 들지 않는 하위에서는 새 접수가 되어 기체가 다시 움직인다.
+     */
+    @Test
+    fun `운영자 취소를 적은 뒤 재기동하고 첫 pump 전에 기체가 취소를 끝내면 StartTask 도 취소도 다시 보내지 않고 보류와 인시던트 없이 중단으로 정착한다`() {
+        HostBench(gated = true).use { bench ->
+            val accepted = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7"), "candidates", HUMANOID)).body!!
+            assertEquals("ACCEPTED", accepted["result"].asText(), accepted.toString())
+            val running = bench.runningTask()
+            assertEquals("CANCELED", bench.cancel("exec-1")["result"].asText())
+            bench.idlePumps()
+            assertEquals(mapOf(running to TaskState.CANCELLING), bench.tasks())
+
+            // 복원은 기동 안에서 끝나고 첫 pump 는 셀 대역을 먼저 읽는다. 그 읽기에서 시계를 밀어 기체가 취소를 끝내게 한다.
+            bench.restartHost {
+                bench.starts.clear()
+                bench.cancels.clear()
+                bench.onCellFetch.set {
+                    repeat(30) { if (bench.tasks()[running] != TaskState.CANCELLED) bench.mimic.server.advance(Duration.ofSeconds(1)) }
+                }
+            }
+            val rebuilt = bench.get("/host/executions")["restore"]["rows"].single()["executionId"].asText()
+            bench.eventually("중단 정착") { bench.execution(rebuilt)?.get("physicalState")?.asText() == "ABORTED" }
+            val aborted = bench.execution(rebuilt)!!
+            assertEquals(listOf("T1.travel" to "ABORTED", "T1" to "PENDING"), aborted["units"].map { it["unitId"].asText() to it["state"].asText() }, aborted.toString())
+            assertEquals(mapOf(running to TaskState.CANCELLED), bench.tasks())
+            assertEquals(emptyList(), bench.starts.toList())
+            assertEquals(emptyList(), bench.cancels.toList())
+            val incidents = bench.get("/host/incidents")["incidents"].filter { it["jobOrderId"].asText() == "JO-1" }
+            assertEquals(emptyList(), incidents, bench.get("/host/incidents").toString())
+            bench.eventually("정착 기록") { events("JO-1").map { it[0] } == listOf("RESTORED", "SETTLED") }
+            val states = PostgresSupport.queryAll(
+                "SELECT physical_state FROM mission.job_response_log WHERE job_order_id = 'JO-1' AND instance_id = '${bench.host.instanceId}' ORDER BY log_id",
+            ) { it.getString(1) }
+            assertEquals("ABORTED", states.last(), states.toString())
+            assertFalse("OPERATOR_HOLD" in states, states.toString())
         }
     }
 
