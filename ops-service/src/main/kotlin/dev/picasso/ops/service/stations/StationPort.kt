@@ -50,6 +50,12 @@ interface StationPort {
  fun dispatch(id: UUID, payload: JsonNode, actor: Actor): StationReceipt
  fun receipt(id: UUID): StationReceipt
  /**
+  * True when work request [receipt] closed without executing: a pre-dispatch or host UNASSIGNED, or a REJECTED other than a forgotten job
+  * order, with no execution observed and no stored result. No robot can be running it. Read fresh, so an execution a [receipt] call just
+  * recorded counts. Ports that cannot tell keep false: a run they sent stays one that may have reached a robot.
+  */
+ fun unsent(receipt: UUID): Boolean = false
+ /**
   * Runs one tick's observations of [receipts]. A port may share host reads covering them across the [receipt] calls inside [block]; a write
   * it sends there is followed by a new read (HA design record §10). Calls outside [block] read the host themselves.
   */
@@ -119,6 +125,10 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
   return sent{requests.receiveInterface(actor,payload["interfaceId"].asText(),payload["interfaceVersion"].asInt(),body,id).receipt.receiptId}
  }
  override fun receipt(id:UUID)=mapped(id)
+ override fun unsent(receipt:UUID):Boolean {
+  val (row,latest)=requests.stationRead(receipt)
+  return row.state in setOf("UNASSIGNED","REJECTED") && row.lastExecution==null && latest==null && requests.rejection(row)?.forgottenJobOrder!=true
+ }
  private fun mapped(id:UUID):StationReceipt {
   val (receipt,latest)=requests.stationRead(id)
   // Use stored result evidence. A missing current host execution never means the work did not start.

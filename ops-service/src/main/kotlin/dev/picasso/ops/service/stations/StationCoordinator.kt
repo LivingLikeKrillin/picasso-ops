@@ -218,6 +218,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   val asked=p.path("decision").asText()
   val signals=if(actor.mode==Mode.OPERATOR && asked in SIGNAL_DECISIONS) runCatching{port.read()}.getOrNull() else null
   val released=if(actor.mode==Mode.OPERATOR && asked=="CONFIRM_CLEAR") runCatching{get(id).receiptId?.let(port::receipt)}.getOrNull() else null
+  // Read after the released read, which may record an execution. A work request closed unsent proves no robot got it; one not read proves nothing.
+  val unsent=actor.mode==Mode.OPERATOR && asked=="CONFIRM_CLEAR" && runCatching{get(id).receiptId?.let(port::unsent)}.getOrNull()==true
   // Nothing was sent for a source-unobserved run: resuming observation would only wait out the deadline and hide the pending confirmation.
   val unobserved=actor.mode==Mode.OPERATOR && asked=="RESUME_OBSERVATION" && runCatching{get(id).receiptId?.let(port::receipt)?.sourceUnobserved}.getOrNull()==true
   return tx.execute {
@@ -235,8 +237,9 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
     if(complete.value)reject("설비 완료 신호가 켜져 있습니다. 신호를 초기화한 뒤 관측을 재개하십시오",409)
     transition(current,"RUNNING",reason,dispatch=true,by=actor.header(),reviewOnly=true)}
    "CONFIRM_CLEAR" -> {if(current.state!="REVIEW_REQUIRED")reject("확인 필요 작업만 현장 확인 후 해제합니다",409)
-    // Release never stops the execution. Without the job-number pair a late completion cannot be told apart, so a dispatched run quarantines the station.
-    val station=station(current.stationId);val quarantine=current.dispatchedAt!=null && station.jobSignal==null
+    // Release never stops the execution. Without the job-number pair a late completion cannot be told apart, so a run that may have reached
+    // a robot quarantines the station: dispatched, and its work request not closed unsent (a pre-dispatch or host UNASSIGNED, or a REJECTED).
+    val station=station(current.stationId);val quarantine=current.dispatchedAt!=null && station.jobSignal==null && !unsent
     val context=json.createObjectNode().apply{set<JsonNode>("signals",snapshot(signals));put("receiptId",current.receiptId?.toString());put("physicalState",released?.physicalState);put("resultVersion",released?.resultVersion);put("quarantined",quarantine)}
     transition(current,"MANUALLY_CLEARED","현장 확인에 의한 자원 해제: $reason",release=true,by=actor.header(),context=context);cleared(current,reason)
     if(quarantine) {jdbc.sql("UPDATE ops.rf_station SET quarantined_by=:id,quarantined_at=:at WHERE station_id=:station").param("id",current.runId).param("at",java.sql.Timestamp.from(clock.instant())).param("station",station.stationId).update()

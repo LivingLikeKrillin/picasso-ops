@@ -884,6 +884,36 @@ class WorkRequestsTest {
   assertEquals(a.receiptId,c.stations().single().owner)
   assertTrue(c.events(a.receiptId).any{it["reason"]==dev.picasso.ops.service.stations.StationCoordinator.SOURCE_CONFIRMED && it["actor"]=="operator/kim"})
  }
+ @Test fun `스테이션 포트는 실행 관측과 저장 결과 없이 끝난 미배정과 거부만 보내지 않은 작업 요청으로 본다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-N$n")
+  val port=dev.picasso.ops.service.stations.OpsStationPort(service,interfaces,bench.host)
+  val judge=bench.judge;bench.judge={ids->HostCall.Ok(ids.map{JobOrderBench.missing(it,"inspect")})}
+  val early=service.receive("mes",order(1)).receipt;assertEquals("UNASSIGNED",early.state);assertNull(early.submission)
+  bench.judge=judge
+  fun answered(n:Int,answer:String)=run{bench.answer=HostWrite.Answered(200,answer);service.receive("mes",order(n)).receipt}
+  val unassigned=answered(2,unassignedBy(refusal("humanoid-01")));val rejected=answered(3,rejectedBy("요구 근거 등급 E2"))
+  val forgotten=answered(4,rejectedBy("이미 끝나 놓은 작업 지시라 다시 받지 않는다",""","forgottenJobOrder":true"""));val accepted=answered(5,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val observed=answered(6,unassignedBy(refusal("humanoid-01")));val stored=answered(7,unassignedBy(refusal("humanoid-01")))
+  jdbc.sql("UPDATE ops.work_request SET last_execution=CAST('{\"executionId\":\"exec-1\"}' AS JSONB) WHERE receipt_id=:id").param("id",observed.receiptId).update()
+  jdbc.sql("""INSERT INTO ops.work_result(receipt_id,version,instance_id,execution_id,response_id,response_version,snapshot,result_hash)
+   VALUES(:id,1,'mw-1','exec-1','r-1',1,CAST('{"jobResponse":{"physicalState":"FAILED"}}' AS JSONB),'hash')""").param("id",stored.receiptId).update()
+  bench.answer=HostWrite.NoResponse("timeout");bench.executions=HostCall.Silent("offline")
+  val doubt=service.receive("mes",order(8)).receipt;assertEquals("IN_DOUBT",doubt.state)
+  val judged=listOf(early,unassigned,rejected,forgotten,accepted,observed,stored,doubt).map{port.unsent(it.receiptId)}
+  assertEquals(listOf(true,true,true,false,false,false,false,false),judged)
+ }
+ @Test fun `자원 관리 작업은 호스트가 미배정으로 답했으면 현장 확인 해제가 스테이션을 격리하지 않고 제출 결과가 불명이면 격리한다`() {
+  resource();ready(true);val kim=Actor(Mode.OPERATOR,"kim");val c=coordinator()
+  fun clear(id:UUID)=c.decide(id,kim,json.readTree("""{"expectedRevision":${c.get(id).revision},"decision":"CONFIRM_CLEAR","reason":"현장 확인"}"""))
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val a=manual().receipt;c.tick()
+  assertEquals(dev.picasso.ops.service.stations.StationCoordinator.SOURCE_UNOBSERVED,c.get(a.receiptId).reason);assertNotNull(c.get(a.receiptId).dispatchedAt)
+  assertEquals("MANUALLY_CLEARED",clear(a.receiptId).state);assertNull(c.stations().single().quarantinedBy);assertNull(c.stations().single().owner)
+  bench.answer=HostWrite.NoResponse("timeout");bench.executions=HostCall.Silent("offline")
+  val b=manual().receipt;c.tick()
+  assertEquals("IN_DOUBT",service.get(b.receiptId).state);assertEquals("REVIEW_REQUIRED",c.get(b.receiptId).state)
+  assertEquals("MANUALLY_CLEARED",clear(b.receiptId).state);assertEquals(b.receiptId,c.stations().single().quarantinedBy)
+ }
  @Test fun `호스트가 거부한 스테이션 작업은 실제 거부 사유와 자원 해제를 함께 남긴다`() {
   resource();ready(true)
   bench.answer=HostWrite.Answered(200,rejectedBy("요구 근거 등급 E2 은 InspectAsset 의 최고 등급 E0 를 넘는다"))

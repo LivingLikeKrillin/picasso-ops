@@ -218,12 +218,12 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | `WAITING_ROBOT` | 호스트에 보내기 전 배정 가능 기체가 없었음 | 설비가 여전히 준비 상태이고 이 상태에 들어온 지 5초가 지났으며 재평가가 3번 미만이면 `RETRYING` 으로 선점한 뒤 미배정 재평가. 작업 요청이 더는 전송 전 미배정이 아니면 그 상태에 따라 전이. 단계 기한이 지나면 `REVIEW_REQUIRED`. 제한 재평가(5초 간격·3회)는 전송 전 미배정만 돌고 출발 미관측은 돌지 않습니다. 스테이션의 전송 전 미배정 제한 재평가가, 처음엔 후보가 전부 빠졌다가(도는 실행·스킬 부족) 나중에 배정 가능해진 기체를 다음 재평가에서 고르고, 재평가 상한(3회)·간격(5초)은 그대로임을 시험 `WorkRequestsTest` «전송 전 미배정의 제한 재평가는 나중에 배정 가능해진 기체를 고르고 재평가 횟수와 간격은 그대로다» 가 확인합니다. |
 | `RETRYING` | 미배정 재평가를 호스트에 보내는 중. 출발 자리 확인 뒤 같은 작업 요청을 다시 제출하는 중인 경우도 이 상태 | 결과에 따라 `RUNNING`·`WAITING_ROBOT`·`REJECTED`·`REVIEW_REQUIRED`, 결과를 모르면 `REVIEW_REQUIRED`. 출발 자리 확인 재제출이 거부되면 같은 사유(«출발 미관측; 작업 요청 상세에서 출발 자리 확인을 기록하기 전에는 다시 제출하지 않고 점유를 유지합니다»)의 `REVIEW_REQUIRED` 로 돌아갑니다. `tick` 이 이 상태를 보면, 이 인스턴스가 남긴 것이면 «재평가 뒤 상태 정리 실패; 실행 관측과 현장 확인 필요» 로 `REVIEW_REQUIRED`. 다른 인스턴스(`station_run.instance_id`)가 남긴 것이면 그 인스턴스의 심장박동이 만료됐거나 멈춤을 적었을 때만 «재평가 중 프로세스 중단; 실행 관측과 현장 확인 필요» 로 `REVIEW_REQUIRED`, 살아 있으면 그대로 둔다. 이벤트 근거(`context`)의 `claimedBy` 에 남긴 인스턴스가 적힌다. |
 | `REWORKING` | 운영자 재작업을 실행 호스트에 전달하는 중. 다른 판단을 막음 | 아래 재작업 관문 절. 이 인스턴스가 남긴 것이면 «재작업 전달 뒤 상태 정리 실패; 반영 여부는 실행 관측과 현장 확인 필요», 다른 인스턴스가 남긴 것이면 만료나 멈춤 뒤에만 «재작업 전달 중 프로세스 중단; 반영 여부는 실행 관측과 현장 확인 필요», 살아 있으면 그대로 둠. 이벤트 근거(`context`)의 `claimedBy` 에 남긴 인스턴스가 적힘 |
-| `REVIEW_REQUIRED` | 자동으로 판단하지 않고 점유를 유지한 채 현장 확인을 기다림 | 운영자 `RESUME_OBSERVATION` 이면 `RUNNING`, `CONFIRM_CLEAR` 면 `MANUALLY_CLEARED`, 재작업 관문을 지나면 `REWORKING`. 작업 번호 쌍이 없고 보낸 적(`dispatched_at`)이 있는 작업은 `CONFIRM_CLEAR` 시 스테이션 격리도 걸림. 묶인 작업 요청이 출발 미관측이면 운영자의 출발 자리 확인으로 `RETRYING`(사유 «출발 자리 확인 기록; 같은 작업 요청을 다시 제출합니다», 행위자는 운영자)이 되고 결과에 따라 전이합니다. 이때 `RESUME_OBSERVATION` 은 409 입니다. |
+| `REVIEW_REQUIRED` | 자동으로 판단하지 않고 점유를 유지한 채 현장 확인을 기다림 | 운영자 `RESUME_OBSERVATION` 이면 `RUNNING`, `CONFIRM_CLEAR` 면 `MANUALLY_CLEARED`, 재작업 관문을 지나면 `REWORKING`. 작업 번호 쌍이 없고 제출 진입(`dispatched_at`) 후 미전송으로 확인되지 않은 작업은 `CONFIRM_CLEAR` 시 스테이션 격리도 걸림. 묶인 작업 요청이 출발 미관측이면 운영자의 출발 자리 확인으로 `RETRYING`(사유 «출발 자리 확인 기록; 같은 작업 요청을 다시 제출합니다», 행위자는 운영자)이 되고 결과에 따라 전이합니다. 이때 `RESUME_OBSERVATION` 은 409 입니다. |
 | `COMPLETED` | 로봇 물리 완료와 이번 작업의 설비 완료 신호를 확인하고 점유를 풂 | 종료 |
 | `TIMED_OUT` | 설비 준비 단계 기한 초과, 로봇에 보내기 전에 점유를 풂 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE` 면 `REJECTED` |
 | `CANCELLED` | 운영자가 대기열에서 취소 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE` 면 `REJECTED` |
 | `REJECTED` | 작업 요청 제출이 거부되어 점유를 풂(묶인 작업 요청이 `REJECTED` 면 사유 «계약 제출 거부: <작업 요청 detail>; 자원 해제», detail 이 없거나 비면 «계약 제출 거부; 자원 해제») | 종료 |
-| `MANUALLY_CLEARED` | 운영자가 현장 확인 뒤 점유를 풂. 물리 완료 판정이 아님 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE`·`UNASSIGNED` 면 `REJECTED`(실행하지 않음), `DISPATCHING` 이면 `IN_DOUBT`(실행 관측으로 확인), `IN_DOUBT`·`ACCEPTED`·`REJECTED` 는 그대로. 작업 번호 쌍이 없는 스테이션에서 `dispatched_at` 이 있는 스테이션 작업을 `CONFIRM_CLEAR` 로 해제하면 같은 트랜잭션에서 스테이션을 격리함(이력에 «자원 해제에 따른 스테이션 격리» 기록) |
+| `MANUALLY_CLEARED` | 운영자가 현장 확인 뒤 점유를 풂. 물리 완료 판정이 아님 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE`·`UNASSIGNED` 면 `REJECTED`(실행하지 않음), `DISPATCHING` 이면 `IN_DOUBT`(실행 관측으로 확인), `IN_DOUBT`·`ACCEPTED`·`REJECTED` 는 그대로. 작업 번호 쌍이 없는 스테이션에서 `dispatched_at` 이 있는 스테이션 작업을 `CONFIRM_CLEAR` 로 해제할 때 작업 요청이 미전송으로 확인되지 않으면 같은 트랜잭션에서 스테이션을 격리함(이력에 «자원 해제에 따른 스테이션 격리» 기록) |
 
 단계 기한은 그 상태에 들어온 시각(`phase_at`)부터 스테이션의 `timeout_seconds` 로 잽니다. 실행 중 기한 초과는 점유를 유지하고 자동으로 다시 실행하지 않습니다. 대기 사유만 바뀌는 경우(작업 번호 쓰기 실패, 격리, 작업 허가 대기)는 `phase_at` 을 바꾸지 않으며, 격리 중 설비 준비 기한은 멈추고 `CONFIRM_STATION_IDLE` 판단 시각부터 다시 셉니다. 작업 허가 대기 중에도 설비 준비 기한은 멈추고, 허가가 돌아와 «작업 허가 복귀; 설비 준비 기한을 다시 셉니다» 로 다시 들어갈 때 `phase_at` 을 그 시각으로 다시 둡니다(기한을 그때부터 다시 셈). 미배정 재평가 요청 ID 는 스테이션 작업 id 와 시도 번호로 정해지는 UUID 이고, 재평가는 최대 3번입니다.
 
@@ -233,7 +233,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 - `CANCEL_QUEUED`: `QUEUED` 만 `CANCELLED` 로 바꿉니다.
 - `RESUME_OBSERVATION`: 작업 요청이 묶인 `REVIEW_REQUIRED` 만 대상으로 합니다. 작업 요청이 출발 미관측으로 묶인 작업에는 409 를 반환합니다. 셀 신호를 스테이션 잠금 전에 읽고, 읽지 못하면 503, 설비 완료 신호가 켜져 있으면 409(신호를 초기화한 뒤 다시 하라)를 반환합니다. 통과하면 `RUNNING` 으로 돌리고 `dispatched_at` 을 지금으로 다시 정합니다. 로봇에 아무것도 다시 보내지 않습니다.
-- `CONFIRM_CLEAR`: `REVIEW_REQUIRED` 만 `MANUALLY_CLEARED` 로 바꿉니다. 점유를 풀고 같은 트랜잭션에서 묶인 작업 요청을 위 표처럼 닫습니다. 해제는 실행 호스트의 실행을 멈추지 않습니다. 판단 전(잠금 밖)에 셀 신호와 해제할 작업의 작업 요청을 읽어 이력 근거에 `signals`, `receiptId`, `physicalState`, `resultVersion`, `quarantined` 를 남기며, 셀 신호를 읽지 못해도 해제는 막지 않습니다(근거의 `signals` 는 null). 작업 번호 쌍이 없는 스테이션에서 `dispatched_at` 이 있는 스테이션 작업을 해제하면 같은 트랜잭션에서 스테이션을 격리하고, 해제한 작업의 이력에 «자원 해제에 따른 스테이션 격리» 한 행을 더 남깁니다(정상 완료, 대기 취소, 전송 전 시간 초과, 제출 거부는 격리하지 않음).
+- `CONFIRM_CLEAR`: `REVIEW_REQUIRED` 만 `MANUALLY_CLEARED` 로 바꿉니다. 점유를 풀고 같은 트랜잭션에서 묶인 작업 요청을 위 표처럼 닫습니다. 해제는 실행 호스트의 실행을 멈추지 않습니다. 판단 전(잠금 밖)에 셀 신호와 해제할 작업의 작업 요청을 읽어 이력 근거에 `signals`, `receiptId`, `physicalState`, `resultVersion`, `quarantined` 를 남기며, 셀 신호를 읽지 못해도 해제는 막지 않습니다(근거의 `signals` 는 null). 작업 번호 쌍이 없는 스테이션에서 `dispatched_at` 이 있는 스테이션 작업을 해제할 때, 작업 요청을 다시 확인하여 미전송으로 확인되지 않으면 같은 트랜잭션에서 스테이션을 격리하고, 해제한 작업의 이력에 «자원 해제에 따른 스테이션 격리» 한 행을 더 남깁니다(정상 완료, 대기 취소, 전송 전 시간 초과, 가용 기체 대기 중 시간 초과, 실행 호스트의 미배정 응답, 제출 거부는 격리하지 않음). `dispatched_at` 은 작업이 로봇에 도달한 시점이 아니라 제출에 진입한 시점을 기록합니다.
 - `CONFIRM_STATION_IDLE`: 격리된 스테이션을 점유해 `WAITING_READY` 인 스테이션 작업에만 씁니다(아니면 409 «격리된 스테이션을 점유해 설비 준비를 기다리는 작업만 격리를 해제합니다»). 셀 신호를 스테이션 잠금 전에 읽고, 읽지 못하면 503 «현장 신호를 확인할 수 없어 격리를 해제하지 않습니다», 완료 신호가 켜져 있으면 409 «설비 완료 신호가 켜져 있습니다. 신호가 꺼진 것을 확인한 뒤 격리를 해제하십시오». 통과하면 격리 칸을 비우고 상태는 `WAITING_READY` 그대로 새 단계로 다시 들어가며(단계 기한이 그 판단 시각부터 다시 시작), 이력에 «현장 확인 후 격리 해제: {사유}» 와 근거 `releasedRunId`·`quarantinedAt`·`signals` 를 남깁니다. 로봇에 아무것도 보내지 않습니다.
 - 새 API `POST /api/stations/runs/{id}/source-confirmations`(운영자 모드만, 본문은 작업 요청의 출발 자리 확인과 같음: `requestId`·`source`·`identity`·`reason`·`expectedUpdatedAt`). 스테이션 작업이 스테이션 점유자이고 `REVIEW_REQUIRED` 이며 작업 요청이 출발 미관측일 때만 받습니다. 셀 신호를 못 읽으면 503, 준비 신호가 false 이거나 완료 신호가 true 면 409(상태 그대로)입니다. 통과하면 `RETRYING` 으로 잡고 같은 작업 요청을 다시 제출합니다. 응답은 200 이고 본문은 다시 제출한 뒤의 작업 요청 상태입니다. 이 판단은 `decision` API 가 아닙니다.
 
@@ -437,16 +437,16 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-17에 `feat/site-persistent-fault` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-17 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 264개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-17에 `fix/station-unsent-quarantine` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-17 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 264개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 457(그대로) | 로컬 시험 결과 XML 457건, 실패 0 |
-| `mission-host` | 176(174 에서 2 늘어남: `ExecutionControlTest` 2) | 로컬 시험 결과 XML 176건, 실패 0 |
-| `site` | 41(39 에서 2 늘어남: `SiteFaultsTest` 2) | 로컬 시험 결과 XML 41건, 실패 0 |
+| `ops-service` | 462(457 에서 5 늘어남: `StationCoordinatorTest` 3, `WorkRequestsTest` 2) | 로컬 시험 결과 XML 462건, 실패 0 |
+| `mission-host` | 176(그대로) | 로컬 시험 결과 XML 176건, 실패 0 |
+| `site` | 41(그대로) | 로컬 시험 결과 XML 41건, 실패 0 |
 | `e2e` | 75(그대로, 시험 클래스 19개) | 로컬 시험 결과 XML 75건, 실패 0 |
 | `ui`(vitest) | 264(그대로, 시험 파일 28개) | 2026-10-17 `feat/site-persistent-fault` 브랜치 로컬 실행, 실패 0 |
-| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `feat/site-persistent-fault` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
+| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `fix/station-unsent-quarantine` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
 
