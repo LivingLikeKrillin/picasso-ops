@@ -328,7 +328,7 @@ DB 잠금(스테이션 행 `FOR UPDATE`, 임무별 advisory 잠금 `pg_advisory_
 
 mimic 제어 채널은 열지 않으므로 시계 밀기, 시계 모드, 시드 노출 기능이 제공되지 않습니다.
 
-`PAYLOAD_LOST`, `LOCALIZATION_LOST`, 제어권 상실과 같은 지속 결함은 주입하지 않습니다. picasso 내에 해당 결함을 제거하는 호출이 없어 이를 주입하면 현장을 재기동할 때까지 기체 동작이 차단됩니다.
+현장 장애 주입 엔드포인트 `POST /faults`는 기존의 `SKILL_EXECUTION_FAILED`, `CONNECTION`과 더불어 새 종류인 `CONTROL_AUTHORITY_LOST` 및 `CONTROL_AUTHORITY_REGAINED`를 지원합니다. `CONTROL_AUTHORITY_LOST`는 기체 단위 결함을 세워 다음 로봇 단위 시작 전에 실행을 막으며, 특정 실행에서 결함 감수를 수행해도 기체의 결함은 유지되어 다음 실행이 다시 막히므로, picasso 내에 결함 제거 호출이 없는 문제를 해결하기 위해 엔진 결함 목록을 직접 정리하는 `CONTROL_AUTHORITY_REGAINED`와 쌍으로 제공되어 현장 재기동 없이 기체를 복구할 수 있습니다. 이 두 종류는 `state`를 받지 않으며, `PAYLOAD_LOST`나 `LOCALIZATION_LOST` 같은 다른 지속 결함 및 전송 장애는 여전히 400 `UNSUPPORTED_FAULT`로 처리됩니다. 현재 화면의 장애 주입 양식에서는 이 두 종류를 고를 수 없으므로, Playwright 생애주기 시험은 엔지니어 모드의 운영 서비스 API인 `POST /api/faults`를 호출하여 직접 주입합니다.
 
 어댑터 적합성은 기록 기능이 개방되지 않아 빌드와 인스턴스 모두 `UNTESTED` 상태로 유지됩니다.
 
@@ -437,16 +437,16 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-17에 `feat/ops-fault-release-ui` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-17 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 264개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-17에 `feat/site-persistent-fault` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-17 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 264개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 457(453 에서 4 늘어남: `ExecutionControlsTest` 3, `HostClientTest` 1) | 로컬 시험 결과 XML 457건, 실패 0 |
-| `mission-host` | 174(그대로) | 로컬 시험 결과 XML 174건, 실패 0 |
-| `site` | 39 | 로컬 시험 결과 XML 39건, 실패 0 |
+| `ops-service` | 457(그대로) | 로컬 시험 결과 XML 457건, 실패 0 |
+| `mission-host` | 176(174 에서 2 늘어남: `ExecutionControlTest` 2) | 로컬 시험 결과 XML 176건, 실패 0 |
+| `site` | 41(39 에서 2 늘어남: `SiteFaultsTest` 2) | 로컬 시험 결과 XML 41건, 실패 0 |
 | `e2e` | 75(그대로, 시험 클래스 19개) | 로컬 시험 결과 XML 75건, 실패 0 |
-| `ui`(vitest) | 264(258 에서 6 늘어남: `ExecutionControls.test.tsx` 5, `IncidentSection.test.tsx` 1, 시험 파일 28개) | 2026-10-17 `feat/ops-fault-release-ui` 브랜치 로컬 실행, 실패 0 |
-| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `feat/ops-fault-release-ui` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
+| `ui`(vitest) | 264(그대로, 시험 파일 28개) | 2026-10-17 `feat/site-persistent-fault` 브랜치 로컬 실행, 실패 0 |
+| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `feat/site-persistent-fault` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
 
@@ -600,13 +600,14 @@ npx playwright test --config=playwright.station.config.ts
 8. `rack_present` 신호를 쓰고 슬롯 하나짜리 `PrepareSequencedRack` 에 스킬 실패를 넣어 `GRASP_FAILED` 인시던트를 봅니다. 스킬 실패로 humanoid-01 이 부품을 든 채 실행이 끝나 잔여 파지 표시가 서며, 운영자 모드에서 «잔여 파지 확인» 표에 그 행이 보이고, 다음 작업 지시 폼의 기체별 배정 가능에서 humanoid-01 이 «불가»(이유 «잔여 파지 확인 필요: <작업 지시 id> RACK-204.S01»)임을 확인합니다. «기체 빈손 확인» 폼에 근거를 적고 확인 체크를 해 보내면 표시가 해소되고 humanoid-01 이 «가능» 으로 돌아옵니다.
 9. 운영자 보류 대기의 실제 20초 기한 동안 엔지니어 판단 버튼이 없음을 확인하고, 운영자 재작업, 신호 켜기, 실행 종료를 거쳐 «사람이 판단함» 을 봅니다. 보류 버전이 DB 에 남으므로 이 단계를 뒤쪽에 둡니다.
 10. 송신 기록에서 그 작업 지시의 처분 «송신», «재기동 중복» 0행, «그 가운데 재기동 중복 0건» 을 봅니다.
-11. 새 임무 `LineAssetCheck` 를 화면에서 등록, 초안 저장, 검증, 모의 실행, 활성화하고 호출 계약 `line-asset-check` 에 임무 버전 1 을 배포·공개한 뒤 작업 요청을 내어 `PHYSICALLY_DONE` 까지 봅니다.
-12. 검증 도구의 «제조 시나리오 검증»에서 두 작업 요청을 비교해 «계약 또는 실행 배포가 다릅니다» 를 봅니다.
-13. 결과 불명: host-link 가 실행 호스트의 수락 응답 직후 연결을 끊으면 외부 주문 `MES-RESTART-1` 은 202 에 `IN_DOUBT` 이고 결과 수집은 `UNAVAILABLE` 이 됩니다. 운영자가 현장 확인(`IN_PROGRESS`)을 기록하고, 호스트에서 실행이 `PHYSICALLY_DONE` 이 되어도 결과 v1 은 아직 404 입니다. 운영 서비스를 재기동해도 결과 커서 순번은 그대로이고 재전송은 200 에 같은 작업 요청이며 호스트 제출 수는 1 만 늘어 있습니다. 실행 호스트를 재기동해도 결과 피드는 같습니다. 연결을 되살리면 결과 v1 이 200 이 되고 작업 요청은 `ACCEPTED` 로 올라가며 호스트 제출 수는 여전히 1 만 늘어 있습니다.
-14. 화면이 존재하지 않는 API(404)를 부르지 않았고 주요 API 가 200 을 받았는지 확인합니다.
-15. 마지막으로 registry 를 멈추고 «모름» 과 직전 값 목록을 봅니다.
+11. `PrepareSequencedRack`의 활성 버전 2(운영자 보류 대기)에서 `rack_present` 신호를 끄고 슬롯 S03에 대한 작업 지시를 제출합니다. 랙 도착 대기 단위가 실행되는 동안(로봇 태스크 없음) `POST /api/faults`로 `CONTROL_AUTHORITY_LOST`를 주입하여 `raised` true와 빈 `terminated`를 확인합니다. 신호를 켜면 실행 행에 «결함 막음 1건»과 `OPERATOR_HOLD`가 표시되고 pick_place 단위는 `PENDING` 상태가 됩니다. 운영자 모드의 «결함 감수» 양식에 `CONTROL_AUTHORITY_LOST` 결함 카드가 표시되며, 사유를 입력하고 현장 확인을 거쳐 결함 감수를 완료하면 행에 감수 기록이 표시되고 «결함 막음»이 사라집니다. 이후 실행이 `PHYSICALLY_DONE`에 도달하고 실행 호스트의 `jobResponse.blockedBy`가 비어 있으며 `releases`에 항목이 1건 기록된 것을 확인한 뒤, 마지막으로 `CONTROL_AUTHORITY_REGAINED`를 호출하여 결함을 지우고 `cleared` true를 검증합니다.
+12. 새 임무 `LineAssetCheck` 를 화면에서 등록, 초안 저장, 검증, 모의 실행, 활성화하고 호출 계약 `line-asset-check` 에 임무 버전 1 을 배포·공개한 뒤 작업 요청을 내어 `PHYSICALLY_DONE` 까지 봅니다.
+13. 검증 도구의 «제조 시나리오 검증»에서 두 작업 요청을 비교해 «계약 또는 실행 배포가 다릅니다» 를 봅니다.
+14. 결과 불명: host-link 가 실행 호스트의 수락 응답 직후 연결을 끊으면 외부 주문 `MES-RESTART-1` 은 202 에 `IN_DOUBT` 이고 결과 수집은 `UNAVAILABLE` 이 됩니다. 운영자가 현장 확인(`IN_PROGRESS`)을 기록하고, 호스트에서 실행이 `PHYSICALLY_DONE` 이 되어도 결과 v1 은 아직 404 입니다. 운영 서비스를 재기동해도 결과 커서 순번은 그대로이고 재전송은 200 에 같은 작업 요청이며 호스트 제출 수는 1 만 늘어 있습니다. 실행 호스트를 재기동해도 결과 피드는 같습니다. 연결을 되살리면 결과 v1 이 200 이 되고 작업 요청은 `ACCEPTED` 로 올라가며 호스트 제출 수는 여전히 1 만 늘어 있습니다.
+15. 화면이 존재하지 않는 API(404)를 부르지 않았고 주요 API 가 200 을 받았는지 확인합니다.
+16. 마지막으로 registry 를 멈추고 «모름» 과 직전 값 목록을 봅니다.
 
-생애주기 시험은 13단계에서 운영 서비스와 실행 호스트를 재기동합니다. 실행 중인 실행의 복원(같은 태스크로 다시 붙기, 재기동 중복 처분)은 통합 시험 `RestartRecoveryTest` 가 보며, 생애주기 시험의 송신 기록 단계 주석도 그렇게 적고 있습니다.
+생애주기 시험은 14단계에서 운영 서비스와 실행 호스트를 재기동합니다. 실행 중인 실행의 복원(같은 태스크로 다시 붙기, 재기동 중복 처분)은 통합 시험 `RestartRecoveryTest` 가 보며, 생애주기 시험의 송신 기록 단계 주석도 그렇게 적고 있습니다.
 
 #### 공유 스테이션 시험
 

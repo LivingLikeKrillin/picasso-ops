@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.HttpExchange
 import dev.picasso.contracts.v1.ConnectionState
 import dev.picasso.mimic.cli.MimicCli
+import dev.picasso.mimic.engine.AuthorityOutcome
 import dev.picasso.mimic.engine.ForceOutcome
 import dev.picasso.mimic.engine.TaskState
 
@@ -20,15 +21,24 @@ sealed interface FaultInjection {
  * mimic 제어 채널을 열지 않고 같은 프로세스의 엔진 객체를 `MimicServer.exclusive` 아래에서 직접 부른다. 시계 밀기·시계 모드·
  * 시드는 어느 경로로도 내지 않는다.
  *
- * 종류는 둘이다.
+ * 종류는 넷이다.
  *
  * - 스킬 실패([SKILL_FAULTS]): 그 기체의 진행 중(RUNNING·PAUSED·CANCELLING) 태스크 가운데 그 스킬의 것을 현장이 스스로
  *   찾아 `tasks.forceFault` 로 강제한다. 호출자는 태스크 id 를 모른다. 없으면 409 [NO_RUNNING_TASK] 다.
  * - 연결 상태([CONNECTION]): `events.setConnection` 으로 [CONNECTION_STATES] 가운데 하나로 바꾼다. `HIBERNATING` 은 받지
  *   않는다.
+ * - 제어권 상실([CONTROL_AUTHORITY_LOST]): `tasks.forceControlAuthorityLoss` 로 기체 수준 결함 `CONTROL_AUTHORITY_LOST` 를
+ *   세운다. 지울 때까지 유지되고 새 태스크를 못 받는 결함이라 실행 호스트가 다음 로봇 단위의 시작 전에 실행을 막는다. 진행 중
+ *   태스크는 엔진이 실패로 보내고, 진행 중 태스크가 없어도 결함은 선다. 프로파일이 배타 제어 모델이 아니면
+ *   (`exclusive_control_required=false`) 엔진이 거부하고 409 [FAULT_REFUSED] 다.
+ * - 제어권 회복([CONTROL_AUTHORITY_REGAINED]): 그 결함을 엔진의 결함 목록에서 지우고 해소 이벤트를 낸다. picasso 에 지우는
+ *   호출이 없어 현장이 엔진의 결함 목록과 이벤트 스트림을 직접 부른다. 서 있지 않았으면 지운 것 없이 받아들인다.
  *
- * 지울 때까지 유지되는 결함(PAYLOAD_LOST, LOCALIZATION_LOST, 제어권 상실)과 전송 장애는 종류 목록에 없으므로 400
- * [UNSUPPORTED_FAULT] 다. picasso 에 지우는 호출이 없어 그런 결함이 서면 현장을 재기동해야 그 기체가 풀린다.
+ * 둘을 짝으로 두는 까닭은 결함 감수가 그 실행만 풀기 때문이다. 감수한 결함은 그 실행을 다시 막지 않지만 결함은 기체에 그대로
+ * 서 있어 같은 기체의 다음 실행이 다시 막힌다. 지우는 종류가 없으면 현장을 재기동해야 그 기체가 풀린다.
+ *
+ * 그 밖의 지울 때까지 유지되는 결함(PAYLOAD_LOST, LOCALIZATION_LOST)과 전송 장애는 종류 목록에 없으므로 400
+ * [UNSUPPORTED_FAULT] 다.
  *
  * 엔진을 부른 뒤 밀거나 정착시키지 않는다. 열린 스트림에는 다음 시계 진행의 정착(런처는 1초 주기, 시험은 시계 밀기)이 민다.
  */
@@ -37,14 +47,15 @@ class SiteFaults(private val mimic: MimicCli.Started) {
     private val json = ObjectMapper()
 
     /**
-     * 장애 하나를 넣는다. 판정 순서는 종류(400) → 기체(404) → 진행 중 태스크(409)다. 엔진 판정과 호출은 한 잠금 아래에서 한다.
+     * 장애 하나를 넣는다. 판정 순서는 종류(400) → 기체(404) → 진행 중 태스크나 엔진 거부(409)다. 엔진 판정과 호출은 한 잠금
+     * 아래에서 한다.
      *
-     * @param state 연결 상태 종류일 때의 목표 상태. 스킬 실패에는 쓰지 않는다.
+     * @param state 연결 상태 종류일 때의 목표 상태. 다른 종류에는 쓰지 않는다.
      */
     fun inject(robotId: String, kind: String, state: String?): FaultInjection {
         val skill = SKILL_FAULTS[kind]
         val connection = state?.let { CONNECTION_STATES[it] }
-        if (skill == null && kind != CONNECTION) {
+        if (skill == null && kind != CONNECTION && kind !in AUTHORITY_KINDS) {
             return FaultInjection.Refused(400, UNSUPPORTED_FAULT, "받지 않는 장애 종류다: $kind (받는 것: ${KINDS.joinToString(", ")})")
         }
         if (kind == CONNECTION && connection == null) {
@@ -58,6 +69,18 @@ class SiteFaults(private val mimic: MimicCli.Started) {
             if (connection != null) {
                 val changed = instance.events.setConnection(connection)
                 FaultInjection.Accepted(linkedMapOf("robotId" to robotId, "kind" to kind, "state" to state, "changed" to changed))
+            } else if (kind == CONTROL_AUTHORITY_LOST) {
+                when (val outcome = instance.tasks.forceControlAuthorityLoss()) {
+                    is AuthorityOutcome.Lost -> FaultInjection.Accepted(
+                        linkedMapOf("robotId" to robotId, "kind" to kind, "raised" to outcome.raised, "terminated" to outcome.terminated),
+                    )
+                    is AuthorityOutcome.Rejected -> FaultInjection.Refused(409, FAULT_REFUSED, outcome.detail)
+                }
+            } else if (kind == CONTROL_AUTHORITY_REGAINED) {
+                // 엔진이 세운 결함은 참조가 없는 기체 수준 결함이다. 실제로 지운 것만 해소 이벤트로 낸다(없던 것을 알리면 유령 해소다).
+                val cleared = instance.faults.clear(CONTROL_AUTHORITY_LOST)
+                cleared.forEach { instance.events.onFault(it, cleared = true) }
+                FaultInjection.Accepted(linkedMapOf("robotId" to robotId, "kind" to kind, "cleared" to cleared.isNotEmpty()))
             } else {
                 val task = instance.tasks.all.lastOrNull { it.skillType == skill && it.machine.state in RUNNING_STATES }
                     ?: return@exclusive FaultInjection.Refused(
@@ -145,6 +168,15 @@ class SiteFaults(private val mimic: MimicCli.Started) {
         /** 연결 상태 종류. 목표 상태를 `state` 에 싣는다. */
         const val CONNECTION = "CONNECTION"
 
+        /** 제어권 상실 종류. 이름은 엔진이 세우는 결함의 `error_type` 이다. */
+        const val CONTROL_AUTHORITY_LOST = "CONTROL_AUTHORITY_LOST"
+
+        /** 제어권 회복 종류. [CONTROL_AUTHORITY_LOST] 결함을 지운다. */
+        const val CONTROL_AUTHORITY_REGAINED = "CONTROL_AUTHORITY_REGAINED"
+
+        /** 제어권 종류 둘. `state` 를 싣지 않는다. */
+        val AUTHORITY_KINDS: List<String> = listOf(CONTROL_AUTHORITY_LOST, CONTROL_AUTHORITY_REGAINED)
+
         /**
          * 스킬 실패 종류와 그 스킬. 종류 이름은 picasso 프로파일의 `error_type` 이다. 스스로 재시도 가능하고 새 태스크까지만
          * 유지되는 것만 둔다(T2).
@@ -159,7 +191,7 @@ class SiteFaults(private val mimic: MimicCli.Started) {
         )
 
         /** 받는 종류 전부. 오류 설명에 쓴다. */
-        val KINDS: List<String> get() = SKILL_FAULTS.keys.toList() + CONNECTION
+        val KINDS: List<String> get() = SKILL_FAULTS.keys.toList() + CONNECTION + AUTHORITY_KINDS
 
         /** 진행 중 태스크 상태. mimic 이 결함을 받는 상태(`TaskHost.FAULTABLE`, 비공개)와 같은 셋이다. */
         val RUNNING_STATES: Set<TaskState> = setOf(TaskState.RUNNING, TaskState.PAUSED, TaskState.CANCELLING)

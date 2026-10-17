@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url'
  * 실행 → 활성화(사유)하면 버전 이력에 «버전 1 (활성)» 이 보인다. 운영 영역의 셀 대역 신호 표에서 rack_present 를 켜면 신호 조작
  * 결과와 신호 값이 보인다.
  * S4b 의 화면 쪽(S4b 스펙 T11)은 운영자 보류 단계 뒤에 송신 기록 구역이 그 작업 지시의 송신 행을 보이는 것 하나다.
+ * 결함 감수의 화면 쪽은 송신 기록 단계 뒤다. 제어권 상실로 막힌 실행을 운영자가 결함 카드를 보고 감수하고, 끝나면 제어권 회복으로 지운다.
  * S3c 의 화면 쪽(S3c 스펙 §3)은 S2 단계 뒤다. 엔지니어 모드로 stallWindow 를 바꾸면 버전 3 이력 행이 보이고 «실행 호스트 반영»
  * 이 버전 3 이 된다.
  * registry 를 멈추는 것은 맨 끝이다. 그 뒤로는 조작이 registry 에 닿지 않는다.
@@ -526,6 +527,55 @@ test('화면에서 기체 생애주기와 어댑터 등록을 한 번 돌고 reg
   await expect(sentRows.filter({ hasText: 'PHYSICALLY_DONE' }).getByRole('cell').nth(9)).toHaveText('송신')
   await expect(sentRows.filter({ hasText: '재기동 중복' })).toHaveCount(0)
   await expect(responseLog).toContainText('그 가운데 재기동 중복 0건')
+
+  // 결함 감수. 활성 버전 2(운영자 보류 대기)로 슬롯 S03 을 내고, 랙 도착 대기가 도는 동안(로봇 태스크 없음) 제어권 상실을 넣는다.
+  // 화면의 장애 주입 양식에는 이 종류가 없어 운영 서비스 API 로 넣는다. 대기가 끝나면 pick_place 의 시작 전 관문이 실행을 막는다.
+  // 운영자가 결함 카드를 보고 사유와 현장 확인을 넣어 감수하면 pick_place 가 나간다. 결함은 기체에 그대로 서 있어 같은 기체의 다음
+  // 실행이 다시 막히므로 끝나면 제어권 회복으로 지운다. 대기 기한 20초 안에 신호를 켠다.
+  const engineerApi = { 'X-Ops-Mode': 'engineer', 'X-Ops-User': 'local' }
+  await signals.getByRole('button', { name: 'rack_present 끄기' }).click()
+  await expect(signals.getByRole('row', { name: /^rack_present BOOLEAN false / })).toBeVisible()
+  await page.getByRole('button', { name: '새 작업 작성', exact: true }).click()
+  await order.getByLabel('임무').selectOption('PrepareSequencedRack')
+  // 새 작업 작성은 앞 작업 지시의 슬롯 선택(S02)을 남긴다. 단위를 pick_place 하나로 두려고 끈다.
+  await order.getByLabel('RACK-204.S02').uncheck()
+  await order.getByLabel('RACK-204.S03').check()
+  await order.getByLabel('자재').selectOption('ENGINE-COVER-A')
+  const blockSubmitted = page.waitForResponse(response => response.url().endsWith('/api/work-requests/manual') && response.request().method() === 'POST')
+  await order.getByRole('button', { name: '작업 요청 내기' }).click()
+  const blockJobOrder = (await (await blockSubmitted).json()).receipt.jobOrderId as string
+  const blockRun = executions.getByRole('row').filter({ hasText: blockJobOrder })
+  await expect(blockRun).toContainText('rack-arrival equipment_wait: RUNNING')
+  const lost = await page.request.post('/api/faults', { headers: engineerApi, data: { robotId: 'humanoid-01', kind: 'CONTROL_AUTHORITY_LOST', reason: '제어권 상실 시연' } })
+  expect(lost.status(), await lost.text()).toBe(200)
+  const lostOutcome = await lost.json()
+  expect([lostOutcome.result, lostOutcome.fault?.raised, lostOutcome.fault?.terminated]).toEqual(['SUCCEEDED', true, []])
+  await signals.getByRole('button', { name: 'rack_present 켜기' }).click()
+  await expect(blockRun).toContainText('결함 막음 1건')
+  await expect(blockRun).toContainText('OPERATOR_HOLD')
+  await expect(blockRun).toContainText('RACK-204.S03 pick_place: PENDING')
+  const blockExecution = (await blockRun.getByRole('cell').first().textContent())!.trim()
+  const releaseForm = page.getByRole('form', { name: '결함 감수' })
+  await releaseForm.getByLabel('감수할 실행').selectOption(blockExecution)
+  const faultCard = releaseForm.getByRole('group', { name: '감수할 결함' }).getByLabel('감수할 결함 1')
+  await expect(faultCard).toContainText('CONTROL_AUTHORITY_LOST(CONTROL_AUTHORITY_LOST)')
+  await expect(faultCard).toContainText('다른 클라이언트가 제어 권한을 가져갔다')
+  await releaseForm.getByLabel('감수 사유').fill('현장에서 제어권 회복 절차 확인')
+  await releaseForm.getByLabel('기체 상태를 현장에서 확인했고 이 결함을 안고 계속합니다').check()
+  await releaseForm.getByRole('button', { name: '현장 확인 후 결함 감수' }).click()
+  await expect(releaseForm.getByRole('status', { name: '결함 감수 결과' })).toHaveText(
+    `${blockExecution}(${blockJobOrder}) 결함 감수: 감수했습니다. 실행 호스트의 다음 pump 에서 다음 단위를 냅니다`,
+  )
+  await expect(blockRun).toContainText('(결함 감수: local, 현장에서 제어권 회복 절차 확인)')
+  await expect(blockRun).not.toContainText('결함 막음')
+  await expect(blockRun).toContainText('PHYSICALLY_DONE', { timeout: 90_000 })
+  const releasedHost = (await (await page.request.get('http://127.0.0.1:8785/host/executions')).json()).executions
+    .find((execution: { jobOrderId: string }) => execution.jobOrderId === blockJobOrder)
+  expect([releasedHost.jobResponse.blockedBy, releasedHost.releases.length]).toEqual([[], 1])
+  const regained = await page.request.post('/api/faults', { headers: engineerApi, data: { robotId: 'humanoid-01', kind: 'CONTROL_AUTHORITY_REGAINED', reason: '제어권 회복' } })
+  expect(regained.status(), await regained.text()).toBe(200)
+  const regainedOutcome = await regained.json()
+  expect([regainedOutcome.result, regainedOutcome.fault?.cleared]).toEqual(['SUCCEEDED', true])
 
   // A third mission is registered, validated, deployed and executed entirely through the UI.
   await page.getByLabel('엔지니어',{exact:true}).check()

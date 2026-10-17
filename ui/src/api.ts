@@ -1133,7 +1133,10 @@ export async function fetchIncident(session: Session, instanceId: string, incide
   throw new Error(detail)
 }
 
-/** 화면이 고르게 하는 장애 종류 둘과 연결 상태 셋(S4a JSON 계약 §1.1). 그 밖의 값은 현장이 거부하므로 두지 않는다. */
+/**
+ * 화면이 고르게 하는 장애 종류 둘과 연결 상태 셋(S4a JSON 계약 §1.1). 현장은 제어권 상실과 제어권 회복도 받지만 화면 양식에는
+ * 두지 않는다. 그 밖의 값은 현장이 거부한다.
+ */
 export type FaultKind = 'SKILL_EXECUTION_FAILED' | 'CONNECTION'
 export type ConnectionFaultState = 'OFFLINE' | 'CONNECTION_BROKEN' | 'ONLINE'
 
