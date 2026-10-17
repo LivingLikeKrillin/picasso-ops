@@ -22,6 +22,8 @@ data class StationSignals(val flags: Map<String, StationSignal>, val texts: Map<
 /**
  * [detail] is the work request's own line; a rejected run carries it so the station history names the actual reason.
  * [sourceUnobserved]: the host's own UNASSIGNED left a source unobserved. Only a person's source confirmation sends it again.
+ * [permitBlock]: the work permit block of the receipt's execution in this read (`permitBlock` of `GET /host/executions`, ADR 52): a unit
+ * held PENDING because a robot command is withheld. Null when none, and when the executions could not be read: an unread block is no block.
  */
 /**
  * One robot's work permit as the host judged it (ADR 52; same rule as the issuing gate). [permit] is PERMITTED, INHIBITED or UNKNOWN.
@@ -38,7 +40,7 @@ sealed interface StationPermit {
  data class Read(val robots: List<StationRobotPermit>) : StationPermit { val blocking: List<StationRobotPermit> get() = robots.filter { it.permit != "PERMITTED" } }
  data class Unreadable(val cause: String) : StationPermit
 }
-data class StationReceipt(val id: UUID, val state: String, val safeToRetry: Boolean, val updatedAt: String, val physicalState: String?, val snapshot: JsonNode?, val resultVersion: Int? = null, val detail: String? = null, val sourceUnobserved: Boolean = false)
+data class StationReceipt(val id: UUID, val state: String, val safeToRetry: Boolean, val updatedAt: String, val physicalState: String?, val snapshot: JsonNode?, val resultVersion: Int? = null, val detail: String? = null, val sourceUnobserved: Boolean = false, val permitBlock: JsonNode? = null)
 interface StationPort {
  fun validate(payload: JsonNode)
  fun signals(): Map<String, StationSignal>?
@@ -132,9 +134,12 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
  private fun mapped(id:UUID):StationReceipt {
   val (receipt,latest)=requests.stationRead(id)
   // Use stored result evidence. A missing current host execution never means the work did not start.
-  val stored=runCatching{requests.stationResult(receipt,latest,executions(receipt))}.getOrNull();val saved=stored?.get("snapshot") as? JsonNode
+  val read=runCatching{executions(receipt)}.getOrNull()
+  val stored=read?.let{runCatching{requests.stationResult(receipt,latest,it)}.getOrNull()};val saved=stored?.get("snapshot") as? JsonNode
+  // The block of this read's execution of the job order, as the host reports it now (never the stored last execution).
+  val block=(read?.call as? HostCall.Ok)?.value?.path("executions")?.firstOrNull{it.path("jobOrderId").asText()==receipt.jobOrderId}?.path("permitBlock")?.takeIf{it.isObject}
   return StationReceipt(id,receipt.state,receipt.state=="UNASSIGNED" && receipt.submission==null && receipt.lastExecution==null,receipt.updatedAt,saved?.path("jobResponse")?.path("physicalState")?.takeIf{it.isTextual}?.asText(),saved,stored?.get("version") as? Int,receipt.detail,
-   requests.pendingSources(receipt).isNotEmpty())
+   requests.pendingSources(receipt).isNotEmpty(),block)
  }
  override fun checkSourceConfirmation(payload:JsonNode) {requests.sourceConfirmationRequest(payload)}
  override fun confirmSourceForRun(receipt:StationReceipt,actor:Actor,payload:JsonNode,runId:UUID):StationReceipt {
