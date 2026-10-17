@@ -499,7 +499,7 @@ export interface HostSubmitOutcome {
   excluded: HostEligibility[]
   /** 출발 미관측 REJECTED 일 때만 있다. 칸이 없던 호스트 본문은 undefined 다. */
   sourceUnobserved?: SourceUnobserved | null
-  /** 이미 끝나 놓은 작업 지시라 받지 않은 REJECTED 면 참이다. 칸이 없던 호스트 본문은 undefined 다. */
+  /** 이미 끝나 이빅션한 작업 지시라 받지 않은 REJECTED 면 참이다. 칸이 없던 호스트 본문은 undefined 다. */
   forgottenJobOrder?: boolean
 }
 

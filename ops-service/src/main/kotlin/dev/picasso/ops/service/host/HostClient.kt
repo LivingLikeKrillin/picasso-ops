@@ -101,7 +101,7 @@ data class HostRefusal(
  *   아님)을 접지 않는다. 이 칸이 없던 호스트의 본문과 UNASSIGNED 는 `null` 이다
  * @param sourceMissing 출발 결품 REJECTED 이면 그 자리와 관측. 아니면 `null`(UNASSIGNED 포함)
  * @param sourceUnobserved 출발 미관측 REJECTED 이면 그 자리와 설비가 말한 것. 아니면 `null`(UNASSIGNED 포함, 기체별 칸은 [HostRefusal])
- * @param forgottenJobOrder 이미 끝나 놓은 작업 지시라 받지 않은 REJECTED(picasso `FORGOTTEN_JOB_ORDER`). 다시 내도 같고 다시 할 일은 새 작업
+ * @param forgottenJobOrder 이미 끝나 이빅션한 작업 지시라 받지 않은 REJECTED(picasso `FORGOTTEN_JOB_ORDER`). 다시 내도 같고 다시 할 일은 새 작업
  *   지시로 낸다. 이 칸이 없던 호스트의 본문은 거짓이다
  */
 @JsonIgnoreProperties(ignoreUnknown = true)

@@ -104,7 +104,7 @@ class ForgetSettledTest {
             ).body!!
             assertEquals(listOf("NOT_CANCELABLE", "PHYSICALLY_DONE"), listOf(cancel["result"].asText(), cancel["physicalState"].asText()), cancel.toString())
 
-            // 같은 작업 지시를 다시 내면 이미 끝나 놓은 작업 지시다.
+            // 같은 작업 지시를 다시 내면 이미 끝나 이빅션한 작업 지시다.
             val tasks = bench.tasks()
             val again = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7"), "candidates", HUMANOID)).body!!
             assertEquals("REJECTED", again["result"].asText(), again.toString())

@@ -9,7 +9,7 @@ export interface WorkRejection {
  sourceMissing: SourceMissing | null
  /** 출발 미관측(결품이 아니다). 칸이 없던 서버 본문은 undefined 다. */
  sourceUnobserved?: SourceUnobserved | null
- /** 이미 끝나 놓은 작업 지시라 받지 않았다. 칸이 없던 서버 본문은 undefined 다. */
+ /** 이미 끝나 이빅션한 작업 지시라 받지 않았다. 칸이 없던 서버 본문은 undefined 다. */
  forgottenJobOrder?: boolean
 }
 function remedy(rejection: WorkRejection) {

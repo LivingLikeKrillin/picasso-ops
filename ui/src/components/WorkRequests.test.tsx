@@ -87,7 +87,7 @@ it('호스트 거부는 제출 전 상세 대신 거부 사유와 대체 위치�
  expect(screen.queryByText('공통 작업 요청 검증 완료')).not.toBeInTheDocument()
 })
 it('이미 끝나 놓은 작업 지시라는 호스트 거부는 거부 사유에 새 작업으로 내라는 안내를 붙이고 다른 거부는 붙이지 않는다',async()=>{
- const forgotten=await rejectedDetail({reason:'이미 끝나 놓은 작업 지시라 다시 받지 않는다: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE',remedy:null,remedyWithheld:false,alternativeLocations:null,sourceMissing:null,forgottenJobOrder:true})
+ const forgotten=await rejectedDetail({reason:'이미 끝나 이빅션한 작업 지시라 다시 받지 않는다: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE',remedy:null,remedyWithheld:false,alternativeLocations:null,sourceMissing:null,forgottenJobOrder:true})
  expect(within(forgotten).getByText(FORGOTTEN_JOB_ORDER_TEXT)).toBeVisible()
  cleanup()
  const other=await rejectedDetail({reason:'요구 근거 등급이 넘는다',remedy:null,remedyWithheld:false,alternativeLocations:null,sourceMissing:null,forgottenJobOrder:false})

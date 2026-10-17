@@ -169,7 +169,7 @@ class RerunRestoreTest {
             assertEquals(listOf("JO-1", "RESTORED"), listOf(row["jobOrderId"].asText(), row["result"].asText()), row.toString())
             val rebuilt = row["executionId"].asText()
             assertEquals("kim", bench.execution(rebuilt)!!["cancel"]["approverId"].asText())
-            // 복원 직후 취소를 건다. 첫 pump 가 도는 태스크에 `StartTask` 없이 붙어 취소를 한 번 보내고, 실행은 그 태스크의 종착을 본 뒤에야
+            // 복원 직후 취소를 건다. 첫 pump 가 도는 태스크에 `StartTask` 없이 붙어 취소를 한 번 보내고, 실행은 그 태스크의 종료를 본 뒤에야
             // 멈춘다 — 붙기 전에 멈추면 취소 중인 태스크를 남긴 채 기체를 내준다. 다음 단위는 시작하지 않는다.
             val aborted = bench.driveUntil(rebuilt, settledStates)
             assertEquals("ABORTED", aborted["physicalState"].asText(), aborted.toString())

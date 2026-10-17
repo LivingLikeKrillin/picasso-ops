@@ -234,7 +234,7 @@ export const EXECUTION_LIST_TEXT = {
   historyReset: '종결 기록이 크게 바뀌어 이전 실행을 다시 읽어야 합니다',
 } as const
 
-/** 이미 끝나 놓은 작업 지시를 실행 호스트가 거부했을 때의 안내(picasso `FORGOTTEN_JOB_ORDER`). */
+/** 이미 끝나 이빅션한 작업 지시를 실행 호스트가 거부했을 때의 안내(picasso `FORGOTTEN_JOB_ORDER`). */
 export const FORGOTTEN_JOB_ORDER_TEXT = '이미 끝나 이빅션한 작업 지시입니다. 같은 작업 지시는 다시 받지 않으므로 다시 할 일은 새 작업 지시로 냅니다.'
 
 /** 운영자 실행 취소와 잔여 파지 확인 문구(P0-b2). */

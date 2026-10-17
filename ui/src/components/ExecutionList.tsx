@@ -338,7 +338,7 @@ function RestoreReport({ at, rows }: { at: string; rows: RestoreRow[] }) {
       )}
       {gaveUp.length > 0 && (
         <>
-          <p>포기한 실행 {gaveUp.length}건. 다시 짓지 않습니다. 기체의 남은 태스크를 운영자가 확인하십시오</p>
+          <p>포기한 실행 {gaveUp.length}건. 리빌드하지 않습니다. 기체의 남은 태스크를 운영자가 확인하십시오</p>
           <ul aria-label="포기한 실행">
             {gaveUp.map((row) => (
               <li key={row.jobOrderId}>{unsettled(row)}</li>

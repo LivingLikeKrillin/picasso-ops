@@ -50,7 +50,7 @@ describe('재기동 뒤 실행 목록', () => {
             previousExecutionId: 'exec-4',
             result: 'DEFERRED',
             executionId: null,
-            reason: '기체 스냅숏을 못 읽어 다시 짓지 않는다: robot=quadruped-01, 재작업 횟수와 지난 설비 대기를 정할 근거가 없다',
+            reason: '기체 스냅숏을 못 읽어 리빌드하지 않는다: robot=quadruped-01, 재작업 횟수와 지난 설비 대기를 정할 근거가 없다',
           }),
           restoreRow({
             jobOrderId: 'JO-C',
@@ -71,9 +71,9 @@ describe('재기동 뒤 실행 목록', () => {
     )
     expect(band).toHaveTextContent('미룬 실행 1건. 실행 호스트가 다시 시도하며 그동안 그 기체는 배정에서 빠집니다')
     expect(within(band).getByRole('list', { name: '미룬 실행' })).toHaveTextContent(
-      'JO-B(quadruped-01, 이전 exec-4): 기체 스냅숏을 못 읽어 다시 짓지 않는다: robot=quadruped-01',
+      'JO-B(quadruped-01, 이전 exec-4): 기체 스냅숏을 못 읽어 리빌드하지 않는다: robot=quadruped-01',
     )
-    expect(band).toHaveTextContent('포기한 실행 1건. 다시 짓지 않습니다. 기체의 남은 태스크를 운영자가 확인하십시오')
+    expect(band).toHaveTextContent('포기한 실행 1건. 리빌드하지 않습니다. 기체의 남은 태스크를 운영자가 확인하십시오')
     expect(within(band).getByRole('list', { name: '포기한 실행' })).toHaveTextContent(
       'JO-C(humanoid-01, 이전 exec-5): 임무 버전 행이 없다: PrepareSequencedRack 버전 4',
     )

@@ -768,13 +768,13 @@ class WorkRequestsTest {
  }
  @Test fun `이미 끝나 놓은 작업 지시라는 호스트 거부는 거부 칸에 그 표시로 남고 다른 거부는 표시가 없다`() {
   fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-F$n")
-  bench.answer=HostWrite.Answered(200,rejectedBy("이미 끝나 놓은 작업 지시라 다시 받지 않는다: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE",""","forgottenJobOrder":true"""))
+  bench.answer=HostWrite.Answered(200,rejectedBy("이미 끝나 이빅션한 작업 지시라 다시 받지 않는다: JO-1 · exec-1 · 판 1 · PHYSICALLY_DONE",""","forgottenJobOrder":true"""))
   val forgotten=service.receive("mes",order(1)).receipt
   assertEquals("REJECTED",forgotten.state)
   assertTrue(forgotten.submission!!["outcome"]["forgottenJobOrder"].asBoolean(),forgotten.submission.toString())
   val rejection=service.detail(forgotten.receiptId)["rejection"] as WorkRequestRejection
   assertTrue(rejection.forgottenJobOrder,rejection.toString())
-  assertTrue(rejection.reason!!.startsWith("이미 끝나 놓은 작업 지시"),rejection.toString())
+  assertTrue(rejection.reason!!.startsWith("이미 끝나 이빅션한 작업 지시"),rejection.toString())
   // 칸이 없던 호스트 본문과 다른 거부는 거짓이다.
   bench.answer=HostWrite.Answered(200,rejectedBy("요구 근거 등급이 넘는다"))
   assertEquals(false,(service.detail(service.receive("mes",order(2)).receipt.receiptId)["rejection"] as WorkRequestRejection).forgottenJobOrder)
@@ -892,7 +892,7 @@ class WorkRequestsTest {
   bench.judge=judge
   fun answered(n:Int,answer:String)=run{bench.answer=HostWrite.Answered(200,answer);service.receive("mes",order(n)).receipt}
   val unassigned=answered(2,unassignedBy(refusal("humanoid-01")));val rejected=answered(3,rejectedBy("요구 근거 등급 E2"))
-  val forgotten=answered(4,rejectedBy("이미 끝나 놓은 작업 지시라 다시 받지 않는다",""","forgottenJobOrder":true"""));val accepted=answered(5,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val forgotten=answered(4,rejectedBy("이미 끝나 이빅션한 작업 지시라 다시 받지 않는다",""","forgottenJobOrder":true"""));val accepted=answered(5,JobOrderBench.accepted(JobOrderBench.HUMANOID))
   val observed=answered(6,unassignedBy(refusal("humanoid-01")));val stored=answered(7,unassignedBy(refusal("humanoid-01")))
   jdbc.sql("UPDATE ops.work_request SET last_execution=CAST('{\"executionId\":\"exec-1\"}' AS JSONB) WHERE receipt_id=:id").param("id",observed.receiptId).update()
   jdbc.sql("""INSERT INTO ops.work_result(receipt_id,version,instance_id,execution_id,response_id,response_version,snapshot,result_hash)
