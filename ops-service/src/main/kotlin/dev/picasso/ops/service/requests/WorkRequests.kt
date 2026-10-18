@@ -218,7 +218,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   // A crash after this point remains DISPATCHING; recovery is observation, never blind resubmission.
   try {
    when(val sent=operations.submit(actor,draft,interfaceRef,interfaceInput,id,jobId,sourceConfirmations(id))) {
-    is JobOrderSubmission.NoEligibleRobot -> update(id,"UNASSIGNED",sent.detail)
+    is JobOrderSubmission.NoEligibleRobot -> update(id,"UNASSIGNED",sent.detail,closeRound=true)
     is JobOrderSubmission.Submitted -> {
      val value=sent.outcome
      val state=when {
@@ -229,12 +229,14 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
      }
      // A rejection or an unassignment replaces the pre-dispatch detail with the host's own reasons; the structured outcome stays in submission.
      val detail=when(state){"REJECTED"->rejectedDetail(value.outcome);"UNASSIGNED"->unassignedDetail(value.outcome);else->null}
-     jdbc.sql("UPDATE ops.work_request SET state=:state,submission=CAST(:submission AS JSONB),${if(detail!=null)"detail=:detail," else ""}updated_at=clock_timestamp() WHERE receipt_id=:id")
+     // Only a host UNASSIGNED that asks a person at a source keeps the source confirmation round open (V22).
+     val open=state=="UNASSIGNED" && value.outcome?.refusals.orEmpty().any{it.sourceUnobserved!=null}
+     jdbc.sql("UPDATE ops.work_request SET state=:state,submission=CAST(:submission AS JSONB),${if(detail!=null)"detail=:detail," else ""}${if(open)"" else "$CLOSE_ROUND,"}updated_at=clock_timestamp() WHERE receipt_id=:id")
       .param("state",state).param("submission",ObjectMapper().findAndRegisterModules().writeValueAsString(value)).param("id",id)
       .let{if(detail!=null)it.param("detail",detail) else it}.update()
     }
    }
-  } catch(e: Exception) { org.slf4j.LoggerFactory.getLogger(WorkRequests::class.java).warn("접수 {} 제출 결과 불명: {}",id,e.javaClass.simpleName); update(id,"IN_DOUBT","제출 결과를 확정할 수 없습니다. 실행 이력을 확인하세요") }
+  } catch(e: Exception) { org.slf4j.LoggerFactory.getLogger(WorkRequests::class.java).warn("접수 {} 제출 결과 불명: {}",id,e.javaClass.simpleName); update(id,"IN_DOUBT","제출 결과를 확정할 수 없습니다. 실행 이력을 확인하세요",closeRound=true) }
  }
  fun dispatchQueued(id:UUID,actor:Actor):ReceiptAccepted {
   val claimed=transactions.execute {
@@ -330,8 +332,10 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  }
  /**
   * A person records what they confirmed at a source the host could not observe (picasso SourceUnobserved), then the same job order is
-  * submitted again. Only a source still pending on the host's own UNASSIGNED is accepted. The row is append-only and every later dispatch of
-  * this work request carries it to the host as the cell observation of that source. A resource-managed receipt goes through its station run.
+  * submitted again. Only a source still pending on the host's own UNASSIGNED is accepted. The row is append-only. The dispatches of this work
+  * request carry it to the host as the cell observation of that source only while the host keeps answering source-unobserved, so another
+  * source of a chain can be confirmed in turn; any other end closes the round ([sourceConfirmations]). A resource-managed receipt goes
+  * through its station run.
   */
  fun confirmSource(id:UUID,actor:Actor,payload:JsonNode,stationRunId:UUID?=null):ReceiptAccepted {
   if(actor.mode!=Mode.OPERATOR) throw RequestRejected("MODE_NOT_ALLOWED","운영자만 출발 자리 확인을 기록합니다",403)
@@ -379,10 +383,15 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  fun pendingSources(receipt:Receipt):List<PendingSource> =
   unassignment(receipt)?.refusals.orEmpty().filter{it.sourceUnobserved!=null}.groupBy{it.sourceUnobserved!!.source}
    .map{(source,refusals)->val first=refusals.first().sourceUnobserved!!;PendingSource(source,first.material,first.occupied,refusals.map{it.robotId})}
- /** Latest confirmation per source of this work request, as the host's `sourceConfirmations`. */
+ /**
+  * Latest confirmation per source of this work request's open round, as the host's `sourceConfirmations`. A round closes when a dispatch
+  * ends other than a host UNASSIGNED asking a person at a source (V22); confirmations recorded before that close are never carried again.
+  */
  private fun sourceConfirmations(id:UUID):List<dev.picasso.ops.service.host.HostSourceConfirmation> =
-  jdbc.sql("""SELECT DISTINCT ON (source) source,identity,actor,created_at FROM ops.work_request_source_confirmation
-   WHERE receipt_id=:id ORDER BY source,created_at DESC,request_id""").param("id",id).query {rs,_ ->
+  jdbc.sql("""SELECT DISTINCT ON (c.source) c.source,c.identity,c.actor,c.created_at FROM ops.work_request_source_confirmation c
+   JOIN ops.work_request r ON r.receipt_id=c.receipt_id
+   WHERE c.receipt_id=:id AND (r.source_confirmations_closed_at IS NULL OR c.created_at>r.source_confirmations_closed_at)
+   ORDER BY c.source,c.created_at DESC,c.request_id""").param("id",id).query {rs,_ ->
    dev.picasso.ops.service.host.HostSourceConfirmation(rs.getString(1),rs.getString(2),rs.getString(3),rs.getTimestamp(4).toInstant().toString())
   }.list()
  fun review(id:UUID,actor:Actor,payload:JsonNode):Map<String,Any?> = transactions.execute {
@@ -410,8 +419,8 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    .param("request",requestId).param("id",id).param("actor",actor.header()).param("observation",observation).param("reason",reason).param("expected",expected).param("context",context.toString()).update()
   mapOf("requestId" to requestId,"duplicate" to false)
  }!!
- private fun update(id:UUID,state:String,detail:String) {
-  jdbc.sql("UPDATE ops.work_request SET state=:state,detail=:detail,updated_at=clock_timestamp() WHERE receipt_id=:id")
+ private fun update(id:UUID,state:String,detail:String,closeRound:Boolean=false) {
+  jdbc.sql("UPDATE ops.work_request SET state=:state,detail=:detail,${if(closeRound)"$CLOSE_ROUND," else ""}updated_at=clock_timestamp() WHERE receipt_id=:id")
    .param("state",state).param("detail",detail.take(2000)).param("id",id).update()
  }
  fun get(id:UUID,source:String?=null):Receipt = jdbc.sql("SELECT * FROM ops.work_request WHERE receipt_id=:id AND (:source IS NULL OR source_system_id=:source)")
@@ -677,6 +686,8 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  companion object {
   /** Optional inbound field: the upstream's own earlier externalOrderId this order replaces. */
   const val REPLACES="replacesExternalOrderId"
+  /** The SET item closing a work request's source confirmation round (V22); written in the statement that writes the dispatch's state. */
+  private const val CLOSE_ROUND="source_confirmations_closed_at=clock_timestamp()"
   /**
    * A work request's latest result version that is not acknowledged, as `u`; the caller binds `u.receipt_id`. Reads only
    * unacknowledged versions through the partial index `work_result_unacknowledged` (V20) instead of every work request's latest.
