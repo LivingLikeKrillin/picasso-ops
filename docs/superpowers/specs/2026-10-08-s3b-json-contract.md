@@ -296,7 +296,7 @@ S3a 의 §2~§5(작업 지시 REST)와 §9.1~§9.4 는 그대로다.
 
 - `DATA_V1` 은 picasso `MissionFixtures.PREPARE_SEQUENCED_RACK` 의 사본(버전 1 모양, 단위 노드 하나 `place`)이다. 코드 `PrepareSequencedRack` 과 같은 단위를 계획한다.
 - `ARRIVAL_WAIT` 는 `MissionFixtures.withArrivalWait()` 의 사본에서 `onDeadline` 만 `ABORTED` 로 바꾼 것(버전 2 모양)이다. 첫 노드가 `{"kind": "wait", "id": "rack-arrival", "signal": "rack_present", "expect": "true", "deadlineSeconds": 120, "onDeadline": "ABORTED"}` 이다.
-- 세 템플릿(`DATA_V1`, `ARRIVAL_WAIT`, S4a 에서 더한 `ARRIVAL_WAIT_HOLD`) 모두 단위 노드 `place` 에 `"sourceObservation": "OPTIONAL"` 이 있다(picasso 픽스처와 같은 줄 자리, `source` 다음). 코드 케이퍼빌리티의 기본값과 같아 거동은 그대로다. 근거: `SourceObservationHostTest` 의 `시작용 정의는 출발 관측을 OPTIONAL 로 선언하고 그 버전은 설비가 말이 없어도 오늘처럼 보낸다`, 기존 `MissionVersionsTest` 의 활성화 시험 전부. 아울러 세 템플릿 모두 단위 노드 `place` 에 `"destinationObservation": "OPTIONAL"` 도 선언하여 현장 거동은 그대로다. 근거: `DestinationObservationHostTest` 의 `시작용 정의는 목적지 관측을 OPTIONAL 로 선언하고 그 버전은 설비가 목적지를 있다고 해도 오늘처럼 보낸다`.
+- 세 템플릿(`DATA_V1`, `ARRIVAL_WAIT`, S4a 에서 더한 `ARRIVAL_WAIT_HOLD`) 모두 단위 노드 `place` 에 `"sourceObservation": "OPTIONAL"` 이 있다(picasso 픽스처와 같은 줄 자리, `source` 다음). 코드 케이퍼빌리티의 기본값과 같아 거동은 그대로다. 근거: `SourceObservationHostTest` 의 `시작용 정의는 출발 관측을 OPTIONAL 로 선언하고 그 버전은 설비가 말이 없어도 오늘처럼 보낸다`, 기존 `MissionVersionsTest` 의 활성화 시험 전부. 아울러 세 템플릿 모두 단위 노드 `place` 에 `"destinationObservation": "OPTIONAL"` 도 선언하여 현장 동작은 그대로다. 근거: `DestinationObservationHostTest` 의 `시작용 정의는 목적지 관측을 OPTIONAL 로 선언하고 그 버전은 설비가 목적지를 있다고 해도 오늘처럼 보낸다`.
 - 글자는 칸마다 한 줄이고 끝 개행이 없다. 틀린 변경은 이 글자를 바꿔 만들 수 있다(예: `"signal": "rack_present"` → `"signal": "rack_ready"` 가 SIGNAL_NOT_IN_SPEC).
 
 ### 4.3 `POST /host/missions/{workMasterId}/drafts`
