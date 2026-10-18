@@ -834,18 +834,66 @@ class WorkRequestsTest {
   assertEquals(0L,jdbc.sql("SELECT count(*) FROM ops.work_request_source_confirmation").query(Long::class.java).single())
   assertEquals("UNASSIGNED",service.get(row.receiptId).state)
  }
- @Test fun `확인 뒤 배정 가능한 기체가 없으면 전송 전 미배정이 되어 확인 대기로 남지 않고 재평가가 확인을 싣는다`() {
-  val kim=Actor(Mode.OPERATOR,"kim")
+ private fun recovery(receipt:Receipt)=json.readTree("""{"requestId":"${UUID.randomUUID()}","reason":"기체 복귀","expectedUpdatedAt":"${receipt.updatedAt}"}""")
+ @Test fun `확인 뒤 배정 가능한 기체가 없으면 전송 전 미배정이 되어 회차가 닫히고 재평가는 앞 확인을 싣지 않으며 다시 기록한 확인만 싣는다`() {
+  val kim=Actor(Mode.OPERATOR,"kim");val lee=Actor(Mode.OPERATOR,"lee")
   bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
   val row=service.receive("mes",body).receipt
   bench.judge={ids->HostCall.Ok(ids.map{JobOrderBench.running(it,"busy")})}
   val early=service.confirmSource(row.receiptId,kim,confirmation(row)).receipt
   assertEquals("UNASSIGNED",early.state);assertNull(early.submission);assertEquals(1,bench.submitted.size)
   assertEquals(emptyList<Any>(),service.detail(row.receiptId)["pendingSources"])
+  // 기체가 돌아와 재평가한다. 앞 확인은 싣지 않으므로 호스트가 다시 출발 미관측으로 답한다.
   bench.judge={ids->HostCall.Ok(ids.map(JobOrderBench::pass))}
+  val again=service.recover(row.receiptId,kim,recovery(early)).receipt
+  assertEquals(listOf(emptyList(),emptyList()),bench.confirmed)
+  assertEquals("UNASSIGNED",again.state)
+  // 사람이 그 자리에서 다시 확인하면 그 확인만 실린다.
   bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
-  val again=service.recover(row.receiptId,kim,json.readTree("""{"requestId":"${UUID.randomUUID()}","reason":"기체 복귀","expectedUpdatedAt":"${early.updatedAt}"}"""))
-  assertEquals("ACCEPTED",again.receipt.state);assertEquals(sourceA,bench.confirmed.last().single().source)
+  assertEquals("ACCEPTED",service.confirmSource(row.receiptId,lee,confirmation(again)).receipt.state)
+  assertEquals(listOf(sourceA to "operator/lee"),bench.confirmed.last().map{it.source to it.confirmedBy})
+ }
+ @Test fun `여러 출발 자리 연쇄가 전송 전 미배정으로 닫히면 다음 연쇄는 앞 연쇄의 다른 자리 확인을 싣지 않는다`() {
+  val kim=Actor(Mode.OPERATOR,"kim");val lee=Actor(Mode.OPERATOR,"lee");val sourceB="SEQ-IN-03.BIN-B"
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val row=service.receive("mes",body).receipt
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved(source=sourceB))))
+  val next=service.confirmSource(row.receiptId,kim,confirmation(row)).receipt
+  bench.judge={ids->HostCall.Ok(ids.map{JobOrderBench.running(it,"busy")})}
+  val early=service.confirmSource(row.receiptId,kim,confirmation(next,source=sourceB,identity="ENGINE-COVER-B")).receipt
+  assertEquals("UNASSIGNED",early.state);assertNull(early.submission)
+  bench.judge={ids->HostCall.Ok(ids.map(JobOrderBench::pass))}
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val again=service.recover(row.receiptId,kim,recovery(early)).receipt
+  assertEquals(emptyList(),bench.confirmed.last())
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  assertEquals("ACCEPTED",service.confirmSource(row.receiptId,lee,confirmation(again)).receipt.state)
+  assertEquals(listOf(sourceA to "operator/lee"),bench.confirmed.last().map{it.source to it.confirmedBy})
+ }
+ /** 이 작업 요청의 마지막 확인이 다음 제출에 실릴 회차 안에 있는가. */
+ private fun roundOpen(id:UUID)=jdbc.sql("""SELECT r.source_confirmations_closed_at IS NULL OR max(c.created_at)>r.source_confirmations_closed_at
+  FROM ops.work_request r JOIN ops.work_request_source_confirmation c ON c.receipt_id=r.receipt_id WHERE r.receipt_id=:id GROUP BY r.source_confirmations_closed_at""")
+  .param("id",id).query(Boolean::class.java).single()
+ @Test fun `확인 뒤 호스트가 출발 미관측이 아닌 답을 하거나 제출 결과가 불명이면 회차를 닫고 출발 미관측으로 답하면 회차를 열어 둔다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-R$n")
+  val kim=Actor(Mode.OPERATOR,"kim");val judge=bench.judge;val executions=bench.executions
+  val missing=""","sourceMissing":{"material":"ENGINE-COVER-A","source":"SEQ-IN-09.BIN-Z","observed":null},"alternativeLocations":[]"""
+  val answers=listOf<Pair<String,()->Unit>>(
+   "수락" to {bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))},
+   "거부" to {bench.answer=HostWrite.Answered(200,rejectedBy("요구 근거 등급 E2"))},
+   "결품만" to {bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",missing)))},
+   "응답 없음" to {bench.answer=HostWrite.NoResponse("timeout");bench.executions=HostCall.Silent("offline")},
+   "제출 중 예외" to {bench.judge={throw IllegalStateException("판정 중단")}},
+   "다른 자리 미관측" to {bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved(source="SEQ-IN-03.BIN-B"))))})
+  val seen=answers.mapIndexed{n,(name,answer)->
+   bench.judge=judge;bench.executions=executions;bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+   val row=service.receive("mes",order(n)).receipt
+   answer()
+   val after=service.confirmSource(row.receiptId,kim,confirmation(row)).receipt
+   name to "${after.state} ${if(roundOpen(row.receiptId)) "열림" else "닫힘"}"
+  }.toMap()
+  assertEquals(mapOf("수락" to "ACCEPTED 닫힘","거부" to "REJECTED 닫힘","결품만" to "UNASSIGNED 닫힘","응답 없음" to "IN_DOUBT 닫힘",
+   "제출 중 예외" to "IN_DOUBT 닫힘","다른 자리 미관측" to "UNASSIGNED 열림"),seen)
  }
  @Test fun `확인 뒤 다른 출발 자리가 남으면 다시 확인 대기이고 다음 제출은 쌓인 확인을 자리마다 하나씩 싣는다`() {
   val kim=Actor(Mode.OPERATOR,"kim");val sourceB="SEQ-IN-03.BIN-B"
@@ -892,6 +940,21 @@ class WorkRequestsTest {
   assertEquals(2,bench.submitted.size);assertEquals(sourceA,bench.confirmed[1].single().source)
   assertEquals(a.receiptId,c.stations().single().owner)
   assertTrue(c.events(a.receiptId).any{it["reason"]==dev.picasso.ops.service.stations.StationCoordinator.SOURCE_CONFIRMED && it["actor"]=="operator/kim"})
+ }
+ @Test fun `자원 관리 작업도 출발 자리 확인 뒤 전송 전 미배정이면 회차가 닫혀 자동 재평가가 앞 확인을 싣지 않고 다시 확인을 기다린다`() {
+  resource();ready(true);val kim=Actor(Mode.OPERATOR,"kim")
+  bench.answer=HostWrite.Answered(200,unassignedBy(refusal("humanoid-01",unobserved())))
+  val a=manual().receipt;val c=coordinator();c.tick()
+  assertEquals(dev.picasso.ops.service.stations.StationCoordinator.SOURCE_UNOBSERVED,c.get(a.receiptId).reason)
+  bench.judge={ids->HostCall.Ok(ids.map{JobOrderBench.running(it,"busy")})}
+  assertEquals("UNASSIGNED",c.confirmSource(a.receiptId,kim,confirmation(service.get(a.receiptId))).state)
+  assertEquals("WAITING_ROBOT",c.get(a.receiptId).state)
+  bench.judge={ids->HostCall.Ok(ids.map(JobOrderBench::pass))}
+  jdbc.sql("UPDATE ops.station_run SET phase_at=phase_at-interval '6 seconds' WHERE run_id=:id").param("id",a.receiptId).update()
+  c.tick()
+  assertEquals(2,bench.submitted.size);assertEquals(emptyList(),bench.confirmed.last())
+  val held=c.get(a.receiptId)
+  assertEquals("REVIEW_REQUIRED",held.state);assertEquals(dev.picasso.ops.service.stations.StationCoordinator.SOURCE_UNOBSERVED,held.reason)
  }
  @Test fun `스테이션 포트는 실행 관측과 저장 결과 없이 끝난 미배정과 거부만 보내지 않은 작업 요청으로 본다`() {
   fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-N$n")
