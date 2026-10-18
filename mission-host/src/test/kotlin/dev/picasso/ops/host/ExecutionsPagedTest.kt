@@ -39,11 +39,16 @@ class ExecutionsPagedTest {
 
     private fun settledIds(node: JsonNode) = node["settled"].map { it["execution"]["executionId"].asText() }
 
-    /** 정착 넷(exec-1~4, 정착 기록까지)과 도는 하나(exec-5). */
+    /**
+     * 정착 넷(exec-1~4, 정착 기록까지)과 도는 하나(exec-5). exec-5 는 가상 시계를 밀지 않아도 다음 pump 에서 `ACCEPTED` 에서
+     * `RUNNING` 으로 넘어가므로, 그 전에 돌려주면 두 번 나눠 읽는 시험이 읽기 사이의 pump 에 따라 갈린다. 그래서 `RUNNING` 에 선
+     * 뒤에 돌려준다. 가상 시계가 멈춰 있는 동안에는 그 뒤로 바뀌지 않는다.
+     */
     private fun seed(bench: HostBench) {
         for (job in listOf("JO-1", "JO-2", "JO-3", "JO-4")) bench.driveUntil(submit(bench, job), settledStates)
         bench.eventually("정착 기록 넷") { settledEvents() == 4 }
-        submit(bench, "JO-5")
+        val live = submit(bench, "JO-5")
+        bench.eventually("$live 가 RUNNING") { bench.execution(live)?.get("physicalState")?.asText() == "RUNNING" }
     }
 
     @Test
