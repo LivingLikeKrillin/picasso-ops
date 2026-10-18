@@ -92,9 +92,10 @@ data class MockRunResult(
  * - **격리**: mimic 엔진 잠금은 인스턴스마다 따로다. 현장 mimic(다른 프로세스)·호스트 미들웨어·호스트 잠금과 섞이지 않는다.
  *   하네스에 적재 지점과 핸드셰이크 보고를 붙이지 않아 registry 에 아무것도 닿지 않는다.
  * - **시계**: 미들웨어의 `now` 는 하네스의 가상 시계다. 어긋나면 E2 시간 윈도우가 갈린다.
- * - **이상적 현장**(T8): 목적지 슬롯은 처음부터 점유이고 기대 자재를 내며 관측 시각은 `null`(읽은 순간)이다. 제시 자리는
- *   `null`(침묵, 관문 통과)이다. 이름 있는 신호는 대기 노드의 기대 값을 낸다. 그래서 대기 노드는 첫 pump 에서 완료된다.
- *   기체 프로파일은 현장 humanoid 프로파일에서 실패 모드를 뺀 사본이다.
+ * - **이상적 현장**(T8): 목적지 슬롯은 작업 지시를 받기 전에는 비었고 받은 뒤에는 점유이며 기대 자재를 내고 관측 시각은
+ *   `null`(읽은 순간)이다. 출발 자리는 점유이고 그 자리의 자재를 낸다. 그 밖의 자리는 `null`(침묵)이다. 이름 있는 신호는
+ *   대기 노드의 기대 값을 낸다. 그래서 대기 노드는 첫 pump 에서 완료된다. 기체 프로파일은 현장 humanoid 프로파일에서 실패
+ *   모드를 뺀 사본이다.
  * - **진행 루프**: pump → 정착했으면 끝 → 상한 확인 → 가상 시계를 [STEP] 민다 → 스트림 갱신이 닿을 틈([PAUSE]) → 다시 pump.
  *
  * 모의 실행은 정의가 끝까지 도는지를 보며 현장 사실(신호가 실제로 오는가, 자재가 맞는가)을 보증하지 않는다.
@@ -132,9 +133,10 @@ class MockRunner(
             )
 
         Harness(mapOf(ROBOT_ID to profile), schema = schema).use { harness ->
+            val cell = IdealCell(order, ideal)
             val middleware = Middleware(
                 robots = ClientRobotPort(harness.client(CLIENT_ID)),
-                cell = IdealCell(order, ideal),
+                cell = cell,
                 now = { harness.clock.now() },
                 missions = MissionCatalog.of(listOf(DefinedCapability(definition))),
             )
@@ -162,6 +164,7 @@ class MockRunner(
                 is Unassigned ->
                     return result(MockRunFailure.SUBMISSION_REJECTED, "표본 작업 지시를 배정하지 못했다: ${submission.refusals}", null)
             }
+            cell.accepted = true
 
             while (true) {
                 middleware.pump()
@@ -216,12 +219,18 @@ class MockRunner(
     }
 
     /**
-     * 이상적 현장(T8). 표본 작업 지시의 목적지 슬롯은 처음부터 점유이고 그 슬롯의 기대 자재를 낸다. 관측 시각은 `null` 이라
-     * 읽은 순간이 시각이므로 E2 시간 윈도우 안에 든다. 출발 자리(`source`)는 점유이고 그 자리의 자재를 낸다 — 이상적 현장에서는
-     * 설비가 출발 자리의 신원을 말하므로 출발 관측을 요구한 단위(`REQUIRED`)도 관문을 지난다. 그 밖의 자리는 `null`(침묵)이다.
-     * 이름 있는 신호는 대기 노드의 기대 값이다.
+     * 이상적 현장(T8). 표본 작업 지시의 목적지 슬롯은 작업 지시를 받기 전([accepted] 가 거짓)에는 비었다고 말하고, 받은 뒤에는 점유이며
+     * 그 슬롯의 기대 자재를 낸다. 관측 시각은 `null` 이라 읽은 순간이 시각이므로 E2 시간 윈도우 안에 든다. 미들웨어가 목적지를 묻는
+     * 때는 배정 게이트(받기 전)과 태스크를 낸 뒤의 근거 확인뿐이라, 받기 전 비움·받은 뒤 점유가 곧 작업 전 비움·완료 뒤 점유다. 그래서
+     * 목적지 관측을 요구한 단위(`REQUIRED`)도 게이트를 지나고 근거는 오늘처럼 선다. 출발 자리(`source`)는 점유이고 그 자리의 자재를
+     * 낸다 — 이상적 현장에서는 설비가 출발 자리의 신원을 말하므로 출발 관측을 요구한 단위(`REQUIRED`)도 게이트를 지난다. 그 밖의 자리는
+     * `null`(침묵)이다. 이름 있는 신호는 대기 노드의 기대 값이다.
      */
     private class IdealCell(order: JobOrder, private val ideal: Map<String, String>) : CellSignals {
+        /** 표본 작업 지시를 미들웨어가 받았다. 그 전에는 목적지가 비었다. */
+        @Volatile
+        var accepted = false
+
         private val destinations: Map<String, String?> = order.equipmentRequirements
             .filter { it.equipmentUse == EquipmentUse.DESTINATION }
             .associate { it.id to it.properties[EquipmentUse.PROP_MATERIAL] }
@@ -231,7 +240,7 @@ class MockRunner(
             .associate { it.id to it.properties[EquipmentUse.PROP_MATERIAL] }
 
         override fun observe(location: String): SlotSignal? = when (location) {
-            in destinations -> SlotSignal(true, destinations[location], null)
+            in destinations -> if (accepted) SlotSignal(true, destinations[location], null) else SlotSignal(false, null, null)
             in sources -> SlotSignal(true, sources[location], null)
             else -> null
         }

@@ -2,7 +2,7 @@
 
 ## 단계 이력
 
-현재 picasso-ops main 은 PR #24 가 머지된 `511d5bc`(2026-10-13 11:50 KST) 기준이며, 서브모듈 picasso 는 `74e4d3d` 에 고정되어 있습니다. S4b 와 화면 문서(#15) 뒤에 picasso-ops PR 아홉 개(#16~#24)가 추가 머지되었으며, 기능 변경인 #18 과 그 뒤 수정(#20·#21·#22), 문서(#16·#17·#19·#24), 화면과 응답 문구의 용어 정비(#23)를 포함합니다. 이 기간에 picasso 쪽 PR 은 없고 서브모듈 고정 커밋도 바뀌지 않았습니다. 이 브랜치 `chore/picasso-aada343`에서는 서브모듈 picasso가 `aada343`(picasso PR #113 머지)에 고정되어 있습니다.
+현재 picasso-ops main 은 PR #24 가 머지된 `511d5bc`(2026-10-13 11:50 KST) 기준이며, 서브모듈 picasso 는 `74e4d3d` 에 고정되어 있습니다. S4b 와 화면 문서(#15) 뒤에 picasso-ops PR 아홉 개(#16~#24)가 추가 머지되었으며, 기능 변경인 #18 과 그 뒤 수정(#20·#21·#22), 문서(#16·#17·#19·#24), 화면과 응답 문구의 용어 정비(#23)를 포함합니다. 이 기간에 picasso 쪽 PR 은 없고 서브모듈 고정 커밋도 바뀌지 않았습니다. 이 브랜치 `chore/picasso-b853f7e`에서는 서브모듈 picasso가 `b853f7e`(picasso PR #115 머지)에 고정되어 있습니다.
 
 P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → P4 → S3a → S3b → P5 → S3c → S4a → P6 → S4b → 화면 문서 → #16 → #17 → #18 → #20 → #21 → #19 → #22 → #23 → #24 (2026-10-07 13:47 ~ 2026-10-13 11:50 KST)
 
@@ -57,7 +57,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | `site-runner` | 1초마다 리비전 시험 요청을 집어 별도 mimic 으로 시험, registry 에 결과 기록 | 없음 | registry |
 | 셀 대역 | 셀 신호·자리·슬롯 관측, 신호 쓰기·장애 주입 입구, 신호 일곱(`inspection_ready`, `inspection_complete`, 텍스트 `inspection_job`, `inspection_job_done`, `rack_present`, 안전 신호 `guard_closed`, 텍스트 `lot_code`) | `SITE_CELL_PORT=8784`, 루프백 | 메모리 |
 | Postgres | registry public, 운영 서비스 `ops`, 실행 호스트 `mission` | `127.0.0.1:55432` | `postgres:16-alpine`, DB `picasso`, `site/compose.yaml` |
-| `picasso/` | 고정 커밋 `aada343` 의 읽기 전용 서브모듈, Gradle `includeBuild` | 없음 | 없음 |
+| `picasso/` | 고정 커밋 `b853f7e` 의 읽기 전용 서브모듈, Gradle `includeBuild` | 없음 | 없음 |
 | `e2e/` | 한 JVM 에 Postgres·registry·mimic·실행 호스트·운영 서비스를 띄우는 통합 시험 | 시험 스택 | Testcontainers |
 | `scripts/mock-mes.mjs` | Mock MES 역할로 외부 주문 API 를 부르는 로컬 도구 | 없음 | 없음 |
 
@@ -106,9 +106,9 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 
 ### 기타 구성 및 설정
 
-- 모의 실행: 실행 호스트 내부의 별도 mimic과 가상 시계로 표본 작업 지시 하나를 실행합니다. 현장 기체, 셀 대역, registry 에는 접근하지 않으며 프로파일로 `mission-host/mock-run/humanoid-a.json` 을 사용합니다.
+- 모의 실행: 실행 호스트 내부의 별도 mimic과 가상 시계로 표본 작업 지시 하나를 실행합니다. 현장 기체, 셀 대역, registry 에는 접근하지 않으며 프로파일로 `mission-host/mock-run/humanoid-a.json` 을 사용합니다. 또한 모의 실행의 이상적 현장이 표본 작업 지시 수락 전에는 목적지 슬롯을 빈 것으로, 수락 뒤에는 점유된 것으로 응답하도록 바꾸어 게이트에서 목적지 관측을 요구한(`REQUIRED`) 정의도 모의 실행을 통과하고 근거는 종전처럼 서도록 했습니다.
 - 작업 허가 대응: 실행 호스트 설정 `host.work-permit.mapping`(작업 디렉터리 기준 JSON 파일 경로, `mission-host.properties` 기본값 빈 문자열)으로 선언합니다. 비면 선언하지 않은 현장이고 미들웨어에 허가 포트를 붙이지 않아 발행 거동이 오늘 그대로입니다. 경로가 있는데 파일을 못 읽거나 모양이 틀리면 기동이 실패합니다. 파일 모양은 `{"validFor":"PT10S","signals":[{"signal":"guard_closed","permittedWhen":"true","robots":["humanoid-01","quadruped-01"]}]}` 입니다. `validFor` 는 선택(기본 `PT10S`), 모르는 칸 거부, 신호 이름 겹침 거부, 줄마다 기체 하나 이상입니다. `.env` 키가 아닙니다. 실행 호스트 안 모의 실행의 별도 미들웨어에는 허가 포트를 붙이지 않습니다. 판독의 관측 시각은 실행 호스트가 셀 대역을 읽은 호스트 시각(잠금 대기 시간 포함)이고, 관측이 `validFor` 를 넘기면 `EXPIRED` 모름으로 막습니다. 근거: `WorkPermitHostTest` 의 `허가 대응을 선언하지 않으면 안전 신호가 막아도 포트를 붙이지 않고 오늘처럼 낸다`, `CellWorkPermitsTest` 의 `대응 파일은 칸을 엄격히 읽고 validFor 가 빠지면 기본값이다`.
-- 서브모듈: `picasso aada343` 커밋(picasso PR #113 머지, 2026-10-18)으로 고정된 읽기 전용 서브모듈입니다. 버전 카탈로그 `picasso/gradle/libs.versions.toml` 을 공유하며 picasso 라이브러리 측 수정은 picasso 저장소 PR 로 반영합니다. 고정 커밋은 picasso main `aada343` 와 같습니다. `4d6d768` 뒤로 PR #97(adapter-host 잠금), #98(판단 기록·단위의 기체 바인딩), #99(다이어그램 용어), #100(리빌드한 운영자 보류의 인시던트 재오픈), #101(다시 연 인시던트의 `at` 과 트레이스 줄 시각 일치, 판단 기록 영속 한계 행 닫음)이 들어 있습니다. `faa8ccc` 뒤로 PR #102(판단 기록 KDoc 의 설계 일지 절 번호 수정: §15.213 → §15.221), PR #103(`Middleware.forget`·`ForgetOutcome`·`Middleware.FORGOTTEN_JOB_ORDER`, `executionSeq` 의 실행 id 재사용 없음)이 들어 있습니다. `7d0fa8f` 뒤로 PR #104(문서: 이빅션 소비자 한계 행 닫음, 오케스트레이션 기록), #105(문서: KDoc 링크 수정, 배선도 노드 이름 `chainRefusal`), #106(승인 시점 연쇄 거절 시 기존 제안 유지, 이미 실행이 있는 작업 지시의 `adopt` 리비전 경로 직행: 동일 버전 멱등·낮은 버전 거절·높은 버전은 현재 기체에서 해당 실행 리비전·후보 목록 미참조), #107(단위 ID 중복 계획의 `submit` 및 리비전 거절 접두사 `Middleware.DUPLICATE_UNIT_ID`, 새 임무 검증기 거절 종류 `SOURCE_OBSERVATION_UNUSED` 추가로 11종), #108(스트림 수정: `RobotPort.release`, 세션 변경 시 커서 초기화, 동일 멱등 키 패리티, adapter-host의 취소된 감시 스트림 정리), #109(`adopt`의 모든 후보 게이트 통과 실패 시 조치 탐색 기록과 제안 레지스터에 각 후보 거절 기록, `Submission.Rejected`에 `approvalRefusal`·`consumedApproval` 추가, `release`가 true 반환 시 작업 응답 발행)이 들어 있습니다. `ddca127` 뒤로 PR #110은 하위 자체 취소 시 운영자 보류와 인시던트 전환 및 보류·결함 차단 해소 시 작업 응답 송신을 추가했고, PR #111은 리빌드한 실행의 첫 pump 전에 취소할 때 기체 스냅숏 태스크에 `StartTask` 없이 붙어 취소하는 처리를 추가했습니다. `955af4f` 뒤로 PR #112는 문서 용어를 정리했고, PR #113은 사람에게 보이는 코드 문자열의 용어를 정리하며 거부 사유 상수(`FORGOTTEN_JOB_ORDER`·`RESUME_SNAPSHOT_UNREADABLE`·`RESUME_RECORD_MISMATCH`)의 글자를 바꿨습니다. 실행 호스트는 이미 실행이 있는 작업 지시의 실제 개정에 대해서만 해당 실행의 기체를 판정하고 비개정 건은 picasso에 그대로 넘기며, 기동 복원 시에는 PR #111에 따라 리빌드 직후 기록된 운영자 취소를 곧바로 다시 겁니다. 실행 호스트가 #91 의 `PhysicalState.occupiesRobot`(판정)·`pumps`(취소 대상)와 #96 의 `WorkPermitPort`·`Middleware(permits)`·`Execution.permitBlock`, #98 의 `Middleware.judgmentRecord`·`Middleware.resume(…, record)`·`JudgmentRecordWire`, #103 의 `Middleware.forget`·`ForgetOutcome`·`Middleware.FORGOTTEN_JOB_ORDER` 를 씁니다.
+- 서브모듈: `picasso b853f7e` 커밋(picasso PR #115 머지, 2026-10-18)으로 고정된 읽기 전용 서브모듈입니다. 버전 카탈로그 `picasso/gradle/libs.versions.toml` 을 공유하며 picasso 라이브러리 측 수정은 picasso 저장소 PR 로 반영합니다. 고정 커밋은 picasso main `b853f7e` 와 같습니다. `4d6d768` 뒤로 PR #97(adapter-host 잠금), #98(판단 기록·단위의 기체 바인딩), #99(다이어그램 용어), #100(리빌드한 운영자 보류의 인시던트 재오픈), #101(다시 연 인시던트의 `at` 과 트레이스 줄 시각 일치, 판단 기록 영속 한계 행 닫음)이 들어 있습니다. `faa8ccc` 뒤로 PR #102(판단 기록 KDoc 의 설계 일지 절 번호 수정: §15.213 → §15.221), PR #103(`Middleware.forget`·`ForgetOutcome`·`Middleware.FORGOTTEN_JOB_ORDER`, `executionSeq` 의 실행 id 재사용 없음)이 들어 있습니다. `7d0fa8f` 뒤로 PR #104(문서: 이빅션 소비자 한계 행 닫음, 오케스트레이션 기록), #105(문서: KDoc 링크 수정, 배선도 노드 이름 `chainRefusal`), #106(승인 시점 연쇄 거절 시 기존 제안 유지, 이미 실행이 있는 작업 지시의 `adopt` 리비전 경로 직행: 동일 버전 멱등·낮은 버전 거절·높은 버전은 현재 기체에서 해당 실행 리비전·후보 목록 미참조), #107(단위 ID 중복 계획의 `submit` 및 리비전 거절 접두사 `Middleware.DUPLICATE_UNIT_ID`, 새 임무 검증기 거절 종류 `SOURCE_OBSERVATION_UNUSED` 추가로 11종), #108(스트림 수정: `RobotPort.release`, 세션 변경 시 커서 초기화, 동일 멱등 키 패리티, adapter-host의 취소된 감시 스트림 정리), #109(`adopt`의 모든 후보 게이트 통과 실패 시 조치 탐색 기록과 제안 레지스터에 각 후보 거절 기록, `Submission.Rejected`에 `approvalRefusal`·`consumedApproval` 추가, `release`가 true 반환 시 작업 응답 발행)이 들어 있습니다. `ddca127` 뒤로 PR #110은 하위 자체 취소 시 운영자 보류와 인시던트 전환 및 보류·결함 차단 해소 시 작업 응답 송신을 추가했고, PR #111은 리빌드한 실행의 첫 pump 전에 취소할 때 기체 스냅숏 태스크에 `StartTask` 없이 붙어 취소하는 처리를 추가했습니다. `955af4f` 뒤로 PR #112는 문서 용어를 정리했고, PR #113은 사람에게 보이는 코드 문자열의 용어를 정리하며 거부 사유 상수(`FORGOTTEN_JOB_ORDER`·`RESUME_SNAPSHOT_UNREADABLE`·`RESUME_RECORD_MISMATCH`)의 글자를 바꿨습니다. `aada343` 뒤로 PR #114는 `InspectAsset`에서 대상으로 가는 이동이 실패하면 그 대상의 점검을 태스크 없이 `PREDECESSOR_NOT_DONE` 실패로 거르고 순회를 다음 대상으로 잇도록 바꿨고, PR #115는 임무 정의의 단위 노드에 목적지 관측 선언(`destinationObservation`)을 추가하여 검증기 거부 종류를 13종으로 늘리고 게이트가 `REQUIRED` 로봇 단위에 한해 설비에 목적지를 묻도록 확장했습니다. 실행 호스트는 이미 실행이 있는 작업 지시의 실제 개정에 대해서만 해당 실행의 기체를 판정하고 비개정 건은 picasso에 그대로 넘기며, 기동 복원 시에는 PR #111에 따라 리빌드 직후 기록된 운영자 취소를 곧바로 다시 겁니다. 실행 호스트가 #91 의 `PhysicalState.occupiesRobot`(판정)·`pumps`(취소 대상)와 #96 의 `WorkPermitPort`·`Middleware(permits)`·`Execution.permitBlock`, #98 의 `Middleware.judgmentRecord`·`Middleware.resume(…, record)`·`JudgmentRecordWire`, #103 의 `Middleware.forget`·`ForgetOutcome`·`Middleware.FORGOTTEN_JOB_ORDER` 를 씁니다.
 - 환경 변수(`.env`): `SITE_ID`, `PICASSO_DB_URL`, `PICASSO_DB_USER`, `PICASSO_DB_PASSWORD`, `REGISTRY_PORT`, `OPS_PORT`, `MIMIC_GRPC_PORT`, `SITE_CELL_PORT`, `HOST_PORT`, `PICASSO_OPERATOR_TOKEN`, `PICASSO_INGEST_TOKEN`. 실제 값은 커밋된 `.env` 를 따릅니다.
 - `.env` 밖의 선택 환경 변수(운영 서비스): `PICASSO_INTEGRATION_TOKEN`(비면 외부 주문 API 꺼짐), `PICASSO_INTEGRATION_SOURCE`(기본 `mock-mes`), `PICASSO_LOCAL_CALLBACK_URL`(루프백 IP 리터럴 http 주소만, 비면 콜백 전달 꺼짐), `PICASSO_LOCAL_CALLBACK_TOKEN`
 - 운영 서비스 주기 속성(`ops-service.properties`): `ops.results.poll-ms=5000`(결과 수집과 멈춘 작업 요청 정리), `ops.requests.stale-seconds=300`, `ops.results.delivery-ms=2000`, `ops.results.delivery-batch`(콜백 전달 한 회차에 보내는 최대 수)는 속성 파일에는 없고 코드 기본값 10, 1~100 밖이면 기동 거부(운영 서비스가 뜨지 않음), 스테이션 워커 `ops.stations.poll-ms` 는 속성 파일에 없고 코드 기본값 2000
@@ -439,16 +439,16 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-18에 `fix/source-confirm-chain` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-18 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 264개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-18에 `chore/picasso-b853f7e` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-18 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 265개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 473(470 에서 3 늘어남: `WorkRequestsTest` 3) | 로컬 시험 결과 XML 473건, 실패 0 |
-| `mission-host` | 177(그대로) | 로컬 시험 결과 XML 177건, 실패 0 |
+| `ops-service` | 473(그대로) | 로컬 시험 결과 XML 473건, 실패 0 |
+| `mission-host` | 182(177 에서 5 늘어남: `DestinationObservationHostTest` 4, `MockRunnerTest` 1) | 로컬 시험 결과 XML 182건, 전체 1회 실행 중 `ExecutionsPagedTest` 1건 경합 실패 뒤 그 클래스만 2회 재실행해 모두 통과(이 변경과 무관, 별도 작업으로 분리) |
 | `site` | 41(그대로) | 로컬 시험 결과 XML 41건, 실패 0 |
 | `e2e` | 75(그대로, 시험 클래스 19개) | 로컬 시험 결과 XML 75건, 실패 0 |
-| `ui`(vitest) | 265(그대로, 시험 파일 28개) | 2026-10-18 `fix/source-confirm-chain` 브랜치 로컬 실행, 실패 0 |
-| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `fix/source-confirm-chain` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
+| `ui`(vitest) | 265(그대로, 시험 파일 28개) | 2026-10-18 `chore/picasso-b853f7e` 브랜치 로컬 실행, 실패 0 |
+| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `chore/picasso-b853f7e` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
 

@@ -45,7 +45,7 @@ S3a 의 §2~§5(작업 지시 REST)와 §9.1~§9.4 는 그대로다.
 
 - 호스트는 Flyway 자동설정만 이름으로 끈다(`FlywayAutoConfiguration`). 마이그레이션은 `HostSchema`(위치 `classpath:db/mission`, 스키마·이력 테이블 `mission`)가 기동 때 올린다. registry·운영 서비스와 한 JVM 에 떠도 위치가 섞이지 않는다.
 - 표 셋은 덧붙이기 전용이다(UPDATE·DELETE·TRUNCATE 를 트리거가 막는다). 시험은 띄울 때마다 `DROP SCHEMA IF EXISTS mission CASCADE` 로 지운다(`PostgresSupport.reset()` 은 public 만 지운다). 호스트만 다시 띄우는 시험은 DB 를 지우지 않는다.
-- 호스트 기동 때 `mission.mission_version` 의 WorkMaster 마다 가장 큰 버전을 파싱해 카탈로그를 세운다. 다시 검증하지 않는다. 다만 출발 관측 선언(picasso #95) 전에 활성화되어 저장된 버전은, 신원을 대는 출발 자리에 선언이 없는 단위 노드를 OPTIONAL 로 채워 세우고 경고 로그를 남긴다. 고칠 노드가 없으면 같은 정의다. 검증·모의 실행·활성화는 이 길을 지나지 않으므로 새 정의는 선언 없이 활성화되지 않는다. 근거: `SourceObservationHostTest` 의 `출발 관측 선언 전에 활성화한 저장 버전은 OPTIONAL 로 되살아나고 새 정의는 선언 없이 활성화되지 않는다`, `선언을 채우는 것은 신원을 대는 출발 자리에 선언이 없는 노드뿐이고 고칠 것이 없으면 같은 정의다`. 파싱하지 못하면 기동이 멈추고 예외 메시지에 `저장된 임무 버전 <WorkMaster> 버전 <N> 을 읽지 못했다: <문제>` 가 남는다.
+- 호스트 기동 때 `mission.mission_version` 의 WorkMaster 마다 가장 큰 버전을 파싱해 카탈로그를 세운다. 다시 검증하지 않는다. 다만 출발 관측 선언(picasso #95) 전에 활성화되어 저장된 버전은, 신원을 대는 출발 자리에 선언이 없는 단위 노드를 OPTIONAL 로 채워 세우고 경고 로그를 남긴다. 고칠 노드가 없으면 같은 정의다. 검증·모의 실행·활성화는 이 길을 지나지 않으므로 새 정의는 선언 없이 활성화되지 않는다. 근거: `SourceObservationHostTest` 의 `출발 관측 선언 전에 활성화한 저장 버전은 OPTIONAL 로 되살아나고 새 정의는 선언 없이 활성화되지 않는다`, `선언을 채우는 것은 신원을 대는 출발 자리에 선언이 없는 노드뿐이고 고칠 것이 없으면 같은 정의다`. 같은 길로 목적지 관측 선언(picasso #115) 전에 활성화되어 저장된 버전은 식별 정보를 대는 목적지에 선언이 없는 단위 노드를 OPTIONAL 로 채워 세우고 경고 로그를 남겨 호스트 기동이 멈추지 않으며, 검증·모의 실행·활성화는 이 길을 지나지 않아 새 정의는 선언 없이 활성화되지 않는다. 근거: `DestinationObservationHostTest` 의 `목적지 관측 선언 전에 활성화한 저장 버전은 OPTIONAL 로 되살아나 기동이 멈추지 않고 새 정의는 선언 없이 활성화되지 않는다`, `목적지 선언을 채우는 것은 식별 정보를 대는 목적지에 선언이 없는 노드뿐이고 두 선언이 다 없으면 둘 다 채운다`. 파싱하지 못하면 기동이 멈추고 예외 메시지에 `저장된 임무 버전 <WorkMaster> 버전 <N> 을 읽지 못했다: <문제>` 가 남는다.
 
 ---
 
@@ -161,7 +161,7 @@ S3a 의 §2~§5(작업 지시 REST)와 §9.1~§9.4 는 그대로다.
 
 | 칸 | 값 |
 |---|---|
-| `kind` | picasso `MissionRefusalKind` 10종: `UNREADABLE`·`DUPLICATE_NODE_ID`·`DEADLINE_INVALID`·`SIGNAL_NOT_IN_SPEC`·`SIGNAL_VALUE_INVALID`·`FLOOR_UNOWNED`·`SKILL_NOT_IN_CONTRACT`·`SKILL_NOT_ON_SITE`·`SAFETY_SIGNAL_WAIT`·`SOURCE_OBSERVATION_UNDECLARED`. 호스트에서 `FLOOR_UNOWNED` 는 나지 않는다(바닥 소유 `FloorOwnership.None`). 근거: `SourceObservationHostTest` 의 `출발 관측 선언 전에 활성화한 저장 버전은 OPTIONAL 로 되살아나고 새 정의는 선언 없이 활성화되지 않는다`. |
+| `kind` | picasso `MissionRefusalKind` 13종: `UNREADABLE`·`DUPLICATE_NODE_ID`·`DEADLINE_INVALID`·`SIGNAL_NOT_IN_SPEC`·`SIGNAL_VALUE_INVALID`·`FLOOR_UNOWNED`·`SKILL_NOT_IN_CONTRACT`·`SKILL_NOT_ON_SITE`·`SAFETY_SIGNAL_WAIT`·`SOURCE_OBSERVATION_UNDECLARED`·`SOURCE_OBSERVATION_UNUSED`·`DESTINATION_OBSERVATION_UNDECLARED`·`DESTINATION_OBSERVATION_UNUSED`. 호스트에서 `FLOOR_UNOWNED` 는 나지 않는다(바닥 소유 `FloorOwnership.None`). 근거: `SourceObservationHostTest` 의 `출발 관측 선언 전에 활성화한 저장 버전은 OPTIONAL 로 되살아나고 새 정의는 선언 없이 활성화되지 않는다`. |
 | `nodeId` | 막힌 노드 id. 문서 전체의 문제(`UNREADABLE`)는 null |
 | `observed` | 지금 값. `UNREADABLE` 이면 JSON 경로로 시작하는 문제 문자열(`$.steps[0].skill: 빠졌다`, `$.maxEvidence: 문자열이어야 한다(수 2.0)`). 문법 오류는 첫 자리에서 멈춘다 |
 | `expected` | 통과에 필요한 값. 파서 문제의 `UNREADABLE` 은 `임무 정의 문서 버전 1 의 모양` |
@@ -184,6 +184,9 @@ S3a 의 §2~§5(작업 지시 REST)와 §9.1~§9.4 는 그대로다.
 | `SKILL_NOT_ON_SITE` | ENGINEER | 그 스킬을 제공하는 기체를 현장에 둔다 |
 | `SAFETY_SIGNAL_WAIT` | ENGINEER | 대기 노드를 안전 신호가 아닌 신호로 바꾼다 |
 | `SOURCE_OBSERVATION_UNDECLARED` | ENGINEER | 단위 노드에 출발 관측을 REQUIRED 나 OPTIONAL 로 적는다 |
+| `SOURCE_OBSERVATION_UNUSED` | ENGINEER | 출발 관측 선언을 지우거나 출발 자리와 기대 신원을 함께 적는다 |
+| `DESTINATION_OBSERVATION_UNDECLARED` | ENGINEER | 단위 노드에 목적지 관측을 REQUIRED 나 OPTIONAL 로 적는다 |
+| `DESTINATION_OBSERVATION_UNUSED` | ENGINEER | 목적지 관측 선언을 지우거나 목적지와 기대 식별 정보를 함께 적는다 |
 
 **정의의 WorkMaster 가 경로와 다름**(T6): `kind: UNREADABLE`, `nodeId: null`, `observed: "$.workMasterId: 초안의 WorkMaster 와 다르다(InspectAsset)"`, `expected: "PrepareSequencedRack"`.
 
@@ -293,7 +296,7 @@ S3a 의 §2~§5(작업 지시 REST)와 §9.1~§9.4 는 그대로다.
 
 - `DATA_V1` 은 picasso `MissionFixtures.PREPARE_SEQUENCED_RACK` 의 사본(버전 1 모양, 단위 노드 하나 `place`)이다. 코드 `PrepareSequencedRack` 과 같은 단위를 계획한다.
 - `ARRIVAL_WAIT` 는 `MissionFixtures.withArrivalWait()` 의 사본에서 `onDeadline` 만 `ABORTED` 로 바꾼 것(버전 2 모양)이다. 첫 노드가 `{"kind": "wait", "id": "rack-arrival", "signal": "rack_present", "expect": "true", "deadlineSeconds": 120, "onDeadline": "ABORTED"}` 이다.
-- 세 템플릿(`DATA_V1`, `ARRIVAL_WAIT`, S4a 에서 더한 `ARRIVAL_WAIT_HOLD`) 모두 단위 노드 `place` 에 `"sourceObservation": "OPTIONAL"` 이 있다(picasso 픽스처와 같은 줄 자리, `source` 다음). 코드 케이퍼빌리티의 기본값과 같아 거동은 그대로다. 근거: `SourceObservationHostTest` 의 `시작용 정의는 출발 관측을 OPTIONAL 로 선언하고 그 버전은 설비가 말이 없어도 오늘처럼 보낸다`, 기존 `MissionVersionsTest` 의 활성화 시험 전부.
+- 세 템플릿(`DATA_V1`, `ARRIVAL_WAIT`, S4a 에서 더한 `ARRIVAL_WAIT_HOLD`) 모두 단위 노드 `place` 에 `"sourceObservation": "OPTIONAL"` 이 있다(picasso 픽스처와 같은 줄 자리, `source` 다음). 코드 케이퍼빌리티의 기본값과 같아 거동은 그대로다. 근거: `SourceObservationHostTest` 의 `시작용 정의는 출발 관측을 OPTIONAL 로 선언하고 그 버전은 설비가 말이 없어도 오늘처럼 보낸다`, 기존 `MissionVersionsTest` 의 활성화 시험 전부. 아울러 세 템플릿 모두 단위 노드 `place` 에 `"destinationObservation": "OPTIONAL"` 도 선언하여 현장 거동은 그대로다. 근거: `DestinationObservationHostTest` 의 `시작용 정의는 목적지 관측을 OPTIONAL 로 선언하고 그 버전은 설비가 목적지를 있다고 해도 오늘처럼 보낸다`.
 - 글자는 칸마다 한 줄이고 끝 개행이 없다. 틀린 변경은 이 글자를 바꿔 만들 수 있다(예: `"signal": "rack_present"` → `"signal": "rack_ready"` 가 SIGNAL_NOT_IN_SPEC).
 
 ### 4.3 `POST /host/missions/{workMasterId}/drafts`
