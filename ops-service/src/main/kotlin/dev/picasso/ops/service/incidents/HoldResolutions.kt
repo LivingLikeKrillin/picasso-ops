@@ -39,14 +39,15 @@ data class HoldResolveOutcome(
 )
 
 /**
- * 재작업 관문. 재작업은 보류한 단위를 다시 돌려 로봇이 다시 움직인다. 관문은 호스트에 넘길지 정하고, 넘기지 않으면
- * [dev.picasso.ops.service.requests.RequestRejected] 를 던져 호스트를 부르지 않는다. 확인 판단(`CONFIRM_DONE`)은 거치지 않는다.
+ * 재작업 게이트. 재작업은 보류한 단위나 건너뛴 대상(선행 이동이 실패해 점검을 내지 않은 단위)을 다시 돌려 로봇이 다시 움직인다. 게이트는
+ * 호스트에 넘길지 정하고, 넘기지 않으면 [dev.picasso.ops.service.requests.RequestRejected] 를 던져 호스트를 부르지 않는다. 확인
+ * 판단(`CONFIRM_DONE`)은 거치지 않는다.
  */
 fun interface ReworkGuard {
     fun guard(actor: Actor, executionId: String, instanceId: String, forward: () -> HoldResolveOutcome): HoldResolveOutcome
 
     companion object {
-        /** 관문 없음. 자원 조정이 없는 시험·구성의 기본값이다. */
+        /** 게이트 없음. 자원 조정이 없는 시험·구성의 기본값이다. */
         val NONE = ReworkGuard { _, _, _, forward -> forward() }
     }
 }
@@ -65,12 +66,17 @@ fun interface ReworkGuard {
  * «가장 최근 인시던트» 와 «보류가 아님» 은 보지 않는다. 재작업 뒤 대기가 기한을 다시 넘기면 새 보류가 서서 반영된 재작업을
  * 반영 안 됨으로 읽기 때문이다. 판단 시각 `at` 은 호스트 시계(통합 시험에서는 가상 시각)라 쓰지 않는다.
  *
+ * 건너뛴 대상 재작업의 판단은 요청한 단위(건너뛴 점검)가 아니라 선행 이동의 인시던트에 붙는다. 건너뛴 점검은 인시던트를 열지 않았다.
+ * 그래서 같은 실행·단위의 인시던트가 하나도 없을 때에 한해 같은 실행의 모든 인시던트로 넓혀 같은 조건(판단자, 결정, 시각)으로 찾는다.
+ * 그 단위에 인시던트가 하나라도 있으면 넓히지 않는다. 같은 사람이 같은 실행의 다른 단위를 같은 시각 뒤에 판단한 기록을 반영으로 읽지
+ * 않기 위해서다. 보류 단위에는 늘 제 인시던트가 있어 보류 경로는 그대로다.
+ *
  * 판단은 인스턴스를 싣는다(S4b 스펙 T8·T9). 화면은 인시던트 상세의 `instanceId` 를 보내고, 호스트는 지금 인스턴스가 아니면
  * 409 `INSTANCE_MISMATCH` 로 막는다. 그 거부는 다른 호스트 4xx 와 같이 거부로 남고 원래 이름이 응답 칸에 있다. 재조회는 목록의
  * `instanceId` 가 요청한 인스턴스와 같을 때만 `incidents` 를 본다. 다르면 호스트가 그 사이 재기동한 것이고 `exec-N` 을 다시
  * 세므로 새 인스턴스의 같은 실행 id 를 잘못 맞출 수 있다. 그때는 `earlier` 에서 요청한 인스턴스의 사본만 본다.
  *
- * 재작업은 [rework] 관문을 지난 뒤에만 호스트에 닿는다. 관문이 막으면 사전 거부라 조작 기록에 남지 않는다.
+ * 재작업은 [rework] 게이트를 지난 뒤에만 호스트에 닿는다. 게이트가 막으면 사전 거부라 조작 기록에 남지 않는다.
  */
 class HoldResolutions(
     private val host: HostIncidents,
@@ -129,7 +135,8 @@ class HoldResolutions(
 
     /**
      * 목록을 못 읽으면 확인하지 못한 것이라 널이다. 반영 안 됨이면 관측으로 그 단위의 가장 최근 인시던트를 남긴다(없으면 널).
-     * 목록의 인스턴스가 [instanceId] 면 `incidents` 를, 아니면 `earlier` 의 그 인스턴스 사본을 본다.
+     * 목록의 인스턴스가 [instanceId] 면 `incidents` 를, 아니면 `earlier` 의 그 인스턴스 사본을 본다. 그 단위의 인시던트가 없으면
+     * 같은 실행의 인시던트로 넓혀 판단을 찾는다(클래스 설명의 건너뛴 대상).
      */
     private fun recheck(
         executionId: String,
@@ -142,11 +149,11 @@ class HoldResolutions(
         val body = (host.incidents(REQUERY_LIMIT) as? HostCall.Ok)?.value ?: return null
         val current = body.path("instanceId").takeIf { it.isTextual }?.asText() == instanceId
         val listed = body.path(if (current) "incidents" else "earlier").takeIf { it.isArray } ?: return null
-        val unit = listed.filter {
-            (current || it.path("instanceId").asText() == instanceId) &&
-                it.path("executionId").asText() == executionId && it.path("unitId").asText() == unitId
+        val ofExecution = listed.filter {
+            (current || it.path("instanceId").asText() == instanceId) && it.path("executionId").asText() == executionId
         }
-        val match = unit.firstOrNull { incident ->
+        val unit = ofExecution.filter { it.path("unitId").asText() == unitId }
+        val match = (unit.ifEmpty { ofExecution }).firstOrNull { incident ->
             val resolution = incident.path("resolution").takeIf { it.isObject } ?: return@firstOrNull false
             resolution.path("decidedBy").path("id").asText() == approver &&
                 resolution.path("decision").asText() == decision &&
@@ -166,7 +173,7 @@ class HoldResolutions(
         const val NOT_HELD = "NotHeld"
         const val REFUSED = "Refused"
 
-        /** 보류한 단위를 다시 돌려 로봇이 움직이는 판단. [ReworkGuard] 를 거친다. */
+        /** 보류한 단위나 건너뛴 대상을 다시 돌려 로봇이 움직이는 판단. [ReworkGuard] 를 거친다. */
         const val REWORK = "REWORK"
 
         /** 판단 종류 둘(picasso `OperatorDecision`). */

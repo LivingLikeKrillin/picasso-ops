@@ -193,17 +193,18 @@ class IncidentOperationsTest {
         bench.resolveAnswer = HostWrite.Answered(503, "<html>bad gateway</html>")
         val misses = listOf(
             // 같은 사람, 같은 결정, 같은 단위지만 요청 직전 시각보다 앞선 판단.
-            row("incident-1", resolution = resolution("REWORK", "kim", T0.minusMillis(1))),
-            row("incident-1", resolution = resolution("REWORK", "park", T0.plusSeconds(1))),
-            row("incident-1", resolution = resolution("CONFIRM_DONE", "kim", T0.plusSeconds(1))),
-            row("incident-1", unitId = "RACK-204.S01", resolution = resolution("REWORK", "kim", T0.plusSeconds(1))),
-            row("incident-1", executionId = "exec-2", resolution = resolution("REWORK", "kim", T0.plusSeconds(1))),
+            listOf(row("incident-1", resolution = resolution("REWORK", "kim", T0.minusMillis(1)))),
+            listOf(row("incident-1", resolution = resolution("REWORK", "park", T0.plusSeconds(1)))),
+            listOf(row("incident-1", resolution = resolution("CONFIRM_DONE", "kim", T0.plusSeconds(1)))),
+            // 이 단위에는 판단 없는 인시던트가 있고 같은 실행의 다른 단위에 판단이 있다. 단위에 인시던트가 있으면 넓히지 않는다.
+            listOf(row("incident-0"), row("incident-1", unitId = "RACK-204.S01", resolution = resolution("REWORK", "kim", T0.plusSeconds(1)))),
+            listOf(row("incident-1", executionId = "exec-2", resolution = resolution("REWORK", "kim", T0.plusSeconds(1)))),
         )
         misses.forEach { miss ->
             clock.now = T0
-            bench.incidents = bench.listed(miss)
+            bench.incidents = bench.listed(*miss.toTypedArray())
             val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업")
-            assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, outcome.confirmation, miss)
+            assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, outcome.confirmation, miss.joinToString())
         }
         // 요청 직전 시각과 같은 판단 시각은 반영이다(경계).
         clock.now = T0
@@ -308,6 +309,78 @@ class IncidentOperationsTest {
         val observed = json.readTree(log.list().first().targetResponse)["observed"]
         assertEquals("incident-3", observed["incidentId"].asText())
         assertEquals("i-1", observed["instanceId"].asText())
+    }
+
+    @Test
+    fun `건너뛴 대상 재조회는 그 실행의 그 단위에 인시던트가 하나도 없을 때 같은 실행의 인시던트로 넓혀 반영됨을 읽는다`() {
+        bench.resolveAnswer = HostWrite.NoResponse("응답 없음: HttpTimeoutException")
+        val applied = resolution("REWORK", "kim", T0.plusSeconds(1))
+        // 건너뛴 점검(T1)은 인시던트를 열지 않았고 판단은 선행 이동(T1.travel)의 인시던트에 붙는다.
+        bench.incidents = bench.listed(row("incident-1", unitId = "T1.travel", resolution = applied))
+        val outcome = resolutions.resolve(kim, "exec-1", "T1", "REWORK", "i-1", "재작업")
+        assertEquals(OperationResult.NO_RESPONSE, outcome.result)
+        assertEquals(OperationResult.CONFIRMED_APPLIED, outcome.confirmation)
+        assertEquals("incident-1", json.readTree(log.list().first().targetResponse)["observed"]["incidentId"].asText())
+
+        // 넓힌 대조도 판단자, 결정, 요청 직전 시각, 같은 실행을 그대로 따진다.
+        listOf(
+            row("incident-1", unitId = "T1.travel", resolution = resolution("REWORK", "kim", T0.minusMillis(1))),
+            row("incident-1", unitId = "T1.travel", resolution = resolution("REWORK", "park", T0.plusSeconds(1))),
+            row("incident-1", unitId = "T1.travel", resolution = resolution("CONFIRM_DONE", "kim", T0.plusSeconds(1))),
+            row("incident-1", unitId = "T1.travel", executionId = "exec-2", resolution = applied),
+        ).forEach { miss ->
+            clock.now = T0
+            bench.incidents = bench.listed(miss)
+            assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, resolutions.resolve(kim, "exec-1", "T1", "REWORK", "i-1", "재작업").confirmation, miss)
+        }
+
+        // 이전 인스턴스 사본에서도 같은 규칙으로 넓힌다. 요청한 인스턴스의 사본만 본다.
+        clock.now = T0
+        bench.incidents = bench.listedAt("i-2", emptyList(), listOf(IncidentBench.copy("i-0", "incident-1", applied, unitId = "T1.travel")))
+        assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, resolutions.resolve(kim, "exec-1", "T1", "REWORK", "i-1", "재작업").confirmation)
+        clock.now = T0
+        bench.incidents = bench.listedAt("i-2", emptyList(), listOf(IncidentBench.copy("i-1", "incident-1", applied, unitId = "T1.travel")))
+        assertEquals(OperationResult.CONFIRMED_APPLIED, resolutions.resolve(kim, "exec-1", "T1", "REWORK", "i-1", "재작업").confirmation)
+    }
+
+    @Test
+    fun `그 실행의 그 단위에 인시던트가 있으면 같은 실행의 다른 단위 판단으로 넓히지 않는다`() {
+        bench.resolveAnswer = HostWrite.NoResponse("응답 없음: HttpTimeoutException")
+        val applied = resolution("REWORK", "kim", T0.plusSeconds(1))
+        // 같은 사람이 같은 실행의 다른 단위를 요청 뒤에 판단했다. 이 단위(rack-arrival)에는 판단 없는 인시던트가 있어 넓히지 않는다.
+        bench.incidents = bench.listed(
+            row("incident-2", unitId = "rack-arrival"),
+            row("incident-1", unitId = "RACK-204.S01", resolution = applied),
+        )
+        val outcome = resolutions.resolve(kim, "exec-1", "rack-arrival", "REWORK", "i-1", "재작업")
+        assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, outcome.confirmation)
+        assertEquals("incident-2", json.readTree(log.list().first().targetResponse)["observed"]["incidentId"].asText())
+    }
+
+    @Test
+    fun `건너뛴 대상 재작업의 새 Refused 사유와 이빅션 NotHeld 는 거부로 남고 호스트의 사유가 응답과 응답 칸에 그대로 있다`() {
+        // 사유는 picasso 의 문장 그대로, EVICTED 는 실행 호스트가 이빅션한 실행의 NotHeld 에 싣는 고정 코드다(화면 문구가 아니다).
+        val answers = listOf(
+            "Refused" to "점검을 하지 않은 단위는 확인할 것이 없다 — 재작업만 받는다: T1",
+            "Refused" to "취소한 실행의 대상은 재작업하지 않는다 — 새 작업 지시로 낸다",
+            "Refused" to "순회가 종결한 뒤 한 대상씩 재작업한다 — 아직 낼 단위나 도는 단위가 있다",
+            "Refused" to "같은 기체에 다른 활성 실행이 있다 — 그 실행이 끝난 뒤 재작업한다: exec-2",
+            "NotHeld" to "EVICTED",
+        )
+        answers.forEach { (name, detail) ->
+            bench.resolveAnswer = HostWrite.Answered(200, IncidentBench.resolved(null, name, detail))
+            val outcome = resolutions.resolve(kim, "exec-1", "T1", "REWORK", "i-1", "재작업")
+            assertEquals(OperationResult.REJECTED, outcome.result, detail)
+            assertEquals(name, outcome.outcome)
+            assertEquals(detail, outcome.answer!!["detail"].asText())
+            assertNull(outcome.answer["incidentId"].takeIf { !it.isNull })
+            assertNull(outcome.rejection)
+            assertNull(outcome.confirmation)
+        }
+        val rows = log.list()
+        assertEquals(List(answers.size) { OperationResult.REJECTED }, rows.map { it.result })
+        assertEquals(answers.map { it.second }.reversed(), rows.map { json.readTree(it.targetResponse)["body"]["detail"].asText() })
+        assertEquals(List(answers.size) { "exec-1/T1" }, rows.map { it.target })
     }
 
     @Test
