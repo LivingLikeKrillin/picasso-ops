@@ -1004,9 +1004,9 @@ class MissionHost(
      */
     fun executionsRecent(recent: Int): ExecutionPageView {
         require(recent in 1..ExecutionPages.MAX) { "recent 는 1~${ExecutionPages.MAX} 다: $recent" }
-        val live = lock.withLock {
+        val (live, reworkable) = lock.withLock {
             val latest = latestResponses(middleware.responses())
-            view(middleware.executions().filter { live(it, latest) })
+            view(middleware.executions().filter { live(it, latest) }) to reworkableTargets(latest)
         }
         val page = settledPage(null, recent)
         return ExecutionPageView(
@@ -1015,6 +1015,7 @@ class MissionHost(
             executions = live.executions,
             restore = live.restore,
             journalBlockedExecutionIds = live.journalBlockedExecutionIds,
+            reworkableTargets = reworkable,
             settled = page.settled,
             nextBefore = page.nextBefore,
             olderTotal = page.olderTotal,
@@ -1041,6 +1042,31 @@ class MissionHost(
             journalBlockedExecutionIds = journalBlocked(),
         )
     }
+
+    /**
+     * 재작업을 받을 수 있는 건너뛴 대상(picasso `Middleware.resolve` 의 건너뛴 대상 경로). 미들웨어 메모리의 실행 가운데 물리 상태가
+     * `PARTIAL`·`FAILED` 이고 열린 단위(낼 것, 도는 것, 미확정, 보류)가 없으며, 단위가 `FAILED` 이고 분류가
+     * [Middleware.PREDECESSOR_NOT_DONE] 이며 태스크를 쓴 적이 없는 것이다. 선행이 시도된 실패인지와 같은 기체의 다른 활성 실행은
+     * 호스트가 못 보거나(`ExecutionUnit.after` 는 picasso 안쪽) picasso 와 규칙이 두 벌이 되므로 picasso 의 `NotHeld`·`Refused` 에 맡긴다.
+     *
+     * `FAILED` 는 지금의 종결 기록을 적은 실행만 싣고([settleRecorded]) 보존 만료 시각을 그 기록 시각에서 정한다. 기록을 적기 전이면
+     * 만료 시각을 모르므로 싣지 않는다. 한 pump 안에 지난다. `PARTIAL` 은 만료가 없다. [latest] 는 [latestResponses] 다. 호스트 잠금
+     * 아래에서 부른다.
+     */
+    private fun reworkableTargets(latest: Map<String, JobResponse>): List<ReworkableTargetView> =
+        middleware.executions().flatMap { execution ->
+            val state = execution.physicalState
+            if (state != PhysicalState.PARTIAL && state != PhysicalState.FAILED) return@flatMap emptyList()
+            if (execution.units.any { it.state in OPEN_UNIT_STATES }) return@flatMap emptyList()
+            val retainedUntil = when {
+                state == PhysicalState.PARTIAL -> null
+                settleRecorded(execution, latest) -> settleMarks.getValue(execution.executionId).at.plus(revisableRetention)
+                else -> return@flatMap emptyList()
+            }
+            execution.units
+                .filter { it.state == UnitState.FAILED && it.failureClass == Middleware.PREDECESSOR_NOT_DONE && it.taskId.isEmpty() }
+                .map { ReworkableTargetView(execution.executionId, execution.order.jobOrderId, execution.robotId, it.unitId, state.name, retainedUntil) }
+        }
 
     /** [ExecutionPages.live]. [latest] 는 [latestResponses] 다. 호스트 잠금 아래에서 부른다. */
     private fun live(execution: Middleware.Execution, latest: Map<String, JobResponse>): Boolean =
@@ -1728,6 +1754,10 @@ class MissionHost(
          * 의 개정판을 받는다. 운영 서비스는 작업 지시 id 를 다시 쓰지 않으므로 개정판은 호스트 REST 를 직접 부르는 쪽만 낸다.
          */
         val DEFAULT_REVISABLE_RETENTION: Duration = Duration.ofMinutes(5)
+
+        /** 아직 낼 것이 있거나 도는 중이거나 사람을 기다리는 단위 상태. 하나라도 있으면 순회는 종결한 것이 아니다(picasso 와 같은 집합). */
+        private val OPEN_UNIT_STATES =
+            setOf(UnitState.PENDING, UnitState.RUNNING, UnitState.VERIFYING, UnitState.IN_DOUBT, UnitState.OPERATOR_HOLD)
 
         /** 개정판으로 다시 돌 수 있어 [DEFAULT_REVISABLE_RETENTION] 동안 두는 정착 상태. `PARTIAL` 은 구동이 계속 돌려 놓지 않는다. */
         private val REVISABLE = setOf(PhysicalState.FAILED, PhysicalState.UNVERIFIED)

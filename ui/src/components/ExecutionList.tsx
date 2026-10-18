@@ -5,7 +5,7 @@ import type { CancelRecord, Execution, ExecutionPage, JobResponse, ReleaseRecord
 import { appendOlder, catchUp, olderCount, olderCursor, sameExecution } from '../executionHistory'
 import type { ExecutionHistory } from '../executionHistory'
 import { EXECUTION_CONTROL_TEXT, EXECUTION_LIST_TEXT as TEXT } from '../labels'
-import { CancelExecutionForm, ReleaseFaultForm } from './ExecutionControls'
+import { CancelExecutionForm, ReleaseFaultForm, ReworkSkippedForm } from './ExecutionControls'
 import { PermitBlockNotice } from './PermitBlockNotice'
 
 /** 실행 호스트를 거친 읽기 하나. 못 읽으면 직전 값을 지우지 않고 [error] 로 불통을 표시한다. */
@@ -48,6 +48,9 @@ const withoutLive = (rows: SettledExecution[], page: ExecutionPage) =>
  *
  * 결함 막음과 운영자 결함 감수(S3a JSON 계약 §5.9·§5.10): 물리 상태 칸에 지금 막는 결함의 수와 그 작업 지시에 건 감수를 붙이고, 취소
  * 폼 아래에 결함 감수 폼을 둔다. 감수할 실행은 남은 실행 가운데 막는 결함이 있는 것에서만 고른다.
+ *
+ * 건너뛴 대상 재작업: 결함 수용 폼 아래에 둔다. 재작업할 대상은 남은 실행이 아니라 실행 호스트가 계산해 싣는 목록(`reworkableTargets`)에서
+ * 고른다. 종결해 이력으로만 보이는 `FAILED` 실행의 대상도 보존 기간 안에는 든다.
  */
 export function ExecutionList({ read, highlight, session, onCanceled }: Props) {
   const { value, error } = read
@@ -104,6 +107,14 @@ export function ExecutionList({ read, highlight, session, onCanceled }: Props) {
           executions={value.executions}
           session={session}
           onReleased={onCanceled ?? (() => undefined)}
+        />
+      )}
+      {session !== undefined && (
+        <ReworkSkippedForm
+          instanceId={value.instanceId}
+          targets={value.reworkableTargets ?? []}
+          session={session}
+          onReworked={onCanceled ?? (() => undefined)}
         />
       )}
       {session !== undefined && <OlderExecutions page={value} session={session} />}

@@ -113,7 +113,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 - `.env` 밖의 선택 환경 변수(운영 서비스): `PICASSO_INTEGRATION_TOKEN`(비면 외부 주문 API 꺼짐), `PICASSO_INTEGRATION_SOURCE`(기본 `mock-mes`), `PICASSO_LOCAL_CALLBACK_URL`(루프백 IP 리터럴 http 주소만, 비면 콜백 전달 꺼짐), `PICASSO_LOCAL_CALLBACK_TOKEN`
 - 운영 서비스 주기 속성(`ops-service.properties`): `ops.results.poll-ms=5000`(결과 수집과 멈춘 작업 요청 정리), `ops.requests.stale-seconds=300`, `ops.results.delivery-ms=2000`, `ops.results.delivery-batch`(콜백 전달 한 회차에 보내는 최대 수)는 속성 파일에는 없고 코드 기본값 10, 1~100 밖이면 기동 거부(운영 서비스가 뜨지 않음), 스테이션 워커 `ops.stations.poll-ms` 는 속성 파일에 없고 코드 기본값 2000
 - 인스턴스 심장박동: 실행 호스트 `host.instance.heartbeat-period=PT5S`·`host.instance.heartbeat-expiry=PT30S`(`mission-host.properties`), 운영 서비스 `ops.instance.heartbeat-period=PT5S`·`ops.instance.heartbeat-expiry=PT30S`(`ops-service.properties`). `.env` 키가 아님. 만료는 주기의 세 배 이상이어야 하고 아니면 기동이 멈춤. 심장박동은 자기 스레드에서 돌아 pump·`tick` 이 길어도 늦지 않음. 기본값 근거: HA 설계 기록 §4.5 하한(주기의 세 배 + GC 정지 + DB 왕복)에 실측 없이 15초 여유. 근거 시험: `HostInstanceTest` 의 `심장박동 만료가 주기의 세 배보다 짧으면 기동하지 않는다`.
-- 종결 보존: 실행 호스트 `host.settled.revisable-retention=PT5M`(`mission-host.properties`), `.env` 키가 아님. 기본값은 5분(소유자 결정)이며 설정 가능. `PHYSICALLY_DONE`·`ABORTED` 는 곧바로 이빅션함. `FAILED`·`UNVERIFIED` 는 종결 기록 커밋 시점부터 호스트 시계 기준으로 이 기간 동안 유지하여 같은 버전은 IDEMPOTENT 로 처리하고 더 높은 버전은 리비전으로 받음. 그 뒤에는 이빅션되며 해당 작업 지시 id 는 모든 버전에서 거부됨. 음수 값이면 기동이 멈춤. 근거 시험: `ForgetSettledTest` 의 `놓을 때는 끝난 실행은 곧이고 개정판을 받을 실행은 두는 폭이 지난 뒤이며 구동이 돌리는 실행은 놓지 않는다`.
+- 종결 보존: 실행 호스트 `host.settled.revisable-retention=PT5M`(`mission-host.properties`), `.env` 키가 아님. 기본값은 5분(소유자 결정)이며 설정 가능. `PHYSICALLY_DONE`·`ABORTED` 는 곧바로 이빅션함. `FAILED`·`UNVERIFIED` 는 종결 기록 커밋 시점부터 호스트 시계 기준으로 이 기간 동안 유지하여 같은 버전은 IDEMPOTENT 로 처리하고 더 높은 버전은 리비전으로 받음. 그 뒤에는 이빅션되며 해당 작업 지시 id 는 모든 버전에서 거부됨. 음수 값이면 기동이 멈춤. 근거 시험: `ForgetSettledTest` 의 `놓을 때는 끝난 실행은 곧이고 개정판을 받을 실행은 두는 폭이 지난 뒤이며 구동이 돌리는 실행은 놓지 않는다`. `FAILED` 실행의 건너뛴 대상 재작업도 이 보존 기간의 제약을 받으며, 화면 목록에는 `retainedUntil` 로 보존 만료 시각이 실림.
 - 기체 명부: `site/robots.json` 에 `humanoid-01`(HA-0001, `humanoid-a.json`)과 `quadruped-01`(QB-0001, `quadruped-b.json`)이 정의되어 있습니다.
 
 ## 운영 흐름 상세
@@ -439,16 +439,16 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-19에 `chore/picasso-70083fd` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-19 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 265개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-19에 `feat/rework-skipped-form` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-19 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 271개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 477(473 에서 4 늘어남: `IncidentOperationsTest` 3, `StationCoordinatorTest` 1) | 로컬 시험 결과 XML 477건, 실패 0 |
-| `mission-host` | 187(182 에서 5 늘어남: `SkippedTargetReworkHostTest` 5) | 로컬 시험 결과 XML 187건, 실패 0 |
+| `ops-service` | 477(그대로) | 로컬 시험 결과 XML 477건, 실패 0 |
+| `mission-host` | 191(187 에서 4 늘어남: `SkippedTargetReworkHostTest` 4) | 로컬 시험 결과 XML 191건, 실패 0 |
 | `site` | 41(그대로) | 로컬 시험 결과 XML 41건, 실패 0 |
-| `e2e` | 75(그대로, 시험 클래스 19개) | 로컬 시험 결과 XML 75건, 실패 0 |
-| `ui`(vitest) | 265(그대로, 시험 파일 28개) | 2026-10-19 `chore/picasso-70083fd` 브랜치 로컬 실행, 실패 0 |
-| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `chore/picasso-70083fd` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
+| `e2e` | 76(75 에서 1 늘어남: `SkippedTargetReworkTest` 1, 시험 클래스 20개) | 로컬 시험 결과 XML 76건, 실패 0 |
+| `ui`(vitest) | 271(265 에서 6 늘어남: `ExecutionControls.test.tsx` 6, 시험 파일 28개) | 2026-10-19 `feat/rework-skipped-form` 브랜치 로컬 실행, 실패 0 |
+| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `feat/rework-skipped-form` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
 

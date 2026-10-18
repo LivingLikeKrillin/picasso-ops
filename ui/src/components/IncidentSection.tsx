@@ -495,7 +495,7 @@ function describeDecision(sent: Delivered<HoldResolveOutcome>): string {
     case 'NotHeld':
       return '보류 단위가 아닙니다'
     case 'Refused':
-      return answer?.detail ? `에이전트 판단은 거부됩니다. ${answer.detail}` : '에이전트 판단은 거부됩니다'
+      return EXECUTION_CONTROL_TEXT.incidentRefused(answer?.detail ?? null)
   }
   if (rejection !== null) return rejectionText('실행 호스트가 거부함', rejection)
   switch (confirmation) {
