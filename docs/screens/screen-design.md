@@ -440,7 +440,8 @@ picasso-ops 는 상위 시스템(MES·WMS)의 외부 주문을 로봇 임무에 
 | SIGNAL_VALUE_INVALID | «신호 종류에 맞지 않는 값» | FLOOR_UNOWNED | «바닥 소유 없음» |
 | SKILL_NOT_IN_CONTRACT | «계약에 없는 스킬» | SKILL_NOT_ON_SITE | «현장에 없는 스킬» |
 | SAFETY_SIGNAL_WAIT | «안전 신호 대기» | SOURCE_OBSERVATION_UNDECLARED | «출발 관측 선언 없음» |
-| SOURCE_OBSERVATION_UNUSED | «출발 관측 선언 미사용» | | |
+| SOURCE_OBSERVATION_UNUSED | «출발 관측 선언 미사용» | DESTINATION_OBSERVATION_UNDECLARED | «목적지 관측 선언 없음» |
+| DESTINATION_OBSERVATION_UNUSED | «목적지 관측 선언 미사용» | | |
 | MISSION_BAD_REQUEST | «임무 요청 오류» | REASON_REQUIRED | «사유 없음» |
 | DRAFT_NOT_FOUND | «없는 초안» | REQUEST_ID_REUSED | «요청 id 재사용» |
 | HOST_SILENT | «실행 호스트 불통» | SIGNAL_BAD_REQUEST | «신호 값 형식 오류» |

@@ -70,6 +70,7 @@ export const KIND_LABEL: Record<string, string> = {
   ACTOR_REQUIRED: '행위자 없음',
   // 임무 정의 거부 10종(S3b JSON 계약 §3.1). 호스트는 바닥 소유를 쥐지 않아 FLOOR_UNOWNED 를 내지 않지만 이름은 둔다.
   // SOURCE_OBSERVATION_UNUSED 는 picasso `b57964e` 가 더한 열한째 종류다. 서브모듈을 올리기 전에는 호스트가 내지 않는다.
+  // DESTINATION_OBSERVATION_UNDECLARED·DESTINATION_OBSERVATION_UNUSED 는 picasso `786a0a2` 가 더한 열두째·열셋째 종류다.
   UNREADABLE: '읽을 수 없는 정의',
   DUPLICATE_NODE_ID: '노드 id 겹침',
   DEADLINE_INVALID: '대기 기한 오류',
@@ -82,6 +83,8 @@ export const KIND_LABEL: Record<string, string> = {
   SAFETY_SIGNAL_WAIT: '안전 신호 대기',
   SOURCE_OBSERVATION_UNDECLARED: '출발 관측 선언 없음',
   SOURCE_OBSERVATION_UNUSED: '출발 관측 선언 미사용',
+  DESTINATION_OBSERVATION_UNDECLARED: '목적지 관측 선언 없음',
+  DESTINATION_OBSERVATION_UNUSED: '목적지 관측 선언 미사용',
   // 임무·신호 조작의 사전 거부와 호스트·현장의 4xx(S3b JSON 계약 §10).
   MISSION_BAD_REQUEST: '임무 요청 오류',
   REASON_REQUIRED: '사유 없음',

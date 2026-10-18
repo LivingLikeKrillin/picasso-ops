@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import dev.picasso.middleware.Approver
 import dev.picasso.middleware.ApproverKind
 import dev.picasso.middleware.JudgmentRecordWire
+import dev.picasso.middleware.Middleware
 import dev.picasso.mimic.engine.ForceOutcome
 import dev.picasso.mimic.engine.TaskState
 import dev.picasso.ops.host.HostBench.Companion.HUMANOID
@@ -28,8 +29,10 @@ import kotlin.test.assertTrue
  * 운영자 결함 감수(결함 감수·조치 승인 노출 설계 제안 §2.1). 호스트 REST `POST /host/executions/{executionId}/release` 가 사람 승인자를
  * 판정하고, 운영자가 본 결함과 지금 막는 결함을 호스트 잠금 아래에서 대조한 뒤 감수 행(V11)을 먼저 적고 picasso `release` 를 부른다.
  *
- * 막힘은 사족 기체의 첫 태스크에 로봇 수준 결함(`LOCALIZATION_LOST`, 지울 때까지 유지되고 새 태스크를 못 받는다)을 대역 mimic 에 강제해
- * 만든다. 첫 단위가 실패하고 다음 단위의 시작 전 관문이 실행을 `OPERATOR_HOLD` 에 세운다. 단위 보류가 아니므로 운영자 판단 대상이 아니다.
+ * 막힘은 사족 기체의 첫 태스크(대상 T1 으로 가는 이동 `T1.travel`)에 로봇 수준 결함(`LOCALIZATION_LOST`, 지울 때까지 유지되고 새
+ * 태스크를 못 받는다)을 대역 mimic 에 강제해 만든다. 첫 단위가 실패하고 다음 단위(T1 점검)의 시작 전 게이트가 실행을 `OPERATOR_HOLD` 에
+ * 세운다. 단위 보류가 아니므로 운영자 판단 대상이 아니다. 수용하면 T1 점검은 선행 이동이 완료되지 않아 태스크 없이 `FAILED`
+ * (`PREDECESSOR_NOT_DONE`)로 걸러지고 다음 대상 T2 의 단위가 나간다(picasso §15.234).
  */
 class FaultReleaseHostTest {
 
@@ -81,7 +84,7 @@ class FaultReleaseHostTest {
     private fun HostBench.latestRecord(jobOrderId: String) = JudgmentRecordWire.decode(bean(HostRecords::class.java).judgmentRecords(jobOrderId).last().record)
 
     @Test
-    fun `본 결함대로 감수하면 감수 행과 판단 기록을 곧바로 적고 다음 단위를 내며 막힘이 걷힌 작업 응답 하나를 곧바로 낸다`() {
+    fun `본 결함대로 감수하면 감수 행과 판단 기록을 곧바로 적고 막힘이 걷힌 작업 응답 하나를 곧바로 내며 이동이 실패한 대상의 점검은 거르고 다음 대상의 단위를 낸다`() {
         HostBench().use { bench ->
             val blocked = bench.blocked()
             val executionId = blocked["executionId"].asText()
@@ -129,8 +132,11 @@ class FaultReleaseHostTest {
                 listOf("RUNNING", "[]", "false"),
                 listOf(releasedResponse["physicalState"].asText(), releasedResponse["blockedBy"].toString(), releasedResponse["operatorRequired"].asText()),
             )
-            val midway = bench.driveUntilUnit(executionId, "T1", "DONE")
+            // 수용 뒤 T1 점검은 선행 이동(T1.travel)이 실패로 종료해 태스크 없이 거른다. 다음 대상 T2 의 이동이 나가 완료된다.
+            val midway = bench.driveUntilUnit(executionId, "T2.travel", "DONE")
             assertEquals("RUNNING", midway["physicalState"].asText(), midway.toString())
+            assertEquals(listOf("FAILED", "FAILED"), midway["units"].take(2).map { it["state"].asText() }, midway.toString())
+            // 거른 것은 작업 응답을 내지 않는다.
             assertEquals(releasedResponse, midway["jobResponse"], midway.toString())
             // 송신 기록과 결과 outbox 에 그 응답이 한 줄로 들고, 막힌 줄 뒤에 다른 줄은 없다.
             assertEquals(listOf("OPERATOR_HOLD" to "[\"LOCALIZATION_LOST\"]", "RUNNING" to "[]"), outbox("JO-1").takeLast(2))
@@ -139,7 +145,12 @@ class FaultReleaseHostTest {
             val done = bench.driveUntil(executionId, settled)
             assertEquals("PARTIAL", done["physicalState"].asText(), done.toString())
             assertEquals(listOf("PARTIAL", "[]"), listOf(done["jobResponse"]["physicalState"].asText(), done["jobResponse"]["blockedBy"].toString()))
-            assertEquals(listOf("FAILED", "DONE", "DONE", "DONE"), done["units"].map { it["state"].asText() })
+            assertEquals(listOf("T1.travel", "T1", "T2.travel", "T2"), done["units"].map { it["unitId"].asText() })
+            assertEquals(listOf("FAILED", "FAILED", "DONE", "DONE"), done["units"].map { it["state"].asText() })
+            assertEquals(Middleware.PREDECESSOR_NOT_DONE, done["jobResponse"]["incompleteUnits"].path("T1").asText(), done.toString())
+            assertEquals(listOf("T1", "T1.travel"), done["jobResponse"]["incompleteUnits"].fieldNames().asSequence().toList().sorted(), done.toString())
+            // 거른 점검은 인시던트를 열지 않는다. 이동의 실패가 연 하나뿐이다.
+            assertEquals(1, bench.get("/host/incidents")["incidents"].size(), bench.get("/host/incidents").toString())
             assertEquals(
                 listOf("OPERATOR_HOLD" to "[\"LOCALIZATION_LOST\"]", "RUNNING" to "[]", "PARTIAL" to "[]"),
                 outbox("JO-1").dropWhile { it.first != "OPERATOR_HOLD" },

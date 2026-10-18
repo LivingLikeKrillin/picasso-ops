@@ -71,6 +71,18 @@ class MockRunnerTest {
     }
 
     @Test
+    fun `목적지 관측을 요구한 버전 1 모양은 이상적 현장의 목적지가 작업 전에 비어 게이트를 지나고 모든 단위가 E2 로 완료되어 통과한다`() {
+        val required = template(MissionTemplates.DATA_V1)
+            .replace("\"destinationObservation\": \"OPTIONAL\"", "\"destinationObservation\": \"REQUIRED\"")
+        check(required != template(MissionTemplates.DATA_V1)) { "선언을 바꾸지 못했다" }
+        val result = runner().run(parsed(required), order())
+        assertTrue(result.passed, result.toString())
+        assertEquals("PHYSICALLY_DONE", result.physicalState)
+        assertEquals(listOf("RACK-204.S01", "RACK-204.S02"), result.units.map { it.unitId })
+        assertTrue(result.units.all { it.state == "DONE" && it.reached == "E2" }, result.units.toString())
+    }
+
+    @Test
     fun `대기 노드 버전 2 모양은 대기 단위가 기대 값을 읽어 완료되고 통과한다`() {
         val result = runner().run(parsed(template(MissionTemplates.ARRIVAL_WAIT)), order())
         assertTrue(result.passed, result.toString())

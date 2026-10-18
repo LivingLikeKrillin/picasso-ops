@@ -1,6 +1,7 @@
 package dev.picasso.ops.host.mission
 
 import dev.picasso.middleware.ActiveMission
+import dev.picasso.middleware.DestinationObservation
 import dev.picasso.middleware.LogicalCapability
 import dev.picasso.middleware.MissionCatalog
 import dev.picasso.middleware.SourceObservation
@@ -84,7 +85,7 @@ class StoredMissionCatalog(code: List<LogicalCapability> = MissionCatalog.codeCa
         check(definition.workMasterId == row.workMasterId) { "$where 의 정의가 다른 WorkMaster(${definition.workMasterId})다" }
         val restored = undeclaredAsOptional(definition)
         if (restored !== definition) {
-            log.warn("{} 은 출발 관측 선언 전에 활성화한 버전이다. 신원을 대는 출발 자리를 OPTIONAL 로 세운다(그때의 거동). 선언한 새 버전을 활성화하십시오", where)
+            log.warn("{} 은 출발 관측이나 목적지 관측 선언 전에 활성화한 버전이다. 선언이 없는 노드를 OPTIONAL 로 세운다(그때의 거동). 선언한 새 버전을 활성화하십시오", where)
         }
         return try {
             DefinedCapability(restored)
@@ -97,24 +98,35 @@ class StoredMissionCatalog(code: List<LogicalCapability> = MissionCatalog.codeCa
         private val log = LoggerFactory.getLogger(StoredMissionCatalog::class.java)
 
         /**
-         * 저장된 활성 버전 중 출발 관측 선언(`sourceObservation`)이 생기기 전에 활성화한 것. 신원을 대는 출발 자리가 있는데 선언이 없는
-         * 단위 노드를 [SourceObservation.OPTIONAL] 로 채운 정의를 낸다. 고칠 노드가 없으면 받은 객체 그대로다.
+         * 저장된 활성 버전 중 출발 관측 선언(`sourceObservation`)이나 목적지 관측 선언(`destinationObservation`)이 생기기 전에 활성화한
+         * 것. 신원을 대는 출발 자리가 있는데 출발 관측 선언이 없는 단위 노드는 [SourceObservation.OPTIONAL] 로, 식별 정보를 대는 목적지가
+         * 있는데 목적지 관측 선언이 없는 단위 노드는 [DestinationObservation.OPTIONAL] 로 채운 정의를 낸다. 고칠 노드가 없으면 받은 객체
+         * 그대로다.
          *
-         * **저장된 버전을 되살릴 때만 쓴다.** 그 버전은 활성화 때의 규칙으로 검증을 지났고, 그때 있던 거동은 OPTIONAL(설비가 말이 없으면
-         * 보낸다) 하나뿐이었다. 채우지 않으면 picasso `DefinedCapability` 가 세우기를 거부해 호스트 기동이 멈추고 이미 활성인 버전이
-         * 사라진다. 검증·활성화·모의 실행은 이 길을 지나지 않으므로 새 정의는 선언 없이 활성화되지 않는다.
+         * **저장된 버전을 되살릴 때만 쓴다.** 그 버전은 활성화 때의 규칙으로 검증을 지났고, 그때 있던 거동은 OPTIONAL 하나뿐이었다(출발
+         * 자리는 설비가 말이 없으면 보내고, 목적지는 설비에 묻지 않는다). 채우지 않으면 picasso `DefinedCapability` 가 세우기를 거부해
+         * 호스트 기동이 멈추고 이미 활성인 버전이 사라진다. 검증·활성화·모의 실행은 이 길을 지나지 않으므로 새 정의는 선언 없이
+         * 활성화되지 않는다.
          */
         fun undeclaredAsOptional(definition: MissionDefinition): MissionDefinition {
-            if (definition.steps.none { it is UnitStep && MissionValidator.needsSourceObservation(it) && it.sourceObservation == null }) return definition
+            if (definition.steps.none { it is UnitStep && (sourceUndeclared(it) || destinationUndeclared(it)) }) return definition
             return definition.copy(
                 steps = definition.steps.map { step ->
-                    if (step is UnitStep && MissionValidator.needsSourceObservation(step) && step.sourceObservation == null) {
-                        step.copy(sourceObservation = SourceObservation.OPTIONAL)
+                    if (step is UnitStep) {
+                        step.copy(
+                            sourceObservation = if (sourceUndeclared(step)) SourceObservation.OPTIONAL else step.sourceObservation,
+                            destinationObservation = if (destinationUndeclared(step)) DestinationObservation.OPTIONAL else step.destinationObservation,
+                        )
                     } else {
                         step
                     }
                 },
             )
         }
+
+        private fun sourceUndeclared(step: UnitStep): Boolean = MissionValidator.needsSourceObservation(step) && step.sourceObservation == null
+
+        private fun destinationUndeclared(step: UnitStep): Boolean =
+            MissionValidator.needsDestinationObservation(step) && step.destinationObservation == null
     }
 }

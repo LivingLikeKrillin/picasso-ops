@@ -17,6 +17,7 @@
 "expectedIdentity": { "from": "ITEM_PROPERTY", "property": "material" },
 "source": { "from": "PAIRED_ID" },
 "sourceObservation": "OPTIONAL",
+"destinationObservation": "OPTIONAL",
 "destination": { "from": "ITEM_ID" }
 }
 ]
