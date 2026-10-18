@@ -1351,28 +1351,45 @@ class MissionHost(
 
     /**
      * 운영자 판단(S4a 스펙 T4, T6). 호스트 잠금 아래에서 `Middleware.resolve` 를 부르고 결과 이름을 picasso 그대로 돌려준다.
-     * 판단은 그 단위의 판단 없는 가장 최근 인시던트에 붙는다(picasso `IncidentLog.noteResolution`). Resolved 이면 그 인시던트 id 를
-     * 같이 낸다. REST 는 늘 `PERSON` 승인자를 만들므로 Refused 는 이 메서드를 직접 부를 때만 난다.
+     * 대상은 보류 단위이거나, 선행 이동이 시도 뒤 실패해 내지 않은 점검인 건너뛴 대상이다(picasso ADR 53). 건너뛴 대상은 `REWORK` 만 받고
+     * 그 점검과 선행 이동을 한 쌍으로 새 시도로 되돌린다.
+     *
+     * Resolved 이면 판단이 붙은 인시던트 id 를 같이 낸다. 어느 인시던트에 붙는지는 picasso 가 정한다(`IncidentLog.noteResolution`). 보류
+     * 단위면 그 단위의 판단 없는 가장 최근 인시던트이고, 건너뛴 대상이면 선행 이동의 것이다(건너뛴 점검은 인시던트를 열지 않았다). 그래서
+     * 요청한 단위 id 로 고르지 않고, 부르기 전 그 실행의 판단 없는 인시던트 가운데 부른 뒤 판단이 새로 붙은 것을 고른다. 호스트 잠금 아래라
+     * 그 사이에 다른 판단이 끼지 않는다. 판단이 아무 인시던트에도 안 붙었으면 `null` 이다.
+     *
+     * Refused 는 에이전트 승인자일 때와 건너뛴 대상 재작업을 지금 받지 않을 때 난다. 앞의 것은 REST 가 늘 `PERSON` 승인자를 만들므로 이
+     * 메서드를 직접 부를 때만 난다. 뒤의 것은 확인(`CONFIRM_DONE`) 요청, 취소한 실행, 순회가 아직 종결하지 않은 실행, 같은 기체의 다른 활성
+     * 실행이며 REST 로도 난다. `detail` 은 picasso 사유 문장 그대로이고 호출한 쪽이 이 문장으로 분기해서는 안 된다.
+     * NotHeld 는 실행이 없거나 그 단위가 보류도 건너뛴 점검 모양도 아닐 때 난다. 그 실행이 picasso 메모리에 없고 이 인스턴스의 종결 기록이
+     * 있으면, 곧 이 인스턴스가 이빅션한 실행이면 `detail` 에 [EVICTED] 를 싣는다. 그 밖의 NotHeld 의 `detail` 은 `null` 이다.
      *
      * picasso `resolve` 는 판단으로 실행의 보류가 걷히면 그 자리에서 작업 응답 하나(`physicalState` `RUNNING`)를 낸다. 다른 단위가 아직
      * 보류이면 실행은 보류 그대로이고 내지 않는다. 다음 pump 가 그 응답을 송신 기록과 결과 outbox 에 한 번 적는다([release] 와 같다).
+     * 건너뛴 대상 재작업은 종료한 실행(`PARTIAL`·`FAILED`)을 `RUNNING` 으로 되돌리고 작업 응답 하나를 낸다. `FAILED` 는 종결을 적은 실행의
+     * 재실행이라 [recordReruns] 가 재실행 이벤트를 적고, `PARTIAL` 은 종결로 적은 적이 없어 적지 않는다. 어느 쪽이든 판단 기록은 곧바로 적는다.
      */
     fun resolve(executionId: String, unitId: String, decision: OperatorDecision, approver: Approver, requestId: String?): ResolveView =
         lock.withLock {
-            val target = middleware.incidents().lastOrNull {
-                it.executionId == executionId && it.unitId == unitId && it.resolution == null
-            }?.incidentId
+            val open = middleware.incidents().filter { it.executionId == executionId && it.resolution == null }.map { it.incidentId }.toSet()
             when (val outcome = middleware.resolve(executionId, unitId, decision, approver)) {
                 ResolveOutcome.Resolved -> {
-                    // 정착을 적은 실행이 판단으로 다시 돌면 다시 돎과 판단 기록을 같이 적는다. 못 적으면 pump 가 다시 적을 때까지 pump 를 막는다.
+                    val target = middleware.incidents().lastOrNull { it.incidentId in open && it.resolution != null }?.incidentId
+                    // 종결을 적은 실행이 판단으로 다시 돌면 재실행과 판단 기록을 같이 적는다. 못 적으면 pump 가 다시 적을 때까지 pump 를 막는다.
                     recordReruns()
                     persistRecord(executionId)
                     ResolveView(RESOLVED, null, target, requestId)
                 }
-                ResolveOutcome.NotHeld -> ResolveView(NOT_HELD, null, null, requestId)
+                ResolveOutcome.NotHeld -> ResolveView(NOT_HELD, EVICTED.takeIf { evicted(executionId) }, null, requestId)
                 is ResolveOutcome.Refused -> ResolveView(REFUSED, outcome.reason, null, requestId)
             }
         }
+
+    /** 그 실행이 picasso 메모리에 없고 이 인스턴스의 종결 기록이 있는가. 호스트 잠금 아래에서 부른다. */
+    private fun evicted(executionId: String): Boolean =
+        middleware.executions().none { it.executionId == executionId } &&
+            records.settledSnapshots(instanceId, executionIds = setOf(executionId)).isNotEmpty()
 
     /**
      * 운영자 실행 취소(P0-b2). 호스트 잠금 아래에서 판정하고, 취소를 DB 에 적은 뒤 미들웨어 `cancel` 을 부른다. 적지 못하면 예외가
@@ -1801,6 +1818,13 @@ class MissionHost(
         const val RESOLVED = "Resolved"
         const val NOT_HELD = "NotHeld"
         const val REFUSED = "Refused"
+
+        /**
+         * 판단 결과 NotHeld 의 `detail` 에 싣는 고정 코드. 그 실행이 picasso 메모리에 없고 이 인스턴스의 종결 기록이 있다, 곧 이 인스턴스가
+         * 종결 뒤 이빅션한 실행이라는 뜻이다. 건너뛴 대상 재작업은 이빅션 뒤에는 받지 않으므로 화면이 «보존 기간이 지났다» 와 «재작업할 수
+         * 없는 대상» 을 이 코드로 가른다. 화면에 그대로 보이는 문구가 아니라 코드이며, 글자를 바꾸면 그것을 읽는 쪽이 같이 바뀌어야 한다.
+         */
+        const val EVICTED = "EVICTED"
 
         /** 받는 WorkMaster. DeliverContainer 는 플릿 포트 구현이 없어 받지 않는다(스펙 §1). */
         val WORK_MASTERS: Set<String> = setOf(InspectAsset.WORK_MASTER, PrepareSequencedRack.WORK_MASTER)

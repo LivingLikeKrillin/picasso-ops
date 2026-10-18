@@ -119,8 +119,14 @@ class IncidentBench {
                "unresolved":true,"resolution":${resolution ?: "null"},"fault":null,"held":$held,"confirmedWithoutEvidence":false}"""
 
         /** 이전 인스턴스 사본 한 줄(S4b 계약 H3, 20칸). `instanceId` 를 앞에 두고 보류가 아니다. */
-        fun copy(instanceId: String, incidentId: String, resolution: String? = null, executionId: String = "exec-1"): String =
+        fun copy(
+            instanceId: String,
+            incidentId: String,
+            resolution: String? = null,
+            executionId: String = "exec-1",
+            unitId: String = "rack-arrival",
+        ): String =
             """{"instanceId":"$instanceId",""" +
-                row(incidentId, executionId = executionId, resolution = resolution, held = false).trimStart().removePrefix("{")
+                row(incidentId, executionId = executionId, unitId = unitId, resolution = resolution, held = false).trimStart().removePrefix("{")
     }
 }

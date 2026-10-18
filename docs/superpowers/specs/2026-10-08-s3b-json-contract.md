@@ -184,7 +184,7 @@ S3a 의 §2~§5(작업 지시 REST)와 §9.1~§9.4 는 그대로다.
 | `SKILL_NOT_ON_SITE` | ENGINEER | 그 스킬을 제공하는 기체를 현장에 둔다 |
 | `SAFETY_SIGNAL_WAIT` | ENGINEER | 대기 노드를 안전 신호가 아닌 신호로 바꾼다 |
 | `SOURCE_OBSERVATION_UNDECLARED` | ENGINEER | 단위 노드에 출발 관측을 REQUIRED 나 OPTIONAL 로 적는다 |
-| `SOURCE_OBSERVATION_UNUSED` | ENGINEER | 출발 관측 선언을 지우거나 출발 자리와 기대 신원을 함께 적는다 |
+| `SOURCE_OBSERVATION_UNUSED` | ENGINEER | 출발 관측 선언을 지우거나 출발 자리와 기대 식별 정보를 함께 적는다 |
 | `DESTINATION_OBSERVATION_UNDECLARED` | ENGINEER | 단위 노드에 목적지 관측을 REQUIRED 나 OPTIONAL 로 적는다 |
 | `DESTINATION_OBSERVATION_UNUSED` | ENGINEER | 목적지 관측 선언을 지우거나 목적지와 기대 식별 정보를 함께 적는다 |
 

@@ -329,6 +329,19 @@ class StationCoordinatorTest {
   incidents.onResolve={error("connection reset")};assertFailsWith<IllegalStateException>{rework(c)};assertEquals("REVIEW_REQUIRED",c.get(r.runId).state)
   assertEquals(3,incidents.writes().size);assertEquals(r.runId,c.stations().single().owner);assertEquals(r.dispatchedAt,c.get(r.runId).dispatchedAt)
  }
+ @Test fun `건너뛴 대상 재작업도 같은 게이트를 지나고 호스트의 Refused 와 이빅션 NotHeld 는 확인 필요로 되돌리며 반영되면 다시 진행한다`() {
+  val c=coordinator();val r=held(c);now=now.plusSeconds(3);signal()
+  listOf("Refused" to "순회가 종결한 뒤 한 대상씩 재작업한다 — 아직 낼 단위나 도는 단위가 있다","NotHeld" to "EVICTED").forEach{(name,detail)->
+   incidents.resolveAnswer=HostWrite.Answered(200,IncidentBench.resolved(null,name,detail))
+   val outcome=resolutions(c).resolve(operator,"exec-1","T1","REWORK","i-1","건너뛴 대상 재작업")
+   assertEquals(OperationResult.REJECTED,outcome.result);assertEquals(detail,outcome.answer!!["detail"].asText())
+   assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertEquals("재작업 거부; 점유를 유지하고 현장 확인을 기다립니다",c.get(r.runId).reason);assertEquals(r.runId,c.stations().single().owner)
+  }
+  assertEquals(listOf("T1","T1"),incidents.writes().map{it.unitId})
+  incidents.resolveAnswer=HostWrite.Answered(200,IncidentBench.resolved("incident-1"))
+  assertEquals("Resolved",resolutions(c).resolve(operator,"exec-1","T1","REWORK","i-1","건너뛴 대상 재작업").outcome)
+  assertEquals("RUNNING",c.get(r.runId).state);assertEquals(r.runId,c.stations().single().owner)
+ }
  @Test fun `재작업이 반영돼도 설비 완료 신호가 켜져 있거나 신호를 모르면 확인 필요로 남긴다`() {
   val c=coordinator();val r=held(c)
   signal(complete=true);rework(c);assertEquals("REVIEW_REQUIRED",c.get(r.runId).state);assertTrue(c.get(r.runId).reason.startsWith("재작업 반영; 설비 완료 신호가 켜져"))

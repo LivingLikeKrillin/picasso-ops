@@ -21,8 +21,8 @@ class ProfileRejectionsTest {
     private val table = listOf(
         Row(ProfileOp.SUBMIT, 400, """{"error":"프로파일을 읽을 수 없다"}""", ProfileRejections.PROFILE_UNREADABLE, Owner.ENGINEER, true),
         Row(ProfileOp.SUBMIT, 409, """{"received":2,"highest":2}""", ProfileRejections.REVISION_NOT_MONOTONIC, Owner.ENGINEER, true),
-        Row(ProfileOp.REQUEST_TEST, 404, """{"error":"없는 개정판이다"}""", ProfileRejections.UNKNOWN_REVISION, Owner.ENGINEER, true),
-        Row(ProfileOp.ACTIVATE, 404, """{"error":"없는 개정판이다"}""", ProfileRejections.UNKNOWN_REVISION, Owner.ENGINEER, true),
+        Row(ProfileOp.REQUEST_TEST, 404, """{"error":"없는 리비전이다"}""", ProfileRejections.UNKNOWN_REVISION, Owner.ENGINEER, true),
+        Row(ProfileOp.ACTIVATE, 404, """{"error":"없는 리비전이다"}""", ProfileRejections.UNKNOWN_REVISION, Owner.ENGINEER, true),
         Row(ProfileOp.REQUEST_TEST, 409, """{"status":"DRAFT"}""", ProfileRejections.REVISION_NOT_TESTABLE, Owner.ENGINEER, true),
         Row(ProfileOp.ACTIVATE, 409, """{"status":"VALIDATED","suites":{}}""", ProfileRejections.ACTIVATION_REFUSED, Owner.ENGINEER, true),
         Row(ProfileOp.BIND, 404, """{"reason":"UNKNOWN_ROBOT"}""", Rejections.UNKNOWN_ROBOT, Owner.ENGINEER, true),
