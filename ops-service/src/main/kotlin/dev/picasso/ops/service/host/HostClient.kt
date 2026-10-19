@@ -27,7 +27,11 @@ import java.util.UUID
 sealed interface HostCall<out T> {
     data class Ok<T>(val value: T) : HostCall<T>
 
-    data class Silent(val cause: String) : HostCall<Nothing>
+    /**
+     * [unreached] 는 호스트가 아무 답도 하지 않은 경우(연결 실패·시간 초과)만 참이다. 200 아닌 응답과 해석 못 한 본문은 호스트가
+     * 답한 것이라 거짓이다. 읽는 쪽이 «닿지 못함» 과 «읽지 못함» 을 가를 때만 쓰고, 같음 비교는 그대로 [cause] 와 함께 한다.
+     */
+    data class Silent(val cause: String, val unreached: Boolean = false) : HostCall<Nothing>
 }
 
 /**
@@ -567,7 +571,7 @@ class HostClient(
     /** 객체 본문만 받는다. 호스트의 GET 은 늘 객체를 준다(S3a JSON 계약 §5·§6, S3b JSON 계약 §4). */
     private fun get(path: String): HostCall<JsonNode> {
         val response = when (val write = send(HttpRequest.newBuilder(URI.create(base + path)).GET(), requestTimeout)) {
-            is HostWrite.NoResponse -> return HostCall.Silent(write.cause)
+            is HostWrite.NoResponse -> return HostCall.Silent(write.cause, unreached = true)
             is HostWrite.Answered -> write
         }
         if (response.status != 200) return HostCall.Silent("HTTP ${response.status}")

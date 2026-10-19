@@ -33,12 +33,14 @@ data class StationRobotPermit(val robotId: String, val permit: String, val cause
 /**
  * The work permit a station reads before its equipment is told to start. An information projection of the safety system, never a safety function.
  * [Undeclared]: the site declared no permit mapping, stations behave as before. [Read]: every robot the mapping governs; a station may send any
- * of them, so one robot not PERMITTED holds it. [Unreadable]: closed, holds.
+ * of them, so one robot not PERMITTED holds it. [Unreadable]: the host answered but the permit is not readable, closed, holds.
+ * [HostUnreachable]: the host gave no answer at all (transport failure, time-out, a thrown read), closed, holds. Not a statement about the permit.
  */
 sealed interface StationPermit {
  data object Undeclared : StationPermit
  data class Read(val robots: List<StationRobotPermit>) : StationPermit { val blocking: List<StationRobotPermit> get() = robots.filter { it.permit != "PERMITTED" } }
  data class Unreadable(val cause: String) : StationPermit
+ data class HostUnreachable(val cause: String) : StationPermit
 }
 data class StationReceipt(val id: UUID, val state: String, val safeToRetry: Boolean, val updatedAt: String, val physicalState: String?, val snapshot: JsonNode?, val resultVersion: Int? = null, val detail: String? = null, val sourceUnobserved: Boolean = false, val permitBlock: JsonNode? = null)
 interface StationPort {
@@ -91,7 +93,11 @@ class OpsStationPort(private val requests: WorkRequests, private val interfaces:
   return StationSignals(plain.filter{it.path("kind").asText()=="BOOLEAN" && it.path("value").asText() in setOf("true","false")}.associate{it.path("name").asText() to StationSignal(it.path("value").asText()=="true",at(it))},
    plain.filter{it.path("kind").asText()=="TEXT"}.associate{it.path("name").asText() to StationText(it.path("value").asText(),at(it))})
  }
- override fun permit():StationPermit = permitOf((host.workPermits() as? HostCall.Ok)?.value)
+ /** No answer from the host is [StationPermit.HostUnreachable]. Any answer that is not a readable permit (error status, odd body) is [StationPermit.Unreadable]. */
+ override fun permit():StationPermit = when(val call=host.workPermits()) {
+  is HostCall.Ok -> permitOf(call.value)
+  is HostCall.Silent -> if(call.unreached) StationPermit.HostUnreachable(call.cause) else permitOf(null)
+ }
  /** Same path as an operator's signal write (host → site), logged; a lost response counts only when the requery shows the value. */
  override fun write(name:String,value:String,actor:Actor):Boolean {
   val outcome=(cell ?: return false).write(actor,name,value)

@@ -114,8 +114,14 @@ class WorkRequestsTest {
   bench.workPermits=HostCall.Ok(json.readTree("""{"declared":true,"robots":[{"robotId":"humanoid-01","permit":"INHIBITED","reasons":[{"source":"cell/guard_closed","cause":"REPORTED","subject":"guard_closed=false","resumeBasis":"b","observedAt":"t"}]}]}"""))
   val read=assertIs<dev.picasso.ops.service.stations.StationPermit.Read>(port.permit())
   assertEquals(listOf("humanoid-01"),read.blocking.map{it.robotId})
-  bench.workPermits=HostCall.Silent("offline")
+  // A host that answered is reachable: an error status or a body that is not a permit is an unreadable permit, never an unreachable host.
+  bench.workPermits=HostCall.Silent("HTTP 503")
   assertIs<dev.picasso.ops.service.stations.StationPermit.Unreadable>(port.permit())
+  bench.workPermits=HostCall.Ok(json.readTree("""{"declared":"yes"}"""))
+  assertIs<dev.picasso.ops.service.stations.StationPermit.Unreadable>(port.permit())
+  // No answer at all is its own case.
+  bench.workPermits=HostCall.Silent("응답 없음: ConnectException",unreached=true)
+  assertEquals(dev.picasso.ops.service.stations.StationPermit.HostUnreachable("응답 없음: ConnectException"),port.permit())
  }
  @Test fun `접수 저장 실패 시 호스트는 호출하지 않는다`() {
   PostgresSupport.execute("ALTER TABLE ops.work_request ADD CONSTRAINT deny_receipt CHECK (false) NOT VALID")
