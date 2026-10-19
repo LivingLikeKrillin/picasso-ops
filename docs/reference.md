@@ -213,7 +213,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | 상태 | 뜻 | 다음 상태 |
 | --- | --- | --- |
 | `QUEUED` | 대기열에서 차례를 기다림 | 스테이션에 점유 작업이 없으면 가장 먼저 들어온 작업(`created_at`, `run_id` 순)이 점유해 `WAITING_READY`. 운영자 `CANCEL_QUEUED` 면 `CANCELLED` |
-| `WAITING_READY` | 스테이션을 점유하고 설비 준비를 기다림. 로봇에는 아직 보내지 않음 | 준비 신호가 true 이고 완료 신호가 false 면 `DISPATCHING`(이때 `dispatched_at` 기록). 단계 기한이 지나면 `TIMED_OUT`. 격리 중이면 운영자 `CONFIRM_STATION_IDLE` 전까지 보내지 않으며(사유 «스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다») 단계 기한은 멈춤. 작업 번호 쌍이 있는 스테이션은 작업 번호 쓰기 성공 뒤 `DISPATCHING`(근거 `jobSignal`·`jobToken`·`signals`), 쓰기 실패면 `WAITING_READY` 에 남음(사유 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다»). 현장이 작업 허가를 선언했으면 격리 확인 다음, 기한 확인 앞에서 허가를 봄. 막히면 `WAITING_READY` 에 남고 사유는 «작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다: <기체> <허가>[ <까닭>][(<막는 주체>)]; 풀릴 근거: <근거>»(까닭은 `REPORTED` 가 아닐 때만, 막는 주체는 있을 때만), 허가를 못 읽으면 «작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다: 작업 허가를 읽지 못했습니다». 근거(`context`)는 `workPermits`(기체마다 `robotId`·`permit`·`causes`·`subjects`·`resumeBasis`) 또는 `permitUnreadable`. 단계 기한은 멈춤. 허가가 돌아오면 «작업 허가 복귀; 설비 준비 기한을 다시 셉니다»(근거 `workPermits`)로 `WAITING_READY` 에 다시 들어감 |
+| `WAITING_READY` | 스테이션을 점유하고 설비 준비를 기다림. 로봇에는 아직 보내지 않음 | 준비 신호가 true 이고 완료 신호가 false 면 `DISPATCHING`(이때 `dispatched_at` 기록). 단계 기한이 지나면 `TIMED_OUT`. 격리 중이면 운영자 `CONFIRM_STATION_IDLE` 전까지 보내지 않으며(사유 «스테이션 격리; 현장 확인과 격리 해제 판단을 기다립니다») 단계 기한은 멈춤. 작업 번호 쌍이 있는 스테이션은 작업 번호 쓰기 성공 뒤 `DISPATCHING`(근거 `jobSignal`·`jobToken`·`signals`), 쓰기 실패면 `WAITING_READY` 에 남음(사유 «작업 번호 쓰기 실패; 설비 신호 기록을 기다립니다»). 현장이 작업 허가를 선언했으면 격리 확인 다음, 기한 확인 앞에서 허가를 봄. 막히면 `WAITING_READY` 에 남고 사유는 «작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다: <기체> <허가>[ <까닭>][(<막는 주체>)]; 풀릴 근거: <근거>»(까닭은 `REPORTED` 가 아닐 때만, 막는 주체는 있을 때만), 실행 호스트가 답했으나 허가를 못 읽으면 «작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다: 작업 허가를 읽지 못했습니다». 근거(`context`)는 `workPermits`(기체마다 `robotId`·`permit`·`causes`·`subjects`·`resumeBasis`) 또는 `permitUnreadable`. 단계 기한은 멈춤. 허가가 돌아오면 «작업 허가 복귀; 설비 준비 기한을 다시 셉니다»(근거 `workPermits`)로 `WAITING_READY` 에 다시 들어감. 어느 현장에서든 실행 호스트가 작업 허가 읽기에 응답하지 않으면 사유 «실행 호스트 응답 없음; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다: <원인>»(근거 `hostUnreachable`)으로 `WAITING_READY` 에 머물며 단계 기한은 멈추고, 실행 호스트가 다시 응답하면 «실행 호스트 응답 복귀; 설비 준비 기한을 다시 셉니다»로 `WAITING_READY` 에 다시 들어감. |
 | `DISPATCHING` | 고정한 호출 계약으로 작업 요청을 제출함 | 제출 결과가 `ACCEPTED` 면 `RUNNING`, 전송 전 미배정이면 `WAITING_ROBOT`, `REJECTED` 면 `REJECTED`(사유는 «계약 제출 거부: <작업 요청 detail>; 자원 해제», `detail` 이 없거나 비면 «계약 제출 거부; 자원 해제»), 호스트 미배정에 출발 미관측이 있으면 `REVIEW_REQUIRED`(사유는 «출발 미관측; 작업 요청 상세에서 출발 자리 확인을 기록하기 전에는 다시 제출하지 않고 점유를 유지합니다»), 그 밖이거나 호출 결과를 모르면 `REVIEW_REQUIRED`. 프로세스가 이 상태에서 멈췄다면 다음 `tick` 이 같은 키로 작업 요청을 다시 찾아볼 뿐 새로 보내지 않음 |
 | `RUNNING` | 로봇이 받아 실행 중. 저장된 결과와 새 설비 완료 신호를 기다림 | 완료 조건(아래 기준선 절)이 맞으면 `COMPLETED`. 기준선보다 새 결과의 물리 상태가 `OPERATOR_HOLD`·`IN_DOUBT`·`UNVERIFIED`·`FAILED`·`ABORTED`·`PARTIAL` 이면 `REVIEW_REQUIRED`. 단계 기한이 지나면 `REVIEW_REQUIRED`. 완료 근거와 판단된 결함을 작업 허가 차단, 실행 기한, 셀 신호 유예보다 먼저 판정함. 실행 기한이 지난 처리 주기라도 로봇 완료와 새 완료 신호가 모두 확인되면 `COMPLETED` 로 완료 처리함. 로봇 실행의 작업 허가 차단 중에는 실행 기한이 일시 정지되며, 복귀 시 `phase_at` 을 갱신해 기한을 다시 계산함. 셀 신호 읽기 실패 시 최대 15초 동안 유예 상태로 관측을 유지하며, 유예가 만료되거나 선언된 신호가 누락된 경우에만 `REVIEW_REQUIRED` 로 전환함. 작업 번호 쌍이 있는 스테이션은 완료 신호가 true 이고 반환 번호가 다르면 «설비 완료 신호 수신, 작업 번호 불일치; 현장 확인이 필요합니다» 로 `REVIEW_REQUIRED`(근거 `expected`·`echoed`·`signals`), 반환 신호가 읽기에 없어도 `REVIEW_REQUIRED` |
 | `WAITING_ROBOT` | 호스트에 보내기 전 배정 가능 기체가 없었음 | 설비가 여전히 준비 상태이고 이 상태에 들어온 지 5초가 지났으며 재평가가 3번 미만이면 `RETRYING` 으로 선점한 뒤 미배정 재평가. 작업 요청이 더는 전송 전 미배정이 아니면 그 상태에 따라 전이. 단계 기한이 지나면 `REVIEW_REQUIRED`. 제한 재평가(5초 간격·3회)는 전송 전 미배정만 돌고 출발 미관측은 돌지 않습니다. 스테이션의 전송 전 미배정 제한 재평가가, 처음엔 후보가 전부 빠졌다가(진행 중인 실행·스킬 부족) 나중에 배정 가능해진 기체를 다음 재평가에서 고르고, 재평가 상한(3회)·간격(5초)은 그대로임을 시험 `WorkRequestsTest` «전송 전 미배정의 제한 재평가는 나중에 배정 가능해진 기체를 고르고 재평가 횟수와 간격은 그대로다» 가 확인합니다. |
@@ -226,7 +226,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | `REJECTED` | 작업 요청 제출이 거부되어 점유를 풂(묶인 작업 요청이 `REJECTED` 면 사유 «계약 제출 거부: <작업 요청 detail>; 자원 해제», detail 이 없거나 비면 «계약 제출 거부; 자원 해제») | 종료 |
 | `MANUALLY_CLEARED` | 운영자가 현장 확인 뒤 점유를 풂. 물리 완료 판정이 아님 | 종료. 묶인 작업 요청이 `WAITING_RESOURCE`·`UNASSIGNED` 면 `REJECTED`(실행하지 않음), `DISPATCHING` 이면 `IN_DOUBT`(실행 관측으로 확인), `IN_DOUBT`·`ACCEPTED`·`REJECTED` 는 그대로. 작업 번호 쌍이 없는 스테이션에서 `dispatched_at` 이 있는 스테이션 작업을 `CONFIRM_CLEAR` 로 해제할 때 작업 요청이 미전송으로 확인되지 않으면 같은 트랜잭션에서 스테이션을 격리함(이력에 «자원 해제에 따른 스테이션 격리» 기록) |
 
-단계 기한은 그 상태에 들어온 시각(`phase_at`)부터 스테이션의 `timeout_seconds` 로 잽니다. 실행 중 기한 초과는 점유를 유지하고 자동으로 다시 실행하지 않습니다. 대기 사유만 바뀌는 경우(작업 번호 쓰기 실패, 격리, 작업 허가 대기)는 `phase_at` 을 바꾸지 않으며, 격리 중 설비 준비 기한은 멈추고 `CONFIRM_STATION_IDLE` 판단 시각부터 다시 셉니다. 작업 허가 대기 중에도 설비 준비 기한은 멈추고, 허가가 돌아와 «작업 허가 복귀; 설비 준비 기한을 다시 셉니다» 로 다시 들어갈 때 `phase_at` 을 그 시각으로 다시 둡니다(기한을 그때부터 다시 셈). `RUNNING` 단계에서는 로봇 실행에 작업 허가 차단이 걸려 있는 동안 실행 기한이 일시 정지되며, 차단이 풀려 작업 허가가 복귀하면 `phase_at` 을 복귀 시점으로 갱신하여 그때부터 실행 기한을 다시 계산합니다. 미배정 재평가 요청 ID 는 스테이션 작업 id 와 시도 번호로 정해지는 UUID 이고, 재평가는 최대 3번입니다.
+단계 기한은 그 상태에 들어온 시각(`phase_at`)부터 스테이션의 `timeout_seconds` 로 잽니다. 실행 중 기한 초과는 점유를 유지하고 자동으로 다시 실행하지 않습니다. 대기 사유만 바뀌는 경우(작업 번호 쓰기 실패, 격리, 작업 허가 대기)는 `phase_at` 을 바꾸지 않으며, 격리 중 설비 준비 기한은 멈추고 `CONFIRM_STATION_IDLE` 판단 시각부터 다시 셉니다. 작업 허가 대기 중에도 설비 준비 기한은 멈추고, 허가가 돌아와 «작업 허가 복귀; 설비 준비 기한을 다시 셉니다» 로 다시 들어갈 때 `phase_at` 을 그 시각으로 다시 둡니다(기한을 그때부터 다시 셈). 실행 호스트 응답 없음으로 대기할 때도 설비 준비 기한은 멈추고, «실행 호스트 응답 복귀; 설비 준비 기한을 다시 셉니다» 로 다시 들어갈 때 `phase_at` 을 그 시각으로 다시 둡니다. `RUNNING` 단계에서는 로봇 실행에 작업 허가 차단이 걸려 있는 동안 실행 기한이 일시 정지되며, 차단이 풀려 작업 허가가 복귀하면 `phase_at` 을 복귀 시점으로 갱신하여 그때부터 실행 기한을 다시 계산합니다. 미배정 재평가 요청 ID 는 스테이션 작업 id 와 시도 번호로 정해지는 UUID 이고, 재평가는 최대 3번입니다.
 
 ### 운영자 판단
 
@@ -439,16 +439,16 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-20에 `fix/work-request-state-guards` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-19 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 271개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-20에 `fix/station-host-unreachable-reason` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-19 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 271개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 490(477 에서 13 늘어남: `WorkRequestsTest` 13) | 로컬 시험 결과 XML 490건, 실패 0 |
+| `ops-service` | 493(490 에서 3 늘어남: `StationCoordinatorTest` 3) | 로컬 시험 결과 XML 493건, 실패 0 |
 | `mission-host` | 191(187 에서 4 늘어남: `SkippedTargetReworkHostTest` 4) | 로컬 시험 결과 XML 191건, 실패 0 |
 | `site` | 41(그대로) | 로컬 시험 결과 XML 41건, 실패 0 |
 | `e2e` | 76(75 에서 1 늘어남: `SkippedTargetReworkTest` 1, 시험 클래스 20개) | 로컬 시험 결과 XML 76건, 실패 0 |
-| `ui`(vitest) | 271(265 에서 6 늘어남: `ExecutionControls.test.tsx` 6, 시험 파일 28개) | 2026-10-20 `fix/work-request-state-guards` 브랜치 로컬 실행, 실패 0 |
-| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `fix/work-request-state-guards` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
+| `ui`(vitest) | 271(265 에서 6 늘어남: `ExecutionControls.test.tsx` 6, 시험 파일 28개) | 2026-10-20 `fix/station-host-unreachable-reason` 브랜치 로컬 실행, 실패 0 |
+| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `fix/station-host-unreachable-reason` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
 

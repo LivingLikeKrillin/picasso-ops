@@ -521,10 +521,45 @@ class StationCoordinatorTest {
   assertEquals("${StationCoordinator.PERMIT_HELD}: humanoid-01 UNKNOWN EXPIRED(guard_closed=true); 풀릴 근거: 원천 cell/guard_closed 가 유효한 관측을 다시 낼 때",service.get(run.runId).reason)
   port.permit=StationPermit.Read(listOf(robotPermit("humanoid-01","UNKNOWN",cause="NOT_COVERED",subject=null,basis="이 기체를 덮는 허가 원천이 생길 때")))
   service.tick();assertEquals("${StationCoordinator.PERMIT_HELD}: humanoid-01 UNKNOWN NOT_COVERED; 풀릴 근거: 이 기체를 덮는 허가 원천이 생길 때",service.get(run.runId).reason)
-  port.permitThrows=true;service.tick()
+  // A host that answered but whose permit body cannot be read is a permit that is not known. A host that gave no answer is its own wait.
+  port.permit=StationPermit.Unreadable("body");service.tick()
   assertEquals("${StationCoordinator.PERMIT_HELD}: 작업 허가를 읽지 못했습니다",service.get(run.runId).reason);assertEquals("WAITING_READY",service.get(run.runId).state)
-  port.permitThrows=false;port.permit=StationPermit.Unreadable("offline");service.tick()
-  assertEquals("${StationCoordinator.PERMIT_HELD}: 작업 허가를 읽지 못했습니다",service.get(run.runId).reason);assertEquals("WAITING_READY",service.get(run.runId).state)
+  assertTrue(port.writes.isEmpty());assertEquals(0,port.sends)
+ }
+ @Test fun `호스트가 응답하지 않으면 허가를 대기한다고 하지 않고 호스트 응답 없음으로 작업 번호를 쓰지 않고 설비 준비 기한을 멈춘다`() {
+  echoing();port.permitThrows=true
+  val run=enqueue();service.tick();service.tick()
+  val waiting=service.get(run.runId);assertEquals("WAITING_READY",waiting.state)
+  assertEquals("${StationCoordinator.HOST_UNREACHABLE_HELD}: IllegalStateException",waiting.reason)
+  assertFalse(waiting.reason.startsWith(StationCoordinator.PERMIT_HELD))
+  assertTrue(port.writes.isEmpty());assertEquals(0,port.sends)
+  assertEquals(1,service.events(run.runId).count{it["reason"]==waiting.reason})
+  assertEquals("IllegalStateException",context(run.runId,"WAITING_READY",waiting.reason)["hostUnreachable"].asText())
+  // The readiness deadline does not run out while the host is silent, and a host that is silent from the port itself reads the same.
+  now=now.plusSeconds(30);port.permitThrows=false;port.permit=StationPermit.HostUnreachable("응답 없음: ConnectException");service.tick()
+  assertEquals("WAITING_READY",service.get(run.runId).state);assertEquals("${StationCoordinator.HOST_UNREACHABLE_HELD}: 응답 없음: ConnectException",service.get(run.runId).reason)
+  assertTrue(port.writes.isEmpty());assertEquals(0,port.sends)
+ }
+ @Test fun `호스트가 다시 응답하면 호스트 응답 복귀로 설비 준비 기한을 다시 세고 준비되면 작업 번호를 쓴다`() {
+  echoing();port.permitThrows=true
+  val run=enqueue();service.tick();service.tick()
+  assertTrue(service.get(run.runId).reason.startsWith(StationCoordinator.HOST_UNREACHABLE_HELD))
+  now=now.plusSeconds(30);port.permitThrows=false;service.tick()
+  val resumed=service.get(run.runId);assertEquals("WAITING_READY",resumed.state);assertEquals(StationCoordinator.HOST_RESUMED,resumed.reason);assertEquals(now,resumed.phaseAt)
+  assertEquals(1,service.events(run.runId).count{it["reason"]==StationCoordinator.HOST_RESUMED});assertTrue(port.writes.isEmpty())
+  service.tick()
+  assertEquals("RUNNING",service.get(run.runId).state);assertEquals(listOf("job" to run.runId.toString()),port.writes);assertEquals(1,port.sends)
+ }
+ @Test fun `호스트가 응답하지 않다 허가가 막는다고 돌아오면 사유만 바꿔 다시 대기하고 호스트가 허가와 함께 돌아오면 풀린다`() {
+  echoing();port.permitThrows=true
+  val run=enqueue();service.tick();service.tick()
+  port.permitThrows=false;port.permit=StationPermit.Read(listOf(robotPermit("humanoid-01","INHIBITED"),robotPermit("quadruped-01","PERMITTED",subject="guard_closed=true")))
+  val phaseAt=service.get(run.runId).phaseAt;now=now.plusSeconds(5);service.tick()
+  val held=service.get(run.runId);assertEquals("WAITING_READY",held.state);assertTrue(held.reason.startsWith(StationCoordinator.PERMIT_HELD));assertEquals(phaseAt,held.phaseAt)
+  port.permit=StationPermit.HostUnreachable("응답 없음: HttpTimeoutException");service.tick()
+  assertTrue(service.get(run.runId).reason.startsWith(StationCoordinator.HOST_UNREACHABLE_HELD))
+  port.permit=permitted;now=now.plusSeconds(5);service.tick()
+  assertEquals(StationCoordinator.HOST_RESUMED,service.get(run.runId).reason)
   assertTrue(port.writes.isEmpty());assertEquals(0,port.sends)
  }
  @Test fun `작업 번호 신호가 없는 스테이션도 작업 허가가 막으면 작업 요청을 내지 않고 허가가 돌아오면 낸다`() {

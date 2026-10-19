@@ -73,8 +73,9 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  @Synchronized fun tick() {
   // Ops clock time of this read. Only a read taken after a run (re)entered RUNNING may speak for that run.
   val readAt=clock.instant();val signals=runCatching{port.read()}.getOrNull()
-  // Read outside every lock, like the signals. A permit that cannot be read is no permit.
-  val permit=runCatching{port.permit()}.getOrElse{StationPermit.Unreadable(it.toString())}
+  // Read outside every lock, like the signals. A permit that cannot be read is no permit. A read that threw got no answer: host unreachable.
+  // Only the exception class: a message that varies per tick would write a new hold event each tick.
+  val permit=runCatching{port.permit()}.getOrElse{StationPermit.HostUnreachable(it.javaClass.simpleName)}
   // Every station with its owner run in one unlocked read. A quiet station takes no lock; any other is judged under its lock (HA design record §10).
   val board=board()
   // The execution reads of this tick cover the receipts it observes; a dispatch in it is followed by a new read (HA design record §10).
@@ -96,6 +97,8 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
      if(held!=null) {hold(run,held.first,held.second);return@execute null}
      // Back to PERMITTED: a new phase, the readiness deadline starts again. The next tick judges readiness.
      if(run.reason.startsWith(PERMIT_HELD)) {transition(run,"WAITING_READY",PERMIT_RESUMED,context=permitContext(permit));return@execute null}
+     // The host answers again and nothing blocks: the same new phase, named for what came back (the host, not a permit).
+     if(run.reason.startsWith(HOST_UNREACHABLE_HELD)) {transition(run,"WAITING_READY",HOST_RESUMED,context=permitContext(permit));return@execute null}
      if(expired(run,current)) {transition(run,"TIMED_OUT","설비 준비 시간 초과; 로봇 전송 전 자원 해제",release=true);return@execute null}
      if(signals?.flags?.get(current.readySignal)?.value==true && signals.flags[current.completeSignal]?.value==false) {
       // The job number is written outside the lock first; DISPATCHING is claimed only after the site holds it.
@@ -357,6 +360,7 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
  private fun permitHeld(permit:StationPermit):Pair<String,JsonNode>? = when(permit) {
   StationPermit.Undeclared -> null
   is StationPermit.Unreadable -> "$PERMIT_HELD: 작업 허가를 읽지 못했습니다" to json.createObjectNode().put("permitUnreadable",permit.cause)
+  is StationPermit.HostUnreachable -> "$HOST_UNREACHABLE_HELD: ${permit.cause}" to json.createObjectNode().put("hostUnreachable",permit.cause)
   is StationPermit.Read -> permit.blocking.takeIf{it.isNotEmpty()}?.let{blocking->
    val robots=blocking.joinToString(", "){r->r.robotId+" "+r.permit+r.causes.filter{it!="REPORTED"}.joinToString(""){" $it"}+(r.subjects.takeIf{it.isNotEmpty()}?.joinToString(", ",prefix="(",postfix=")")?:"")}
    "$PERMIT_HELD: $robots; 풀릴 근거: ${blocking.flatMap{it.resumeBasis}.distinct().joinToString(", ")}" to permitContext(permit)
@@ -433,6 +437,9 @@ class StationCoordinator(private val jdbc:JdbcClient,private val tx:TransactionT
   /** Prefix of a WAITING_READY hold on the work permit. Robots, their permit, cause, blocking subject and what lifts it follow. */
   const val PERMIT_HELD="작업 허가 대기; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다"
   const val PERMIT_RESUMED="작업 허가 복귀; 설비 준비 기한을 다시 셉니다"
+  /** Prefix of a WAITING_READY hold while the execution host gives no answer to the work permit read. The cause follows. Not a permit wait. */
+  const val HOST_UNREACHABLE_HELD="실행 호스트 응답 없음; 작업 번호를 쓰지 않고 작업 요청을 내지 않습니다"
+  const val HOST_RESUMED="실행 호스트 응답 복귀; 설비 준비 기한을 다시 셉니다"
   /** RUNNING reasons: the run's own wait, a run deadline past, and declared signals missing from a read or unread past [SIGNAL_GRACE]. */
   const val RUN_WAITING="로봇 수락; 저장 결과와 새 설비 완료 신호를 기다립니다"
   const val RUN_TIMED_OUT="작업 시간 초과; 물리 상태 확인 전 점유를 유지합니다"
