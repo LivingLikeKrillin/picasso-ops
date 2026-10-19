@@ -218,7 +218,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   // A crash after this point remains DISPATCHING; recovery is observation, never blind resubmission.
   try {
    when(val sent=operations.submit(actor,draft,interfaceRef,interfaceInput,id,jobId,sourceConfirmations(id))) {
-    is JobOrderSubmission.NoEligibleRobot -> update(id,"UNASSIGNED",sent.detail,closeRound=true)
+    is JobOrderSubmission.NoEligibleRobot -> finish(id,"UNASSIGNED",sent.detail,null,closeRound=true)
     is JobOrderSubmission.Submitted -> {
      val value=sent.outcome
      val state=when {
@@ -231,12 +231,10 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
      val detail=when(state){"REJECTED"->rejectedDetail(value.outcome);"UNASSIGNED"->unassignedDetail(value.outcome);else->null}
      // Only a host UNASSIGNED that asks a person at a source keeps the source confirmation round open (V22).
      val open=state=="UNASSIGNED" && value.outcome?.refusals.orEmpty().any{it.sourceUnobserved!=null}
-     jdbc.sql("UPDATE ops.work_request SET state=:state,submission=CAST(:submission AS JSONB),${if(detail!=null)"detail=:detail," else ""}${if(open)"" else "$CLOSE_ROUND,"}updated_at=clock_timestamp() WHERE receipt_id=:id")
-      .param("state",state).param("submission",ObjectMapper().findAndRegisterModules().writeValueAsString(value)).param("id",id)
-      .let{if(detail!=null)it.param("detail",detail) else it}.update()
+     finish(id,state,detail,ObjectMapper().findAndRegisterModules().writeValueAsString(value),closeRound=!open)
     }
    }
-  } catch(e: Exception) { org.slf4j.LoggerFactory.getLogger(WorkRequests::class.java).warn("접수 {} 제출 결과 불명: {}",id,e.javaClass.simpleName); update(id,"IN_DOUBT","제출 결과를 확정할 수 없습니다. 실행 이력을 확인하세요",closeRound=true) }
+  } catch(e: Exception) { org.slf4j.LoggerFactory.getLogger(WorkRequests::class.java).warn("접수 {} 제출 결과 불명: {}",id,e.javaClass.simpleName); finish(id,"IN_DOUBT","제출 결과를 확정할 수 없습니다. 실행 이력을 확인하세요",null,closeRound=true) }
  }
  fun dispatchQueued(id:UUID,actor:Actor):ReceiptAccepted {
   val claimed=transactions.execute {
@@ -423,6 +421,28 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   jdbc.sql("UPDATE ops.work_request SET state=:state,detail=:detail,${if(closeRound)"$CLOSE_ROUND," else ""}updated_at=clock_timestamp() WHERE receipt_id=:id")
    .param("state",state).param("detail",detail.take(2000)).param("id",id).update()
  }
+ /**
+  * Writes the end of a dispatch. The submission, the round close and updated_at are always written: they are the host's answer.
+  * State and detail move only from the states [leavesTo] allows, so a late answer never overwrites what observation or a person
+  * already decided while the host call was in flight. A kept state is logged with the discarded target.
+  */
+ private fun finish(id:UUID,target:String,detail:String?,submission:String?,closeRound:Boolean) {
+  val allowed=leavesTo(target)
+  var statement=jdbc.sql("""UPDATE ops.work_request SET state=CASE WHEN $allowed THEN :state ELSE state END,
+   ${if(detail!=null)"detail=CASE WHEN $allowed THEN :detail ELSE detail END," else ""}${if(submission!=null)"submission=CAST(:submission AS JSONB)," else ""}${if(closeRound)"$CLOSE_ROUND," else ""}
+   updated_at=clock_timestamp() WHERE receipt_id=:id RETURNING state""").param("state",target).param("id",id)
+  if(detail!=null) statement=statement.param("detail",detail.take(2000))
+  if(submission!=null) statement=statement.param("submission",submission)
+  val now=statement.query(String::class.java).optional().orElse(null)
+  if(now!=null && now!=target) org.slf4j.LoggerFactory.getLogger(WorkRequests::class.java).warn("접수 {} 상태 {} 유지, 제출 결과 {} 는 반영하지 않았다",id,now,target)
+ }
+ /** The SQL condition on the current row under which a dispatch outcome [target] may set the state. */
+ private fun leavesTo(target:String):String = when(target) {
+  "IN_DOUBT" -> "state='DISPATCHING'"
+  "ACCEPTED" -> "state IN ('DISPATCHING','IN_DOUBT')"
+  "REJECTED","UNASSIGNED" -> "state IN ('DISPATCHING','IN_DOUBT') AND last_execution IS NULL"
+  else -> error("no dispatch outcome $target")
+ }
  fun get(id:UUID,source:String?=null):Receipt = jdbc.sql("SELECT * FROM ops.work_request WHERE receipt_id=:id AND (:source IS NULL OR source_system_id=:source)")
   .param("id",id).param("source",source,java.sql.Types.VARCHAR).query(::row).optional()
   .orElseThrow { RequestRejected("RECEIPT_NOT_FOUND","작업 요청을 찾을 수 없습니다",404) }
@@ -567,12 +587,23 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  private fun journalBlocked(body:JsonNode?,execution:JsonNode?):Boolean = body?.get("journalBlockedExecutionIds")?.any { it.asText()==execution?.get("executionId")?.asText() } ?: false
  /** Records [execution] on the locked [receipt]: the observation, ACCEPTED for an uncertain submission, and under legacy polling its result. */
  private fun record(receipt:Receipt,body:JsonNode,execution:JsonNode,observedAt:java.time.Instant) {
+  val instance=body.get("instanceId").asText()
+  // updated_at is the "still current" basis of review, recovery and confirmation: it moves when the observed state or evidence changed, not on a refresh.
+  val changed=receipt.lastExecution==null || receipt.executionInstanceId!=instance || evidence(receipt.lastExecution)!=evidence(execution)
   val observed=jdbc.sql("""UPDATE ops.work_request SET last_execution=CAST(:execution AS JSONB),execution_observed_at=:at,execution_instance_id=:instance,
     state=CASE WHEN state IN ('RECEIVED','DISPATCHING','IN_DOUBT') THEN 'ACCEPTED' ELSE state END,
-    updated_at=clock_timestamp() WHERE receipt_id=:id AND (execution_observed_at IS NULL OR execution_observed_at < :at)""")
+    updated_at=CASE WHEN :changed OR state IN ('RECEIVED','DISPATCHING','IN_DOUBT') THEN clock_timestamp() ELSE updated_at END
+    WHERE receipt_id=:id AND (execution_observed_at IS NULL OR execution_observed_at < :at)""")
    .param("execution",execution.toString()).param("at",java.time.OffsetDateTime.ofInstant(observedAt,java.time.ZoneOffset.UTC))
-   .param("instance",body.get("instanceId").asText()).param("id",receipt.receiptId).update()
+   .param("instance",instance).param("changed",changed).param("id",receipt.receiptId).update()
   if(observed>0 && !durableResults) captureResult(receipt,body.get("instanceId").asText(),execution)
+ }
+ /**
+  * The execution as a person judges it changed: all of it except the source's own observation time on a permit reason, which the
+  * source renews while the reason stays the same (cause, subject and resume basis still compare).
+  */
+ private fun evidence(execution:JsonNode):JsonNode = execution.deepCopy<JsonNode>().also {copy->
+  copy.path("permitBlock").path("robots").forEach {robot->robot.path("reasons").forEach {(it as? ObjectNode)?.remove("observedAt")}}
  }
  /** One `GET /host/executions` read and the instant taken before it, as [detail] takes them. A station tick shares them (HA design record §10). */
  class ExecutionsRead(val call:HostCall<JsonNode>,val observedAt:java.time.Instant)

@@ -587,6 +587,155 @@ class WorkRequestsTest {
   assertEquals("IN_DOUBT",after.state);assertEquals("swept",after.detail)
  }
 
+ /**
+  * A service whose host call is still in flight when observation promotes the same receipt to ACCEPTED: [answer] runs after that
+  * promotion, with the host silent again, and its outcome is what the dispatch then writes.
+  */
+ private fun promotedBeforeAnswer(answer:()->HostWrite):WorkRequests {
+  lateinit var late:WorkRequests
+  val writes=dev.picasso.ops.service.host.HostWrites {order,_ ->
+   val job=order["jobOrderId"].asText()
+   val id=jdbc.sql("SELECT receipt_id FROM ops.work_request WHERE job_order_id=:job").param("job",job).query(UUID::class.java).single()
+   bench.executions=bench.executionsWith(job)
+   assertEquals("ACCEPTED",(late.detail(id)["receipt"] as Receipt).state)
+   bench.executions=HostCall.Silent("offline")
+   answer()
+  }
+  late=WorkRequests(jdbc,interfaces,JobOrderOperations(bench.eligibility,writes,bench.host,log,bench.clock,requeryDelay=Duration.ZERO),bench.host,TransactionTemplate(DataSourceTransactionManager(ds)))
+  return late
+ }
+ @Test fun `관측이 먼저 수락으로 올린 접수는 늦게 온 응답 없음이 결과 불명으로 덮지 않고 제출 기록은 남긴다`() {
+  val logger=org.slf4j.LoggerFactory.getLogger(WorkRequests::class.java) as ch.qos.logback.classic.Logger
+  val lines=ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>().apply{start()}
+  logger.addAppender(lines)
+  val row=try {promotedBeforeAnswer{HostWrite.NoResponse("timeout")}.receive("mes",body).receipt} finally {logger.detachAppender(lines)}
+  assertEquals("ACCEPTED",row.state);assertNotNull(row.lastExecution)
+  assertEquals("NO_RESPONSE",row.submission!!["result"].asText())
+  val kept=lines.list.single{it.level==ch.qos.logback.classic.Level.WARN}.formattedMessage
+  assertContains(kept,row.receiptId.toString());assertContains(kept,"ACCEPTED");assertContains(kept,"IN_DOUBT")
+ }
+ @Test fun `관측이 먼저 수락으로 올린 접수는 늦게 온 호스트 거부로 닫지 않고 거부 사유 대신 제출 기록만 남긴다`() {
+  fun order(n:Int)=body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-L$n")
+  val refused=promotedBeforeAnswer{HostWrite.Answered(200,rejectedBy("늦은 거부"))}.receive("mes",order(1)).receipt
+  assertEquals("ACCEPTED",refused.state);assertFalse(refused.detail.orEmpty().contains("늦은 거부"))
+  assertEquals("REJECTED",refused.submission!!["outcome"]["result"].asText())
+  val http=promotedBeforeAnswer{HostWrite.Answered(409,"""{"error":"BUSY","detail":"늦은 4xx"}""")}.receive("mes",order(2)).receipt
+  assertEquals("ACCEPTED",http.state);assertEquals("REJECTED",http.submission!!["outcome"]["result"].asText())
+  val unassigned=promotedBeforeAnswer{HostWrite.Answered(200,unassignedBy(refusal("humanoid-01")))}.receive("mes",order(3)).receipt
+  assertEquals("ACCEPTED",unassigned.state);assertEquals("UNASSIGNED",unassigned.submission!!["outcome"]["result"].asText())
+ }
+ @Test fun `관측이 먼저 수락으로 올린 접수는 제출 호출이 늦게 예외로 끝나도 결과 불명으로 덮지 않는다`() {
+  val row=promotedBeforeAnswer{throw IllegalStateException("socket closed")}.receive("mes",body).receipt
+  assertEquals("ACCEPTED",row.state);assertNotNull(row.lastExecution)
+  assertNull(row.submission);assertFalse(row.detail.orEmpty().contains("확정할 수 없습니다"))
+ }
+ @Test fun `배정 가능한 기체가 없다는 판정이 나오는 사이 관측이 수락으로 올린 접수는 미배정으로 덮지 않는다`() {
+  var promoted=false
+  bench.judge={ids->
+   jdbc.sql("SELECT receipt_id,job_order_id FROM ops.work_request WHERE state='DISPATCHING'").query{rs,_->rs.getObject(1,UUID::class.java) to rs.getString(2)}.optional().orElse(null)?.let{(id,job)->
+    promoted=true;bench.executions=bench.executionsWith(job);service.detail(id);bench.executions=HostCall.Silent("offline")}
+   HostCall.Ok(ids.map{JobOrderBench.running(it,"busy")})
+  }
+  val row=service.receive("mes",body).receipt
+  assertTrue(promoted);assertEquals("ACCEPTED",row.state);assertTrue(bench.submitted.isEmpty())
+ }
+ @Test fun `실행 관측이 남은 접수는 제출이 거부되어도 거부로 닫지 않는다`() {
+  val writes=dev.picasso.ops.service.host.HostWrites {order,_ ->
+   jdbc.sql("UPDATE ops.work_request SET last_execution='{}'::jsonb WHERE job_order_id=:job").param("job",order["jobOrderId"].asText()).update()
+   HostWrite.Answered(200,rejectedBy("관측 뒤 거부"))
+  }
+  val late=WorkRequests(jdbc,interfaces,JobOrderOperations(bench.eligibility,writes,bench.host,log,bench.clock,requeryDelay=Duration.ZERO),bench.host,TransactionTemplate(DataSourceTransactionManager(ds)))
+  val row=late.receive("mes",body).receipt
+  assertEquals("DISPATCHING",row.state);assertEquals("REJECTED",row.submission!!["outcome"]["result"].asText())
+ }
+ @Test fun `관측이 없었으면 제출 예외는 결과 불명으로 거부는 거부로 닫는다`() {
+  val thrown=dev.picasso.ops.service.host.HostWrites {_,_ -> throw IllegalStateException("socket closed")}
+  val row=WorkRequests(jdbc,interfaces,JobOrderOperations(bench.eligibility,thrown,bench.host,log,bench.clock,requeryDelay=Duration.ZERO),bench.host,TransactionTemplate(DataSourceTransactionManager(ds))).receive("mes",body).receipt
+  assertEquals("IN_DOUBT",row.state);assertEquals("제출 결과를 확정할 수 없습니다. 실행 이력을 확인하세요",row.detail)
+  bench.answer=HostWrite.Answered(200,rejectedBy("정상 거부"))
+  val refused=service.receive("mes",body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-2")).receipt
+  assertEquals("REJECTED",refused.state);assertContains(refused.detail!!,"정상 거부")
+ }
+ @Test fun `스테이션 작업은 관측이 먼저 수락으로 올렸으면 늦은 응답 없음에도 실행 중으로 가고 점유를 유지한다`() {
+  resource();ready(true)
+  val c=dev.picasso.ops.service.stations.StationCoordinator(jdbc,TransactionTemplate(DataSourceTransactionManager(ds)),
+   dev.picasso.ops.service.stations.OpsStationPort(promotedBeforeAnswer{HostWrite.NoResponse("timeout")},interfaces,bench.host))
+  val a=manual().receipt;c.tick()
+  assertEquals("ACCEPTED",service.get(a.receiptId).state);assertEquals("RUNNING",c.get(a.receiptId).state)
+  assertNotNull(c.stations().single().owner);assertNull(c.stations().single().quarantinedBy)
+ }
+ @Test fun `수집 주기가 먼저 수락으로 올린 접수도 늦게 온 호스트 거부로 닫지 않고 그 뒤 첫 실행 관측은 갱신 시각을 올린다`() {
+  lateinit var promoted:Receipt
+  val writes=dev.picasso.ops.service.host.HostWrites {order,_ ->
+   val job=order["jobOrderId"].asText()
+   val collector=durable{HostCall.Ok(feed(job))}
+   assertEquals(2,collector.collectResults())
+   bench.executions=HostCall.Silent("offline")
+   promoted=service.get(UUID.fromString(job.removePrefix("JO-")))
+   HostWrite.Answered(200,rejectedBy("늦은 거부"))
+  }
+  val late=WorkRequests(jdbc,interfaces,JobOrderOperations(bench.eligibility,writes,bench.host,log,bench.clock,requeryDelay=Duration.ZERO),bench.host,TransactionTemplate(DataSourceTransactionManager(ds)))
+  val row=late.receive("mes",body).receipt
+  assertEquals("ACCEPTED",promoted.state);assertNull(promoted.lastExecution)
+  assertEquals("ACCEPTED",row.state);assertEquals("REJECTED",row.submission!!["outcome"]["result"].asText())
+  observeResult(row.jobOrderId,state="RUNNING");service.detail(row.receiptId)
+  assertNotEquals(row.updatedAt,service.get(row.receiptId).updatedAt)
+ }
+ @Test fun `다른 판단으로 이미 닫힌 접수는 늦게 온 수락 응답이 다시 열지 않는다`() {
+  val writes=dev.picasso.ops.service.host.HostWrites {order,_ ->
+   jdbc.sql("UPDATE ops.work_request SET state='REJECTED',detail='다른 판단' WHERE job_order_id=:job").param("job",order["jobOrderId"].asText()).update()
+   HostWrite.Answered(200,JobOrderBench.accepted("humanoid-01"))
+  }
+  val late=WorkRequests(jdbc,interfaces,JobOrderOperations(bench.eligibility,writes,bench.host,log,bench.clock,requeryDelay=Duration.ZERO),bench.host,TransactionTemplate(DataSourceTransactionManager(ds)))
+  val row=late.receive("mes",body).receipt
+  assertEquals("REJECTED",row.state);assertEquals("다른 판단",row.detail);assertEquals("ACCEPTED",row.submission!!["outcome"]["result"].asText())
+ }
+ /** A running work request observed once, so its execution and ACCEPTED are recorded. */
+ private fun observedOnce():Receipt {
+  val row=service.receive("mes",body).receipt
+  observeResult(row.jobOrderId,state="RUNNING");service.detail(row.receiptId)
+  return service.get(row.receiptId)
+ }
+ private fun review(id:UUID,expected:String)=service.review(id,Actor(Mode.OPERATOR,"kim"),json.valueToTree(mapOf("requestId" to UUID.randomUUID().toString(),"observation" to "IN_PROGRESS","reason" to "현장 확인","expectedUpdatedAt" to expected)))
+ @Test fun `같은 실행을 다시 관측해도 바뀐 것이 없으면 갱신 시각은 그대로이고 먼저 읽은 갱신 시각으로 현장 확인할 수 있다`() {
+  val first=observedOnce();assertNotNull(first.executionObservedAt)
+  val polled=first.updatedAt
+  observeResult(first.jobOrderId,state="RUNNING");service.detail(first.receiptId)
+  val again=service.get(first.receiptId)
+  assertNotEquals(first.executionObservedAt,again.executionObservedAt)
+  assertEquals(polled,again.updatedAt);assertEquals(first.lastExecution,again.lastExecution)
+  assertEquals(false,review(first.receiptId,polled)["duplicate"])
+ }
+ @Test fun `상태를 올리는 관측은 실행이 그대로여도 갱신 시각을 올린다`() {
+  val first=observedOnce()
+  jdbc.sql("UPDATE ops.work_request SET state='IN_DOUBT' WHERE receipt_id=:id").param("id",first.receiptId).update()
+  observeResult(first.jobOrderId,state="RUNNING");service.detail(first.receiptId)
+  val after=service.get(first.receiptId)
+  assertEquals("ACCEPTED",after.state);assertNotEquals(first.updatedAt,after.updatedAt);assertEquals(first.lastExecution,after.lastExecution)
+ }
+ @Test fun `관측이 바꾼 상태와 작업 응답과 인스턴스는 갱신 시각을 올려 먼저 읽은 값으로는 현장 확인이 낡았다고 막힌다`() {
+  val row=observedOnce()
+  fun changes(how:()->Unit) {
+   val before=service.get(row.receiptId).updatedAt;how();service.detail(row.receiptId)
+   assertNotEquals(before,service.get(row.receiptId).updatedAt)
+   assertEquals("STALE_REVIEW",assertFailsWith<RequestRejected>{review(row.receiptId,before)}.code)
+  }
+  changes{observeResult(row.jobOrderId,version=2,state="RUNNING")}
+  changes{observeResult(row.jobOrderId,version=2,state="PHYSICALLY_DONE")}
+  changes{bench.executions=HostCall.Ok(json.readTree((bench.executions as HostCall.Ok).value.toString().replace("\"mw-1\"","\"mw-2\"")))}
+ }
+ @Test fun `허가 차단은 근거 관측 시각만 새로워지면 그대로이고 막는 까닭이 바뀌면 갱신 시각이 올라간다`() {
+  val row=service.receive("mes",body).receipt
+  fun block(observedAt:String,subject:String)=""","permitBlock":{"unitId":"T1.travel","withheld":"START","robots":[{"robotId":"humanoid-01","permit":"INHIBITED","reasons":[{"source":"cell/guard_closed","cause":"REPORTED","subject":"$subject","resumeBasis":"b","observedAt":"$observedAt"}]}],"since":"2026-10-14T00:00:00Z"}"""
+  fun observe(extra:String){bench.executions=HostCall.Ok(json.readTree("""{"instanceId":"mw-1","executions":[${execution("exec-1",row.jobOrderId,extra)}]}"""));service.detail(row.receiptId)}
+  observe(block("2026-10-14T00:00:01Z","guard_closed=false"));val first=service.get(row.receiptId)
+  observe(block("2026-10-14T00:00:09Z","guard_closed=false"));val refreshed=service.get(row.receiptId)
+  assertEquals(first.updatedAt,refreshed.updatedAt);assertNotEquals(first.executionObservedAt,refreshed.executionObservedAt)
+  assertEquals("2026-10-14T00:00:09Z",refreshed.lastExecution!!["permitBlock"]["robots"][0]["reasons"][0]["observedAt"].asText())
+  observe(block("2026-10-14T00:00:10Z","door_open=true"))
+  assertNotEquals(refreshed.updatedAt,service.get(row.receiptId).updatedAt)
+ }
+
  private fun durable(feed:()->HostCall<com.fasterxml.jackson.databind.JsonNode>)=WorkRequests(jdbc,interfaces,operations,
   object:dev.picasso.ops.service.host.HostReads by bench.host {override fun resultEvents(after:Long,limit:Int)=feed()},TransactionTemplate(DataSourceTransactionManager(ds)),durableResults=true)
  private fun feed(job:String,producer:String=PRODUCER,count:Int=2):com.fasterxml.jackson.databind.JsonNode {
