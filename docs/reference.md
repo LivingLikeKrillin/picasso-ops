@@ -174,7 +174,7 @@ P1 → S1a → S1b → S1c → P2a → P2b → S1d → 용어 → S2 → P3 → 
 | `UNASSIGNED` | 배정 가능 기체가 없어 제출하지 못한 상태입니다. 두 갈래로 나뉩니다. 전송 전 미배정(운영 서비스 판정에 배정 가능 기체 없음, 호스트 안 부름, 제출 기록 없음)은 `detail` 이 전과 같은 판정 문장(`humanoid-01: 이유; 이유 / quadruped-01: 이유` 꼴)입니다. 호스트 미배정(호스트가 200 `UNASSIGNED`)은 `detail` 을 «호스트 미배정: <robotId>: <reason> / <robotId>: <reason>; <reason>» 로 바꿉니다(앞은 `refusals` 가 기체마다 낸 사유, 뒤는 `excluded` 로 호스트가 판정에서 뺀 기체 이유를 `; ` 로 이음. 둘 다 없으면 «호스트 미배정: 기체별 사유 없음», 2000자에서 자름). 기체별 사유 구조는 `submission.outcome.refusals[]` 와 작업 요청 상세 API(`GET /api/work-requests/{id}`)의 `unassigned` 칸에 실립니다. 제출 기록이 있으므로 미배정 재평가 대상이 아닙니다. 호스트 미배정의 기체별 사유에 출발 미관측이 있으면 상세 API 의 `pendingSources`(출발 자리마다 `{source, material, occupied, robotIds}`)가 비지 않습니다. 운영자의 출발 자리 확인(`POST /api/work-requests/{id}/source-confirmations`, 본문 `requestId`·`source`·`identity`·`reason`·`expectedUpdatedAt`)만 같은 작업 지시 id 로 다시 보냅니다. 자동 재제출은 없습니다. 결품(`sourceMissing`)과 전송 전 미배정은 409 `SOURCE_NOT_PENDING` 입니다. 오류 이름은 `BAD_SOURCE_CONFIRMATION`(400), `MODE_NOT_ALLOWED`(403), `STALE_SOURCE_CONFIRMATION`·`SOURCE_NOT_PENDING`·`SOURCE_CONFIRMATION_CONFLICT`·`RESOURCE_MANAGED`(409)입니다. 새로 기록하면 202, 같은 요청 id 에 같은 내용이면 200 `duplicate:true` 입니다. 이 작업 요청의 이후 제출(미배정 재평가 포함)은 마지막으로 회차가 닫힌 시각 이후에 기록된 확인만 출발 자리마다 최신 하나씩 싣습니다. 확인을 받으면 `DISPATCHING` 으로 잡을 때 앞 호스트 답(`submission`)을 비웁니다(그 답은 확인 행의 `context` 에 남습니다). 그래서 다시 낼 때 배정 가능한 기체가 없으면 전송 전 미배정(제출 기록 없음)이 되어 회차가 닫히며, 이후 미배정 재평가는 이전 확인을 싣지 않아 실행 호스트가 다시 출발 미관측으로 답하고 사람이 다시 확인해야 합니다. 확인 이력은 상세 API 칸 `sourceConfirmations` 에 있습니다. | 제출 기록과 실행 관측이 없는 `UNASSIGNED` 만 운영자 미배정 재평가(`POST /api/work-requests/{id}/recover`)로 `DISPATCHING` 이 됩니다. 필수 자원이 있는 작업 요청은 이 API 가 409 `RESOURCE_MANAGED` 로 막고 공유 스테이션 조정만 재평가합니다. 출발 자리 확인을 받으면 같은 작업 지시 id 로 `DISPATCHING` 이 됩니다. 상위 시스템이 대체한 앞선 작업 요청은 상태·`detail`·`submission` 이 그대로이고, 미배정 재평가(`recover`)와 출발 자리 확인(`source-confirmations`)이 409 `ORIGINAL_REPLACED` 입니다(재평가·확인 기록을 남기지 않고 제출하지 않습니다). |
 | `IN_DOUBT` | 제출 결과를 확정할 수 없는 상태입니다(응답 없음, 재조회에도 안 보임, 예외, 제출 중 중단). | 자동 재제출은 없습니다. 결과 피드 이벤트나 상세 조회에서 호스트 실행 목록에 그 작업 지시가 보이면 `ACCEPTED` 로 올라갑니다. 미배정 재평가는 409 `RECOVERY_NOT_SAFE` 입니다. |
 
-운영자는 `POST /api/work-requests/{id}/reviews` 로 현장 확인을 기록할 수 있습니다. 관측 값은 `NOT_CONFIRMED`·`NOT_STARTED`·`IN_PROGRESS`·`COMPLETED` 넷이고 사유와 조회한 `updatedAt` 이 필요합니다(바뀌었으면 409 `STALE_REVIEW`). 기록은 `work_request_review` 에 남고 변경·삭제가 금지되며, 작업 요청 상태를 바꾸거나 제출하거나 완료로 만들지 않습니다. 출발 자리 확인(`source-confirmations`)은 현장 확인(`reviews`)과 다른 표에 남고, 현장 확인과 달리 같은 작업 지시를 다시 제출합니다.
+운영자는 `POST /api/work-requests/{id}/reviews` 로 현장 확인을 기록할 수 있습니다. 관측 값은 `NOT_CONFIRMED`·`NOT_STARTED`·`IN_PROGRESS`·`COMPLETED` 넷이고 사유와 조회한 `updatedAt` 이 필요합니다(바뀌었으면 409 `STALE_REVIEW`). `updatedAt`은 상태가 승격되거나 첫 관측, 호스트 인스턴스 변경, 허가 사유의 원천 관측 시각(`permitBlock` 사유의 `observedAt`)을 제외한 실행 내용 변경이 있을 때만 갱신되며, 변경 사항이 없는 단순 반복 관측에서는 갱신되지 않고 유지됩니다. 기록은 `work_request_review` 에 남고 변경·삭제가 금지되며, 작업 요청 상태를 바꾸거나 제출하거나 완료로 만들지 않습니다. 출발 자리 확인(`source-confirmations`)은 현장 확인(`reviews`)과 다른 표에 남고, 현장 확인과 달리 같은 작업 지시를 다시 제출합니다.
 
 ### 중복 방지와 배포 고정
 
@@ -439,16 +439,16 @@ registry가 응답하지 않을 경우 기존 목록을 비우지 않고 직전 
 
 ### 시험 수
 
-Kotlin 네 모듈은 2026-10-20에 `chore/picasso-30df704` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-19 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 271개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
+Kotlin 네 모듈은 2026-10-20에 `fix/work-request-state-guards` 브랜치의 `<모듈>/src/test` 아래 `.kt` 파일에서 `@Test` 애너테이션(정규식 `@Test\b`, 그래서 `@TestInstance`·`@TestMethodOrder`는 세지 않음)이 붙은 함수를 세었습니다. 매개변수 시험(`@ParameterizedTest`·`@RepeatedTest`·`@TestFactory`)은 없습니다. 이렇게 센 수는 네 모듈 모두 아래 표의 실행 기록과 같습니다. UI는 2026-10-19 같은 브랜치 로컬에서 `cd ui && npx vitest run --maxWorkers=2` 로 실행해 28개 파일 271개 통과를 확인했습니다. 같은 기계에서 작업자 수를 정하지 않고 돌리면 5초 시험 시간 제한을 넘는 시험이 생겨 실패로 끝날 수 있었습니다.
 
 | 모듈 | 시험 수 | 실행으로 확인한 곳 |
 |---|---|---|
-| `ops-service` | 477(그대로) | 로컬 시험 결과 XML 477건, 실패 0 |
+| `ops-service` | 490(477 에서 13 늘어남: `WorkRequestsTest` 13) | 로컬 시험 결과 XML 490건, 실패 0 |
 | `mission-host` | 191(187 에서 4 늘어남: `SkippedTargetReworkHostTest` 4) | 로컬 시험 결과 XML 191건, 실패 0 |
 | `site` | 41(그대로) | 로컬 시험 결과 XML 41건, 실패 0 |
 | `e2e` | 76(75 에서 1 늘어남: `SkippedTargetReworkTest` 1, 시험 클래스 20개) | 로컬 시험 결과 XML 76건, 실패 0 |
-| `ui`(vitest) | 271(265 에서 6 늘어남: `ExecutionControls.test.tsx` 6, 시험 파일 28개) | 2026-10-20 `chore/picasso-30df704` 브랜치 로컬 실행, 실패 0 |
-| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `chore/picasso-30df704` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
+| `ui`(vitest) | 271(265 에서 6 늘어남: `ExecutionControls.test.tsx` 6, 시험 파일 28개) | 2026-10-20 `fix/work-request-state-guards` 브랜치 로컬 실행, 실패 0 |
+| `ui`(Playwright) | 2(`lifecycle.spec.ts` 1, `station.spec.ts` 1) | `./gradlew installDist` 후 `fix/work-request-state-guards` 브랜치 로컬 실행, 기본 설정 `npx playwright test` 1 통과, `npx playwright test --config=playwright.station.config.ts` 1 통과 |
 
 모듈마다 잰 때가 달라 합계를 내지 않습니다.
 
