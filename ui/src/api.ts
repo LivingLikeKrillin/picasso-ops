@@ -667,10 +667,27 @@ export interface SettledPage {
 }
 
 /**
- * 화면의 실행 목록(`GET /api/executions?recent=`, HA 설계 기록 §10). `executions` 는 지금 인스턴스의 남은 실행(활성이거나 정착 기록 전)이고,
- * `settled` 는 최근 정착 이력이다(최근부터).
+ * 재작업할 수 있는 건너뛴 대상 하나(실행 호스트가 계산한다). 순회가 종결한 뒤 선행 이동이 실패해 점검을 내지 않은 단위다. `unitId` 가
+ * 건너뛴 점검의 단위 id이고 `REWORK` 판단에 그대로 싣는다. `physicalState` 는 `PARTIAL` 이나 `FAILED` 다. `retainedUntil` 은 `FAILED`
+ * 일 때만 있고, 이 시각(호스트 시계) 뒤에는 실행 호스트가 그 실행을 이빅션해 재작업할 수 없다. `PARTIAL` 은 null 이다.
  */
-export interface ExecutionPage extends ExecutionsView, SettledPage {}
+export interface ReworkableTarget {
+  executionId: string
+  jobOrderId: string
+  robotId: string
+  unitId: string
+  physicalState: string
+  retainedUntil: string | null
+}
+
+/**
+ * 화면의 실행 목록(`GET /api/executions?recent=`, HA 설계 기록 §10). `executions` 는 지금 인스턴스의 남은 실행(활성이거나 정착 기록 전)이고,
+ * `settled` 는 최근 종결 이력이다(최근부터). `reworkableTargets` 는 재작업할 수 있는 건너뛴 대상이고 종결 기록을 적고 아직 호스트 메모리에
+ * 있는 `FAILED` 실행의 것도 든다(칸이 없던 호스트 본문은 undefined 다).
+ */
+export interface ExecutionPage extends ExecutionsView, SettledPage {
+  reworkableTargets?: ReworkableTarget[]
+}
 
 /** 운영 개요의 실행 수(`GET /api/executions/summary`). `states` 는 남은 실행의 물리 상태별 수다. */
 export interface ExecutionSummary {
@@ -1161,6 +1178,9 @@ export interface FaultInjectionOutcome {
 }
 
 export type HoldDecision = 'CONFIRM_DONE' | 'REWORK'
+
+/** 판단 결과 `NotHeld` 의 `detail` 이 이 값이면 그 실행을 호스트가 보존 기간이 지나 이빅션했다. 호스트 `MissionHost.EVICTED` 와 같은 글자다. */
+export const HOLD_EVICTED = 'EVICTED'
 
 /** 실행 호스트 판단의 200 본문(S4a JSON 계약 §5.2). */
 export interface HoldResolveAnswer {

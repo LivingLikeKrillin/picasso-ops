@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
-import { cancelExecution, confirmRobotEmpty, faultBlocked, fetchResidualHolds, releaseFaults } from '../api'
+import { cancelExecution, confirmRobotEmpty, faultBlocked, fetchResidualHolds, HOLD_EVICTED, releaseFaults, resolveHold } from '../api'
 import type {
   Delivered,
   Execution,
   ExecutionCancelOutcome,
   ExecutionReleaseOutcome,
+  HoldResolveOutcome,
   ResidualHold,
   ResidualHoldsView,
+  ReworkableTarget,
   RobotEmptyOutcome,
   Session,
 } from '../api'
@@ -224,6 +226,116 @@ function describeRelease(sent: Delivered<ExecutionReleaseOutcome>): string {
       return TEXT.releaseNotApplied
     default:
       return TEXT.releaseUnconfirmed
+  }
+}
+
+interface ReworkProps {
+  instanceId: string
+  /** 실행 호스트가 계산한 재작업할 수 있는 건너뛴 대상. 남은 실행이 아니다. 칸이 없던 호스트는 빈 목록이다. */
+  targets: ReworkableTarget[]
+  session: Session
+  /** 조작이 끝나면 부른다. 실행 목록을 지금 한 번, pump 뒤 한 번 더 읽는다. */
+  onReworked: () => void
+}
+
+/** 고르는 대상 하나의 키. 실행 하나에 건너뛴 대상이 여럿일 수 있다. */
+const reworkKey = (target: ReworkableTarget) => `${target.executionId}/${target.unitId}`
+
+/**
+ * 운영자 건너뛴 대상 재작업. 운영자 모드에서만 조작하고 승인자는 운영 서비스가 행위자로 정한다(ADR 43). 순회가 종결한 뒤 선행 이동이
+ * 실패해 점검을 하지 않은 대상을 실행 호스트 목록에서 하나 골라 `REWORK` 판단으로 보낸다. 인시던트 판단과 같은 호출이고 단위 id 가 건너뛴
+ * 점검의 것이다. 확인(`CONFIRM_DONE`)은 보내지 않는다. 사유와 현장 확인이 있어야 보낸다. 인스턴스는 실행 목록의 것이고 호스트가 그 사이
+ * 재기동했으면 409 로 막힌다. 목록이 호스트 판정이므로 화면은 남은 실행에서 대상을 추리지 않는다. 호스트가 같은 기체의 다른 활성 실행 등을
+ * 거부하면 그 사유를 그대로 보인다.
+ */
+export function ReworkSkippedForm({ instanceId, targets, session, onReworked }: ReworkProps) {
+  const [chosenKey, setChosenKey] = useState('')
+  const [reason, setReason] = useState('')
+  const [confirmed, setConfirmed] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [last, setLast] = useState<{ what: string; sent: Delivered<HoldResolveOutcome> } | null>(null)
+  if (session.mode !== 'operator') return targets.length > 0 ? <p>{TEXT.reworkOperatorOnly}</p> : null
+
+  const chosen = targets.find((target) => reworkKey(target) === chosenKey) ?? null
+  const send = () => {
+    if (chosen === null || reason.trim() === '' || !confirmed) return
+    const what = `${chosen.executionId}(${chosen.jobOrderId}) ${TEXT.reworkHeading}`
+    setBusy(true)
+    resolveHold(session, { instanceId, executionId: chosen.executionId, unitId: chosen.unitId }, 'REWORK', reason.trim())
+      .then((sent) => setLast({ what, sent }))
+      .finally(() => {
+        setBusy(false)
+        setReason('')
+        setConfirmed(false)
+        setChosenKey('')
+        onReworked()
+      })
+  }
+
+  return (
+    <form aria-label={TEXT.reworkHeading} onSubmit={(event) => event.preventDefault()}>
+      <h3>{TEXT.reworkHeading}</h3>
+      {last !== null && (
+        <p role="status" aria-label={`${TEXT.reworkHeading} 결과`}>
+          {last.what}: {describeRework(last.sent)}
+        </p>
+      )}
+      {targets.length === 0 ? (
+        <p>{TEXT.reworkEmpty}</p>
+      ) : (
+        <>
+          <p>{TEXT.reworkIntro}</p>
+          <p>{TEXT.reworkSiteNote}</p>
+          <label>
+            {TEXT.reworkTarget}
+            <select value={chosenKey} disabled={busy} onChange={(event) => setChosenKey(event.target.value)}>
+              <option value="">{TEXT.reworkChoose}</option>
+              {targets.map((target) => (
+                <option key={reworkKey(target)} value={reworkKey(target)}>
+                  {TEXT.reworkOption(target.executionId, target.jobOrderId, target.robotId, target.unitId)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {chosen !== null && <p>{chosen.retainedUntil === null ? TEXT.reworkNoExpiry : TEXT.reworkExpiry(chosen.retainedUntil)}</p>}{' '}
+          <label>
+            {TEXT.reworkReason}
+            <input maxLength={1000} value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} />
+          </label>{' '}
+          <label>
+            <input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />
+            {TEXT.reworkConfirm}
+          </label>{' '}
+          <button type="button" disabled={busy || chosen === null || reason.trim() === '' || !confirmed} onClick={send}>
+            {TEXT.reworkButton}
+          </button>
+        </>
+      )}
+    </form>
+  )
+}
+
+function describeRework(sent: Delivered<HoldResolveOutcome>): string {
+  if (sent.kind === 'refused') return `보내지 않음(${kindLabel(sent.refusal.error)}). ${sent.refusal.detail}`
+  if (sent.kind === 'unknown') return `결과 모름(${sent.cause}). 실행 목록에서 확인하십시오`
+  const { outcome, answer, rejection, confirmation } = sent.outcome
+  switch (outcome) {
+    case 'Resolved':
+      return TEXT.reworkResolved(answer?.incidentId ?? null)
+    case 'Refused':
+      return TEXT.reworkRefused(answer?.detail ?? null)
+    case 'NotHeld':
+      // 보존 기간이 지나 호스트가 이빅션한 실행과 그 밖의 재작업할 수 없는 대상을 호스트의 고정 코드로 가른다.
+      return answer?.detail === HOLD_EVICTED ? TEXT.reworkEvicted : TEXT.reworkNotSkipped
+  }
+  if (rejection !== null) return rejectionText('실행 호스트가 거부함', rejection)
+  switch (confirmation) {
+    case 'CONFIRMED_APPLIED':
+      return TEXT.reworkApplied
+    case 'CONFIRMED_NOT_APPLIED':
+      return TEXT.reworkNotApplied
+    default:
+      return TEXT.reworkUnconfirmed
   }
 }
 

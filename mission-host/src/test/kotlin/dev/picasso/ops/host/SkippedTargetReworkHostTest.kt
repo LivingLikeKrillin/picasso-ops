@@ -1,5 +1,6 @@
 package dev.picasso.ops.host
 
+import com.fasterxml.jackson.databind.JsonNode
 import dev.picasso.middleware.Approver
 import dev.picasso.middleware.ApproverKind
 import dev.picasso.middleware.JudgmentRecordWire
@@ -13,6 +14,7 @@ import dev.picasso.ops.host.HostBench.Companion.request
 import dev.picasso.ops.host.store.HostRecords
 import dev.picasso.registry.PostgresSupport
 import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -253,6 +255,93 @@ class SkippedTargetReworkHostTest {
             val live = bench.get("/host/incidents/$travelIncident")
             assertEquals(listOf(false, false), listOf(live["unresolved"].asBoolean(), live["held"].asBoolean()))
             assertEquals("REWORK", live["resolution"]["decision"].asText())
+        }
+    }
+
+    /** 화면 목록 본문의 «재작업할 수 있는 건너뛴 대상». */
+    private fun HostBench.reworkable(): JsonNode = get("/host/executions?recent=5")["reworkableTargets"]
+
+    private fun JsonNode.rows(): List<List<String>> =
+        map { listOf("executionId", "jobOrderId", "robotId", "unitId", "physicalState").map { name -> it[name].asText() } }
+
+    @Test
+    fun `화면 목록은 PARTIAL 실행의 건너뛴 대상을 재작업할 수 있는 대상으로 싣고 보존 만료 시각은 없으며 재작업하면 빠진다`() {
+        HostBench().use { bench ->
+            val held = bench.blocked("T1" to "bay-7", "T2" to "dock-3")
+            // 결함이 막고 있는 실행은 아직 종결하지 않았다. 건너뛴 점검도 없다.
+            assertTrue(bench.reworkable().isEmpty, bench.reworkable().toString())
+            bench.accept(held)
+            val done = bench.driveUntil(held, settled)
+            assertEquals("PARTIAL", done["physicalState"].asText(), done.toString())
+
+            val targets = bench.reworkable()
+            assertEquals(listOf(listOf(held, "JO-1", QUADRUPED, "T1", "PARTIAL")), targets.rows(), targets.toString())
+            assertEquals(
+                listOf("executionId", "jobOrderId", "robotId", "unitId", "physicalState", "retainedUntil"),
+                targets.single().fieldNames().asSequence().toList(),
+            )
+            // PARTIAL 은 기체를 쥔 채 기다리며 보존 기간이 없다.
+            assertTrue(targets.single()["retainedUntil"].isNull, targets.toString())
+            assertEquals("Resolved", bench.rework(held).body!!["result"].asText())
+            // 재작업하면 실행이 다시 돌아 종결 상태가 아니므로 목록에서 빠진다.
+            assertTrue(bench.reworkable().isEmpty, bench.reworkable().toString())
+        }
+    }
+
+    @Test
+    fun `화면 목록은 메모리에 있는 FAILED 실행의 건너뛴 대상에만 보존 만료 시각을 싣고 이빅션하면 빠진다`() {
+        HostBench().use { bench ->
+            val before = bench.now()
+            val executionId = bench.failed()
+            val after = bench.now()
+
+            val targets = bench.reworkable()
+            assertEquals(listOf(listOf(executionId, "JO-1", QUADRUPED, "T1", "FAILED")), targets.rows(), targets.toString())
+            // 보존 만료는 종결 기록 시각(호스트 시계) + 보존 기간이다.
+            val expiry = Instant.parse(targets.single()["retainedUntil"].asText())
+            val settledAt = expiry.minus(MissionHost.DEFAULT_REVISABLE_RETENTION)
+            assertTrue(!settledAt.isBefore(before) && !settledAt.isAfter(after), "$before <= $settledAt <= $after")
+
+            bench.mimic.server.advance(MissionHost.DEFAULT_REVISABLE_RETENTION.plusMinutes(1))
+            bench.awaitPump()
+            bench.eventually("이빅션") { bench.host.footprint().executions == 0 }
+            assertTrue(bench.reworkable().isEmpty, bench.reworkable().toString())
+        }
+    }
+
+    @Test
+    fun `FAILED 실행의 건너뛴 대상을 보존 기간 안에 재작업하면 목록에서 빠진다`() {
+        HostBench().use { bench ->
+            val executionId = bench.failed()
+            assertEquals(1, bench.reworkable().size())
+            assertEquals("Resolved", bench.rework(executionId).body!!["result"].asText())
+            assertTrue(bench.reworkable().isEmpty, bench.reworkable().toString())
+        }
+    }
+
+    @Test
+    fun `재기동으로 리빌드한 PARTIAL 실행에서도 건너뛴 대상이 재작업 대상으로 서고 재작업할 수 있다`() {
+        HostBench().use { bench ->
+            val executionId = bench.partial()
+            val before = bench.host.instanceId
+
+            bench.restartHost()
+            assertTrue(bench.host.instanceId != before)
+            val row = bench.get("/host/executions")["restore"]["rows"].single()
+            assertEquals(
+                listOf("JO-1", "RESTORED", before, executionId),
+                listOf(row["jobOrderId"].asText(), row["result"].asText(), row["previousInstanceId"].asText(), row["previousExecutionId"].asText()),
+                row.toString(),
+            )
+            val rebuilt = row["executionId"].asText()
+            // 리빌드한 실행에서 건너뛴 점검이 건너뛴 모양(FAILED, PREDECESSOR_NOT_DONE, 태스크 없음)으로 다시 선다.
+            bench.eventually("리빌드한 PARTIAL") { bench.execution(rebuilt)?.get("physicalState")?.asText() == "PARTIAL" }
+            val targets = bench.reworkable()
+            assertEquals(listOf(listOf(rebuilt, "JO-1", QUADRUPED, "T1", "PARTIAL")), targets.rows(), targets.toString())
+
+            val resolved = bench.rework(rebuilt).body!!
+            assertEquals("Resolved", resolved["result"].asText(), resolved.toString())
+            assertEquals("RUNNING", bench.execution(rebuilt)!!["physicalState"].asText())
         }
     }
 

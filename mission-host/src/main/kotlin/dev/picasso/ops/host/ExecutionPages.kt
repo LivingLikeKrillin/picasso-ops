@@ -32,6 +32,8 @@ data class SettledExecutionView(
  *
  * 앞 다섯 칸은 [ExecutionsView] 와 같은 이름·같은 뜻이고 [executions] 는 지금 인스턴스의 남은 실행([ExecutionPages.live])만 담는다(생성 순).
  *
+ * @param reworkableTargets 지금 재작업을 받을 수 있는 건너뛴 대상([ReworkableTargetView]). 남은 실행뿐 아니라 종결 기록을 적고 아직 picasso
+ *   메모리에 있는 `FAILED` 실행의 것도 든다(생성 순, 실행 안에서는 단위 순)
  * @param settled 최근 정착 이력(최근부터). 인스턴스를 가리지 않는다
  * @param nextBefore 더 오래된 정착 이력을 읽을 커서. 더 없으면 `null`
  * @param olderTotal [nextBefore] 보다 오래된 정착 이력 수. [nextBefore] 가 `null` 이면 0
@@ -42,9 +44,29 @@ data class ExecutionPageView(
     val executions: List<ExecutionView>,
     val restore: RestoreView?,
     val journalBlockedExecutionIds: List<String>,
+    val reworkableTargets: List<ReworkableTargetView>,
     val settled: List<SettledExecutionView>,
     val nextBefore: Long?,
     val olderTotal: Int,
+)
+
+/**
+ * 재작업할 수 있는 건너뛴 대상 하나. 순회가 종결한 뒤 선행 이동이 실패해 점검을 내지 않은 단위다. 운영자가 `REWORK` 로 판단하면
+ * picasso 가 그 점검과 선행 이동을 한 쌍으로 새 시도로 되돌린다. 호스트는 picasso 가 공개한 칸만으로 이 모양을 추리므로 목록은 후보다.
+ * 선행이 시도된 실패였는지와 같은 기체의 다른 활성 실행은 picasso 가 판단 때 가른다(`NotHeld`·`Refused`).
+ *
+ * @param unitId 건너뛴 점검의 단위 id. 판단에 싣는 단위 id 다
+ * @param physicalState `PARTIAL` 이나 `FAILED`
+ * @param retainedUntil `FAILED` 면 이 시각(호스트 시계) 뒤에 picasso 메모리에서 이빅션되어 재작업할 수 없다. 종결 기록 시각에
+ *   [MissionHost.DEFAULT_REVISABLE_RETENTION] 에 해당하는 보존 기간을 더한 값이다. `PARTIAL` 은 기체를 쥔 채 기다리므로 `null` 이다
+ */
+data class ReworkableTargetView(
+    val executionId: String,
+    val jobOrderId: String,
+    val robotId: String,
+    val unitId: String,
+    val physicalState: String,
+    val retainedUntil: Instant?,
 )
 
 /** `GET /host/executions?before=` 의 본문. 칸 뜻은 [ExecutionPageView] 의 같은 이름 칸과 같다. */

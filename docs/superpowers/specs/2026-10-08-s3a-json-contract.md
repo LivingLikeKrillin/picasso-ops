@@ -405,9 +405,10 @@ InspectAsset 예:
 
 화면의 실행 목록은 활성 실행과 최근 종결 실행 N개를 읽고, 그보다 이전 이력은 페이지로 읽는다. 종결한 실행은 미들웨어 메모리가 아니라 실행 호스트의 종결 기록(DB)에서 읽으므로, 실행 호스트가 picasso `forget`을 불러 실제로 메모리에서 사라지거나 호스트 재기동 뒤에도 남는다.
 
-`GET /host/executions?recent=N`. N은 1~200 정수다. 본문 칸은 `{instanceId, pumpedAt, executions, restore, journalBlockedExecutionIds, settled, nextBefore, olderTotal}` 순서다. 앞 다섯 칸은 §5와 이름과 뜻이 같다.
+`GET /host/executions?recent=N`. N은 1~200 정수다. 본문 칸은 `{instanceId, pumpedAt, executions, restore, journalBlockedExecutionIds, reworkableTargets, settled, nextBefore, olderTotal}` 순서다. 앞 다섯 칸은 §5와 이름과 뜻이 같다.
 - `executions`: 현재 인스턴스의 남은 실행만 담는다(메모리, 생성 순). 남은 실행은 활성이거나, 종결했으나 이번 종결 기록(`SETTLED` 이벤트)이 아직 커밋되지 않은 실행이다(재실행해 다시 종결한 실행도 든다). 활성은 `PhysicalState.pumps`(아직 종결하지 않았거나 `PARTIAL`: `REQUESTED`·`ACCEPTED`·`RUNNING`·`PARTIAL`·`IN_DOUBT`·`OPERATOR_HOLD`·`CANCELING`), 적어도 한 단위가 `OPERATOR_HOLD`나 `IN_DOUBT`, 일지에 막힘 중 하나에 해당한다.
 - `journalBlockedExecutionIds`: 남은 실행 가운데 막힌 실행이다. 막힌 실행은 늘 활성이고 따라서 늘 남은 실행이므로 전체 목록과 같다.
+- `reworkableTargets`: 재작업할 수 있는 건너뛴 대상 목록이다. 실행 호스트 잠금 아래에서 물리 상태가 `PARTIAL`·`FAILED` 이고 열린 단위가 없는 실행의 단위 가운데 `FAILED` 이고 `failureClass` 가 `PREDECESSOR_NOT_DONE` 이며 태스크 id 가 빈 단위를 모아 계산한다. 각 요소는 `{executionId, jobOrderId, robotId, unitId, physicalState, retainedUntil}` 이다. `FAILED` 실행은 현재 종결 기록이 쓰인 뒤에만 목록에 오르며 `retainedUntil` 은 종결 기록 시각에 `host.settled.revisable-retention`(기본 5분)을 더한 시각이고, `PARTIAL` 은 `retainedUntil: null` 이다. 재작업하거나 이빅션되면 목록에서 빠진다. 목록에 있더라도 실행 호스트의 수락이 보장되는 것은 아니며 picasso 가 `NotHeld` 나 `Refused` 로 응답할 수 있다. 운영 서비스는 이 본문을 그대로 전달하며, 이 칸이 없는 본문은 대상이 없는 것으로 읽는다.
 - `settled`: 인스턴스를 가리지 않고 가장 최근 종결 이력 N개 행이며 최신 순이다. 종결마다 한 행이라 한 작업 지시가 여러 행을 가질 수 있다. 각 원소는 `{settleSeq, instanceId, settledAt, snapshot, execution, superseded}`이다. `execution`은 §5의 실행 한 행과 모양이 같다.
   - `settleSeq`: `execution_journal_event`의 `SETTLED` 이벤트 `event_id`다. 정렬 키이자 커서다. 클수록 나중에 종결한 것이다. 다른 일지 이벤트가 같은 식별자를 나누므로 연속적이지 않다.
   - `instanceId`: 종결 기록을 쓴 인스턴스다(재기동 전 인스턴스일 수 있다).

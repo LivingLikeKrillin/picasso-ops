@@ -403,7 +403,7 @@ describe('인시던트', () => {
         outcome: 'Refused',
         answer: { result: 'Refused', detail: '에이전트는 운영자 판단을 내지 못한다', incidentId: null, requestId: null },
       }),
-      'exec-1/rack-arrival 재작업: 에이전트 판단은 거부됩니다. 에이전트는 운영자 판단을 내지 못한다',
+      'exec-1/rack-arrival 재작업: 실행 호스트가 판단을 거부했습니다. 에이전트는 운영자 판단을 내지 못한다',
     ],
     [
       holdResolved({ result: 'NO_RESPONSE', outcome: null, answer: null, confirmation: 'CONFIRMED_APPLIED' }),

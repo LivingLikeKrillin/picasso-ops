@@ -8,6 +8,7 @@ import type {
   EarlierIncidentRow,
   EligibilityView,
   Execution,
+  ExecutionPage,
   ExecutionsView,
   ExecutionSummary,
   FaultInjectionOutcome,
@@ -61,9 +62,9 @@ export interface FakeOps {
   executions: ExecutionsView
   /**
    * 화면 실행 목록(`GET /api/executions?recent=`)의 정착 이력 쪽(HA 설계 기록 §10). 답은 [executions] 에 이것을 더한 것이다. 대역은 남은 실행을
-   * 고르지 않는다(실행 호스트의 몫). 기본은 정착 이력이 없다.
+   * 고르지 않는다(실행 호스트의 몫). 기본은 종결 이력이 없다. `reworkableTargets` 도 호스트가 계산한 값을 그대로 싣는다(기본은 칸 없음).
    */
-  recent: SettledPage
+  recent: SettledPage & Pick<ExecutionPage, 'reworkableTargets'>
   /** 이전 실행 페이지(`GET /api/executions?before=`). 커서마다의 답이고 없으면 빈 페이지다. */
   older: Map<number, SettledPage>
   cell: CellView

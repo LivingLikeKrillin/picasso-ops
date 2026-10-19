@@ -266,7 +266,7 @@ export const EXECUTION_CONTROL_TEXT = {
   emptyConfirm: '기체 손에 남은 물체가 없음을 현장에서 직접 확인했습니다',
   emptyOperatorOnly: '기체 빈손 확인은 운영자 모드에서 합니다',
   emptyDone: '빈손 확인이 기록되었습니다. 그 기체는 다음 배정 판정부터 다시 판정됩니다',
-  // 운영자 결함 감수(S3a JSON 계약 §5.10·§9.8).
+  // 운영자 결함 수용(S3a JSON 계약 §5.10·§9.8).
   releaseHeading: '결함 수용',
   releaseIntro: '수용은 결함을 지우지 않으며, 이 결함들이 다음 단위를 막지 않게 하고 다음 로봇 단위를 냅니다. 기체 상태를 현장에서 확인한 뒤 결정하세요.',
   releaseRepeat: '같은 결함은 다시 막지 않고 새 결함은 다시 막습니다.',
@@ -284,6 +284,32 @@ export const EXECUTION_CONTROL_TEXT = {
   releaseApplied: '응답은 없었으나 다시 읽어 보니 수용이 걸림',
   releaseNotApplied: '응답 없음. 다시 읽어 보니 수용이 걸리지 않음. 실행 목록에서 확인하십시오',
   releaseUnconfirmed: '응답 없음. 수용이 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오',
+  // 건너뛴 대상 재작업. 순회가 종결한 뒤 이동에 실패해 점검을 하지 않은 대상을 한 번에 하나씩 새 시도로 다시 보낸다.
+  reworkHeading: '건너뛴 대상 재작업',
+  reworkIntro: '순회가 종결된 뒤 이동에 실패해 건너뛴 대상을 한 번에 하나씩 재작업할 수 있습니다. 같은 실행과 작업 지시에서 해당 대상의 이동과 점검을 다시 보냅니다.',
+  reworkSiteNote: '경로 차단 등 이동 실패 원인이 사라졌는지 현장에서 먼저 확인한 뒤 재작업하세요.',
+  reworkTarget: '재작업할 건너뛴 대상',
+  reworkChoose: '건너뛴 대상 선택',
+  reworkOption: (executionId: string, jobOrderId: string, robotId: string, unitId: string) =>
+    `${executionId} · ${jobOrderId} · ${robotId} · ${unitId}`,
+  reworkExpiry: (time: string) => `보존 기간 만료: ${time}`,
+  reworkNoExpiry: '보존 만료 없음',
+  reworkEmpty: '재작업할 건너뛴 대상이 없습니다',
+  reworkReason: '재작업 사유',
+  reworkConfirm: '기체 상태를 현장에서 확인했고 이동 실패 원인이 해소되어 재작업을 진행합니다',
+  reworkButton: '현장 확인 후 재작업',
+  reworkOperatorOnly: '재작업은 운영자 모드에서 합니다',
+  // 판단이 붙은 인시던트 id 를 모르면(이동 인시던트가 없는 실행) 괄호를 뺀다.
+  reworkResolved: (incidentId: string | null) =>
+    incidentId ? `선행 이동 인시던트에 판단이 섰습니다(${incidentId})` : '선행 이동 인시던트에 판단이 섰습니다',
+  reworkRefused: (detail: string | null) => (detail ? `실행 호스트가 재작업을 거부했습니다. ${detail}` : '실행 호스트가 재작업을 거부했습니다.'),
+  reworkEvicted: '보존 기간이 지나 이빅션되었습니다. 새 작업 지시를 내리십시오',
+  reworkNotSkipped: '이미 재작업되었거나 더는 건너뛴 대상이 아닙니다. 실행 목록에서 다시 확인하십시오',
+  reworkApplied: '응답은 없었으나 다시 읽어 보니 재작업이 걸림',
+  reworkNotApplied: '응답 없음. 다시 읽어 보니 재작업이 걸리지 않음. 실행 목록에서 확인하십시오',
+  reworkUnconfirmed: '응답 없음. 재작업이 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오',
+  // 인시던트 판단 폼의 Refused. 건너뛴 대상 재작업의 거부도 이 폼의 인시던트 상세로 올 수 있어 승인자 종류를 가리지 않는다.
+  incidentRefused: (detail: string | null) => (detail ? `실행 호스트가 판단을 거부했습니다. ${detail}` : '실행 호스트가 판단을 거부했습니다.'),
 } as const
 
 /** 조치 탐색이 대안을 못 찾은 종류(picasso `Remedy.None.Cause`). 「없다」와 「덜 봤다」를 가른다. */
