@@ -740,7 +740,8 @@ class CloseUnrestoredTest {
 
         /** 그 인스턴스의 심장박동이 끊긴 것으로 만든다. */
         fun expireInstance(id: String) =
-            PostgresSupport.execute("UPDATE mission.host_instance SET expires_at = clock_timestamp() - interval '1 second' WHERE instance_id = '$id'")
+            // last_seen_at 도 함께 앞으로 당긴다: expires_at >= last_seen_at(V7) 을 행을 넣은 직후에도 지킨다.
+            PostgresSupport.execute("UPDATE mission.host_instance SET last_seen_at = clock_timestamp() - interval '2 seconds', expires_at = clock_timestamp() - interval '1 second' WHERE instance_id = '$id'")
 
         /** 다른 인스턴스(`mw-writer`)가 적은 GAVE_UP 이벤트를 넣는다. */
         fun insertGaveUpEvent(jobOrderId: String) = PostgresSupport.execute(
