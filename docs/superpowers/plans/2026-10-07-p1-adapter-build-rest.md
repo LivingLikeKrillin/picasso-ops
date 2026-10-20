@@ -4,7 +4,7 @@
 
 **Goal:** picasso registry 에 어댑터 제품·빌드를 등록·조회하는 운영자 REST 3개(`POST /operations/adapters`, `POST /operations/adapters/{adapterId}/versions`, `GET /operations/adapters`)를 더해 PR 로 올린다.
 
-**Architecture:** `AdapterService` 에 결과를 가르는 새 메서드 `declareAdapter`·`declareVersion`·`list` 를 더하고, 옛 `registerVersion` 은 새 메서드에 위임해 한 SQL 경로만 남긴다(`registerAdapter` 는 호출 18곳·harness 3파일이 있어 그대로 둔다). 새 컨트롤러 `AdapterOperationsController` 가 `/operations/adapters` 아래를 맡고, 운영자 토큰 관문(`/operations/**`)은 경로로 자동 적용된다. 문서는 `docs/commissioning.md`, 설계 변경 이력 §15.206, 변경 이력 번호를 대는 `docs/limits.md`, 시험 수를 적는 `CLAUDE.md`·`docs/verification.md`, 문 시험 수를 적는 `docs/verification.md`·`registry/README.md` 를 고친다.
+**Architecture:** `AdapterService` 에 결과를 가르는 새 메서드 `declareAdapter`·`declareVersion`·`list` 를 더하고, 옛 `registerVersion` 은 새 메서드에 위임해 한 SQL 경로만 남긴다(`registerAdapter` 는 호출 18곳·harness 3파일이 있어 그대로 둔다). 새 컨트롤러 `AdapterOperationsController` 가 `/operations/adapters` 아래를 맡고, 운영자 토큰 게이트(`/operations/**`)은 경로로 자동 적용된다. 문서는 `docs/commissioning.md`, 설계 변경 이력 §15.206, 변경 이력 번호를 대는 `docs/limits.md`, 시험 수를 적는 `CLAUDE.md`·`docs/verification.md`, 문 시험 수를 적는 `docs/verification.md`·`registry/README.md` 를 고친다.
 
 **스펙 §5·§10 과 다른 결정(이 계획이 정함):** 스펙은 옛 `registerVersion` 의 같은 버전 재등록 거부를 바꾸고 `AdapterLifecycleTest` 의 `같은 버전을 두 번 등록하면 거부한다` 를 고친다고 적었다. 이 계획은 **옛 메서드의 그 거부를 유지**하고, 멱등(같은 내용 재요청 200)은 새 조작 문(`declareVersion`)에만 둔다. 이유: 옛 메서드는 시험·하네스가 부르고, 그 호출자들은 멱등을 기대하지 않는다. 대신 옛 `registerVersion` 의 동작이 2곳 바뀐다: 모르는 제품이 FK 예외 대신 `Rejected`, 빈 `version` 이 `Rejected`. picasso-ops 스펙의 정정은 Task 7 이 한다.
 
@@ -617,7 +617,7 @@ import org.springframework.web.bind.annotation.RestController
 
 /**
  * P1 — 어댑터 제품·빌드의 조작 문(시운전 Step 2). **조작 문이다** — 사람이 *"이 빌드를 들였다"* 고 적는다.
- * 관문은 [OperatorToken] 이 경로로 건다.
+ * 게이트는 [OperatorToken] 이 경로로 건다.
  *
  * 생긴 이유는 첫 바깥 소비자다(ADR 9). picasso-ops 의 운영 화면이 인스턴스를 등록하려면 고를 빌드가
  * 있어야 하는데, 빌드를 넣는 문이 없어 시험만 서비스를 직접 불렀다.

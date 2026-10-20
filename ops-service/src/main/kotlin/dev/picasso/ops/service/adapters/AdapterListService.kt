@@ -31,7 +31,7 @@ data class AdapterListView(
  * 인스턴스를 먼저, 제품·빌드를 나중에 읽는다. 제품과 빌드는 지워지지 않으므로, 이 순서면 보이는 인스턴스의 빌드가
  * 제품·빌드 목록에 늘 있다. 거꾸로 읽으면 그 사이에 등록된 인스턴스가 빌드 없이 보일 수 있다.
  *
- * 제품·빌드 읽기는 운영자 토큰 관문 안이라 토큰이 틀리면 [RegistryState.REGISTRY_UNAUTHORIZED] 다.
+ * 제품·빌드 읽기는 운영자 토큰 게이트 안이라 토큰이 틀리면 [RegistryState.REGISTRY_UNAUTHORIZED] 다.
  */
 class AdapterListService(
     private val source: AdapterSource,

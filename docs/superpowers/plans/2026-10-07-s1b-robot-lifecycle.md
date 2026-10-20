@@ -4,13 +4,13 @@
 
 **Goal:** S1a 골격 위에 기체 생애주기를 화면에서 돌린다. 운영 서비스가 기체 선언·퇴역·복귀를 registry 에 보내고 조작 기록에 남기며, 기체마다 연결 칸과 상태 막힘 4종을 계산하고, registry 의 거부를 대응표로 옮긴다. 화면은 목록과 상세에서 이것을 보이고 조작한다. 완료 판정은 스펙 §3 의 S1b 행이다. 통합 시험과 Playwright 에서 선언(`CLAIMED`) → 보고(`CONFIRMED`) → 퇴역 → 퇴역 뒤 보고 감지 → 복귀 → 조작 기록 확인이 돌고, 막힘·거부 판정 단위 시험이 결함 주입을 잡는다.
 
-**Architecture:** 운영 서비스에 판정 모델 3개(`Finding`, `Blockers`, `Rejections`), 조작 서비스 `RobotOperations`, 조작 API `RobotOperationsController` 를 더하고 `RegistryClient` 에 조작 3가지와 관문 안 토큰 확인을 더한다. 기체 목록 서비스는 목록을 읽을 때마다 관문 안의 `GET /operations/adapters` 로 토큰을 함께 확인하고, 기체마다 연결 칸과 막힘을 붙인다. 화면은 상세 패널, 선언 폼, 퇴역·복귀, 결과 알림을 더한다. 통합 시험은 공용 기동 픽스처 `E2eStack` 위에 생애주기 시험을 얹고, Playwright 는 스택의 프로세스를 하나씩 띄워 화면으로 같은 흐름을 돈다.
+**Architecture:** 운영 서비스에 판정 모델 3개(`Finding`, `Blockers`, `Rejections`), 조작 서비스 `RobotOperations`, 조작 API `RobotOperationsController` 를 더하고 `RegistryClient` 에 조작 3가지와 게이트 안 토큰 확인을 더한다. 기체 목록 서비스는 목록을 읽을 때마다 게이트 안의 `GET /operations/adapters` 로 토큰을 함께 확인하고, 기체마다 연결 칸과 막힘을 붙인다. 화면은 상세 패널, 선언 폼, 퇴역·복귀, 결과 알림을 더한다. 통합 시험은 공용 기동 픽스처 `E2eStack` 위에 생애주기 시험을 얹고, Playwright 는 스택의 프로세스를 하나씩 띄워 화면으로 같은 흐름을 돈다.
 
 **Tech Stack:** S1a 와 같다(Kotlin 2.4.20, Spring Boot 3.4.0 BOM, Gradle 9.7.1, PostgreSQL 16, Testcontainers, JUnit5, React 19, Vite 8, TypeScript 6, vitest 5). 더하는 것은 `@playwright/test` 1.63.0(chromium) 하나다.
 
 **근거 스펙:** `docs/superpowers/specs/2026-10-07-s1-skeleton-robot-lifecycle-design.md` §3(S1b 행), §7.1~§7.4, §8, §9, §10. S1a 계획 `docs/superpowers/plans/2026-10-07-s1a-skeleton.md` 끝의 «S1b 로 넘긴 것».
 
-**결정(2026-10-07 사용자):** 운영자 토큰 불일치(401)는 목록을 읽을 때 관문 안의 `GET /operations/adapters` 를 함께 불러 판정한다. 목록 읽기 `/diag/robots` 는 관문 밖이라, 이것이 없으면 조작에서 받은 401 이 다음 폴링에 `OK` 로 덮인다.
+**결정(2026-10-07 사용자):** 운영자 토큰 불일치(401)는 목록을 읽을 때 게이트 안의 `GET /operations/adapters` 를 함께 불러 판정한다. 목록 읽기 `/diag/robots` 는 게이트 밖이라, 이것이 없으면 조작에서 받은 401 이 다음 폴링에 `OK` 로 덮인다.
 
 **스펙과 다른 결정(이 계획이 정함):**
 1. **모드를 운영 서비스도 집행한다.** 스펙 §8 은 «등록은 엔지니어 모드, 퇴역·복귀는 운영자 모드» 라고만 적었다. 화면이 버튼을 감추는 것에 더해, 운영 서비스가 모드가 맞지 않는 조작을 403 으로 막는다.
@@ -438,7 +438,7 @@ EOF
 - Modify: `ops-service/src/main/kotlin/dev/picasso/ops/service/registry/RegistryClient.kt`(파일 전체를 아래로 바꾼다)
 - Test: `ops-service/src/test/kotlin/dev/picasso/ops/service/RegistryWritesTest.kt`
 
-조작 3가지(`RobotWrites`)와 관문 안 토큰 확인(`TokenProbe`)을 더한다. 조작은 응답이 오면 코드와 본문을 그대로 넘기고(`RegistryWrite.Answered`), 오지 않으면 `NoResponse` 다. 분류는 부르는 쪽이 대응표로 한다. 형식이 틀린 registry 주소는 기동에서 거절한다. 토큰 속성 이름은 `token` 으로 바꾼다(새 메서드 `operatorToken()` 과 겹치지 않게).
+조작 3가지(`RobotWrites`)와 게이트 안 토큰 확인(`TokenProbe`)을 더한다. 조작은 응답이 오면 코드와 본문을 그대로 넘기고(`RegistryWrite.Answered`), 오지 않으면 `NoResponse` 다. 분류는 부르는 쪽이 대응표로 한다. 형식이 틀린 registry 주소는 기동에서 거절한다. 토큰 속성 이름은 `token` 으로 바꾼다(새 메서드 `operatorToken()` 과 겹치지 않게).
 
 - [ ] **Step 1: 실패하는 시험 쓰기**
 
@@ -536,7 +536,7 @@ class RegistryWritesTest {
     }
 
     @Test
-    fun `토큰 확인은 관문 안의 읽기를 부르고 401 을 토큰 불일치로 본다`() {
+    fun `토큰 확인은 게이트 안의 읽기를 부르고 401 을 토큰 불일치로 본다`() {
         assertEquals(RegistryCall.Unauthorized, RegistryClient(serve(401, ""), "op-t").operatorToken())
         assertEquals("GET" to "/operations/adapters", seen!!.method to seen!!.path)
         stop()
@@ -584,8 +584,8 @@ import java.time.Duration
  * 읽기에서는 401 이 아닌 실패를 모두 [Silent] 로 둔다. 연결 실패·시간 초과·5xx·해석 불가 어느 것이든
  * 값을 모른다는 점이 같다. 조작은 [RegistryWrite] 로 따로 돌려준다.
  *
- * [Unauthorized] 는 운영자 토큰 관문(`/operations` 이하) 안의 호출에서만 나온다. 목록 읽기 `/diag/robots` 는
- * 관문 밖이라 토큰을 [TokenProbe] 가 관문 안의 읽기로 따로 확인한다.
+ * [Unauthorized] 는 운영자 토큰 게이트(`/operations` 이하) 안의 호출에서만 나온다. 목록 읽기 `/diag/robots` 는
+ * 게이트 밖이라 토큰을 [TokenProbe] 가 게이트 안의 읽기로 따로 확인한다.
  */
 sealed interface RegistryCall<out T> {
     data class Ok<T>(val value: T) : RegistryCall<T>
@@ -619,7 +619,7 @@ fun interface RobotSource {
     fun robots(siteId: String): RegistryCall<List<RegistryRobot>>
 }
 
-/** 운영자 토큰 확인. 목록 읽기는 관문 밖이라 401 이 오지 않으므로 관문 안의 읽기를 따로 부른다. */
+/** 운영자 토큰 확인. 목록 읽기는 게이트 밖이라 401 이 오지 않으므로 게이트 안의 읽기를 따로 부른다. */
 fun interface TokenProbe {
     fun operatorToken(): RegistryCall<Unit>
 }
@@ -662,7 +662,7 @@ class RegistryClient(
         return get("/diag/robots?retired=true&site=$site") { json.readValue<List<RegistryRobot>?>(it) }
     }
 
-    /** 관문 안의 읽기 하나로 토큰을 본다. 읽은 값은 쓰지 않는다. */
+    /** 게이트 안의 읽기 하나로 토큰을 본다. 읽은 값은 쓰지 않는다. */
     override fun operatorToken(): RegistryCall<Unit> = get("/operations/adapters") { }
 
     override fun declare(
@@ -1273,7 +1273,7 @@ class RobotListServiceTest {
     }
 
     @Test
-    fun `목록은 읽혀도 관문 안 확인이 401 이면 토큰 불일치이고 목록은 새 값이다`() {
+    fun `목록은 읽혀도 게이트 안 확인이 401 이면 토큰 불일치이고 목록은 새 값이다`() {
         next = RegistryCall.Ok(listOf(r1))
         token = RegistryCall.Unauthorized
         val view = service.read()
@@ -1283,7 +1283,7 @@ class RobotListServiceTest {
     }
 
     @Test
-    fun `관문 안 확인이 답하지 않는 것은 토큰 불일치가 아니다`() {
+    fun `게이트 안 확인이 답하지 않는 것은 토큰 불일치가 아니다`() {
         next = RegistryCall.Ok(listOf(r1))
         token = RegistryCall.Silent("HTTP 503")
         assertEquals(RegistryState.OK, service.read().registry)
@@ -1353,8 +1353,8 @@ data class RobotListView(
 /**
  * 기체 목록. registry 가 답하지 않으면 목록을 비우지 않고 직전 값과 시각을 보인다(스펙 §9).
  *
- * 목록 읽기(`/diag/robots`)는 운영자 토큰 관문 밖이라 401 이 오지 않는다. 그래서 목록을 읽을 때마다
- * [token] 으로 관문 안의 읽기를 함께 불러, 토큰 불일치가 다음 폴링에 `OK` 로 덮이지 않게 한다.
+ * 목록 읽기(`/diag/robots`)는 운영자 토큰 게이트 밖이라 401 이 오지 않는다. 그래서 목록을 읽을 때마다
+ * [token] 으로 게이트 안의 읽기를 함께 불러, 토큰 불일치가 다음 폴링에 `OK` 로 덮이지 않게 한다.
  *
  * @param threshold 연결 칸의 기준 시간(스펙 §7.3). S1 에서는 설정값이다
  */
@@ -1631,7 +1631,7 @@ Expected: XML 에서 `RobotListServiceTest` 9개, ops-service 모듈 전체 53�
 
 - [ ] **Step 6: 결함 주입 2건(하나씩)**
 
-① `read()` 의 `RegistryCall.Unauthorized -> RegistryState.REGISTRY_UNAUTHORIZED` 줄을 지운다(관문 안 확인을 무시한다). Expected 실패 이름: `목록은 읽혀도 관문 안 확인이 401 이면 토큰 불일치이고 목록은 새 값이다()`.
+① `read()` 의 `RegistryCall.Unauthorized -> RegistryState.REGISTRY_UNAUTHORIZED` 줄을 지운다(게이트 안 확인을 무시한다). Expected 실패 이름: `목록은 읽혀도 게이트 안 확인이 401 이면 토큰 불일치이고 목록은 새 값이다()`.
 ② `if (prev != null && prev.at.isAfter(now)) prev else Known(call.value, now)` 를 `Known(call.value, now)` 로 바꾼다. Expected 실패 이름: `늦게 끝난 옛 읽기는 더 새 목록을 덮지 않는다()`.
 각각 `./gradlew :ops-service:test --tests '*RobotListServiceTest' --console=plain` 으로 돌리고, 되돌리고 초록을 본다.
 
@@ -2058,7 +2058,7 @@ class LifecycleTest {
         context.use {
             val view = E2eStack.read("$url/api/robots")
             assertEquals("REGISTRY_UNAUTHORIZED", view["registry"].asText())
-            // 목록 자체는 관문 밖에서 새로 읽었다. 직전 값이 아니다.
+            // 목록 자체는 게이트 밖에서 새로 읽었다. 직전 값이 아니다.
             assertEquals(view["checkedAt"].asText(), view["robotsAsOf"].asText())
 
             val reply = E2eStack.send(url, "POST", "/api/robots", "engineer", body = """{"robotId":"tok-01","serialNumber":"TOK-0001"}""")
@@ -2080,7 +2080,7 @@ Expected: XML(`e2e/...`)에서 `LifecycleTest` 10개, `SkeletonTest` 3개, 실�
 앞의 둘은 S1b 완료 흐름(선언부터 조작 기록까지)을 겨눈다.
 ① `RegistryClient.robots` 의 `retired=true` 를 `retired=false` 로 바꾼다(스펙 §7.2 의 고정 질의값). Expected 실패 이름(e2e): `운영자가 사유와 함께 퇴역시키면 RETIRED 이다()`, `퇴역 뒤에도 보고가 오면 운영자가 풀 막힘으로 보인다()`. ops-service 의 `퇴역 기체를 포함해 사이트로 묻고 칸을 읽는다()` 도 빨갛다.
 ② `Blockers.of` 의 `if (robot.reportingAfterRetirement) {` 를 `if (false) {` 로 바꾼다. Expected 실패 이름(e2e): `퇴역 뒤에도 보고가 오면 운영자가 풀 막힘으로 보인다()`. ops-service 의 `퇴역 뒤 보고는 운영자가 화면 안에서 푼다()` 도 빨갛다.
-③ Task 4 Step 6 ① 과 같은 주입(관문 안 확인 무시). Expected 실패 이름(e2e): `운영자 토큰이 틀린 운영 서비스는 목록을 읽어도 화면 전체 상태가 토큰 불일치이고 조작도 401 이다()`. ops-service 의 `목록은 읽혀도 관문 안 확인이 401 이면 토큰 불일치이고 목록은 새 값이다()` 도 빨갛다.
+③ Task 4 Step 6 ① 과 같은 주입(게이트 안 확인 무시). Expected 실패 이름(e2e): `운영자 토큰이 틀린 운영 서비스는 목록을 읽어도 화면 전체 상태가 토큰 불일치이고 조작도 401 이다()`. ops-service 의 `목록은 읽혀도 게이트 안 확인이 401 이면 토큰 불일치이고 목록은 새 값이다()` 도 빨갛다.
 ④ `RobotOperationsController.declare` 의 `if (body.site != null && body.site != siteId.value) {` 를 `if (false) {` 로 바꾼다. Expected 실패 이름: `registry 에 보내기 전에 막는 요청은 조작 기록에 남지 않는다()`.
 ⑤ `guarded` 의 `if (actor.mode != required) {` 를 `if (false) {` 로 바꾼다. Expected 실패 이름: 같은 시험.
 각각 `./gradlew :ops-service:test :e2e:test --continue --console=plain` 으로 돌리고, 되돌리고 초록을 본다.
@@ -3561,13 +3561,13 @@ Expected: 모두 성공(Playwright `1 passed`). 커밋된 파일만으로 CI 와
 - [ ] **Step 3: 스펙 정정(컨트롤러가 한다)**
 
 문장은 Fable·Codex 초안 취합이다. 고칠 사실(머리말 결정 1~12 와 대응):
-- §7.2: 목록을 읽을 때마다 관문 안 `GET /operations/adapters` 로 운영자 토큰을 함께 확인한다(2026-10-07 결정).
+- §7.2: 목록을 읽을 때마다 게이트 안 `GET /operations/adapters` 로 운영자 토큰을 함께 확인한다(2026-10-07 결정).
 - §7.3: 연결 칸과 막힘의 판정 시각은 목록을 읽은 시각이다(결정 5).
 - §7.4: 대응표에 없는 응답은 `UNCLASSIFIED`(엔지니어, 화면 밖), 종류 값의 표기, 거부는 `UNCLASSIFIED` 만 화면 밖이라는 것(대응표에 화면 안/밖 열을 더한다)(결정 4). «바로 갈 링크» 칸은 기체 id 이고 모양은 화면이 정한다(결정 6). `REGISTRY_UNAUTHORIZED` 는 목록 읽기의 토큰 확인에서도 나온다. «토큰 불일치는 S1b 의 첫 조작에서 드러난다» 는 문장을 «목록을 읽을 때 드러난다» 로 고친다.
 - §8: 모드를 운영 서비스도 집행한다(모드 불일치 403, 결정 1). 다른 모드에서는 어느 모드에서 하는지 적는다. «직전 값» 표시는 목록을 읽은 시각이 확인 시각과 다를 때다(결정 7). 선언 폼의 «표시 이름».
 - §9: registry 에 보내기 전에 막은 요청(행위자 헤더 없음 400, 모드 403, 사이트 400, JSON 아닌 본문 415, 본문 해석 불가 400)은 조작 기록에 남지 않고, 사이트 대조는 선언에만 있다(결정 2). 조작 API 는 registry 가 답한 결과를 거부까지 포함해 200 과 결과 본문으로 돌려준다(결정 3). 재조회는 1초 뒤 한 번이고 실패하면 확인 행을 붙이지 않으며, 그때 화면 문구(결정 9). 선언의 «반영됨» 판정(결정 10). 화면의 «결과 모름», 알림에 어느 기체의 어느 조작인지 보이는 것, 거부 알림의 막힘 카드에만 바로 가기가 있는 것(결정 11).
 - §10: Playwright 는 스택을 프로세스마다 `webServer` 로 띄우고 끈다. 런처와 운영 서비스는 `java -cp lib/*` 로 띄운다. Postgres 준비 확인과 기동 실패 때의 정리(결정 8). Playwright 가 `CLAIMED` 를 단언하지 않는 이유와 registry 정지 방법(결정 12). CI 는 job 3개(`gradle`·`ui`·`playwright`)를 돌린다.
-- §11: 사실 행 둘을 더한다. registry 는 퇴역 기체의 생존 보고도 받아 `lastReportedAt` 을 갱신한다(`registry/.../ingest/LivenessService.kt`). 선언·퇴역·복귀는 `audit_log` 에 남는다(`registry/.../binding/RobotRegistration.kt`). 서브모듈 포인터를 옮길 때 `GET /operations/adapters` 가 여전히 관문 안에 있는지 다시 확인한다는 것도 적는다(없어지면 토큰 확인이 조용히 꺼진다).
+- §11: 사실 행 둘을 더한다. registry 는 퇴역 기체의 생존 보고도 받아 `lastReportedAt` 을 갱신한다(`registry/.../ingest/LivenessService.kt`). 선언·퇴역·복귀는 `audit_log` 에 남는다(`registry/.../binding/RobotRegistration.kt`). 서브모듈 포인터를 옮길 때 `GET /operations/adapters` 가 여전히 게이트 안에 있는지 다시 확인한다는 것도 적는다(없어지면 토큰 확인이 조용히 꺼진다).
 
 - [ ] **Step 4: 이 계획 끝에 «실행 결과» 절 덧붙이기**
 

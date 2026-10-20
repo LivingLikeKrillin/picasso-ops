@@ -154,7 +154,7 @@ InspectAsset 예:
 ```
 
 - `candidates` 필수, 비어 있지 않은 문자열 배열.
-- `sourceConfirmations` 선택, `[{source, identity, confirmedBy, confirmedAt}]`(`confirmedAt` 은 ISO-8601 시각). 없거나 null 이면 빈 목록이다. 원소가 객체가 아니거나, 문자열 칸이 비었거나, `confirmedAt` 이 시각이 아니거나, 같은 `source` 가 두 번 오면 400 `BAD_REQUEST` 다. 호스트는 이 칸을 저장하지 않고 그 제출의 `assign` 한 번 동안만 셀 관측으로 쓴다(§7). 운영 서비스는 사람이 기록한 출발 자리 확인이 있을 때만 이 칸을 싣는다. 근거: `SourceObservationHostTest` 의 `출발 자리 확인 칸이 틀리면 400 이다`, `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `HostClientTest` 의 `출발 자리 확인은 있을 때만 제출 본문에 싣고 출발 미관측 답은 결품 칸과 따로 읽는다`.
+- `sourceConfirmations` 선택, `[{source, identity, confirmedBy, confirmedAt}]`(`confirmedAt` 은 ISO-8601 시각). 없거나 null 이면 빈 목록이다. 원소가 객체가 아니거나, 문자열 칸이 비었거나, `confirmedAt` 이 시각이 아니거나, 같은 `source` 가 두 번 오면 400 `BAD_REQUEST` 다. 호스트는 이 칸을 저장하지 않고 그 제출의 `assign` 한 번 동안만 셀 관측으로 쓴다(§7). 운영 서비스는 사람이 기록한 출발 자리 확인이 있을 때만 이 칸을 싣는다. 근거: `SourceObservationHostTest` 의 `출발 자리 확인 칸이 틀리면 400 이다`, `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 게이트를 지나고 다음 제출은 다시 설비만 본다`, `HostClientTest` 의 `출발 자리 확인은 있을 때만 제출 본문에 싣고 출발 미관측 답은 결품 칸과 따로 읽는다`.
 - 호스트가 같은 판정을 다시 해 `passed` 인 기체만 `Middleware.assign` 에 넘긴다. 통과한 기체가 없어도 `assign` 을 빈 목록으로 부른다(결과 UNASSIGNED, `refusals` 빈 배열). 이미 같은 작업 지시 id의 실행이 picasso에 있을 때는 후보 목록을 무시하고 해당 실행의 기체(현재 기체)로 보낸다. 같은 버전은 `IDEMPOTENT`, 낮은 버전은 거부, 높은 버전은 그 기체에서의 리비전이다. 리비전 판정 시 실행 호스트는 후보가 아닌 현재 기체만 판정하며, 이때 해당 실행 자체는 제 기체의 진행 중인 실행으로 세지 않고 다른 실행의 점유만 계산한다. 현재 기체가 호스트 판정을 통과하면 그 기체만으로 `assign` 을 호출하며 `excluded` 는 빈 배열이다. 현재 기체가 호스트 판정에서 제외되면(잔여 파지 표시, 다른 실행 점유, 현장 시간값 미적용, 모자란 스킬 등) `assign` 을 부르지 않고 결과는 `UNASSIGNED` 이며 `excluded` 에 그 기체의 판정 행이 실린다. picasso가 개정하지 않는 제출(같은 버전, 낮은 버전, 종료한 `ABORTED` 또는 `PHYSICALLY_DONE` 실행, WorkMaster 변경, 실행이 쥔 케이퍼빌리티를 넘는 요구 근거 등급)은 호스트 판정 없이 현재 기체의 `assign` 으로 넘겨 picasso의 `IDEMPOTENT` 나 거부가 그대로 반환되고 `excluded` 는 빈 배열이다. 단위 id 중복과 연쇄 검사는 계획을 지은 뒤에만 알 수 있어 리비전으로 취급되며, 현재 기체가 판정에서 제외되면 해당 거부 대신 `UNASSIGNED` 가 반환된다. 근거: `ExecutionControlTest` 의 `기존 실행의 기체가 호스트 판정으로 빠지면 통과하는 다른 후보가 있어도 개정하지 않고 UNASSIGNED 에 그 기체의 판정을 실으며 같은 판 재제출은 판정 없이 IDEMPOTENT 다`, `부분 완료 실행의 개정판은 제 실행이 쥔 기체로 빠지지 않아 후보가 다 빠져도 그 기체에서 개정한다`.
 
 응답 200(결과가 무엇이든 200 이다. 상태 코드로 결과를 가르지 말 것):
@@ -483,7 +483,7 @@ picasso `ddca127`(PR #109)부터 `release`는 true를 반환할 때 `notify`를 
 
 ## 7. 셀 신호(호스트 안, 참고)
 
-- `observe(자리)`: 스냅숏의 제시 자리·슬롯에서 같은 id 를 찾아 `SlotSignal(occupied, material, observedAt)`. 없는 자리는 null. 스냅숏이 없으면 null. 그 제출 본문에 그 자리의 출발 자리 확인(`sourceConfirmations`)이 있고 스냅숏이 말이 없거나(null) «있다» 고만 하면(점유, 신원 없음) `SlotSignal(true, identity, confirmedAt)` 이다. 스냅숏이 비었다·다른 것이 있다·신원까지 말하면 스냅숏의 답 그대로다(확인이 관측을 뒤집지 않는다). 그 제출이 끝나면 확인을 비운다. 근거: `SourceObservationHostTest` 의 `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`.
+- `observe(자리)`: 스냅숏의 제시 자리·슬롯에서 같은 id 를 찾아 `SlotSignal(occupied, material, observedAt)`. 없는 자리는 null. 스냅숏이 없으면 null. 그 제출 본문에 그 자리의 출발 자리 확인(`sourceConfirmations`)이 있고 스냅숏이 말이 없거나(null) «있다» 고만 하면(점유, 신원 없음) `SlotSignal(true, identity, confirmedAt)` 이다. 스냅숏이 비었다·다른 것이 있다·신원까지 말하면 스냅숏의 답 그대로다(확인이 관측을 뒤집지 않는다). 그 제출이 끝나면 확인을 비운다. 근거: `SourceObservationHostTest` 의 `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 게이트를 지나고 다음 제출은 다시 설비만 본다`, `확인한 신원이 다르면 결품이고 설비가 비었다고 말하면 사람의 확인이 그 관측을 뒤집지 않는다`.
 - `holding(자재)`: 그 자재를 든 **제시 자리**만(채운 슬롯은 안 냄). 스냅숏이 없으면 null.
 - `signal(이름)`: 늘 null(S3b).
 

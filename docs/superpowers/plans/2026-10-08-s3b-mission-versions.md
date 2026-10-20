@@ -4,7 +4,7 @@
 
 **Goal:** 엔지니어가 화면의 «임무·정책» 영역에서 PrepareSequencedRack 정의를 JSON 으로 편집해 초안으로 저장하고, 검증하고, 가상 기체로 모의 실행하고, 사유를 적어 활성화한다. 활성 버전은 실행 호스트 DB 에 남아 재기동 뒤에도 같은 번호다. 도는 실행 중에 새 버전을 활성화하면 새 작업 지시부터 새 버전을 쓰고 옛 실행은 옛 버전으로 끝난다. 신호 사양에 없는 신호를 참조한 초안은 활성화에서 거부되고 화면이 부족한 조건과 바로 갈 작업을 보인다. 설비 대기 노드는 운영 영역의 셀 대역 표에서 신호를 켜면 풀린다.
 
-**Architecture:** site 의 셀 대역이 신호 셋과 그 사양을 선언하고 루프백으로 신호 쓰기를 받는다(안전 신호는 거부). 실행 호스트는 `mission` 스키마의 추가 전용 표 셋(초안, 모의 실행, 버전)을 들고 picasso `MissionCatalog` 를 직접 구현해 재기동 때 버전 번호를 복원한다. 검증은 셀 대역 스냅숏의 신호 사양과 시운전 완료 기체들의 케이퍼빌리티로 하고, 모의 실행은 호스트 안의 별도 mimic 과 미들웨어로 이상적 현장에서 끝까지 돌리며, 활성화는 호스트 잠금 아래에서 한다. 운영 서비스는 엔지니어 모드 관문, 요청 id 재조회, 거부 카드 변환, 두 모드의 신호 조작을 맡고, 화면은 «임무·정책» 영역과 셀 대역 신호 표를 연다.
+**Architecture:** site 의 셀 대역이 신호 셋과 그 사양을 선언하고 루프백으로 신호 쓰기를 받는다(안전 신호는 거부). 실행 호스트는 `mission` 스키마의 추가 전용 표 셋(초안, 모의 실행, 버전)을 들고 picasso `MissionCatalog` 를 직접 구현해 재기동 때 버전 번호를 복원한다. 검증은 셀 대역 스냅숏의 신호 사양과 시운전 완료 기체들의 케이퍼빌리티로 하고, 모의 실행은 호스트 안의 별도 mimic 과 미들웨어로 이상적 현장에서 끝까지 돌리며, 활성화는 호스트 잠금 아래에서 한다. 운영 서비스는 엔지니어 모드 게이트, 요청 id 재조회, 거부 카드 변환, 두 모드의 신호 조작을 맡고, 화면은 «임무·정책» 영역과 셀 대역 신호 표를 연다.
 
 **Tech Stack:** Kotlin, Spring Boot(BOM), Postgres·Flyway(`db/mission`), JDK `HttpServer`, picasso(`MissionDefinitionParser`, `MissionValidator`, `DefinedCapability`, `MissionCatalog`, `Middleware`, harness `Harness`), React·TypeScript·vitest, Playwright, JUnit5 + kotlin.test, Testcontainers.
 
@@ -1319,7 +1319,7 @@ enum class MockRunFailure {
     /** 정의: 같은 신호를 기대 값이 다른 대기 노드 둘이 쓴다. 이상적 현장의 신호 값을 하나로 정할 수 없다. */
     DEFINITION,
 
-    /** 표본 작업 지시를 미들웨어가 받지 않았다(근거 등급 초과, 관문 거부). 실행이 서지 않았다. */
+    /** 표본 작업 지시를 미들웨어가 받지 않았다(근거 등급 초과, 게이트 거부). 실행이 서지 않았다. */
     SUBMISSION_REJECTED,
 
     /** 가상 시간 상한 안에 실행이 정착하지 않았다. */
@@ -1381,7 +1381,7 @@ data class MockRunResult(
  *   하네스에 적재 지점과 핸드셰이크 보고를 붙이지 않아 registry 에 아무것도 닿지 않는다.
  * - **시계**: 미들웨어의 `now` 는 하네스의 가상 시계다. 어긋나면 E2 시간 윈도우가 갈린다.
  * - **이상적 현장**(T8): 목적지 슬롯은 처음부터 점유이고 기대 자재를 내며 관측 시각은 `null`(읽은 순간)이다. 제시 자리는
- *   `null`(침묵, 관문 통과)이다. 이름 있는 신호는 대기 노드의 기대 값을 낸다. 그래서 대기 노드는 첫 pump 에서 완료된다.
+ *   `null`(침묵, 게이트 통과)이다. 이름 있는 신호는 대기 노드의 기대 값을 낸다. 그래서 대기 노드는 첫 pump 에서 완료된다.
  *   기체 프로파일은 현장 humanoid 프로파일에서 실패 모드를 뺀 사본이다.
  * - **진행 루프**: pump → 정착했으면 끝 → 상한 확인 → 가상 시계를 [STEP] 민다 → 스트림 갱신이 닿을 틈([PAUSE]) → 다시 pump.
  *
@@ -1501,7 +1501,7 @@ class MockRunner(
 
     /**
      * 이상적 현장(T8). 표본 작업 지시의 목적지 슬롯은 처음부터 점유이고 그 슬롯의 기대 자재를 낸다. 관측 시각은 `null` 이라
-     * 읽은 순간이 시각이므로 E2 시간 윈도우 안에 든다. 그 밖의 자리(제시 자리 포함)는 `null`(침묵)이다. 관문은 침묵을
+     * 읽은 순간이 시각이므로 E2 시간 윈도우 안에 든다. 그 밖의 자리(제시 자리 포함)는 `null`(침묵)이다. 게이트는 침묵을
      * 판정하지 않으므로 통과한다. 이름 있는 신호는 대기 노드의 기대 값이다.
      */
     private class IdealCell(order: JobOrder, private val ideal: Map<String, String>) : CellSignals {
@@ -1537,7 +1537,7 @@ class MockRunner(
         /**
          * 마지막 셀 대역 스냅숏으로 만든 표본 작업 지시(S3b 스펙 §6.4). 호스트는 현장 모듈의 픽스처를 모르므로 스냅숏의
          * 슬롯을 앞에서부터 [SAMPLE_SLOTS] 개, 자재를 든 첫 제시 자리를 쓴다. 요구 근거는 E2 이고 `materialRequirements` 는
-         * 자재별 슬롯 수라 관문의 정합 검사를 지난다. 슬롯이나 자재를 든 제시 자리가 없으면 `null` 이다.
+         * 자재별 슬롯 수라 게이트의 정합 검사를 지난다. 슬롯이나 자재를 든 제시 자리가 없으면 `null` 이다.
          */
         fun sampleOrder(workMasterId: String, draftId: Long, cell: CellSnapshot): JobOrder? {
             val slots = cell.slots.take(SAMPLE_SLOTS).map { it.id }
@@ -1773,7 +1773,7 @@ class MissionStore(private val jdbc: JdbcClient) {
             .query { rs, _ -> mockRun(rs) }
             .single()
 
-    /** 그 초안의 마지막 모의 실행. 활성화 관문이 이것 하나만 본다(S3b 스펙 §1). */
+    /** 그 초안의 마지막 모의 실행. 활성화 게이트가 이것 하나만 본다(S3b 스펙 §1). */
     fun lastMockRun(draftId: Long): MockRunRow? =
         jdbc.sql("SELECT $MOCK_RUN_COLUMNS FROM mission.mock_run WHERE draft_id = :draftId ORDER BY mock_run_id DESC LIMIT 1")
             .param("draftId", draftId)
@@ -2607,7 +2607,7 @@ class MissionVersionsTest {
             assertTrue(none["version"].isNull)
             assertTrue(none["lastMockRun"].isNull)
 
-            // 다른 초안의 통과한 모의 실행은 이 초안의 관문을 열지 않는다.
+            // 다른 초안의 통과한 모의 실행은 이 초안의 게이트를 열지 않는다.
             val otherDraft = bench.draft(bench.dataV1())
             assertEquals("PASSED", bench.mockRun(otherDraft)["result"].asText())
             assertEquals("MOCK_RUN_REQUIRED", bench.activate(draftId).body!!["result"].asText())
@@ -4482,9 +4482,9 @@ import org.springframework.web.bind.annotation.RestController
  * 임무 버전 API(S3b 스펙 §7). 두 읽기는 모드와 관계없고, 초안 저장·검증·모의 실행·활성화는 엔지니어 모드만 한다(T5).
  * 활성화는 사유가 있어야 한다.
  *
- * 판정 순서는 관문(헤더 400, 모드 403) → WorkMaster(400 `UNKNOWN_WORK_MASTER`) → 초안 id(400 `MISSION_BAD_REQUEST`) →
+ * 판정 순서는 게이트(헤더 400, 모드 403) → WorkMaster(400 `UNKNOWN_WORK_MASTER`) → 초안 id(400 `MISSION_BAD_REQUEST`) →
  * 본문(400 `MISSION_BAD_REQUEST`, 활성화의 사유는 400 `REASON_REQUIRED`) → 시운전 완료 기체(503
- * `COMMISSIONED_ROBOTS_UNKNOWN`)다. 모두 호스트에 닿지 않은 사전 거부라 조작 기록에 남지 않는다. 본문은 바이트로 받아 관문을
+ * `COMMISSIONED_ROBOTS_UNKNOWN`)다. 모두 호스트에 닿지 않은 사전 거부라 조작 기록에 남지 않는다. 본문은 바이트로 받아 게이트를
  * 지난 뒤 직접 읽는다([SiteSettingsController] 와 같은 이유: 운영자 모드의 깨진 본문은 400 이 아니라 403 이다). 쓰기 본문은
  * `application/json` 만 받는다(다른 출처 방어는 [RobotOperationsController]). 검증·모의 실행은 본문을 읽지 않지만 같은
  * 까닭으로 `application/json` 을 요구한다.
@@ -4568,7 +4568,7 @@ class MissionVersionController(
         }
     }
 
-    /** 임무 편집 관문. 엔지니어 모드만 받는다(T5). 네 쓰기가 모두 이것을 지난다. */
+    /** 임무 편집 게이트. 엔지니어 모드만 받는다(T5). 네 쓰기가 모두 이것을 지난다. */
     private inline fun engineer(mode: String?, user: String?, action: (Actor) -> ResponseEntity<Any>): ResponseEntity<Any> =
         guarded(mode, user, Mode.ENGINEER, action)
 
@@ -5529,7 +5529,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 
 /**
- * 임무 버전·신호 조작 API 의 관문과 사전 거부(S3b 스펙 §7). 컨트롤러를 스프링 없이 바로 부른다. 관문(`guarded`)과 본문 읽기,
+ * 임무 버전·신호 조작 API 의 게이트와 사전 거부(S3b 스펙 §7). 컨트롤러를 스프링 없이 바로 부른다. 게이트(`guarded`)과 본문 읽기,
  * 상태 코드의 고름이 컨트롤러 안에 있기 때문이다. `application/json` 제한은 스프링의 몫이라 통합 시험이 본다.
  */
 class MissionVersionControllerTest {
@@ -5568,7 +5568,7 @@ class MissionVersionControllerTest {
             assertEquals("MODE_NOT_ALLOWED", reply.rejection().error)
             assertEquals("이 조작은 engineer 모드에서 한다", reply.rejection().detail)
         }
-        // 깨진 본문도 관문이 먼저다.
+        // 깨진 본문도 게이트가 먼저다.
         editAll("operator", body = "임무").forEach { assertEquals(403, it.statusCode.value()) }
         assertEquals(emptyList(), bench.writes())
         assertEquals(emptyList(), log.list())
@@ -5976,7 +5976,7 @@ index 64980ca..d7033ff 100644
 +++ b/ops-service/src/main/kotlin/dev/picasso/ops/service/web/Guard.kt
 @@ -14,17 +14,29 @@ data class PreRejection(val error: String, val detail: String)
  /**
-  * 조작 API 의 관문. 행위자 헤더가 없거나 틀리면 400, 모드가 맞지 않으면 403 으로 registry 를 부르기 전에 막는다(스펙 §9).
+  * 조작 API 의 게이트. 행위자 헤더가 없거나 틀리면 400, 모드가 맞지 않으면 403 으로 registry 를 부르기 전에 막는다(스펙 §9).
   * 기체 조작과 어댑터 조작이 같이 쓴다. 교차 출처 방어에서 이 헤더가 맡는 몫은 [RobotOperationsController] 에 적었다.
 + * S3b 부터 실행 호스트 조작(임무 버전, 신호 조작)도 같이 쓴다. 막은 요청은 호스트에도 닿지 않는다.
   */
@@ -5988,7 +5988,7 @@ index 64980ca..d7033ff 100644
 +): ResponseEntity<Any> = guarded(mode, user, setOf(required), action)
 +
 +/**
-+ * 여러 모드를 받는 관문(S3b 스펙 §7). 셀 대역 신호 조작은 운영자·엔지니어 두 모드 모두 하지만, 행위자 헤더는 조작 기록의
++ * 여러 모드를 받는 게이트(S3b 스펙 §7). 셀 대역 신호 조작은 운영자·엔지니어 두 모드 모두 하지만, 행위자 헤더는 조작 기록의
 + * 사람 칸이라 빠지면 여전히 400 이다.
 + */
 +internal inline fun guarded(
@@ -6760,7 +6760,7 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 
 /**
  * «임무·정책» 영역(S3b 스펙 §8). PrepareSequencedRack 하나의 활성 버전, 버전 이력, 초안과 그 마지막 모의 실행을 보이고, 엔지니어
- * 모드에서 정의 JSON 을 편집해 초안 저장, 검증, 모의 실행, 활성화한다. 초안은 자유롭고 활성화만 관문이다.
+ * 모드에서 정의 JSON 을 편집해 초안 저장, 검증, 모의 실행, 활성화한다. 초안은 자유롭고 활성화만 게이트다.
  *
  * 임무 개요는 실행 호스트를 거친다. 그래서 App 의 다섯 조회와 따로, 이 영역이 열려 있을 때만 읽는다(S3a 스펙 §9.3). 못 읽으면
  * 직전 값을 지우지 않고 불통을 표시한다(S3b 스펙 §9).
@@ -9030,7 +9030,7 @@ index f426f4e..c2d8f49 100644
  picasso 를 라이브러리로 쓰는 담는 측 저장소입니다. 로봇, 임무, 엔드포인트의 운영 가능성을 PoC 로 입증합니다. 실제 하드웨어 현장은 없습니다. 보안과 인증은 생략합니다. 운영 중 변경은 코드 수정이 아니라 관리 화면에서 처리합니다.
  
 -지금 단계는 S3a 실행 호스트와 작업 지시입니다. S2 현장 설정 위에 올립니다. 서브모듈 `picasso` 는 P4 머지 커밋 `1e3f4ae` 를 가리킵니다. 그 버전에는 P2a 시험 실행기, P2b 리비전·바인딩 REST, P3 임무 정의 버전, P4 스트림 재부착과 mimic 엔진 잠금이 들어 있습니다. 로봇·연결 영역에서 엔지니어 모드는 기체를 선언합니다. 같은 영역에서 엔지니어 모드는 어댑터 제품 선언, 빌드 선언, 인스턴스 등록을 합니다. 같은 영역 왼쪽에 프로파일 구역이 있습니다. 그 구역에서 엔지니어 모드는 기종 프로파일 리비전을 파일로 골라 제출하고, 시험을 요청하고, 활성화합니다. 시험 결과는 사람이 적지 않습니다. 런처가 띄운 시험 실행기가 적습니다. 기체 상세에서 엔지니어 모드는 빌드와 활성 리비전을 골라 바인딩하고, 사이트 명칭 등록을 기록합니다. 명칭 티칭은 화면 밖 현장 작업입니다. 기체 목록에 시운전 칸이 있습니다. 값은 완료, 미완, 퇴역입니다. 완료 조건은 셋입니다. 원장 상태가 `CONFIRMED` 이고 퇴역이 아니어야 합니다. 활성 바인딩이 있어야 합니다. 사이트 명칭 상태가 `CONFIRMED` 또는 `NOT_REQUIRED` 여야 합니다. 빠진 조건은 막힘으로 보입니다. 운영자 모드는 퇴역과 복귀를 합니다. 어댑터 적합성 기록은 열지 않습니다. 그래서 빌드와 인스턴스는 모두 `UNTESTED` 로 보입니다. 현장·자원 영역에는 현장 설정 구역이 있습니다. 지금 버전, 연결 기준 시간, 허용 범위(60~3600초), 버전 이력을 보입니다. 엔지니어 모드는 연결 기준 시간을 바꿉니다. 바꿀 때는 사유가 필요합니다. 바꾸면 새 버전이 생깁니다. 다음 기체 목록 읽기부터 그 값으로 연결 칸과 막힘을 판정합니다. 재기동은 필요 없습니다. 운영자 모드는 바꾸지 못합니다. 막힘 카드는 어느 현장 설정 버전으로 판정했는지를 근거 버전으로 보입니다. 기체 상세에는 연결 판정 기준이 보입니다. 기준 초와 버전입니다. 운영 영역에서 운영자 모드는 작업 지시를 냅니다. 임무는 코드 정의 임무 2개(`InspectAsset`, `PrepareSequencedRack`)입니다. `InspectAsset` 은 점검 대상의 id 와 장소 이름을 넣습니다. `PrepareSequencedRack` 은 셀 대역의 슬롯과 자재를 고릅니다. 제시 자리는 자재에서 정해집니다. 폼을 채우면 기체별 배정 가능 표가 보입니다. 배정 가능 조건은 넷입니다. 시운전 완료, 연결 신선, 도는 실행 없음, 스킬 적합입니다. 앞의 둘은 운영 서비스가, 뒤의 둘은 실행 호스트가 판정합니다. 못 물어본 칸은 모름이고 모름이 있으면 배정 불가입니다. 운영 서비스는 배정 가능한 기체만 후보로 실행 호스트에 넘깁니다. 실행 호스트의 picasso 미들웨어가 후보 중 하나를 골라 mimic 기체에서 실행합니다. 엔지니어 모드는 작업 지시를 내지 못합니다. 실행 목록은 실행 상태, 단위 상태와 근거 등급, 작업 응답, 임무 버전을 보입니다. 코드 정의 임무의 임무 버전은 `코드 정의` 로 보입니다. 셀 대역 표는 제시 자리와 슬롯의 점유와 자재를 보입니다. 임무 버전 저장과 편집은 S3b, 미들웨어 시간값과 인시던트 기록의 현장 설정 버전은 S3c 의 몫입니다. S1 설계 스펙은 `docs/superpowers/specs/2026-10-07-s1-skeleton-robot-lifecycle-design.md` 에 있습니다. P2·S1d 설계 스펙은 `docs/superpowers/specs/2026-10-08-p2-s1d-runner-binding-commissioning-design.md` 에 있습니다. S2 설계 스펙은 `docs/superpowers/specs/2026-10-08-s2-site-settings-design.md` 에 있습니다. S3a 설계 스펙은 `docs/superpowers/specs/2026-10-08-s3a-execution-host-design.md` 에 있습니다. 구현 계획은 `docs/superpowers/plans/` 아래에 있습니다.
-+지금 단계는 S3b 임무 버전입니다. S3a 실행 호스트와 작업 지시 위에 올립니다. 서브모듈 `picasso` 는 P4 머지 커밋 `1e3f4ae` 를 가리킵니다. 그 버전에는 P2a 시험 실행기, P2b 리비전·바인딩 REST, P3 임무 정의 버전, P4 스트림 재부착과 mimic 엔진 잠금이 들어 있습니다. 로봇·연결 영역에서 엔지니어 모드는 기체를 선언합니다. 같은 영역에서 엔지니어 모드는 어댑터 제품 선언, 빌드 선언, 인스턴스 등록을 합니다. 같은 영역 왼쪽에 프로파일 구역이 있습니다. 그 구역에서 엔지니어 모드는 기종 프로파일 리비전을 파일로 골라 제출하고, 시험을 요청하고, 활성화합니다. 시험 결과는 사람이 적지 않습니다. 런처가 띄운 시험 실행기가 적습니다. 기체 상세에서 엔지니어 모드는 빌드와 활성 리비전을 골라 바인딩하고, 사이트 명칭 등록을 기록합니다. 명칭 티칭은 화면 밖 현장 작업입니다. 기체 목록에 시운전 칸이 있습니다. 값은 완료, 미완, 퇴역입니다. 완료 조건은 셋입니다. 원장 상태가 `CONFIRMED` 이고 퇴역이 아니어야 합니다. 활성 바인딩이 있어야 합니다. 사이트 명칭 상태가 `CONFIRMED` 또는 `NOT_REQUIRED` 여야 합니다. 빠진 조건은 막힘으로 보입니다. 운영자 모드는 퇴역과 복귀를 합니다. 어댑터 적합성 기록은 열지 않습니다. 그래서 빌드와 인스턴스는 모두 `UNTESTED` 로 보입니다. 현장·자원 영역에는 현장 설정 구역이 있습니다. 지금 버전, 연결 기준 시간, 허용 범위(60~3600초), 버전 이력을 보입니다. 엔지니어 모드는 연결 기준 시간을 바꿉니다. 바꿀 때는 사유가 필요합니다. 바꾸면 새 버전이 생깁니다. 다음 기체 목록 읽기부터 그 값으로 연결 칸과 막힘을 판정합니다. 재기동은 필요 없습니다. 운영자 모드는 바꾸지 못합니다. 막힘 카드는 어느 현장 설정 버전으로 판정했는지를 근거 버전으로 보입니다. 기체 상세에는 연결 판정 기준이 보입니다. 기준 초와 버전입니다. 운영 영역에서 운영자 모드는 작업 지시를 냅니다. 임무는 `InspectAsset`, `PrepareSequencedRack` 2개입니다. `InspectAsset` 은 점검 대상의 id 와 장소 이름을 넣습니다. `PrepareSequencedRack` 은 셀 대역의 슬롯과 자재를 고릅니다. 제시 자리는 자재에서 정해집니다. 폼을 채우면 기체별 배정 가능 표가 보입니다. 배정 가능 조건은 넷입니다. 시운전 완료, 연결 신선, 도는 실행 없음, 스킬 적합입니다. 앞의 둘은 운영 서비스가, 뒤의 둘은 실행 호스트가 판정합니다. 못 물어본 칸은 모름이고 모름이 있으면 배정 불가입니다. 운영 서비스는 배정 가능한 기체만 후보로 실행 호스트에 넘깁니다. 실행 호스트의 picasso 미들웨어가 후보 중 하나를 골라 mimic 기체에서 실행합니다. 엔지니어 모드는 작업 지시를 내지 못합니다. 실행 목록은 실행 상태, 단위 상태와 근거 등급, 작업 응답, 임무 버전을 보입니다. 임무 버전은 코드 정의면 `코드 정의`, 데이터 버전이면 `버전 N` 으로 보입니다. 셀 대역 표는 제시 자리와 슬롯의 점유와 자재를 보입니다. 같은 영역의 셀 대역 신호 표는 이름 있는 신호의 이름, 종류, 값, 관측 시각을 보입니다. 안전이 아닌 BOOLEAN 신호는 켜기와 끄기 버튼이 있습니다. 사람이 PLC 역할을 하는 정상 조작이라 운영자 모드와 엔지니어 모드 둘 다 합니다. 안전 신호는 값만 보입니다. 임무·정책 영역은 `PrepareSequencedRack` 의 활성 버전과 버전 이력, 초안과 그 마지막 모의 실행을 보입니다. 엔지니어 모드는 정의 JSON 을 편집기에서 고쳐 초안으로 저장하고, 검증하고, 모의 실행하고, 사유를 적어 활성화합니다. 시작용 정의 2개(데이터 정의, 랙 도착 대기)를 템플릿으로 불러올 수 있습니다. 초안은 자유롭게 저장되고 활성화만 관문입니다. 활성화는 지금의 신호 사양과 시운전 완료 기체의 스킬로 다시 검증하고, 그 초안의 마지막 모의 실행이 통과여야 합니다. 신호 사양에 없는 신호를 참조하는 것 같은 거부는 거부 카드로 보이고, 해결 담당과 바로 갈 작업이 함께 보입니다. 활성화한 버전은 다음 작업 지시부터 쓰이고, 도는 실행은 생성 때의 버전으로 끝납니다. 운영자 모드는 보기만 합니다. 미들웨어 시간값과 인시던트 기록의 현장 설정 버전은 S3c 의 몫입니다. S1 설계 스펙은 `docs/superpowers/specs/2026-10-07-s1-skeleton-robot-lifecycle-design.md` 에 있습니다. P2·S1d 설계 스펙은 `docs/superpowers/specs/2026-10-08-p2-s1d-runner-binding-commissioning-design.md` 에 있습니다. S2 설계 스펙은 `docs/superpowers/specs/2026-10-08-s2-site-settings-design.md` 에 있습니다. S3a 설계 스펙은 `docs/superpowers/specs/2026-10-08-s3a-execution-host-design.md` 에 있습니다. S3b 설계 스펙은 `docs/superpowers/specs/2026-10-08-s3b-mission-versions-design.md` 에 있습니다. 구현 계획은 `docs/superpowers/plans/` 아래에 있습니다.
++지금 단계는 S3b 임무 버전입니다. S3a 실행 호스트와 작업 지시 위에 올립니다. 서브모듈 `picasso` 는 P4 머지 커밋 `1e3f4ae` 를 가리킵니다. 그 버전에는 P2a 시험 실행기, P2b 리비전·바인딩 REST, P3 임무 정의 버전, P4 스트림 재부착과 mimic 엔진 잠금이 들어 있습니다. 로봇·연결 영역에서 엔지니어 모드는 기체를 선언합니다. 같은 영역에서 엔지니어 모드는 어댑터 제품 선언, 빌드 선언, 인스턴스 등록을 합니다. 같은 영역 왼쪽에 프로파일 구역이 있습니다. 그 구역에서 엔지니어 모드는 기종 프로파일 리비전을 파일로 골라 제출하고, 시험을 요청하고, 활성화합니다. 시험 결과는 사람이 적지 않습니다. 런처가 띄운 시험 실행기가 적습니다. 기체 상세에서 엔지니어 모드는 빌드와 활성 리비전을 골라 바인딩하고, 사이트 명칭 등록을 기록합니다. 명칭 티칭은 화면 밖 현장 작업입니다. 기체 목록에 시운전 칸이 있습니다. 값은 완료, 미완, 퇴역입니다. 완료 조건은 셋입니다. 원장 상태가 `CONFIRMED` 이고 퇴역이 아니어야 합니다. 활성 바인딩이 있어야 합니다. 사이트 명칭 상태가 `CONFIRMED` 또는 `NOT_REQUIRED` 여야 합니다. 빠진 조건은 막힘으로 보입니다. 운영자 모드는 퇴역과 복귀를 합니다. 어댑터 적합성 기록은 열지 않습니다. 그래서 빌드와 인스턴스는 모두 `UNTESTED` 로 보입니다. 현장·자원 영역에는 현장 설정 구역이 있습니다. 지금 버전, 연결 기준 시간, 허용 범위(60~3600초), 버전 이력을 보입니다. 엔지니어 모드는 연결 기준 시간을 바꿉니다. 바꿀 때는 사유가 필요합니다. 바꾸면 새 버전이 생깁니다. 다음 기체 목록 읽기부터 그 값으로 연결 칸과 막힘을 판정합니다. 재기동은 필요 없습니다. 운영자 모드는 바꾸지 못합니다. 막힘 카드는 어느 현장 설정 버전으로 판정했는지를 근거 버전으로 보입니다. 기체 상세에는 연결 판정 기준이 보입니다. 기준 초와 버전입니다. 운영 영역에서 운영자 모드는 작업 지시를 냅니다. 임무는 `InspectAsset`, `PrepareSequencedRack` 2개입니다. `InspectAsset` 은 점검 대상의 id 와 장소 이름을 넣습니다. `PrepareSequencedRack` 은 셀 대역의 슬롯과 자재를 고릅니다. 제시 자리는 자재에서 정해집니다. 폼을 채우면 기체별 배정 가능 표가 보입니다. 배정 가능 조건은 넷입니다. 시운전 완료, 연결 신선, 도는 실행 없음, 스킬 적합입니다. 앞의 둘은 운영 서비스가, 뒤의 둘은 실행 호스트가 판정합니다. 못 물어본 칸은 모름이고 모름이 있으면 배정 불가입니다. 운영 서비스는 배정 가능한 기체만 후보로 실행 호스트에 넘깁니다. 실행 호스트의 picasso 미들웨어가 후보 중 하나를 골라 mimic 기체에서 실행합니다. 엔지니어 모드는 작업 지시를 내지 못합니다. 실행 목록은 실행 상태, 단위 상태와 근거 등급, 작업 응답, 임무 버전을 보입니다. 임무 버전은 코드 정의면 `코드 정의`, 데이터 버전이면 `버전 N` 으로 보입니다. 셀 대역 표는 제시 자리와 슬롯의 점유와 자재를 보입니다. 같은 영역의 셀 대역 신호 표는 이름 있는 신호의 이름, 종류, 값, 관측 시각을 보입니다. 안전이 아닌 BOOLEAN 신호는 켜기와 끄기 버튼이 있습니다. 사람이 PLC 역할을 하는 정상 조작이라 운영자 모드와 엔지니어 모드 둘 다 합니다. 안전 신호는 값만 보입니다. 임무·정책 영역은 `PrepareSequencedRack` 의 활성 버전과 버전 이력, 초안과 그 마지막 모의 실행을 보입니다. 엔지니어 모드는 정의 JSON 을 편집기에서 고쳐 초안으로 저장하고, 검증하고, 모의 실행하고, 사유를 적어 활성화합니다. 시작용 정의 2개(데이터 정의, 랙 도착 대기)를 템플릿으로 불러올 수 있습니다. 초안은 자유롭게 저장되고 활성화만 게이트입니다. 활성화는 지금의 신호 사양과 시운전 완료 기체의 스킬로 다시 검증하고, 그 초안의 마지막 모의 실행이 통과여야 합니다. 신호 사양에 없는 신호를 참조하는 것 같은 거부는 거부 카드로 보이고, 해결 담당과 바로 갈 작업이 함께 보입니다. 활성화한 버전은 다음 작업 지시부터 쓰이고, 도는 실행은 생성 때의 버전으로 끝납니다. 운영자 모드는 보기만 합니다. 미들웨어 시간값과 인시던트 기록의 현장 설정 버전은 S3c 의 몫입니다. S1 설계 스펙은 `docs/superpowers/specs/2026-10-07-s1-skeleton-robot-lifecycle-design.md` 에 있습니다. P2·S1d 설계 스펙은 `docs/superpowers/specs/2026-10-08-p2-s1d-runner-binding-commissioning-design.md` 에 있습니다. S2 설계 스펙은 `docs/superpowers/specs/2026-10-08-s2-site-settings-design.md` 에 있습니다. S3a 설계 스펙은 `docs/superpowers/specs/2026-10-08-s3a-execution-host-design.md` 에 있습니다. S3b 설계 스펙은 `docs/superpowers/specs/2026-10-08-s3b-mission-versions-design.md` 에 있습니다. 구현 계획은 `docs/superpowers/plans/` 아래에 있습니다.
  
  ## 구성
  

@@ -27,9 +27,9 @@ import org.springframework.web.bind.annotation.RestController
  * 두 읽기는 모드와 관계없고 호스트 본문을 그대로 넘긴다. 호스트가 안 닿으면 503 `HOST_SILENT` 다. 단건의 404
  * `INCIDENT_NOT_FOUND` 는 호스트 본문 그대로 404 로 넘긴다.
  *
- * 장애 주입은 엔지니어 모드, 판단은 운영자 모드만 한다. 판정 순서는 관문(헤더 400 `ACTOR_REQUIRED`, 모드 403) → 본문(400
+ * 장애 주입은 엔지니어 모드, 판단은 운영자 모드만 한다. 판정 순서는 게이트(헤더 400 `ACTOR_REQUIRED`, 모드 403) → 본문(400
  * `FAULT_BAD_REQUEST`·`RESOLVE_BAD_REQUEST`) → 사유(400 `REASON_REQUIRED`)다. 모두 호스트에 닿지 않은 사전 거부라 조작
- * 기록에 남지 않는다. 본문은 바이트로 받아 관문을 지난 뒤 직접 읽는다([SiteSettingsController] 와 같은 이유). 쓰기 본문은
+ * 기록에 남지 않는다. 본문은 바이트로 받아 게이트를 지난 뒤 직접 읽는다([SiteSettingsController] 와 같은 이유). 쓰기 본문은
  * `application/json` 만 받는다(다른 출처 방어는 [RobotOperationsController]).
  *
  * 두 조작은 호스트가 무엇을 답했든 200 과 조작 결과다. 현장·호스트의 거부와 판단 결과 이름은 본문에 있다.
@@ -37,7 +37,7 @@ import org.springframework.web.bind.annotation.RestController
  * 재기동 뒤(S4b 스펙 T9): 목록은 이전 인스턴스의 사본 `earlier`·`earlierTotal` 을 그대로 넘긴다. 상세는 `instanceId` 쿼리를
  * 그대로 넘기고(빈 값은 400 `INCIDENT_BAD_REQUEST`), 판단 본문은 `instanceId` 가 필수다(없거나 비면 400 `RESOLVE_BAD_REQUEST`).
  *
- * 재작업 관문의 거부(자원 관리 작업의 점유 확인, 실행 목록을 못 읽음)는 그 상태 코드와 이름으로 넘긴다. 호스트에 닿지 않은 사전
+ * 재작업 게이트의 거부(자원 관리 작업의 점유 확인, 실행 목록을 못 읽음)는 그 상태 코드와 이름으로 넘긴다. 호스트에 닿지 않은 사전
  * 거부라 조작 기록에 남지 않는다.
  */
 @RestController

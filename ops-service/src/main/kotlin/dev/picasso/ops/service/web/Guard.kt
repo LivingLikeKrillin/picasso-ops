@@ -6,13 +6,13 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 
 /**
- * 관문에서 막은 요청의 답. 조작 기록에 남기지 않는다. 상태를 바꾸는 쪽(registry, 또는 S2 의 현장 설정)에 닿지 않은 요청은
+ * 게이트에서 막은 요청의 답. 조작 기록에 남기지 않는다. 상태를 바꾸는 쪽(registry, 또는 S2 의 현장 설정)에 닿지 않은 요청은
  * 조작이 아니다(S2 스펙 §6.2).
  */
 data class PreRejection(val error: String, val detail: String)
 
 /**
- * 조작 API 의 관문. 행위자 헤더가 없거나 틀리면 400, 모드가 맞지 않으면 403 으로 registry 를 부르기 전에 막는다(스펙 §9).
+ * 조작 API 의 게이트. 행위자 헤더가 없거나 틀리면 400, 모드가 맞지 않으면 403 으로 registry 를 부르기 전에 막는다(스펙 §9).
  * 기체 조작과 어댑터 조작이 같이 쓴다. 교차 출처 방어에서 이 헤더가 맡는 몫은 [RobotOperationsController] 에 적었다.
  * S3b 부터 실행 호스트 조작(임무 버전, 신호 조작)도 같이 쓴다. 막은 요청은 호스트에도 닿지 않는다.
  */
@@ -24,7 +24,7 @@ internal inline fun guarded(
 ): ResponseEntity<Any> = guarded(mode, user, setOf(required), action)
 
 /**
- * 여러 모드를 받는 관문(S3b 스펙 §7). 셀 대역 신호 조작은 운영자·엔지니어 두 모드 모두 하지만, 행위자 헤더는 조작 기록의
+ * 여러 모드를 받는 게이트(S3b 스펙 §7). 셀 대역 신호 조작은 운영자·엔지니어 두 모드 모두 하지만, 행위자 헤더는 조작 기록의
  * 사람 칸이라 빠지면 여전히 400 이다.
  */
 internal inline fun guarded(

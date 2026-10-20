@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController
 data class BindBody(val adapterVersionId: Long? = null, val profileRevisionId: Long? = null)
 
 /**
- * 개정판·바인딩 조작 API(P2·S1d 스펙 §8.2). 다섯 다 엔지니어 모드에서 한다. 관문, 사전 거절을 조작 기록에 남기지 않는 것,
+ * 개정판·바인딩 조작 API(P2·S1d 스펙 §8.2). 다섯 다 엔지니어 모드에서 한다. 게이트, 사전 거절을 조작 기록에 남기지 않는 것,
  * registry 의 답을 200 과 결과 본문으로 돌려주는 것은 [RobotOperationsController] 와 같다.
  *
  * 제출 본문은 바이트 그대로 받는다. 운영 서비스가 다시 직렬화하면 registry 가 매기는 문서 해시가 달라져, 같은 문서의

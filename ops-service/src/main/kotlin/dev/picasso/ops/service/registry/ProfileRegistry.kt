@@ -99,14 +99,14 @@ data class RegistrySoftware(
     val verdict: String,
 )
 
-/** 카탈로그와 개정판 목록의 출처. 둘 다 운영자 토큰 관문 안의 읽기다. 시험이 registry 없이 대신 끼운다. */
+/** 카탈로그와 개정판 목록의 출처. 둘 다 운영자 토큰 게이트 안의 읽기다. 시험이 registry 없이 대신 끼운다. */
 interface ProfileSource {
     fun catalog(): RegistryCall<RegistryCatalog>
 
     fun revisions(): RegistryCall<List<RegistryRevision>>
 }
 
-/** 바인딩과 소프트웨어 대조의 출처. 둘 다 관문 밖의 진단이다. 시험이 registry 없이 대신 끼운다. */
+/** 바인딩과 소프트웨어 대조의 출처. 둘 다 게이트 밖의 진단이다. 시험이 registry 없이 대신 끼운다. */
 interface CommissioningSource {
     /** 이 사이트의 활성 바인딩. 이력은 빼고 읽는다. */
     fun bindings(siteId: String): RegistryCall<List<RegistryBinding>>

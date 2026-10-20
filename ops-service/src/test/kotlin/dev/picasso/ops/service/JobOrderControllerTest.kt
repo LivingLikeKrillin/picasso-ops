@@ -29,7 +29,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 
 /**
- * 작업 지시 API 의 관문과 사전 거부(S3a 스펙 §8·§10). 컨트롤러를 스프링 없이 바로 부른다. 관문(`guarded`)과 폼 읽기, 상태 코드의
+ * 작업 지시 API 의 게이트와 사전 거부(S3a 스펙 §8·§10). 컨트롤러를 스프링 없이 바로 부른다. 게이트(`guarded`)과 폼 읽기, 상태 코드의
  * 고름이 컨트롤러 안에 있기 때문이다. `application/json` 제한은 스프링의 몫이라 통합 시험이 본다.
  */
 class JobOrderControllerTest {
@@ -66,7 +66,7 @@ class JobOrderControllerTest {
         val reply = submit("engineer")
         assertEquals(403, reply.statusCode.value())
         assertEquals("MODE_NOT_ALLOWED", reply.rejection().error)
-        // 깨진 본문도 관문이 먼저다.
+        // 깨진 본문도 게이트가 먼저다.
         assertEquals(403, submit("engineer", form = "작업 지시").statusCode.value())
         assertEquals(emptyList(), bench.judged)
         assertEquals(emptyList(), bench.submitted)

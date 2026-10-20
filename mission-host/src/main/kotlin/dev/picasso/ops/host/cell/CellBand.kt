@@ -163,7 +163,7 @@ class CellBandClient(
  *
  * picasso `SourceUnobserved` 가 말하는 «기록된 수동 확인» 이다. 미들웨어의 덮어쓰기 칸이 아니라 셀 포트의 답으로 들어간다.
  *
- * @param identity 사람이 그 자리에서 확인한 신원. 요구한 자재와 다르면 관문이 출발 결품으로 판정한다
+ * @param identity 사람이 그 자리에서 확인한 신원. 요구한 자재와 다르면 게이트가 출발 결품으로 판정한다
  * @param confirmedBy 확인한 사람(운영 서비스 행위자 헤더)
  * @param confirmedAt 확인을 기록한 시각. 셀 관측의 시각이 된다
  */

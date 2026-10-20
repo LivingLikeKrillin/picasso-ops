@@ -105,7 +105,7 @@ enum class SubmitResult { ACCEPTED, IDEMPOTENT, REJECTED, UNASSIGNED }
  * 모양은 REJECTED 의 같은 이름 칸([SubmitOutcome.alternativeLocations]·[SubmitOutcome.sourceMissing])과 같다.
  *
  * 마지막 칸은 출발 미관측으로 떨어진 기체에만 값이 있다(picasso `Unassigned.sourceUnobserved`). 출발 결품과 접지 않는다. 한 기체는 둘 중
- * 많아야 하나를 든다(관문이 첫 거절에서 멈춘다).
+ * 많아야 하나를 든다(게이트가 첫 거절에서 멈춘다).
  *
  * @param alternativeLocations 그 자재를 든 다른 자리. 빈 목록은 «든 자리가 없다» 는 응답이고 `null` 은 셀이 응답하지 않았거나 출발 결품이
  *   아니다. 둘을 접지 않는다. 어느 `null` 인지는 [sourceMissing] 으로 가른다. 출발 미관측이면 대체 자리를 계산하지 않으므로 `null` 이다.
@@ -428,7 +428,7 @@ data class HostFootprint(
  *
  * ## 판정(T3)
  *
- * 호스트는 스킬 적합과 도는 실행 없음만 본다. 시운전 완료와 연결 신선은 운영 서비스가 본다. 미들웨어의 배정 관문은 이
+ * 호스트는 스킬 적합과 도는 실행 없음만 본다. 시운전 완료와 연결 신선은 운영 서비스가 본다. 미들웨어의 배정 게이트는 이
  * 넷을 보지 않으므로 제출 때 호스트가 다시 판정해 통과한 기체만 `assign` 에 넘긴다. 미해소 잔여 파지 표시가 있는 기체도 뺀다
  * (P0-b2, [cancel]·[clearResidualHold]). 이미 실행이 있는 작업 지시의 개정판은 후보 대신 그 실행의 기체 하나를 판정한다([submit]).
  *
@@ -893,7 +893,7 @@ class MissionHost(
      * 초과)은 판정 없이 그 기체로 `assign` 에 넘겨 picasso 의 IDEMPOTENT·거부를 그대로 낸다. 운영 서비스는 작업 지시 id 를 다시 쓰지 않는다.
      *
      * 미적용 판단은 한 번만 읽어 모든 기체의 판정에 같은 값을 쓴다. 미적용이면 통과한 기체가 없어 UNASSIGNED 다. 미들웨어의 채택은
-     * 기체마다 관문을 걸므로 기체가 없으면 요구 근거 등급 검사도 하지 않는다.
+     * 기체마다 게이트를 걸므로 기체가 없으면 요구 근거 등급 검사도 하지 않는다.
      *
      * 새 실행으로 ACCEPTED 이면 같은 잠금 안에서 응답하기 전에 실행 일지를 적는다(S4b 스펙 T2). 이미 있던 실행의 `revise` 가 낸
      * Accepted 는 받은 개정판(그 실행이 정착을 적은 뒤면 다시 돎도)과 판단 기록을 적는다([recordReruns]). IDEMPOTENT 는 적지 않는다.
@@ -1638,7 +1638,7 @@ class MissionHost(
     }
 
     /**
-     * 작업 허가의 지금(ADR 52). 현장이 대응을 선언하지 않았으면 `declared` 가 거짓이고 나머지가 비어 있다. 판정은 발행 관문과 같은 규칙이다
+     * 작업 허가의 지금(ADR 52). 현장이 대응을 선언하지 않았으면 `declared` 가 거짓이고 나머지가 비어 있다. 판정은 발행 게이트와 같은 규칙이다
      * ([CellWorkPermits.evaluate]). 지어 둔 판독만 읽으므로 호스트 잠금을 잡지 않는다.
      */
     fun workPermits(): WorkPermitsView {
@@ -2203,7 +2203,7 @@ class MissionHost(
 
         /**
          * 정착한 실행의 잔여 파지 단위(P0-b2). 경로가 로봇인 단위 가운데 파지 관측이 있는 마지막 단위(계획 순서)의 관측이 HOLDING 이면
-         * 그 단위다. 플릿 단위의 HOLDING 은 플릿 AMR 이 용기를 든 것이라 보지 않는다. picasso 는 정착한 실행의 파지를 정보로만 두고 관문에
+         * 그 단위다. 플릿 단위의 HOLDING 은 플릿 AMR 이 용기를 든 것이라 보지 않는다. picasso 는 정착한 실행의 파지를 정보로만 두고 게이트에
          * 쓰지 않는다(§15.146). 이 표시는 실행 호스트의 운영 정책이다(ADR 41).
          */
         internal fun residualHoldUnit(units: List<ExecutionUnit>): ExecutionUnit? =

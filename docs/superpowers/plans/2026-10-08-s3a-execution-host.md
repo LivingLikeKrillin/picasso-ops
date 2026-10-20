@@ -1056,7 +1056,7 @@ data class ExecutionsView(val instanceId: String, val pumpedAt: Instant?, val ex
  *
  * ## 판정(T3)
  *
- * 호스트는 스킬 적합과 도는 실행 없음만 본다. 시운전 완료와 연결 신선은 운영 서비스가 본다. 미들웨어의 배정 관문은 이
+ * 호스트는 스킬 적합과 도는 실행 없음만 본다. 시운전 완료와 연결 신선은 운영 서비스가 본다. 미들웨어의 배정 게이트는 이
  * 넷을 보지 않으므로 제출 때 호스트가 다시 판정해 통과한 기체만 `assign` 에 넘긴다.
  *
  * ## 작업 응답
@@ -2916,7 +2916,7 @@ object JobOrderForm {
     /**
      * 작업 지시 본문. 버전은 1, 파라미터는 비어 있고, 요구 근거 등급은 임무마다 고정이다.
      *
-     * PrepareSequencedRack 의 자재 요구는 슬롯 수와 같아야 미들웨어 관문의 정합 검사를 지난다(스펙 §4). 제시 자리는 하나이며
+     * PrepareSequencedRack 의 자재 요구는 슬롯 수와 같아야 미들웨어 게이트의 정합 검사를 지난다(스펙 §4). 제시 자리는 하나이며
      * 미들웨어가 슬롯의 `material` 속성으로 그 자리를 찾는다.
      */
     fun jobOrder(draft: JobOrderDraft, jobOrderId: String, json: ObjectMapper): ObjectNode {
@@ -3213,7 +3213,7 @@ import org.springframework.web.bind.annotation.RestController
 /**
  * 작업 지시와 실행 API(S3a 스펙 §8). 판정과 두 조회는 모드와 관계없고, 제출은 운영자 모드만 한다.
  *
- * 폼 본문은 바이트로 받아 직접 읽는다([SiteSettingsController] 와 같은 이유). 제출은 관문을 먼저 지나므로 엔지니어 모드의
+ * 폼 본문은 바이트로 받아 직접 읽는다([SiteSettingsController] 와 같은 이유). 제출은 게이트를 먼저 지나므로 엔지니어 모드의
  * 깨진 본문은 400 이 아니라 403 이다. 폼 오류(`JOB_ORDER_BAD_REQUEST`·`UNKNOWN_WORK_MASTER`·`UNIT_ID_CONFLICT`)와 후보 없음
  * (`NO_ELIGIBLE_ROBOT`)은 호스트에 닿지 않은 사전 거부라 조작 기록에 남지 않는다. 쓰기 본문은 `application/json` 만 받는다
  * (다른 출처 방어는 [RobotOperationsController]). 판정은 POST 지만 부작용이 없다. 폼 초안을 본문으로 실어야 해서 POST 다.
@@ -3569,7 +3569,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 
 /**
- * 작업 지시 API 의 관문과 사전 거부(S3a 스펙 §8·§10). 컨트롤러를 스프링 없이 바로 부른다. 관문(`guarded`)과 폼 읽기, 상태 코드의
+ * 작업 지시 API 의 게이트와 사전 거부(S3a 스펙 §8·§10). 컨트롤러를 스프링 없이 바로 부른다. 게이트(`guarded`)과 폼 읽기, 상태 코드의
  * 고름이 컨트롤러 안에 있기 때문이다. `application/json` 제한은 스프링의 몫이라 통합 시험이 본다.
  */
 class JobOrderControllerTest {
@@ -3602,7 +3602,7 @@ class JobOrderControllerTest {
         val reply = submit("engineer")
         assertEquals(403, reply.statusCode.value())
         assertEquals("MODE_NOT_ALLOWED", reply.rejection().error)
-        // 깨진 본문도 관문이 먼저다.
+        // 깨진 본문도 게이트가 먼저다.
         assertEquals(403, submit("engineer", form = "작업 지시").statusCode.value())
         assertEquals(emptyList(), bench.judged)
         assertEquals(emptyList(), bench.submitted)
@@ -5754,7 +5754,7 @@ index f88abb2..1be30c1 100644
 +
 +export type HostSubmitResult = 'ACCEPTED' | 'IDEMPOTENT' | 'REJECTED' | 'UNASSIGNED'
 +
-+/** 실행 호스트의 제출 결과(S3a JSON 계약 §4). `refusals` 는 미배정일 때 기체별 관문 사유, `excluded` 는 호스트가 판정에서 뺀 기체다. */
++/** 실행 호스트의 제출 결과(S3a JSON 계약 §4). `refusals` 는 미배정일 때 기체별 게이트 사유, `excluded` 는 호스트가 판정에서 뺀 기체다. */
 +export interface HostSubmitOutcome {
 +  result: HostSubmitResult
 +  executionId: string | null

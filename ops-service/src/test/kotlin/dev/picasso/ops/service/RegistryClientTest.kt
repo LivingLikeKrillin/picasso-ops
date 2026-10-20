@@ -60,7 +60,7 @@ class RegistryClientTest {
         assertIs<RegistryCall.Silent>(RegistryClient(serve(200, "null"), "op-t").robots("site-01"))
     }
 
-    /** 실제 registry 의 `/diag/robots` 는 관문 밖이라 401 을 안 낸다. 분류만 본다(S1b 의 `/operations` 호출이 쓴다). */
+    /** 실제 registry 의 `/diag/robots` 는 게이트 밖이라 401 을 안 낸다. 분류만 본다(S1b 의 `/operations` 호출이 쓴다). */
     @Test
     fun `401 은 토큰 불일치로 분류한다`() {
         assertEquals(RegistryCall.Unauthorized, RegistryClient(serve(401, ""), "op-t").robots("site-01"))

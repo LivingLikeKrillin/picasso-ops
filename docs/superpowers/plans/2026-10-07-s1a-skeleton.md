@@ -16,7 +16,7 @@
 3. **운영 서비스는 Spring Boot 의 Flyway 자동설정을 끄고 ops 스키마를 코드로 올린다.** 자동설정의 기본 위치(`classpath:db/migration`)는 통합 시험 JVM 에서 registry 마이그레이션을 집어 온다. 스펙 §7.1 의 위치·스키마·이력 테이블 규칙은 그대로다.
 4. **Spring Boot Gradle 플러그인을 쓰지 않는다.** registry 와 같이 BOM 과 `application` 플러그인으로 띄운다. 버전이 picasso 카탈로그 밖으로 나가지 않는다(스펙 §4).
 5. **사용자 이름은 `[A-Za-z0-9._-]` 1~64자만 받는다.** 스펙 §7.1 의 «사용자» 에는 제약이 없다. registry 로 가는 `X-Actor` 헤더가 ASCII 만 실을 수 있고 `/` 가 모드와 사용자를 가르는 자리라서 한글 이름은 받지 않는다.
-6. **S1a 에서는 `REGISTRY_UNAUTHORIZED` 가 나오지 않는다.** picasso `6b1a255` 의 운영자 토큰 관문은 `/operations` 이하만 덮고, S1a 의 유일한 읽기 `/diag/robots` 는 관문 밖이다. 토큰이 틀려도 S1a 화면은 `OK` 이고, 토큰 불일치는 S1b 의 첫 조작에서 드러난다. 401 분류 코드와 화면 표시는 S1b 가 쓰므로 S1a 에 둔다.
+6. **S1a 에서는 `REGISTRY_UNAUTHORIZED` 가 나오지 않는다.** picasso `6b1a255` 의 운영자 토큰 게이트는 `/operations` 이하만 덮고, S1a 의 유일한 읽기 `/diag/robots` 는 게이트 밖이다. 토큰이 틀려도 S1a 화면은 `OK` 이고, 토큰 불일치는 S1b 의 첫 조작에서 드러난다. 401 분류 코드와 화면 표시는 S1b 가 쓰므로 S1a 에 둔다.
 7. **토큰은 스펙 §4 의 표대로 나눠 준다.** `.env` 하나에 두되, 적재 토큰은 mimic 이 있는 `site` 만 받는다. `site` 는 같은 프로세스에서 registry(토큰을 검증하는 쪽)를 띄우므로 운영자 토큰도 받는다. registry 와 운영 서비스는 `127.0.0.1` 에만 연다(토큰이 공개 저장소의 `.env` 에 있다). mimic 의 gRPC 는 picasso 가 주소를 정하므로 모든 인터페이스에 열린다.
 8. **선언 전 mimic 보고의 거부는 어디에도 보이지 않는다.** 스펙 §6 은 «`site/` 로그에서만 보인다» 고 적었으나, uplink 의 `IngestBridge` 가 생존 보고 결과를 `runCatching` 으로 버리고 registry 도 남기지 않는다. 런처의 안내문은 이 사실대로 쓴다. 스펙 정정은 Task 10 이 한다.
 
@@ -1386,7 +1386,7 @@ class RegistryClientTest {
         assertIs<RegistryCall.Silent>(RegistryClient(serve(200, "null"), "op-t").robots("site-01"))
     }
 
-    /** 실제 registry 의 `/diag/robots` 는 관문 밖이라 401 을 안 낸다. 분류만 본다(S1b 의 `/operations` 호출이 쓴다). */
+    /** 실제 registry 의 `/diag/robots` 는 게이트 밖이라 401 을 안 낸다. 분류만 본다(S1b 의 `/operations` 호출이 쓴다). */
     @Test
     fun `401 은 토큰 불일치로 분류한다`() {
         assertEquals(RegistryCall.Unauthorized, RegistryClient(serve(401, ""), "op-t").robots("site-01"))
@@ -1444,8 +1444,8 @@ import java.time.Duration
  * 읽기에서는 401 이 아닌 실패를 모두 [Silent] 로 둔다. 연결 실패·시간 초과·5xx·해석 불가 어느 것이든
  * 값을 모른다는 점이 같다. 조작의 거절 대응(400/404/409)은 S1b 에서 더한다(스펙 §7.4).
  *
- * [Unauthorized] 는 운영자 토큰 관문(`/operations` 이하) 안의 호출에서만 나온다. S1a 의 유일한 읽기인
- * `/diag/robots` 는 관문 밖이라 토큰이 틀려도 401 이 오지 않는다. 토큰 불일치는 S1b 의 첫 조작에서 드러난다.
+ * [Unauthorized] 는 운영자 토큰 게이트(`/operations` 이하) 안의 호출에서만 나온다. S1a 의 유일한 읽기인
+ * `/diag/robots` 는 게이트 밖이라 토큰이 틀려도 401 이 오지 않는다. 토큰 불일치는 S1b 의 첫 조작에서 드러난다.
  */
 sealed interface RegistryCall<out T> {
     data class Ok<T>(val value: T) : RegistryCall<T>
@@ -2812,9 +2812,9 @@ Expected: 둘 다 성공. 세션 스크래치 디렉터리가 아니라 짧은 �
 - §4: 트리의 `.env` 설명과 본문에 DB 접속값·포트·토큰 2개가 함께 있음을 적는다. 토큰 표의 행을 «부르는 쪽» 과 «검증하는 쪽» 으로 고친다. 운영자 토큰은 부르는 쪽이 운영 서비스만이고 검증하는 쪽이 `site` 안의 registry 다. 적재 토큰은 부르는 쪽이 `site` 의 mimic 만이고 검증하는 쪽이 같은 registry 다. 그래서 `site` 는 토큰 2개를 다 받고, 운영 서비스는 운영자 토큰만 받는다(셸에서 상속된 적재 토큰도 지운다). registry 와 운영 서비스는 127.0.0.1 에만 연다. §4 의 «통합 시험은 같은 `.env` 를 읽어 속성으로 넣고» 는 실제와 맞춘다. e2e 는 `.env` 에서 `SITE_ID` 만 받고 DB 접속값과 토큰은 시험 값을 쓴다. compose 는 `env_file` 이 아니라 `--env-file .env` 로 값을 받는다.
 - §6: «이 거절은 `site/` 로그에서만 보입니다» 를 «uplink 가 결과를 버리고 registry 도 남기지 않아 어디에도 보이지 않습니다» 로. §12 첫 후보의 비고도 같이.
 - §7.1: ops 스키마는 Spring Boot 의 Flyway 자동설정이 아니라 코드(`OpsSchema`)로 올린다(이유: 자동설정 기본 위치가 통합 시험 JVM 에서 registry 마이그레이션을 집는다). 조작 기록은 행 트리거와 문장 트리거로 UPDATE·DELETE·TRUNCATE 를 막는다. 사용자 이름은 `[A-Za-z0-9._-]` 1~64자다.
-- §7.4: `REGISTRY_UNAUTHORIZED` 는 `/operations` 이하 호출에서만 나온다. `/diag` 이하는 운영자 토큰 관문 밖이다.
+- §7.4: `REGISTRY_UNAUTHORIZED` 는 `/operations` 이하 호출에서만 나온다. `/diag` 이하는 운영자 토큰 게이트 밖이다.
 - §10 마지막 문단: 미뤄 둔 물음 2개의 답(testFixtures 는 포함 빌드에서 쓴다, `reset()` 은 public 만 지운다).
-- §11: 첫 문단의 «S1c 에서 서브모듈 포인터를 옮기면(§3)…» 문장을 지우고, 사실 표를 `6b1a255` 기준으로 다시 확인했다고 적는다. 사실 행 2개를 더한다. `/diag` 이하는 운영자 토큰 관문 밖이다(`OperatorToken.kt` 의 `GUARDED`). 생존 보고 거부는 uplink 가 버린다(`uplink/.../IngestBridge.kt`).
+- §11: 첫 문단의 «S1c 에서 서브모듈 포인터를 옮기면(§3)…» 문장을 지우고, 사실 표를 `6b1a255` 기준으로 다시 확인했다고 적는다. 사실 행 2개를 더한다. `/diag` 이하는 운영자 토큰 게이트 밖이다(`OperatorToken.kt` 의 `GUARDED`). 생존 보고 거부는 uplink 가 버린다(`uplink/.../IngestBridge.kt`).
 
 - [ ] **Step 4: 이 계획 끝에 «실행 결과» 절 덧붙이기**
 
@@ -2864,7 +2864,7 @@ CI 를 폴링하지 않는다. PR 을 만든 뒤 앱의 PR 도구(`get_status`, 
   - `RegistryClient` 의 `HttpClient` 닫기, `Site.close` 의 try/finally, 런처 종료 훅의 `awaitTermination`, e2e 의 입력을 되풀이하던 단언 삭제, 시험 변수 `@Volatile`, `smoke.sh` 의 `down -v` 와 준비 확인 `curl -f`
 - 스펙 정정: §3(서브모듈 `6b1a255` 고정, S1c 첫 커밋 없음), §4(`.env` 값 범위, 토큰 표를 부르는 쪽·검증하는 쪽으로), §6·§12(선언 전 보고 거부는 어디에도 안 보임), §7.1(`OpsSchema`, 트리거, 사용자 이름 규칙), §7.4(`REGISTRY_UNAUTHORIZED` 는 `/operations` 이하에서만), §10(미뤘던 물음 2개의 답), §11(기준 커밋 문단과 사실 2행)
 - S1b 로 넘긴 것(최종 검토):
-  - 쓰기에서 받은 401 이 다음 목록 읽기에 `OK` 로 덮이지 않게 하는 방법(관문 안 GET 을 함께 읽기, 또는 401 을 공유 상태로 유지) 결정과 결함 주입 시험
+  - 쓰기에서 받은 401 이 다음 목록 읽기에 `OK` 로 덮이지 않게 하는 방법(게이트 안 GET 을 함께 읽기, 또는 401 을 공유 상태로 유지) 결정과 결함 주입 시험
   - 쓰기 API 의 교차 출처 방어: `X-Ops-Mode`·`X-Ops-User` 가 없으면 registry 호출 전 400, `application/json` 만 받음
   - 동시 읽기에서 오래된 결과가 최신 값을 덮는 경우, 잘못된 registry URL 의 기동 검사, e2e 공용 픽스처, 운영 서비스 `Clock` 교체 방법, mimic gRPC 포트 노출
 - CI: PR 뒤 확인 대기

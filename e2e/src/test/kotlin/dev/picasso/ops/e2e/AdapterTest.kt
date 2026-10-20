@@ -175,7 +175,7 @@ class AdapterTest {
         context.use {
             val view = E2eStack.read("$url/api/adapters")
             assertEquals("REGISTRY_UNAUTHORIZED", view["registry"].asText())
-            // 둘 다 읽혀야 새 값으로 바꾸므로 관문 밖의 인스턴스 목록도 모름이다.
+            // 둘 다 읽혀야 새 값으로 바꾸므로 게이트 밖의 인스턴스 목록도 모름이다.
             assertTrue(view["adapters"].isNull && view["instances"].isNull, "$view")
         }
     }

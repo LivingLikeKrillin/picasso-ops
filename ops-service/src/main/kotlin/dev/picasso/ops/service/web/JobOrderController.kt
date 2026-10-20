@@ -26,7 +26,7 @@ import org.springframework.web.bind.annotation.RestController
 /**
  * 작업 지시와 실행 API(S3a 스펙 §8). 판정과 두 조회는 모드와 관계없고, 제출은 운영자 모드만 한다.
  *
- * 폼 본문은 바이트로 받아 직접 읽는다([SiteSettingsController] 와 같은 이유). 제출은 관문을 먼저 지나므로 엔지니어 모드의
+ * 폼 본문은 바이트로 받아 직접 읽는다([SiteSettingsController] 와 같은 이유). 제출은 게이트를 먼저 지나므로 엔지니어 모드의
  * 깨진 본문은 400 이 아니라 403 이다. 폼 오류(`JOB_ORDER_BAD_REQUEST`·`UNKNOWN_WORK_MASTER`·`UNIT_ID_CONFLICT`)와 후보 없음
  * (`NO_ELIGIBLE_ROBOT`)은 호스트에 닿지 않은 사전 거부라 조작 기록에 남지 않는다. 쓰기 본문은 `application/json` 만 받는다
  * (다른 출처 방어는 [RobotOperationsController]). 판정은 POST 지만 부작용이 없다. 폼 초안을 본문으로 실어야 해서 POST 다.

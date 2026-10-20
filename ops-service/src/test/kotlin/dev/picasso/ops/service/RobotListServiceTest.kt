@@ -106,7 +106,7 @@ class RobotListServiceTest {
     }
 
     @Test
-    fun `목록은 읽혀도 관문 안 확인이 401 이면 토큰 불일치이고 목록은 새 값이다`() {
+    fun `목록은 읽혀도 게이트 안 확인이 401 이면 토큰 불일치이고 목록은 새 값이다`() {
         next = RegistryCall.Ok(listOf(r1))
         token = RegistryCall.Unauthorized
         val view = service.read()
@@ -116,7 +116,7 @@ class RobotListServiceTest {
     }
 
     @Test
-    fun `관문 안 확인이 답하지 않는 것은 토큰 불일치가 아니다`() {
+    fun `게이트 안 확인이 답하지 않는 것은 토큰 불일치가 아니다`() {
         next = RegistryCall.Ok(listOf(r1))
         token = RegistryCall.Silent("HTTP 503")
         assertEquals(RegistryState.OK, service.read().registry)

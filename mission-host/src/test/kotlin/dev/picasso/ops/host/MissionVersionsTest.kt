@@ -315,7 +315,7 @@ class MissionVersionsTest {
             assertTrue(none["version"].isNull)
             assertTrue(none["lastMockRun"].isNull)
 
-            // 다른 초안의 통과한 모의 실행은 이 초안의 관문을 열지 않는다.
+            // 다른 초안의 통과한 모의 실행은 이 초안의 게이트를 열지 않는다.
             val otherDraft = bench.draft(bench.dataV1())
             assertEquals("PASSED", bench.mockRun(otherDraft)["result"].asText())
             assertEquals("MOCK_RUN_REQUIRED", bench.activate(draftId).body!!["result"].asText())

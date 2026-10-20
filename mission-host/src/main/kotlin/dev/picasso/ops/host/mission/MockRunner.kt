@@ -30,7 +30,7 @@ enum class MockRunFailure {
     /** 정의: 같은 신호를 기대 값이 다른 대기 노드 둘이 쓴다. 이상적 현장의 신호 값을 하나로 정할 수 없다. */
     DEFINITION,
 
-    /** 표본 작업 지시를 미들웨어가 받지 않았다(근거 등급 초과, 관문 거부). 실행이 서지 않았다. */
+    /** 표본 작업 지시를 미들웨어가 받지 않았다(근거 등급 초과, 게이트 거부). 실행이 서지 않았다. */
     SUBMISSION_REJECTED,
 
     /** 가상 시간 상한 안에 실행이 정착하지 않았다. */
@@ -270,7 +270,7 @@ class MockRunner(
         /**
          * 마지막 셀 대역 스냅숏으로 만든 표본 작업 지시(S3b 스펙 §6.4). 호스트는 현장 모듈의 픽스처를 모르므로 스냅숏의
          * 슬롯을 앞에서부터 [SAMPLE_SLOTS] 개, 자재를 든 첫 제시 자리를 쓴다. 요구 근거는 E2 이고 `materialRequirements` 는
-         * 자재별 슬롯 수라 관문의 정합 검사를 지난다. 슬롯이나 자재를 든 제시 자리가 없으면 `null` 이다.
+         * 자재별 슬롯 수라 게이트의 정합 검사를 지난다. 슬롯이나 자재를 든 제시 자리가 없으면 `null` 이다.
          */
         fun sampleOrder(workMasterId: String, draftId: Long, cell: CellSnapshot): JobOrder? {
             val slots = cell.slots.take(SAMPLE_SLOTS).map { it.id }

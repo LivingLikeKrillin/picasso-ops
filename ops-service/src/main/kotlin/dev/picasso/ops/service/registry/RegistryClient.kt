@@ -22,8 +22,8 @@ import java.time.Duration
  * 읽기에서는 401 이 아닌 실패를 모두 [Silent] 로 둔다. 연결 실패·시간 초과·5xx·해석 불가 어느 것이든
  * 값을 모른다는 점이 같다. 조작은 [RegistryWrite] 로 따로 돌려준다.
  *
- * [Unauthorized] 는 운영자 토큰 관문(`/operations` 이하) 안의 호출에서만 나온다. 목록 읽기 `/diag/robots` 는
- * 관문 밖이라 토큰을 [TokenProbe] 가 관문 안의 읽기로 따로 확인한다.
+ * [Unauthorized] 는 운영자 토큰 게이트(`/operations` 이하) 안의 호출에서만 나온다. 목록 읽기 `/diag/robots` 는
+ * 게이트 밖이라 토큰을 [TokenProbe] 가 게이트 안의 읽기로 따로 확인한다.
  */
 sealed interface RegistryCall<out T> {
     data class Ok<T>(val value: T) : RegistryCall<T>
@@ -105,13 +105,13 @@ data class RegistryInstance(
 
 /** 어댑터 제품·빌드와 인스턴스 목록의 출처. 시험이 registry 없이 대신 끼운다. */
 interface AdapterSource {
-    /** 운영자 토큰 관문 안의 읽기다. 토큰이 틀리면 [RegistryCall.Unauthorized] 다. */
+    /** 운영자 토큰 게이트 안의 읽기다. 토큰이 틀리면 [RegistryCall.Unauthorized] 다. */
     fun adapters(): RegistryCall<List<RegistryAdapter>>
 
     fun instances(siteId: String): RegistryCall<List<RegistryInstance>>
 }
 
-/** 운영자 토큰 확인. 목록 읽기는 관문 밖이라 401 이 오지 않으므로 관문 안의 읽기를 따로 부른다. */
+/** 운영자 토큰 확인. 목록 읽기는 게이트 밖이라 401 이 오지 않으므로 게이트 안의 읽기를 따로 부른다. */
 fun interface TokenProbe {
     fun operatorToken(): RegistryCall<Unit>
 }
@@ -171,7 +171,7 @@ class RegistryClient(
         return get("/diag/robots?retired=true&site=$site") { json.readValue<List<RegistryRobot>?>(it) }
     }
 
-    /** 관문 안의 읽기 하나로 토큰을 본다. 읽은 값은 쓰지 않는다. */
+    /** 게이트 안의 읽기 하나로 토큰을 본다. 읽은 값은 쓰지 않는다. */
     override fun operatorToken(): RegistryCall<Unit> = get("/operations/adapters") { }
 
     override fun declare(

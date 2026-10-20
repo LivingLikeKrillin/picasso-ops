@@ -89,7 +89,7 @@ class RegistryWritesTest {
     }
 
     @Test
-    fun `토큰 확인은 관문 안의 읽기를 부르고 401 을 토큰 불일치로 본다`() {
+    fun `토큰 확인은 게이트 안의 읽기를 부르고 401 을 토큰 불일치로 본다`() {
         assertEquals(RegistryCall.Unauthorized, RegistryClient(serve(401, ""), "op-t").operatorToken())
         assertEquals("GET" to "/operations/adapters", seen!!.method to seen!!.path)
         stop()

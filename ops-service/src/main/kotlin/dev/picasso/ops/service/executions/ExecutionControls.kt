@@ -106,7 +106,7 @@ data class RobotEmptyOutcome(
  *
  * 결함 감수: picasso `release` 는 막는 결함 전부를 감수하므로 운영자가 본 결함(`sawFaults`)을 함께 보내고, 대조는 실행 호스트가
  * 잠금 아래에서 한다. 감수는 결함을 지우지 않고 작업 허가 막음을 풀지 않는다. 재작업이 아니라 계획의 다음 단위로 가므로 재작업
- * 관문([dev.picasso.ops.service.incidents.ReworkGuard])을 거치지 않는다. 호스트는 요청 id 를 감수 행에 적고 실행 목록의
+ * 게이트([dev.picasso.ops.service.incidents.ReworkGuard])을 거치지 않는다. 호스트는 요청 id 를 감수 행에 적고 실행 목록의
  * `releases` 로 낸다. 응답 없음 뒤 재조회는 그 실행 하나로 좁힌 실행 목록이다. 목록의 인스턴스가 요청한 인스턴스와 같고 그 실행의
  * `releases` 에 이 요청 id 가 있으면 반영됨, 실행이 없거나 그런 줄이 없으면 반영 안 됨이다. 인스턴스가 다르면 같은 실행 id 가 다른
  * 실행일 수 있어 확인하지 못한다(널).

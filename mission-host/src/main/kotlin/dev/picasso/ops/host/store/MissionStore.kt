@@ -110,7 +110,7 @@ class MissionStore(private val jdbc: JdbcClient) {
             .query { rs, _ -> mockRun(rs) }
             .single()
 
-    /** 그 초안의 마지막 모의 실행. 활성화 관문이 이것 하나만 본다(S3b 스펙 §1). */
+    /** 그 초안의 마지막 모의 실행. 활성화 게이트가 이것 하나만 본다(S3b 스펙 §1). */
     fun lastMockRun(draftId: Long): MockRunRow? =
         jdbc.sql("SELECT $MOCK_RUN_COLUMNS FROM mission.mock_run WHERE draft_id = :draftId ORDER BY mock_run_id DESC LIMIT 1")
             .param("draftId", draftId)
