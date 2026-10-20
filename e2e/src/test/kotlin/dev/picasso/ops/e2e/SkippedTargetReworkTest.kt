@@ -34,6 +34,9 @@ class SkippedTargetReworkTest {
         /** 수집기가 결과를 쌓기를 기다리는 상한(실제 시간). */
         private val RESULT_WAIT: Duration = Duration.ofSeconds(30)
 
+        /** 시계를 밀지 않고 단위 상태를 기다리는 상한(실제 시간). pump 주기는 250ms 다. */
+        private val UNIT_WAIT: Duration = Duration.ofSeconds(10)
+
         private val INSPECT_TWO = """{"workMasterId":"InspectAsset","targets":[{"id":"T1","location":"bay-7"},{"id":"T2","location":"dock-3"}]}"""
 
         @BeforeAll
@@ -133,10 +136,11 @@ class SkippedTargetReworkTest {
         assertEquals(listOf("REWORK", "kim", "PERSON"), listOf(row["resolution"]["decision"], row["resolution"]["decidedBy"]["id"], row["resolution"]["decidedBy"]["kind"]).map { it.asText() }, "$row")
         assertEquals(listOf(false, false), listOf(row["held"], row["unresolved"]).map { it.asBoolean() }, "$row")
 
-        // 두 단위가 새 시도로 돌아가고 실행은 곧바로 RUNNING 이다. 도는 실행은 더는 재작업 대상이 아니다.
-        val running = driver.execution(executionId)
+        // 두 단위가 새 시도로 돌아가고 실행은 곧바로 RUNNING 이다. 호스트 pump 는 시계를 밀지 않아도 실제 시간으로 돌아 되돌린 이동을
+        // 다음 주기에 새 태스크로 내므로, 두 단위가 함께 PENDING 인 모양은 한 주기 동안만 보인다. 그래서 그 뒤의 모양을 기다린다.
+        // 시도된 실패로 끝난 이동은 재작업 없이 다시 나가지 않으므로 이동의 RUNNING 이 되돌림을 보인다. 도는 실행은 더는 재작업 대상이 아니다.
+        val running = awaitUnits(executionId, listOf("T1.travel" to "RUNNING", "T1" to "PENDING", "T2.travel" to "DONE", "T2" to "DONE"))
         assertEquals("RUNNING", running["physicalState"].asText(), "$running")
-        assertEquals(listOf("PENDING", "PENDING", "DONE", "DONE"), running["units"].map { it["state"].asText() }, "$running")
         assertTrue(stack.get("/api/executions?recent=20")["reworkableTargets"].isEmpty)
         val runningResult = awaitResult(receiptId, "RUNNING")
 
@@ -180,6 +184,20 @@ class SkippedTargetReworkTest {
             driver.push(ExecutionDriver.STEP)
         }
         error("실행이 $state 가 되지 않았다: ${driver.execution(executionId)}")
+    }
+
+    /** 시계를 밀지 않고 실제 시간으로 실행의 단위가 [expected] (단위 id, 상태) 가 되기를 기다린다. */
+    private fun awaitUnits(executionId: String, expected: List<Pair<String, String>>): JsonNode {
+        val clock = stack.site.now()
+        val until = Instant.now().plus(UNIT_WAIT)
+        var seen = driver.execution(executionId)
+        while (seen["units"].map { it["unitId"].asText() to it["state"].asText() } != expected) {
+            check(Instant.now().isBefore(until)) { "${UNIT_WAIT.seconds}초 안에 $expected 가 되지 않았다: $seen" }
+            Thread.sleep(100)
+            seen = driver.execution(executionId)
+        }
+        assertEquals(clock, stack.site.now(), "단위 상태를 기다리는 동안 시계를 밀지 않는다")
+        return seen
     }
 
     private fun unit(executionId: String, unitId: String): JsonNode =
