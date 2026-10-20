@@ -89,7 +89,7 @@ class WorkPermitHostTest {
             assertEquals("안전 계통이 guard_closed 을 true 으로 되돌릴 때", reason["resumeBasis"].asText())
             assertTrue(bench.mimic.server.exclusive { bench.mimic.instance(HUMANOID)!!.tasks.all.isEmpty() }, "막힌 동안 기체에 명령이 나갔다")
 
-            // 작업 허가 조회는 발행 관문과 같은 판정을 낸다(관측 시각까지 같은 판독).
+            // 작업 허가 조회는 발행 게이트와 같은 판정을 낸다(관측 시각까지 같은 판독).
             val view = bench.get("/host/work-permits")
             assertTrue(view["declared"].asBoolean())
             assertEquals(listOf("guard_closed"), view["mappings"].map { it["signal"].asText() })

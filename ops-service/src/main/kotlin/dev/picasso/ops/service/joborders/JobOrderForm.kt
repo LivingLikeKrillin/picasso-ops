@@ -108,7 +108,7 @@ object JobOrderForm {
     /**
      * 작업 지시 본문. 버전은 1, 파라미터는 비어 있고, 요구 근거 등급은 임무마다 고정이다.
      *
-     * PrepareSequencedRack 의 자재 요구는 슬롯 수와 같아야 미들웨어 관문의 정합 검사를 지난다(스펙 §4). 제시 자리는 하나이며
+     * PrepareSequencedRack 의 자재 요구는 슬롯 수와 같아야 미들웨어 게이트의 정합 검사를 지난다(스펙 §4). 제시 자리는 하나이며
      * 미들웨어가 슬롯의 `material` 속성으로 그 자리를 찾는다.
      */
     fun jobOrder(draft: JobOrderDraft, jobOrderId: String, json: ObjectMapper): ObjectNode {

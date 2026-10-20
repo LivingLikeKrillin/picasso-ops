@@ -24,7 +24,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 
 /**
- * 장애 주입·인시던트·운영자 판단 API 의 관문과 사전 거부와 읽기 중계(S4a 스펙 §7, §9). 컨트롤러를 스프링 없이 바로 부른다.
+ * 장애 주입·인시던트·운영자 판단 API 의 게이트와 사전 거부와 읽기 중계(S4a 스펙 §7, §9). 컨트롤러를 스프링 없이 바로 부른다.
  * `application/json` 제한은 스프링의 몫이라 통합 시험이 본다.
  */
 class IncidentControllerTest {
@@ -162,7 +162,7 @@ class IncidentControllerTest {
     }
 
     @Test
-    fun `재작업 관문의 거부는 그 상태 코드와 이름이고 호스트를 부르지 않고 기록하지 않으며 확인 판단은 관문을 거치지 않는다`() {
+    fun `재작업 게이트의 거부는 그 상태 코드와 이름이고 호스트를 부르지 않고 기록하지 않으며 확인 판단은 게이트를 거치지 않는다`() {
         val gated = IncidentController(
             FaultOperations(bench.host, log),
             HoldResolutions(bench.host, log, requeryDelay = Duration.ZERO, rework = { _, _, _, _ ->

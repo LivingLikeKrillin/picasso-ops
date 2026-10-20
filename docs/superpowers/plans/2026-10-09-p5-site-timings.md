@@ -1131,7 +1131,7 @@ index cc80975..d269f05 100644
  | `Canonical.kt` | 작업 응답·인시던트 번들·이벤트 자취가 나눠 쓰는 정준 프로젝션 셋 |
 -| `Ports.kt` | 하위 시스템 연동 추상화 포트: `RobotPort` (인터페이스 계약 소비자), `CellSignals` (현장 설비 센서 신호, E2), `AmrFleetPort` (이송 플릿 연동, E1), `MissionCatalog` (WorkMaster 마다 지금 활성인 케이퍼빌리티와 임무 버전을 주는 포트, 새 작업 지시만 읽음) |
 +| `Ports.kt` | 하위 시스템 연동 추상화 포트: `RobotPort` (인터페이스 계약 소비자), `CellSignals` (현장 설비 센서 신호, E2), `AmrFleetPort` (이송 플릿 연동, E1), `MissionCatalog` (WorkMaster 마다 지금 활성인 케이퍼빌리티와 임무 버전을 주는 포트, 새 작업 지시만 읽음), `SiteTimingsSource` (현장 시간값 한 세트 `SiteTimings` 를 주는 포트, pump 라운드마다 한 번 읽음, 허용 범위 상수와 검사 함수 포함) |
- | `mission/` | **임무 정의 패키지** (`dev.picasso.middleware.mission`): 임무 정의 스키마(`MissionDefinition`)와 엄격 파서(`MissionDefinitionParser`), 신호 사양(`SignalSpec`), 해석기(`DefinedCapability`), 검증기(`MissionValidator`, 5검사 + 노드 id), 메모리 카탈로그(`InMemoryMissionCatalog`, 활성화 관문). 설비 대기 진행 · 버전 고정 · 인시던트 칸 등 엔진 쪽 변경은 기존 파일에 있음 (ADR 50) |
+ | `mission/` | **임무 정의 패키지** (`dev.picasso.middleware.mission`): 임무 정의 스키마(`MissionDefinition`)와 엄격 파서(`MissionDefinitionParser`), 신호 사양(`SignalSpec`), 해석기(`DefinedCapability`), 검증기(`MissionValidator`, 5검사 + 노드 id), 메모리 카탈로그(`InMemoryMissionCatalog`, 활성화 게이트). 설비 대기 진행 · 버전 고정 · 인시던트 칸 등 엔진 쪽 변경은 기존 파일에 있음 (ADR 50) |
  
  ---
 @@ -60,4 +60,4 @@

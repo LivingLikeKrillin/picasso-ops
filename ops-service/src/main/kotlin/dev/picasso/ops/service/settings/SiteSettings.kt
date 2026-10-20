@@ -30,7 +30,7 @@ data class SiteSettingsFields(
 
 /**
  * 변경 요청의 값 칸(S3c 스펙 §6.2). 칸마다 선택이며 널이면 빠진 것이다. 빠진 칸은 기준 버전의 값으로 채운다([resolve]).
- * 다섯이 다 빠진 요청은 관문이 400 으로 막는다.
+ * 다섯이 다 빠진 요청은 게이트가 400 으로 막는다.
  */
 data class SiteSettingsChange(
     val connectionThresholdSeconds: Int? = null,

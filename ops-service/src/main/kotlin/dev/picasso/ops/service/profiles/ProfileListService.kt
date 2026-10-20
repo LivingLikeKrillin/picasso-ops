@@ -34,7 +34,7 @@ data class ProfileListView(
 
 /**
  * 카탈로그(`GET /operations/skill-types`)와 개정판 목록(`GET /operations/profile-revisions`). 둘 다 읽혀야 새 값으로
- * 바꾸고, 하나라도 못 읽으면 둘 다 직전 값이다(어댑터 목록과 같은 규칙). 둘 다 운영자 토큰 관문 안이라 토큰이 틀리면
+ * 바꾸고, 하나라도 못 읽으면 둘 다 직전 값이다(어댑터 목록과 같은 규칙). 둘 다 운영자 토큰 게이트 안이라 토큰이 틀리면
  * [RegistryState.REGISTRY_UNAUTHORIZED] 다.
  */
 class ProfileListService(

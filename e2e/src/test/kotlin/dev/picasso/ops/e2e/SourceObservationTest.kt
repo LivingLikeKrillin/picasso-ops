@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
  *
  * 출발 관측을 요구한 버전(REQUIRED)을 활성화하고, 셀 대역이 말하지 않는 출발 자리(현장 픽스처에 없는 제시 자리)로 수동 작업 요청을
  * 낸다. 실행 호스트는 보내지 않고 기체별 사유에 출발 미관측을 싣는다. 운영 서비스는 결품과 따로 확인 대기로 보이고 자동으로 다시 내지
- * 않는다. 운영자가 출발 자리 확인을 기록하면 같은 작업 지시가 그 확인을 셀 관측으로 싣고 다시 나가 관문을 지나 실행이 선다.
+ * 않는다. 운영자가 출발 자리 확인을 기록하면 같은 작업 지시가 그 확인을 셀 관측으로 싣고 다시 나가 게이트를 지나 실행이 선다.
  */
 class SourceObservationTest {
 
@@ -47,7 +47,7 @@ class SourceObservationTest {
     }
 
     @Test
-    fun `출발 미관측은 확인 대기로 보류되고 사람의 출발 자리 확인을 기록하면 같은 작업 지시가 관문을 지나 실행이 선다`() {
+    fun `출발 미관측은 확인 대기로 보류되고 사람의 출발 자리 확인을 기록하면 같은 작업 지시가 게이트를 지나 실행이 선다`() {
         val template = stack.get("/api/missions/templates/$WORK_MASTER")["templates"].single { it["id"].asText() == "DATA_V1" }["definition"].asText()
         val required = template.replace("\"sourceObservation\": \"OPTIONAL\"", "\"sourceObservation\": \"REQUIRED\"")
         check(required != template) { "출발 관측 선언을 바꾸지 못했다" }
@@ -81,7 +81,7 @@ class SourceObservationTest {
         val confirmed = operator("/api/work-requests/$id/source-confirmations", confirmation.toString(), 202)["receipt"]
         assertEquals("ACCEPTED", confirmed["state"].asText(), "$confirmed")
         val executionId = confirmed["submission"]["outcome"]["executionId"].asText()
-        // 같은 작업 지시가 관문을 지나 실행이 섰다. 현장 셀 대역은 모르는 제시 자리의 자재를 몰라 슬롯을 신원 없이 채우므로
+        // 같은 작업 지시가 게이트를 지나 실행이 섰다. 현장 셀 대역은 모르는 제시 자리의 자재를 몰라 슬롯을 신원 없이 채우므로
         // 정착 판정(E2 신원 대조)은 이 시험이 보지 않는다.
         val execution = driver.execution(executionId)
         assertEquals(received["jobOrderId"].asText() to HUMANOID, execution["jobOrderId"].asText() to execution["robotId"].asText(), "$execution")

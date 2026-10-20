@@ -32,7 +32,7 @@ data class PermitMapping(val signal: String, val permittedWhen: String, val robo
  * 본문은 `{"validFor":"PT10S","signals":[{"signal":"guard_closed","permittedWhen":"true","robots":["humanoid-01"]}]}` 이다.
  * `validFor` 는 빠지면 [DEFAULT_VALID_FOR] 다. 모르는 칸은 받지 않는다.
  *
- * **대응에 없는 기체는 붙인 뒤로 어느 원천도 덮지 않는 기체**이고 발행 관문이 막는다(`NOT_COVERED`). 그래서 현장은 명부의 기체를
+ * **대응에 없는 기체는 붙인 뒤로 어느 원천도 덮지 않는 기체**이고 발행 게이트가 막는다(`NOT_COVERED`). 그래서 현장은 명부의 기체를
  * 빠짐없이 어느 신호엔가 넣어야 한다.
  *
  * @param validFor 판독 하나가 지금의 값으로 읽히는 폭. 관측 시각은 이 층이 셀 대역을 읽은 호스트 시각이다
@@ -105,7 +105,7 @@ data class WorkPermitMap(val signals: List<PermitMapping>, val validFor: Duratio
  *
  * 셀 대역은 세션이나 기동 번호를 내지 않는다. 그래서 이 층이 정한다: **셀 대역을 못 읽은 순간마다 새 세션**이다. 읽기가 끊긴 사이에
  * 현장이 다시 떴는지 이 층은 모르므로 끊김 하나를 원천의 재기동으로 본다(닫힌 쪽). 끊긴 동안 판독은 앞 세션의 줄을 그대로 들고 세션만
- * 새 것을 말하므로 발행 관문이 그 줄을 `SESSION_CHANGED` 모름으로 읽는다 — 마지막으로 본 주체가 함께 보인다. 다시 읽히면 새 세션으로
+ * 새 것을 말하므로 발행 게이트가 그 줄을 `SESSION_CHANGED` 모름으로 읽는다 — 마지막으로 본 주체가 함께 보인다. 다시 읽히면 새 세션으로
  * 다시 관측한다. 호스트가 다시 뜨면 세션 번호는 1 부터 다시 센다(미들웨어도 새 인스턴스라 앞 세션의 줄을 들고 있지 않다).
  *
  * ## 막히지 않는 읽기
@@ -151,7 +151,7 @@ class CellWorkPermits(val map: WorkPermitMap, start: Instant) : WorkPermitPort {
     override fun read(): List<PermitReading> = readings
 
     /**
-     * 기체마다 지금의 허가. **발행 관문이 같은 판독을 판정하는 규칙**(picasso `IssuingGate`)을 그대로 따른다 — 관문은 미들웨어 안에
+     * 기체마다 지금의 허가. **발행 게이트가 같은 판독을 판정하는 규칙**(picasso `IssuingGate`)을 그대로 따른다 — 게이트는 미들웨어 안에
      * 있어 밖에서 부를 수 없으므로 화면과 스테이션 조정이 읽을 값을 여기서 같은 규칙으로 낸다. 어긋나지 않는지는 호스트 시험이 막힌
      * 실행의 `permitBlock` 과 대조한다.
      *

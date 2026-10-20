@@ -31,7 +31,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * 운영자 실행 취소와 기체 빈손 확인 API(P0-b2), 운영자 결함 감수 API(S3a JSON 계약 §9.8). 관문과 사전 거부, 조작 기록의 결과 매김, 응답 없음 뒤 재조회의 대조를 본다. 컨트롤러를
+ * 운영자 실행 취소와 기체 빈손 확인 API(P0-b2), 운영자 결함 감수 API(S3a JSON 계약 §9.8). 게이트와 사전 거부, 조작 기록의 결과 매김, 응답 없음 뒤 재조회의 대조를 본다. 컨트롤러를
  * 스프링 없이 바로 부르고 호스트는 대역이다. `application/json` 제한은 스프링의 몫이다.
  */
 class ExecutionControlsTest {

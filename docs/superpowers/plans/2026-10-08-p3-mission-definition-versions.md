@@ -837,7 +837,7 @@ enum class MissionRefusalKind(val owner: RefusalOwner, val nextAction: String) {
     /** 신호 검사 — 기대 값이 그 신호의 종류로 읽힐 수 없는 값이다(참거짓 신호에 `true`·`false` 밖의 값). 영영 안 끝나는 대기다. */
     SIGNAL_VALUE_INVALID(RefusalOwner.ENGINEER, "기대 값을 신호 종류에 맞게 고친다"),
 
-    /** 자원 검사 — 대기 신호의 자리에 바닥 소유자가 없다(`Unowned`). 관문과 같은 규칙이다. */
+    /** 자원 검사 — 대기 신호의 자리에 바닥 소유자가 없다(`Unowned`). 게이트와 같은 규칙이다. */
     FLOOR_UNOWNED(RefusalOwner.OUTSIDE_CONSOLE, "그 자리의 바닥 소유를 선언한다"),
 
     /** 스킬 검사 — 계약 카탈로그에 없는 스킬이다. */
@@ -856,19 +856,19 @@ enum class MissionRefusalKind(val owner: RefusalOwner, val nextAction: String) {
  * 검사는 다섯이고(기한·신호·자원·스킬·안전) 그 앞에 노드 id 중복을 본다. **모든 거부를 모아 낸다** — 하나만 알리면
  * 고치고 다시 내고 또 거부되는 왕복이 생긴다.
  *
- * 함수 이름은 관문의 판정 이름과 겹치지 않게 둔다 — 자리 대조 시험이 이름으로 판정의 자리를 찾는다.
+ * 함수 이름은 게이트의 판정 이름과 겹치지 않게 둔다 — 자리 대조 시험이 이름으로 판정의 자리를 찾는다.
  *
  * ## 보지 않는 것
  *
  * - **파라미터 이름.** 오타는 실행 때 하위가 `PARAMETER_INVALID` 로 거부한다
- * - **작업 지시에서 오는 자리**(슬롯·제시 자리). 정의에 고정으로 적힌 것이 아니라 실행 때 관문이 본다
+ * - **작업 지시에서 오는 자리**(슬롯·제시 자리). 정의에 고정으로 적힌 것이 아니라 실행 때 게이트가 본다
  * - **작업 지시의 설비 id 와 대기 노드 id 의 겹침.** 설비 id 는 작업 지시가 오기 전에는 모른다
  */
 object MissionValidator {
 
     /**
      * @param signals 현장 신호 사양.
-     * @param floors 바닥 소유. 관문이 받는 것과 같은 것을 준다.
+     * @param floors 바닥 소유. 게이트가 받는 것과 같은 것을 준다.
      * @param siteSkills 현장 기체들이 제공하는 스킬 이름의 합.
      * @param at 활성화를 시도한 시각 — 거부의 마지막 확인 시각이 된다.
      */
@@ -943,7 +943,7 @@ object MissionValidator {
         }
 
     /**
-     * 자원 — 정의에 고정으로 적힌 자리(대기 신호의 자리)의 바닥 소유. **관문과 같은 규칙이다** — `Unowned` 만 거부하고
+     * 자원 — 정의에 고정으로 적힌 자리(대기 신호의 자리)의 바닥 소유. **게이트와 같은 규칙이다** — `Unowned` 만 거부하고
      * `Declared`·`NotDeclared` 는 통과한다. 선언 없음을 거부로 읽으면 레지스터를 안 붙인 현장에서 자리가 적힌 신호를 쓰는
      * 정의가 모두 거부된다. 자리가 없는 신호는 건너뛴다.
      */
@@ -1008,12 +1008,12 @@ sealed interface Activation {
  * **코드 케이퍼빌리티와 데이터 정의가 한 카탈로그에 함께 선다.** 활성화한 적이 없는 WorkMaster 는 코드 케이퍼빌리티로
  * 답하고(버전 없음), 활성화하면 그 WorkMaster 는 그 정의로 답한다.
  *
- * ## 활성화는 관문을 지난다
+ * ## 활성화는 게이트를 지난다
  *
  * 읽을 수 없거나 검증기가 거부한 정의는 서지 않고 **활성 버전이 그대로다.** 통과하면 그 WorkMaster 의 다음 버전 번호
  * (1부터 오른다)가 활성이 된다. 거부된 시도는 번호를 쓰지 않는다.
  *
- * 검증기 입력(신호 사양·바닥 소유·현장 기체의 스킬)은 활성화 호출이 준다 — 미들웨어는 바닥 소유를 관문에만 넘기고
+ * 검증기 입력(신호 사양·바닥 소유·현장 기체의 스킬)은 활성화 호출이 준다 — 미들웨어는 바닥 소유를 게이트에만 넘기고
  * 쥐지 않는다.
  *
  * ## 스레드
@@ -1546,7 +1546,7 @@ class MissionValidatorTest {
         assertEquals(MissionFixtures.WAIT_NODE, refusal.nodeId)
         assertEquals(RefusalOwner.OUTSIDE_CONSOLE, refusal.owner)
 
-        // ★관문과 같은 규칙 — 레지스터를 안 붙인 배치(NotDeclared)와 소유자가 있는 자리(Declared)는 통과한다.
+        // ★게이트와 같은 규칙 — 레지스터를 안 붙인 배치(NotDeclared)와 소유자가 있는 자리(Declared)는 통과한다.
         assertEquals(emptyList(), refusals(MissionFixtures.withArrivalWait(), floors = FloorOwnership.None))
         assertEquals(emptyList(), refusals(MissionFixtures.withArrivalWait(), floors = floors("OTHER")))
         // 자리가 없는 신호는 건너뛴다.
@@ -2457,9 +2457,9 @@ class MissionVersionScenarioTest {
     }
 
     @Test
-    fun `배정 사이에 활성화가 끼어도 실행은 관문에 댄 버전을 쥔다`() {
+    fun `배정 사이에 활성화가 끼어도 실행은 게이트에 댄 버전을 쥔다`() {
         // ★한 스레드의 시험에서는 배정이 카탈로그를 두 번 읽어도 같은 답이 온다 — 그래서 두 번째 읽기부터 다음 버전을
-        //   주는 카탈로그로 «관문을 본 뒤, 작업 수락 전» 의 활성화를 흉내 낸다.
+        //   주는 카탈로그로 «게이트를 본 뒤, 작업 수락 전» 의 활성화를 흉내 낸다.
         World().use { w ->
             w.activate(MissionFixtures.PREPARE_SEQUENCED_RACK)
             val v1 = w.catalog.active(PrepareSequencedRack.WORK_MASTER)!!
@@ -2472,8 +2472,8 @@ class MissionVersionScenarioTest {
             val mw = Middleware(ClientRobotPort(w.harness.client()), w.cell, now = { w.harness.clock.now() }, missions = flipping)
 
             val exec = assertIs<Middleware.Submission.Accepted>(mw.adopt(w.order("306"), listOf(ROBOT_A))).execution
-            assertEquals(1, exec.missionVersion, "관문은 버전 1 로 봤는데 실행은 다른 버전을 쥐었다")
-            assertTrue(exec.units.none { it.route == Route.SIGNAL }, "관문이 본 적 없는 단위가 실행에 들었다")
+            assertEquals(1, exec.missionVersion, "게이트는 버전 1 로 봤는데 실행은 다른 버전을 쥐었다")
+            assertTrue(exec.units.none { it.route == Route.SIGNAL }, "게이트가 본 적 없는 단위가 실행에 들었다")
             assertEquals(1, flipping.reads, "배정이 카탈로그를 두 번 읽었다")
         }
     }
@@ -2838,7 +2838,7 @@ index 03c6152..76e397b 100644
 +        robotId: String,
 +        prefix: List<ExecutionUnit>,
 +        approvedBy: Approver? = null,
-+        /** [adopt] 가 관문에 대려고 이미 읽은 쌍. 널이면 지금 카탈로그를 읽는다 — 한 작업 수락이 카탈로그를 두 번 읽지 않게 한다. */
++        /** [adopt] 가 게이트에 대려고 이미 읽은 쌍. 널이면 지금 카탈로그를 읽는다 — 한 작업 수락이 카탈로그를 두 번 읽지 않게 한다. */
 +        mission: ActiveMission? = null,
 +    ): Submission {
 +        // **이미 있는 실행이면 카탈로그를 안 본다.** 리비전은 그 실행이 쥔 케이퍼빌리티로 계획한다 — 여기서 카탈로그를
@@ -2880,15 +2880,15 @@ index 03c6152..76e397b 100644
 +        }
 +
      /**
-      * **배정 관문**(설계안 §7)의 공개 창구. 판정은 [AdmissionGate.admits] 가 한다.
+      * **배정 게이트**(설계안 §7)의 공개 창구. 판정은 [AdmissionGate.admits] 가 한다.
       *
 @@ -312,13 +359,15 @@ class Middleware(
       * 전부 떨어지면 [Unassigned] 다. **재계산을 요청하지 않는다** — 요청하면 이 층이 중재자가 된다.
       */
      fun adopt(order: JobOrder, ranked: List<String>): Submission {
 -        val capability = capabilities[order.workMasterId]
-+        // **카탈로그를 한 번 읽고 그 쌍을 작업 수락까지 넘긴다.** 관문에 댄 계획과 실행이 쥘 계획이 같은 버전이어야
-+        // 한다 — 그 사이에 활성화가 끼면 관문이 본 적 없는 단위가 나간다.
++        // **카탈로그를 한 번 읽고 그 쌍을 작업 수락까지 넘긴다.** 게이트에 댄 계획과 실행이 쥘 계획이 같은 버전이어야
++        // 한다 — 그 사이에 활성화가 끼면 게이트가 본 적 없는 단위가 나간다.
 +        val mission = missions.active(order.workMasterId)
              ?: return Submission.Rejected("모르는 논리적 능력이다: ${order.workMasterId}")
 -        val planned = capability.plan(order)
@@ -3219,9 +3219,9 @@ Expected: 대조 줄 35개가 모두 `같음`(코드·시험·인계 번들).
 - 파서와 검증기를 나눴다. 기한 검사를 파서가 하면 그 검사를 빼는 결함이 검증기 시험에 안 잡힌다. 결함 주입 I4a 는 검증기 시험이 잡았다.
 - 판정은 지금 값이다. P3 의 신호는 상태 신호뿐이다. 시작 전부터 그 값이면 그 상태는 이미 성립한 것이다. 이벤트형 신호는 범위 밖이다(한계 §15.209).
 - 기한 뒤 `ABORTED` 를 `FAILED` 단위 하나로 두지 않았다. 엔진은 `FAILED` 단위 뒤에도 다음 단위를 내보낸다. 신호를 못 본 채 로봇이 움직이면 대기를 둔 뜻이 없다. 정산을 기존 규칙에 맡기면 `[FAILED, …]` 가 부분 완료(`PARTIAL`)가 되어 리비전으로 다시 열린다. 남은 단위를 먼저 `ABORTED` 로 적고 같은 라운드에서 반환해야 다음 단위가 출발하지 않는다(결함 주입 I3a·I3b). 취소 응답은 남기지 않는다. 아무도 취소하지 않았는데 취소 응답이 있으면 «누가 멈췄나» 에 거짓으로 응답한다.
-- 자원 검사는 관문과 같은 규칙이다(`Unowned` 만 거부). 레지스터를 안 붙인 배치에서는 모든 자리가 `NotDeclared` 라, 선언 없음을 거부로 읽으면 자리가 적힌 신호를 쓰는 정의가 모두 거부된다.
+- 자원 검사는 게이트와 같은 규칙이다(`Unowned` 만 거부). 레지스터를 안 붙인 배치에서는 모든 자리가 `NotDeclared` 라, 선언 없음을 거부로 읽으면 자리가 적힌 신호를 쓰는 정의가 모두 거부된다.
 - 스킬 검사는 둘이다. 계약에 있는 스킬인가와 현장이 제공하는 스킬인가는 다른 물음이고 후속 행동이 다르다.
-- 리비전은 실행이 쥔 케이퍼빌리티로 계획한다. 카탈로그를 다시 보면 활성 버전이 바뀐 뒤의 리비전이 새 버전의 단위(예: 대기 단위)를 옛 실행에 들인다(결함 주입 I5 를 시나리오 시험이 잡았다). `adopt` 가 읽은 쌍을 넘기는 것도 같은 이유다. 관문에 댄 계획과 실행이 쥘 계획이 같은 버전이어야 한다.
+- 리비전은 실행이 쥔 케이퍼빌리티로 계획한다. 카탈로그를 다시 보면 활성 버전이 바뀐 뒤의 리비전이 새 버전의 단위(예: 대기 단위)를 옛 실행에 들인다(결함 주입 I5 를 시나리오 시험이 잡았다). `adopt` 가 읽은 쌍을 넘기는 것도 같은 이유다. 게이트에 댄 계획과 실행이 쥘 계획이 같은 버전이어야 한다.
 - 임무 버전은 해시에 든다. `Incident.kt` KDoc 의 해시 원칙 «새 칸은 전부 든다» 를 따른다. `review`·`resolution` 이 빠지는 것은 나중의 사람 단계라서다.
 - 모듈을 떼지 않고 패키지로 두었다. 변경의 절반이 엔진 안쪽이라 떼면 한 변경이 둘로 갈라진다. ADR 38 과 `LogicalCapability` KDoc 의 «조합은 미션 계층의 일이고 그것은 이 모듈 안이다» 와 같다. 엔진 없이 스키마·검증기만 필요한 둘째 소비자가 생기면 다시 본다.
 
@@ -3258,7 +3258,7 @@ Expected: 대조 줄 35개가 모두 `같음`(코드·시험·인계 번들).
 | 정의 안에서 노드 id 가 겹치면 거부한다 | `MissionValidatorTest` · `노드 id 가 겹치면 거부한다` |
 | 버전 1 실행 중 버전 2 를 활성화하면 새 작업 지시만 버전 2 로 대기를 거치고 옛 실행은 버전 1 로 끝난다 | `MissionVersionScenarioTest` · `버전 1 실행 중 버전 2 를 활성화하면 새 작업 지시만 버전 2 로 대기를 거치고 옛 실행은 버전 1 로 끝난다` |
 | 인시던트는 실행이 쥔 임무 버전을 싣고 그 값이 해시에 들며 내보내기에는 실리지 않는다 | `MissionVersionScenarioTest` · `버전 2 의 대기 기한 인시던트가 그 버전을 싣고 해시에 들며 내보내기에는 안 실린다` |
-| 배정 사이에 활성화가 끼어도 실행은 관문에 댄 버전을 쥔다 | `MissionVersionScenarioTest` · `배정 사이에 활성화가 끼어도 실행은 관문에 댄 버전을 쥔다` |
+| 배정 사이에 활성화가 끼어도 실행은 게이트에 댄 버전을 쥔다 | `MissionVersionScenarioTest` · `배정 사이에 활성화가 끼어도 실행은 게이트에 댄 버전을 쥔다` |
 | WorkMaster 를 바꾸는 리비전은 거부하고 실행은 그대로다 | `MissionVersionScenarioTest` · `리비전이 WorkMaster 를 바꾸면 거부하고 실행은 그대로다` |
 | 활성화를 통과하면 1 부터 오르는 버전이 활성이 되고 거부된 시도는 번호를 쓰지 않는다 | `InMemoryMissionCatalogTest` · `통과하면 1 부터 오르는 버전이 활성이 되고 거부된 시도는 번호를 쓰지 않는다` |
 | 파서는 모르는 키와 빠진 칸과 형이 틀린 값을 한 번에 모은다 | `MissionDefinitionParserTest` · `모르는 키와 빠진 칸과 형이 틀린 값을 한 번에 모은다` |
@@ -3442,7 +3442,7 @@ index 148f669..8b2be24 100644
 +| 임무 정의의 활성 버전 | 본 저장소 | `InMemoryMissionCatalog.activate` → `MissionValidator.validate` — 활성화는 검증(노드 id · 기한 · 신호 · 자원 · 스킬 · 안전)을 지나야 서고 거부면 활성 버전이 그대로다. 새 작업 지시부터 적용되며 도는 실행은 쥔 버전으로 끝난다. 소유는 활성화 판정의 소유이고 정의를 쓰는 사람은 시운전 · 통합 엔지니어다 | 있음 |
  | 자리 이름 ↔ 좌표 결속 | 기체 세계 모델 또는 상위 사이트 정본 (ADR 34 §4) | 기체 질의 (ADR 35) 앞에 `SiteBindingCheck` — 지도 버전과 개체 캘리브레이션 버전 두 차원을 대조 | 있음 (§15.156 — 정본 구현체는 배치가 붙인다) |
  
- **관문 칸이 대는 기호는 코드와 대조됩니다** — `DocumentClaimsTest` 의 «자원 소유 대장이 대는 관문이 코드에 실재한다». 이름이 바뀌거나 사라지면 이 표가 아니라 그 시험이 먼저 빨개집니다.
+ **게이트 칸이 대는 기호는 코드와 대조됩니다** — `DocumentClaimsTest` 의 «자원 소유 대장이 대는 게이트가 코드에 실재한다». 이름이 바뀌거나 사라지면 이 표가 아니라 그 시험이 먼저 빨개집니다.
 @@ -210,10 +212,10 @@ flowchart TB
  | 인시던트가 드는 것 | 어느 기체(`robotId`) · 근거의 세기(`requiredEvidence`·`reachedEvidence`·`verification`) · 분류의 근거(`fault`) · 단계 위치(`step`)를 함께 적습니다. **읽는 쪽이 되짚지 않도록 하는 것이 기준입니다**(§15.177) |
  | 결함 | `fault` 는 이 단위의 분류가 그 값이 된 근거이고, `blockedBy` 는 **다음 단위를 막는** 결함입니다. 다음 단위가 없으면 후자는 빈 목록이므로 둘은 다른 차원입니다. 정준 분류와 벤더 원문을 함께 실으며, 분류 이름만으로 접지 않습니다 |
@@ -3616,7 +3616,7 @@ index a8f5eac..cc80975 100644
  | `Canonical.kt` | 작업 응답·인시던트 번들·이벤트 자취가 나눠 쓰는 정준 프로젝션 셋 |
 -| `Ports.kt` | 하위 시스템 연동 추상화 포트: `RobotPort` (인터페이스 계약 소비자), `CellSignals` (현장 설비 센서 신호, E2), `AmrFleetPort` (이송 플릿 연동, E1) |
 +| `Ports.kt` | 하위 시스템 연동 추상화 포트: `RobotPort` (인터페이스 계약 소비자), `CellSignals` (현장 설비 센서 신호, E2), `AmrFleetPort` (이송 플릿 연동, E1), `MissionCatalog` (WorkMaster 마다 지금 활성인 케이퍼빌리티와 임무 버전을 주는 포트, 새 작업 지시만 읽음) |
-+| `mission/` | **임무 정의 패키지** (`dev.picasso.middleware.mission`): 임무 정의 스키마(`MissionDefinition`)와 엄격 파서(`MissionDefinitionParser`), 신호 사양(`SignalSpec`), 해석기(`DefinedCapability`), 검증기(`MissionValidator`, 5검사 + 노드 id), 메모리 카탈로그(`InMemoryMissionCatalog`, 활성화 관문). 설비 대기 진행 · 버전 고정 · 인시던트 칸 등 엔진 쪽 변경은 기존 파일에 있음 (ADR 50) |
++| `mission/` | **임무 정의 패키지** (`dev.picasso.middleware.mission`): 임무 정의 스키마(`MissionDefinition`)와 엄격 파서(`MissionDefinitionParser`), 신호 사양(`SignalSpec`), 해석기(`DefinedCapability`), 검증기(`MissionValidator`, 5검사 + 노드 id), 메모리 카탈로그(`InMemoryMissionCatalog`, 활성화 게이트). 설비 대기 진행 · 버전 고정 · 인시던트 칸 등 엔진 쪽 변경은 기존 파일에 있음 (ADR 50) |
  
  ---
  
@@ -3639,7 +3639,7 @@ index a8f5eac..cc80975 100644
  | `EventStreamTest` | 상태 스냅샷 권위, 이벤트 재생 및 장애 복구 후 엔진 재동기화 |
  | `ProgressStallTest` | 작업 정체 가시화 — 정량 측정이 불가능한 기체에 대한 허위 판정 배제 (계약 0.8.0 사양) |
 +| `EquipmentWaitTest` | 설비 대기(`Route.SIGNAL`): 신호의 지금 값으로 판정해 `DONE`(E2) · 기한 시각까지 대기하고 넘으면 운영자 보류(라인 멈춤) · 재작업과 확인 · 기한 뒤 `ABORTED`(대기 `FAILED`, 남은 단위 미출발, 취소 응답 없음) · 대기 중 취소 · 대기 중 리비전 |
-+| `MissionVersionScenarioTest` | 임무 버전 시나리오: 버전 1 실행 중 버전 2 활성화 시 새 작업 지시만 버전 2 로 대기를 거치고 옛 실행과 그 리비전은 버전 1 로 끝남 · 없는 신호를 참조하는 버전 3 은 거부되고 활성 버전 2 유지 · 인시던트는 실행이 쥔 버전을 실음 · 배정은 관문에 댄 버전을 쥠 · WorkMaster 를 바꾸는 리비전은 거부 |
++| `MissionVersionScenarioTest` | 임무 버전 시나리오: 버전 1 실행 중 버전 2 활성화 시 새 작업 지시만 버전 2 로 대기를 거치고 옛 실행과 그 리비전은 버전 1 로 끝남 · 없는 신호를 참조하는 버전 3 은 거부되고 활성 버전 2 유지 · 인시던트는 실행이 쥔 버전을 실음 · 배정은 게이트에 댄 버전을 쥠 · WorkMaster 를 바꾸는 리비전은 거부 |
 +| `mission/*Test` | 임무 정의 패키지 4종: 파서(모든 오류를 한 번에 모음, 중복 키 거부) · 동등성(작업 지시 모양 9가지에서 코드 `PrepareSequencedRack` 과 칸마다 같음) · 검증기(5검사와 노드 id 각각) · 메모리 카탈로그(버전 번호, 거부, 스레드 겹침) |
  
  ---

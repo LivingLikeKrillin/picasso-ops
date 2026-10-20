@@ -145,7 +145,7 @@ class LifecycleTest {
         assertEquals(400 to "SITE_MISMATCH", mismatch.status to mismatch.body!!["error"].asText())
         assertEquals(415, stack.send("POST", "/api/robots", "engineer", body = body, contentType = "text/plain").status)
 
-        // 퇴역·복귀도 같은 관문을 지난다. 복귀는 본문이 없어 헤더와 모드만 막는다.
+        // 퇴역·복귀도 같은 게이트를 지난다. 복귀는 본문이 없어 헤더와 모드만 막는다.
         val retire = """{"reason":"정비"}"""
         assertEquals(400, stack.send("DELETE", "/api/robots/$ROBOT/retirement", mode = null).status)
         assertEquals(403, stack.send("DELETE", "/api/robots/$ROBOT/retirement", "engineer").status)
@@ -171,7 +171,7 @@ class LifecycleTest {
         context.use {
             val view = E2eStack.read("$url/api/robots")
             assertEquals("REGISTRY_UNAUTHORIZED", view["registry"].asText())
-            // 목록 자체는 관문 밖에서 새로 읽었다. 직전 값이 아니다.
+            // 목록 자체는 게이트 밖에서 새로 읽었다. 직전 값이 아니다.
             assertEquals(view["checkedAt"].asText(), view["robotsAsOf"].asText())
 
             val reply = E2eStack.send(url, "POST", "/api/robots", "engineer", body = """{"robotId":"tok-01","serialNumber":"TOK-0001"}""")

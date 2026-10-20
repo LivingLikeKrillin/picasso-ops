@@ -143,7 +143,7 @@ class SiteSettingsOperationsTest {
     }
 
     @Test
-    fun `범위 밖 값과 다 빠진 요청은 관문이 막으므로 여기까지 오면 계약 위반이다`() {
+    fun `범위 밖 값과 다 빠진 요청은 게이트가 막으므로 여기까지 오면 계약 위반이다`() {
         assertFailsWith<IllegalArgumentException> { operations.change(lee, 1, threshold(59), "범위 밖") }
         assertFailsWith<IllegalArgumentException> { operations.change(lee, 1, SiteSettingsChange(stallWindowSeconds = 3601), "범위 밖") }
         assertFailsWith<IllegalArgumentException> { operations.change(lee, 1, SiteSettingsChange(), "빈 변경") }

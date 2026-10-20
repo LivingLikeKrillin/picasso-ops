@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 /**
  * 셀 대역 안전 신호 위의 작업 허가 포트(ADR 52). 대응에서 판독으로, 판독에서 기체마다의 허가로. HTTP·DB 없이 스냅숏을 직접 넘긴다.
  *
- * 기체마다의 판정([CellWorkPermits.evaluate])이 발행 관문과 같은 규칙인지는 호스트 시험(`WorkPermitHostTest`)이 막힌 실행의 `permitBlock` 과
+ * 기체마다의 판정([CellWorkPermits.evaluate])이 발행 게이트와 같은 규칙인지는 호스트 시험(`WorkPermitHostTest`)이 막힌 실행의 `permitBlock` 과
  * 대조한다.
  */
 class CellWorkPermitsTest {

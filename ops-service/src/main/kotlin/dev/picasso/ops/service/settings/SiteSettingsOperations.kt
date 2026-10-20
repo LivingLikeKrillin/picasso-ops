@@ -16,7 +16,7 @@ import java.util.UUID
  * 현장 설정 변경(S2 스펙 §6.2, S3c 스펙 §6.2). registry 를 부르지 않으므로 `OperationRunner` 를 거치지 않는다. 같은 DB 라 응답 없음과
  * 재조회가 없다. 새 버전 행과 조작 기록의 `SUCCEEDED` 행은 한 트랜잭션에 들어간다.
  *
- * 범위·사유·본문 검사는 부르는 쪽(웹 관문)이 먼저 한다. 여기 오는 요청은 그것을 지난 것이다.
+ * 범위·사유·본문 검사는 부르는 쪽(웹 게이트)가 먼저 한다. 여기 오는 요청은 그것을 지난 것이다.
  */
 class SiteSettingsOperations(
     private val store: SiteSettingsStore,
@@ -35,8 +35,8 @@ class SiteSettingsOperations(
      * 채운 값 다섯이다. 버전 충돌이면 기준 버전 행이 있을 때 그 값으로 채우고, 없는 버전(앞선 기준)이면 빠진 칸은 `null` 이다.
      */
     fun change(actor: Actor, baseVersion: Long, change: SiteSettingsChange, reason: String): OperationOutcome {
-        require(!change.isEmpty) { "값 칸이 다 빠진 요청은 관문이 막는다" }
-        require(SiteSettingsRange.problems(change).isEmpty()) { "범위 밖 값은 관문이 막는다: ${SiteSettingsRange.problems(change)}" }
+        require(!change.isEmpty) { "값 칸이 다 빠진 요청은 게이트가 막는다" }
+        require(SiteSettingsRange.problems(change).isEmpty()) { "범위 밖 값은 게이트가 막는다: ${SiteSettingsRange.problems(change)}" }
         val requestId = UUID.randomUUID()
         val outcome = try {
             tx.execute {

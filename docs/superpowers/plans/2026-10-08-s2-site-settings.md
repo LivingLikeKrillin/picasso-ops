@@ -796,7 +796,7 @@ class SiteSettingsOperationsTest {
     }
 
     @Test
-    fun `범위 밖 값은 관문이 막으므로 여기까지 오면 계약 위반이다`() {
+    fun `범위 밖 값은 게이트가 막으므로 여기까지 오면 계약 위반이다`() {
         assertFailsWith<IllegalArgumentException> { operations.change(lee, 1, 59, "범위 밖") }
         assertEquals(listOf(1L), store.history().map { it.version })
         assertEquals(emptyList(), log.list())
@@ -825,7 +825,7 @@ import java.util.UUID
  * 현장 설정 변경(S2 스펙 §6.2). registry 를 부르지 않으므로 `OperationRunner` 를 거치지 않는다. 같은 DB 라 응답 없음과
  * 재조회가 없다. 새 버전 행과 조작 기록의 `SUCCEEDED` 행은 한 트랜잭션에 들어간다.
  *
- * 범위·사유·본문 검사는 부르는 쪽(웹 관문)이 먼저 한다. 여기 오는 요청은 그것을 지난 것이다.
+ * 범위·사유·본문 검사는 부르는 쪽(웹 게이트)가 먼저 한다. 여기 오는 요청은 그것을 지난 것이다.
  */
 class SiteSettingsOperations(
     private val store: SiteSettingsStore,
@@ -840,7 +840,7 @@ class SiteSettingsOperations(
     }
 
     fun change(actor: Actor, baseVersion: Long, connectionThresholdSeconds: Int, reason: String): OperationOutcome {
-        require(SiteSettingsRange.allows(connectionThresholdSeconds.toLong())) { "범위 밖 값은 관문이 막는다: $connectionThresholdSeconds" }
+        require(SiteSettingsRange.allows(connectionThresholdSeconds.toLong())) { "범위 밖 값은 게이트가 막는다: $connectionThresholdSeconds" }
         val requestId = UUID.randomUUID()
         val request = json.createObjectNode()
             .put("op", "CHANGE_SITE_SETTINGS")
@@ -916,8 +916,8 @@ data class SiteSettingsView(
 /**
  * 현장 설정 API(S2 스펙 §6). 읽기는 모드와 관계없고, 변경은 엔지니어 모드만 한다.
  *
- * 변경 본문은 바이트로 받아 관문을 지난 뒤 직접 읽는다. 스프링에 맡기면 못 읽는 본문의 400 이 [PreRejection] 모양이 아니고,
- * 관문보다 먼저 읽혀 운영자 모드의 깨진 본문이 403 이 아니라 400 이 된다. 칸은 널 가능으로 읽는다. 빈 칸을 0 으로 읽으면
+ * 변경 본문은 바이트로 받아 게이트를 지난 뒤 직접 읽는다. 스프링에 맡기면 못 읽는 본문의 400 이 [PreRejection] 모양이 아니고,
+ * 게이트보다 먼저 읽혀 운영자 모드의 깨진 본문이 403 이 아니라 400 이 된다. 칸은 널 가능으로 읽는다. 빈 칸을 0 으로 읽으면
  * 누락이 버전 충돌이나 범위 밖으로 갈린다. 범위 밖, 사유 빈칸, 못 읽는 본문은 사전 거부라 조작 기록에 남지 않는다.
  * 기존 `PROFILE_REQUIRED` 와 같은 길이다. 쓰기 본문은 `application/json` 만 받는다(다른 출처 방어는 [RobotOperationsController]).
  *
@@ -1058,7 +1058,7 @@ index d4854ee..64980ca 100644
  
 -/** registry 에 보내기 전에 막은 요청의 답. 조작 기록에 남기지 않는다. registry 에 닿지 않은 요청은 조작이 아니다. */
 +/**
-+ * 관문에서 막은 요청의 답. 조작 기록에 남기지 않는다. 상태를 바꾸는 쪽(registry, 또는 S2 의 현장 설정)에 닿지 않은 요청은
++ * 게이트에서 막은 요청의 답. 조작 기록에 남기지 않는다. 상태를 바꾸는 쪽(registry, 또는 S2 의 현장 설정)에 닿지 않은 요청은
 + * 조작이 아니다(S2 스펙 §6.2).
 + */
  data class PreRejection(val error: String, val detail: String)

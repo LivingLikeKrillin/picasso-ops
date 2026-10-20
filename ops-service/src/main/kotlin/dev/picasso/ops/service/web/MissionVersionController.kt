@@ -24,9 +24,9 @@ import org.springframework.web.bind.annotation.RestController
  * 임무 버전 API(S3b 스펙 §7). 두 읽기는 모드와 관계없고, 초안 저장·검증·모의 실행·활성화는 엔지니어 모드만 한다(T5).
  * 활성화는 사유가 있어야 한다.
  *
- * 판정 순서는 관문(헤더 400, 모드 403) → WorkMaster(400 `UNKNOWN_WORK_MASTER`) → 초안 id(400 `MISSION_BAD_REQUEST`) →
+ * 판정 순서는 게이트(헤더 400, 모드 403) → WorkMaster(400 `UNKNOWN_WORK_MASTER`) → 초안 id(400 `MISSION_BAD_REQUEST`) →
  * 본문(400 `MISSION_BAD_REQUEST`, 활성화의 사유는 400 `REASON_REQUIRED`) → 시운전 완료 기체(503
- * `COMMISSIONED_ROBOTS_UNKNOWN`)다. 모두 호스트에 닿지 않은 사전 거부라 조작 기록에 남지 않는다. 본문은 바이트로 받아 관문을
+ * `COMMISSIONED_ROBOTS_UNKNOWN`)다. 모두 호스트에 닿지 않은 사전 거부라 조작 기록에 남지 않는다. 본문은 바이트로 받아 게이트를
  * 지난 뒤 직접 읽는다([SiteSettingsController] 와 같은 이유: 운영자 모드의 깨진 본문은 400 이 아니라 403 이다). 쓰기 본문은
  * `application/json` 만 받는다(다른 출처 방어는 [RobotOperationsController]). 검증·모의 실행은 본문을 읽지 않지만 같은
  * 까닭으로 `application/json` 을 요구한다.
@@ -111,7 +111,7 @@ class MissionVersionController(
         }
     }
 
-    /** 임무 편집 관문. 엔지니어 모드만 받는다(T5). 네 쓰기가 모두 이것을 지난다. */
+    /** 임무 편집 게이트. 엔지니어 모드만 받는다(T5). 네 쓰기가 모두 이것을 지난다. */
     private inline fun engineer(mode: String?, user: String?, action: (Actor) -> ResponseEntity<Any>): ResponseEntity<Any> =
         guarded(mode, user, Mode.ENGINEER, action)
 

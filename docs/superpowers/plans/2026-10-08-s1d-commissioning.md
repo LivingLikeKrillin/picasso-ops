@@ -971,14 +971,14 @@ data class RegistrySoftware(
     val verdict: String,
 )
 
-/** 카탈로그와 개정판 목록의 출처. 둘 다 운영자 토큰 관문 안의 읽기다. 시험이 registry 없이 대신 끼운다. */
+/** 카탈로그와 개정판 목록의 출처. 둘 다 운영자 토큰 게이트 안의 읽기다. 시험이 registry 없이 대신 끼운다. */
 interface ProfileSource {
     fun catalog(): RegistryCall<RegistryCatalog>
 
     fun revisions(): RegistryCall<List<RegistryRevision>>
 }
 
-/** 바인딩과 소프트웨어 대조의 출처. 둘 다 관문 밖의 진단이다. 시험이 registry 없이 대신 끼운다. */
+/** 바인딩과 소프트웨어 대조의 출처. 둘 다 게이트 밖의 진단이다. 시험이 registry 없이 대신 끼운다. */
 interface CommissioningSource {
     /** 이 사이트의 활성 바인딩. 이력은 빼고 읽는다. */
     fun bindings(siteId: String): RegistryCall<List<RegistryBinding>>
@@ -1137,7 +1137,7 @@ data class ProfileListView(
 
 /**
  * 카탈로그(`GET /operations/skill-types`)와 개정판 목록(`GET /operations/profile-revisions`). 둘 다 읽혀야 새 값으로
- * 바꾸고, 하나라도 못 읽으면 둘 다 직전 값이다(어댑터 목록과 같은 규칙). 둘 다 운영자 토큰 관문 안이라 토큰이 틀리면
+ * 바꾸고, 하나라도 못 읽으면 둘 다 직전 값이다(어댑터 목록과 같은 규칙). 둘 다 운영자 토큰 게이트 안이라 토큰이 틀리면
  * [RegistryState.REGISTRY_UNAUTHORIZED] 다.
  */
 class ProfileListService(
@@ -1313,8 +1313,8 @@ index 47f31ea..66fd383 100644
  
  /**
 @@ -39,6 +53,9 @@ data class RobotListView(
-  * 목록 읽기(`/diag/robots`)는 운영자 토큰 관문 밖이라 401 이 오지 않는다. 그래서 목록을 읽을 때마다
-  * [token] 으로 관문 안의 읽기를 함께 불러, 토큰 불일치가 다음 폴링에 `OK` 로 덮이지 않게 한다.
+  * 목록 읽기(`/diag/robots`)는 운영자 토큰 게이트 밖이라 401 이 오지 않는다. 그래서 목록을 읽을 때마다
+  * [token] 으로 게이트 안의 읽기를 함께 불러, 토큰 불일치가 다음 폴링에 `OK` 로 덮이지 않게 한다.
   *
 + * [commissioning] 을 붙이면 기체 → 바인딩 → 소프트웨어 대조를 함께 읽고 셋 다 읽혀야 새 값으로 바꾼다(P2·S1d 스펙
 + * §8.1). 하나라도 못 읽으면 셋 다 직전 값이다. 다른 시각에 읽은 것을 섞으면 서로 맞지 않는 행이 보일 수 있다.
@@ -1973,7 +1973,7 @@ import org.springframework.web.bind.annotation.RestController
 data class BindBody(val adapterVersionId: Long? = null, val profileRevisionId: Long? = null)
 
 /**
- * 개정판·바인딩 조작 API(P2·S1d 스펙 §8.2). 다섯 다 엔지니어 모드에서 한다. 관문, 사전 거절을 조작 기록에 남기지 않는 것,
+ * 개정판·바인딩 조작 API(P2·S1d 스펙 §8.2). 다섯 다 엔지니어 모드에서 한다. 게이트, 사전 거절을 조작 기록에 남기지 않는 것,
  * registry 의 답을 200 과 결과 본문으로 돌려주는 것은 [RobotOperationsController] 와 같다.
  *
  * 제출 본문은 바이트 그대로 받는다. 운영 서비스가 다시 직렬화하면 registry 가 매기는 문서 해시가 달라져, 같은 문서의

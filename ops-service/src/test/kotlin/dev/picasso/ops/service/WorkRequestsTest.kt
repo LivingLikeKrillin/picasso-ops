@@ -271,7 +271,7 @@ class WorkRequestsTest {
   jdbc.sql("UPDATE ops.work_request SET state='DISPATCHING' WHERE receipt_id=:id").param("id",row.receiptId).update()
   assertEquals("DISPATCHING",service().receiveManual(manualActor,input).receipt.state);assertEquals(1,bench.submitted.size)
  }
- @Test fun `수동 접수 API는 운영자 관문과 본문 크기 및 UUID 형식을 확인한다`() {
+ @Test fun `수동 접수 API는 운영자 게이트와 본문 크기 및 UUID 형식을 확인한다`() {
   val api=WorkRequestController(service,"secret","mock-mes");val input=manualBody().toString().toByteArray()
   assertEquals(403,api.manual("engineer","kim",null).statusCode.value())
   assertEquals(400,api.manual(null,"kim",input).statusCode.value())
@@ -1616,10 +1616,10 @@ class WorkRequestsTest {
   assertEquals(0L,jdbc.sql("SELECT count(*) FROM ops.work_request_recovery").query(Long::class.java).single())
   assertEquals(0L,jdbc.sql("SELECT count(*) FROM ops.work_request_source_confirmation").query(Long::class.java).single())
  }
- @Test fun `대체 위치로 다시 보낸 새 작업 요청도 제출 때 다시 관문을 지나 그 자리마저 비었으면 새 대체 위치와 함께 출발 결품을 받고 그것도 다시 대체할 수 있다`() {
+ @Test fun `대체 위치로 다시 보낸 새 작업 요청도 제출 때 다시 게이트를 지나 그 자리마저 비었으면 새 대체 위치와 함께 출발 결품을 받고 그것도 다시 대체할 수 있다`() {
   bench.answer=HostWrite.Answered(200,unassignedBy(shortage("humanoid-01","[\"SEQ-IN-03.BIN-B\"]")))
   val a=posted(order("ORDER-A"),"UNASSIGNED")
-  // 그사이 대체 위치가 비었다. 운영 서비스는 미리 거르지 않고 실행 호스트의 제출 관문이 다시 본다.
+  // 그사이 대체 위치가 비었다. 운영 서비스는 미리 거르지 않고 실행 호스트의 제출 게이트가 다시 본다.
   bench.answer=HostWrite.Answered(200,unassignedBy(shortage("humanoid-01","[\"SEQ-IN-04.BIN-C\"]","SEQ-IN-03.BIN-B")))
   val b=posted(order("ORDER-B","ORDER-A","SEQ-IN-03.BIN-B"),"UNASSIGNED")
   assertEquals(2,bench.submitted.size)

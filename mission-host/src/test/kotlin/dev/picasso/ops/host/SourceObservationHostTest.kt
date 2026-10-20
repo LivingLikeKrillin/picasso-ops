@@ -112,7 +112,7 @@ class SourceObservationHostTest {
     }
 
     @Test
-    fun `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 관문을 지나고 다음 제출은 다시 설비만 본다`() {
+    fun `사람의 출발 자리 확인을 실은 제출은 그 한 번만 셀 관측이 되어 게이트를 지나고 다음 제출은 다시 설비만 본다`() {
         HostBench().use { bench ->
             bench.awaitPump()
             bench.activate("REQUIRED")

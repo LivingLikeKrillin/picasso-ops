@@ -27,7 +27,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertSame
 
 /**
- * 임무 버전·신호 조작 API 의 관문과 사전 거부(S3b 스펙 §7). 컨트롤러를 스프링 없이 바로 부른다. 관문(`guarded`)과 본문 읽기,
+ * 임무 버전·신호 조작 API 의 게이트와 사전 거부(S3b 스펙 §7). 컨트롤러를 스프링 없이 바로 부른다. 게이트(`guarded`)과 본문 읽기,
  * 상태 코드의 고름이 컨트롤러 안에 있기 때문이다. `application/json` 제한은 스프링의 몫이라 통합 시험이 본다.
  */
 class MissionVersionControllerTest {
@@ -66,7 +66,7 @@ class MissionVersionControllerTest {
             assertEquals("MODE_NOT_ALLOWED", reply.rejection().error)
             assertEquals("이 조작은 engineer 모드에서 한다", reply.rejection().detail)
         }
-        // 깨진 본문도 관문이 먼저다.
+        // 깨진 본문도 게이트가 먼저다.
         editAll("operator", body = "임무").forEach { assertEquals(403, it.statusCode.value()) }
         assertEquals(emptyList(), bench.writes())
         assertEquals(emptyList(), log.list())

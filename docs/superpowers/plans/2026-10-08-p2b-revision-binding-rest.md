@@ -975,8 +975,8 @@ import kotlin.test.assertTrue
 /**
  * 개정판과 바인딩의 조작 문(picasso-ops P2·S1d 스펙 §6.2). **결과 타입이 응답 코드와 `reason` 으로 옮겨졌는가.**
  *
- * 서비스 시험은 결과를 보고, 이 시험은 그것이 문에서 어떻게 보이는지와 운영자 토큰 관문이 새 경로에도 걸렸는지 본다.
- * 관문은 경로 패턴으로 걸리므로 새 경로가 패턴 밖이면 단위 시험이 전부 초록인 채로 문이 열린다.
+ * 서비스 시험은 결과를 보고, 이 시험은 그것이 문에서 어떻게 보이는지와 운영자 토큰 게이트가 새 경로에도 걸렸는지 본다.
+ * 게이트는 경로 패턴으로 걸리므로 새 경로가 패턴 밖이면 단위 시험이 전부 초록인 채로 문이 열린다.
  */
 @SpringBootTest(
     classes = [RegistryApplication::class],
@@ -1313,7 +1313,7 @@ class CatalogBootEndpointTest {
 - [ ] **Step 2: 실패 확인**
 
 Run: `./gradlew :registry:test --tests '*RevisionEndpointTest' --tests '*CatalogBootEndpointTest' -q`
-Expected: XML 에서 `CatalogBootEndpointTest` 1개와 `RevisionEndpointTest` 대부분이 실패(문이 없음, 진단 칸 없음, 메시지가 글자 그대로). `새 경로는 모두 운영자 토큰 뒤다` 는 관문이 경로 패턴(`/operations/**`)으로 걸리므로 문이 없어도 통과할 수 있다.
+Expected: XML 에서 `CatalogBootEndpointTest` 1개와 `RevisionEndpointTest` 대부분이 실패(문이 없음, 진단 칸 없음, 메시지가 글자 그대로). `새 경로는 모두 운영자 토큰 뒤다` 는 게이트가 경로 패턴(`/operations/**`)으로 걸리므로 문이 없어도 통과할 수 있다.
 
 - [ ] **Step 3: 컨트롤러 둘**
 
@@ -1337,7 +1337,7 @@ import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 개정판의 조작 문(§8.4 ①③, picasso-ops P2·S1d 스펙 §6.2) — 스킬 종류 조회, 제출, 목록, 활성화. 관문은
+ * 개정판의 조작 문(§8.4 ①③, picasso-ops P2·S1d 스펙 §6.2) — 스킬 종류 조회, 제출, 목록, 활성화. 게이트는
  * [OperatorToken] 이 경로로 건다.
  *
  * 생긴 이유는 첫 바깥 소비자다(ADR 9). picasso-ops 의 운영 화면이 개정판을 제출하고 활성화하려 했으나 서비스가
@@ -1468,7 +1468,7 @@ import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 바인딩의 조작 문(§9.1, picasso-ops P2·S1d 스펙 §6.2). 관문은 [OperatorToken] 이 경로로 건다.
+ * 바인딩의 조작 문(§9.1, picasso-ops P2·S1d 스펙 §6.2). 게이트는 [OperatorToken] 이 경로로 건다.
  *
  * 404 와 409 는 본문 `reason` 으로 가른다. 화면이 할 일이 거절마다 다르다 — 없는 기체는 등록부터, 퇴역 기체는 복귀부터,
  * 활성 아닌 개정판은 활성화부터, 낮은 계약은 다른 빌드다.

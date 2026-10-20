@@ -272,14 +272,14 @@ class MissionHostTest {
             assertEquals(alternative, refusal["sourceMissing"]["source"].asText(), refusal.toString())
             assertEquals(listOf(HostBench.SOURCE), refusal["alternativeLocations"].map { it.asText() }, refusal.toString())
             assertEquals(0, bench.get("/host/executions")["executions"].size())
-            // 대체 위치에 자재가 아직 있으면 같은 관문을 지난다.
+            // 대체 위치에 자재가 아직 있으면 같은 게이트를 지난다.
             read(source = false, other = true)
             val third = bench.post("/host/job-orders", request(from("JO-3", alternative), "candidates", HUMANOID)).body!!
             assertEquals("ACCEPTED", third["result"].asText(), third.toString())
         }
     }
 
-    /** 출발 결품이 아닌 관문 사유(여기서는 자재 선언과 배정이 어긋난 주문)는 대체 자리도 출발 자리도 싣지 않는다. 빈 목록으로 채우면 «든 자리 없음» 으로 읽힌다. */
+    /** 출발 결품이 아닌 게이트 사유(여기서는 자재 선언과 배정이 어긋난 주문)는 대체 자리도 출발 자리도 싣지 않는다. 빈 목록으로 채우면 «든 자리 없음» 으로 읽힌다. */
     @Test
     fun `출발 결품이 아닌 기체별 미배정 사유는 대체 자리와 출발 자리가 둘 다 null 이다`() {
         HostBench().use { bench ->

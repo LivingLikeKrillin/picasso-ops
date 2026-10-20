@@ -51,7 +51,7 @@ data class PermitMappingView(val signal: String, val permittedWhen: String, val 
  * @param evaluatedAt 판정한 호스트 시각
  * @param session 허가 원천(셀 대역)의 지금 세션. 선언하지 않았으면 `null`
  * @param validFor 판독 하나의 유효 폭(ISO-8601 기간 문자열). 선언하지 않았으면 `null`
- * @param robots 대응이 맡은 기체마다 지금의 허가. 발행 관문과 같은 규칙으로 판정한다
+ * @param robots 대응이 맡은 기체마다 지금의 허가. 발행 게이트와 같은 규칙으로 판정한다
  */
 data class WorkPermitsView(
     val declared: Boolean,
