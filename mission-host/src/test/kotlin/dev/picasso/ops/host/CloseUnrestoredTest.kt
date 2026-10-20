@@ -41,7 +41,8 @@ class CloseUnrestoredTest {
             listOf(
                 "UPDATE mission.execution_close SET reason = 'x'",
                 "DELETE FROM mission.execution_close",
-                "TRUNCATE mission.execution_close",
+                // V13 의 확인 표가 이 표를 가리키므로 CASCADE 가 없으면 외래 키가 먼저 막는다. CASCADE 는 두 표의 TRUNCATE 트리거를 탄다.
+                "TRUNCATE mission.execution_close CASCADE",
             ).forEach { sql ->
                 val e = assertFailsWith<SQLException>(sql) { PostgresSupport.execute(sql) }
                 assertTrue("덧붙이기만" in e.message!!, "$sql: ${e.message}")
@@ -671,6 +672,140 @@ class CloseUnrestoredTest {
             assertEquals(canonical, closure.body!!["requestId"].asText())
         }
     }
+
+    @Test
+    fun `증언 종결은 스냅숏이 동의하는 판정에서 확인 행을 적고 재기동 뒤에는 실행 목록에도 판정에도 다시 오르지 않는다`() {
+        HostBench(gated = true).use { bench ->
+            val reason = "${MissionHost.CLOSED_UNCONFIRMED_REASON}: JO-1"
+            attestedDeferredClose(bench)
+            assertEquals(0, confirmedRows())
+            // 스냅숏이 읽혀도 앞 인스턴스의 태스크가 도는 동안은 동의하지 않는다. 확인 행도 없다.
+            assertEquals(listOf(reason), reasons(bench, HUMANOID))
+            assertEquals(0, confirmedRows())
+            finishTasks(bench)
+            // 판정이 스냅숏을 읽고 동의하면 풀고 확인 행을 하나 적는다. 같은 판정을 다시 해도 한 행이다.
+            assertEquals(emptyList(), reasons(bench, HUMANOID))
+            assertEquals(emptyList(), reasons(bench, HUMANOID))
+            assertEquals(1, confirmedRows())
+            assertEquals(
+                listOf("JO-1", bench.host.instanceId),
+                PostgresSupport.queryOne(
+                    "SELECT c.job_order_id, k.instance_id FROM mission.execution_close_confirmed k JOIN mission.execution_close c USING (close_id)",
+                ) { listOf(it.getString(1), it.getString(2)) },
+            )
+
+            // 재기동 뒤 판정하기 전에도 실행 목록에 오르지 않고, 판정에도 사유가 없다.
+            bench.restartHost()
+            assertTrue(bench.get("/host/executions?recent=20")["unrestored"].isEmpty)
+            assertEquals(emptyList(), reasons(bench, HUMANOID))
+            assertEquals(listOf("DEFERRED", "CLOSED"), kinds("JO-1"))
+            assertEquals(1, confirmedRows())
+        }
+    }
+
+    @Test
+    fun `동의하기 전의 증언 종결은 재기동 뒤에도 실행 목록에 남고 그 기체를 계속 빼며 확인 행이 없다`() {
+        HostBench(gated = true).use { bench ->
+            val reason = "${MissionHost.CLOSED_UNCONFIRMED_REASON}: JO-1"
+            attestedDeferredClose(bench)
+            bench.restartHost()
+            assertEquals("CLOSED", bench.get("/host/executions?recent=20")["unrestored"].single()["result"].asText())
+            assertEquals(listOf(reason), reasons(bench, HUMANOID))
+            bench.restartHost()
+            assertEquals("CLOSED", bench.get("/host/executions?recent=20")["unrestored"].single()["result"].asText())
+            assertEquals(listOf(reason), reasons(bench, HUMANOID))
+            assertEquals(0, confirmedRows())
+        }
+    }
+
+    @Test
+    fun `확인 표는 덧붙이기만 하고 종결 행마다 하나다`() {
+        HostBench().use { _ ->
+            insertJournal("JO-1", HUMANOID)
+            insertClose("JO-1", "ATTESTED")
+            val closeId = PostgresSupport.queryOne("SELECT close_id FROM mission.execution_close") { it.getLong(1) }
+            PostgresSupport.execute("INSERT INTO mission.execution_close_confirmed (close_id, instance_id) VALUES ($closeId, 'mw-now')")
+            assertEquals(1, confirmedRows())
+            listOf(
+                "UPDATE mission.execution_close_confirmed SET instance_id = 'x'",
+                "DELETE FROM mission.execution_close_confirmed",
+                "TRUNCATE mission.execution_close_confirmed",
+            ).forEach { sql ->
+                val e = assertFailsWith<SQLException>(sql) { PostgresSupport.execute(sql) }
+                assertTrue("덧붙이기만" in e.message!!, "$sql: ${e.message}")
+            }
+            assertFailsWith<SQLException>("같은 종결 행") {
+                PostgresSupport.execute("INSERT INTO mission.execution_close_confirmed (close_id, instance_id) VALUES ($closeId, 'mw-other')")
+            }
+            assertFailsWith<SQLException>("없는 종결 행") {
+                PostgresSupport.execute("INSERT INTO mission.execution_close_confirmed (close_id, instance_id) VALUES (${closeId + 1000}, 'mw-now')")
+            }
+            assertEquals(1, confirmedRows())
+        }
+    }
+
+    @Test
+    fun `확인 행을 못 적으면 판정은 예외 없이 그 기체를 계속 빼고 다음 판정에서 다시 적는다`() {
+        HostBench(gated = true).use { bench ->
+            val reason = "${MissionHost.CLOSED_UNCONFIRMED_REASON}: JO-1"
+            attestedDeferredClose(bench)
+            finishTasks(bench)
+            PostgresSupport.execute("ALTER TABLE mission.execution_close_confirmed ADD CONSTRAINT refuse_confirm CHECK (false)")
+            // 스냅숏은 동의하지만 확인 행을 못 적는다. 판정은 깨지지 않고 기체는 계속 빠지며 목록에도 남는다.
+            assertEquals(listOf(reason), reasons(bench, HUMANOID))
+            assertEquals(listOf(reason), reasons(bench, HUMANOID))
+            assertEquals(0, confirmedRows())
+            assertEquals("CLOSED", bench.get("/host/executions?recent=20")["unrestored"].single()["result"].asText())
+
+            PostgresSupport.execute("ALTER TABLE mission.execution_close_confirmed DROP CONSTRAINT refuse_confirm")
+            assertEquals(emptyList(), reasons(bench, HUMANOID))
+            assertEquals(1, confirmedRows())
+            assertTrue(bench.get("/host/executions?recent=20")["unrestored"].isEmpty)
+        }
+    }
+
+    @Test
+    fun `다른 인스턴스가 먼저 적은 확인 행이 있어도 판정은 풀고 그 행을 그대로 둔다`() {
+        HostBench(gated = true).use { bench ->
+            attestedDeferredClose(bench)
+            finishTasks(bench)
+            val closeId = PostgresSupport.queryOne("SELECT close_id FROM mission.execution_close") { it.getLong(1) }
+            PostgresSupport.execute("INSERT INTO mission.execution_close_confirmed (close_id, instance_id) VALUES ($closeId, 'mw-other')")
+            assertEquals(emptyList(), reasons(bench, HUMANOID))
+            assertEquals(listOf("mw-other"), PostgresSupport.queryAll("SELECT instance_id FROM mission.execution_close_confirmed") { it.getString(1) })
+            assertTrue(bench.get("/host/executions?recent=20")["unrestored"].isEmpty)
+        }
+    }
+
+    /**
+     * 미룬 행(스냅숏을 못 읽음)을 정지 증언으로 종결한다. 앞 인스턴스의 태스크가 하위에 남아 있고 스냅숏은 종결 뒤에 읽히게 되돌린다.
+     * 종결한 인스턴스는 뒤에 그대로 돈다.
+     */
+    private fun attestedDeferredClose(bench: HostBench) {
+        val accepted = bench.post("/host/job-orders", request(inspect("JO-1", "T1" to "bay-7"), "candidates", HUMANOID)).body!!
+        assertEquals("ACCEPTED", accepted["result"].asText(), accepted.toString())
+        val before = bench.host.instanceId
+        bench.eventually("앞 인스턴스의 태스크") { bench.tasks(HUMANOID).isNotEmpty() }
+        bench.blockedSnapshots += HUMANOID
+        bench.restartHost()
+        val attested = bench.close("JO-1", seen = before to "exec-1", attested = true)
+        assertEquals(listOf("CLOSED", "ATTESTED"), listOf("result", "basis").map { attested.body!![it].asText() }, attested.body.toString())
+        bench.blockedSnapshots -= HUMANOID
+        bench.idlePumps(6)
+    }
+
+    /** mimic 시계를 당겨 그 기체의 태스크를 모두 끝낸다. */
+    private fun finishTasks(bench: HostBench) {
+        repeat(60) {
+            if (bench.tasks(HUMANOID).values.any { !it.isTerminal }) {
+                bench.mimic.server.advance(Duration.ofSeconds(5))
+                bench.awaitPump()
+            }
+        }
+        assertTrue(bench.tasks(HUMANOID).values.all { it.isTerminal }, bench.tasks(HUMANOID).toString())
+    }
+
+    private fun confirmedRows(): Int = PostgresSupport.queryOne("SELECT count(*) FROM mission.execution_close_confirmed") { it.getInt(1) }
 
     private fun closeRows(): Int =PostgresSupport.queryOne("SELECT count(*) FROM mission.execution_close") { it.getInt(1) }
 
