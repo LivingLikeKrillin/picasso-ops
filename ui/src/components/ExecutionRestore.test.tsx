@@ -1,7 +1,8 @@
 import { render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Execution, Session } from '../api'
-import { executionsView, installFakeOps, restoreRow } from '../testing/fakeOps'
+import { UNRESTORED_TEXT } from '../labels'
+import { closeRecord, executionsView, installFakeOps, restoreRow } from '../testing/fakeOps'
 import { OperationsArea } from './OperationsArea'
 
 const operator: Session = { mode: 'operator', user: 'kim' }
@@ -73,13 +74,41 @@ describe('재기동 뒤 실행 목록', () => {
     expect(within(band).getByRole('list', { name: '미룬 실행' })).toHaveTextContent(
       'JO-B(quadruped-01, 이전 exec-4): 기체 스냅숏을 못 읽어 리빌드하지 않는다: robot=quadruped-01',
     )
-    expect(band).toHaveTextContent('포기한 실행 1건. 리빌드하지 않습니다. 기체의 남은 태스크를 운영자가 확인하십시오')
+    expect(band).toHaveTextContent('포기한 실행 1건. 기체가 정지했음을 확인한 후 아래 «복원 못 한 실행»에서 종결하십시오.')
     expect(within(band).getByRole('list', { name: '포기한 실행' })).toHaveTextContent(
       'JO-C(humanoid-01, 이전 exec-5): 임무 버전 행이 없다: PrepareSequencedRack 버전 4',
     )
     // 띠는 실행 목록 표 위에 있다.
     const table = within(region).getByRole('table', { name: '실행 목록' })
     expect(band.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('이번 기동 뒤 운영자가 종결한 행은 복원 보고에 운영자 종결로 표시되고 종결하지 않은 행은 표시가 없다', async () => {
+    const fake = installFakeOps(emptyList)
+    fake.executions = executionsView({
+      executions: [],
+      restore: {
+        at: 'h1',
+        rows: [
+          restoreRow({
+            jobOrderId: 'JO-C',
+            previousExecutionId: 'exec-5',
+            result: 'GAVE_UP',
+            executionId: null,
+            reason: '임무 버전 행이 없다: PrepareSequencedRack 버전 4',
+            close: closeRecord(),
+          }),
+          restoreRow({ jobOrderId: 'JO-D', previousExecutionId: 'exec-6', result: 'GAVE_UP', executionId: null, reason: '판단 기록을 읽지 못해 리빌드하지 않는다', close: null }),
+        ],
+      },
+    })
+    open()
+    const band = await screen.findByRole('region', { name: '재기동 복원 보고' })
+    const gaveUp = within(band).getByRole('list', { name: '포기한 실행' })
+    const [closed, open2] = within(gaveUp).getAllByRole('listitem')
+    expect(closed).toHaveTextContent(`JO-C(humanoid-01, 이전 exec-5): 임무 버전 행이 없다: PrepareSequencedRack 버전 4 · ${UNRESTORED_TEXT.reportClosed('kim')}`)
+    expect(open2).toHaveTextContent('JO-D(humanoid-01, 이전 exec-6): 판단 기록을 읽지 못해 리빌드하지 않는다')
+    expect(open2).not.toHaveTextContent(UNRESTORED_TEXT.reportClosed('kim'))
   })
 
   it('다시 지은 실행 행은 실행 id 옆에 이전 exec-k 를 보이고 새로 받은 실행에는 없다', async () => {

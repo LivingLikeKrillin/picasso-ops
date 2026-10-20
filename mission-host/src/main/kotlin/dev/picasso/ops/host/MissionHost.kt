@@ -13,6 +13,7 @@ import dev.picasso.contracts.v1.TaskState
 import dev.picasso.middleware.ActiveMission
 import dev.picasso.middleware.Approver
 import dev.picasso.middleware.ApproverKind
+import dev.picasso.middleware.Evidence
 import dev.picasso.middleware.ExecutionUnit
 import dev.picasso.middleware.ForgetOutcome
 import dev.picasso.middleware.IncidentBundle
@@ -47,10 +48,12 @@ import dev.picasso.ops.host.permit.WorkPermitsView
 import dev.picasso.ops.host.web.BadRequest
 import dev.picasso.ops.host.web.HostRequests
 import dev.picasso.ops.host.store.CancelRow
+import dev.picasso.ops.host.store.CloseRow
 import dev.picasso.ops.host.store.CopyResolutionRow
 import dev.picasso.ops.host.store.FaultReleaseRow
 import dev.picasso.ops.host.store.HostRecords
 import dev.picasso.ops.host.store.IncidentCopyRow
+import dev.picasso.ops.host.store.JournalEvent
 import dev.picasso.ops.host.store.JournalRow
 import dev.picasso.ops.host.store.JournalEventKind
 import dev.picasso.ops.host.store.MissionStore
@@ -63,6 +66,7 @@ import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
@@ -317,6 +321,7 @@ enum class RestoreResult { RESTORED, DEFERRED, GAVE_UP }
  * @param previousInstanceId·previousExecutionId 바로 앞 인스턴스에서 그 작업 지시를 들었던 실행. 앞서 다시 지었으면 그 실행이다
  * @param executionId RESTORED 일 때 새 실행 id. 그 밖에는 `null`
  * @param reason DEFERRED·GAVE_UP 의 사유. RESTORED 면 `null`
+ * @param close 이번 기동 뒤 운영자가 이 행을 종결했으면 그 종결(결함 14). [result] 는 그대로이고(종결 전의 복원 결과) 이 칸이 «종결했다» 를 알린다. 아니면 `null`
  */
 data class RestoreRowView(
     val jobOrderId: String,
@@ -326,6 +331,7 @@ data class RestoreRowView(
     val result: String,
     val executionId: String?,
     val reason: String?,
+    val close: CloseRecordView? = null,
 )
 
 /** 이번 기동의 복원 보고. [at] 은 복원한 호스트 시각이고 [rows] 는 일지의 받은 순서다. 다시 지을 것이 없었으면 [rows] 가 비어 있다. */
@@ -373,6 +379,15 @@ data class JobResponsesView(val instanceId: String, val total: Int, val response
 
 /** 결함 감수의 요청 id 가 이미 감수 행에 있다(V11). 아무것도 바꾸지 않았다. REST 는 409 `REQUEST_ID_REUSED` 다. */
 class ReleaseRequestReused(val requestId: String) : RuntimeException("결함 수용의 요청 id 가 이미 쓰였다: $requestId")
+
+/** 종결의 요청 id 가 이미 종결 행에 있다(V12). 아무것도 바꾸지 않았다. REST 는 409 `REQUEST_ID_REUSED` 다. */
+class CloseRequestReused(val requestId: String) : RuntimeException("운영자 종결의 요청 id 가 이미 쓰였다: $requestId")
+
+/**
+ * 그 요청 id 의 종결을 아직 처리 중이다(호스트 잠금을 기다리거나 기체 스냅숏을 읽는 중). 종결 조회가 «종결 없음» 이라고 답하면 안 되는 때다. REST 는
+ * 409 `REQUEST_IN_PROGRESS` 다.
+ */
+class CloseInProgress(val requestId: String) : RuntimeException("그 요청 id 의 운영자 종결을 아직 처리 중이다: $requestId")
 
 /** 일지 쓰기가 실패했다(S4b 스펙 §9). 실행은 미들웨어에 남는다. 제출은 500 이다. */
 class JournalWriteFailed(val executionId: String, cause: Throwable) : RuntimeException("실행 일지를 적지 못했다: $executionId", cause)
@@ -549,6 +564,18 @@ class MissionHost(
     private val gaveUp = mutableListOf<JournalRow>()
 
     /**
+     * 포기했고 아직 운영자가 종결하지 않은 일지 행(결함 14). [gaveUp] 과 달리 스냅숏이 동의해도 빼지 않는다 — 판정 제외가 풀린 뒤에도 사람은
+     * 그 행을 종결할 수 있어야 한다. 이전 기동에서 포기한 행도 기동 때 DB 에서 다시 읽어 든다. 종결하면 뺀다.
+     */
+    private val unclosed = LinkedHashMap<String, Unclosed>()
+
+    /**
+     * 정지 증언(`ATTESTED`)으로 종결했고 그 기체의 스냅숏이 아직 동의하지 않은 일지 행. 포기한 행([gaveUp])과 같은 규칙으로 판정이 그 기체를
+     * 빼고, 스냅숏이 그 작업 지시의 종료하지 않은 태스크가 없다고 보이면 푼다. 기동 때 DB 에서 다시 읽는다.
+     */
+    private val attested = mutableListOf<Attested>()
+
+    /**
      * 미해소 잔여 파지 표시(P0-b2). 기동 때 DB 에서 다시 읽고, 정착 기록 트랜잭션이 커밋된 뒤와 해소를 적은 뒤에 고친다. 판정이 이것을
      * 읽어 그 기체를 뺀다. 원본은 DB 이고 이것은 그 사본이다.
      */
@@ -566,11 +593,24 @@ class MissionHost(
      */
     private val recorded = mutableMapOf<String, String>()
 
+    /** 처리 중인 운영자 종결의 요청 id. 프로세스 안에만 있다. [closeUnrestored] 가 잠금을 기다리기 전에 넣고 끝나면 뺀다. */
+    private val closing: MutableSet<UUID> = ConcurrentHashMap.newKeySet()
+
+    /** 종결하지 않은 포기 행. [previous] 는 포기한 실행(앞 인스턴스의 것), [reason]·[since] 는 마지막 GAVE_UP 이벤트의 사유와 DB 시각이다. */
+    private class Unclosed(val row: JournalRow, val previous: RestoredFromView, val reason: String, val since: Instant)
+
+    /** 증언으로 종결한 행과 그 종결 행. */
+    private class Attested(val row: JournalRow, val close: CloseRow)
+
     /**
-     * 미룬 행. [order]·[mission] 은 복원 때 한 번 읽은 것이고 다시 시도할 때 그대로 쓴다. [heldBy] 는 이 행을 든 다른 인스턴스가
-     * 살아 있어 미룬 동안 그 인스턴스다. 그 심장박동이 끊긴 것을 보면 `null` 로 두고 보통의 다시 시도로 넘어간다.
+     * 미룬 행. [order]·[mission] 은 [prepare] 가 한 번 읽은 것이고 다시 시도할 때 그대로 쓴다. 행을 든 다른 인스턴스가 살아 있어 미룬 행은
+     * 아직 읽지 않았다(`null`) — 읽지 못하는 행도 그 인스턴스의 것이라 GAVE_UP 으로 적지 않는다. [heldBy] 는 그 동안 그 인스턴스다. 그 심장박동이
+     * 끊긴 것을 보면 `null` 로 두고 보통의 다시 시도로 넘어간다.
      */
-    private class Deferred(val row: JournalRow, val order: JobOrder, val mission: ActiveMission, val index: Int, var heldBy: String? = null)
+    private class Deferred(val row: JournalRow, val index: Int, var heldBy: String? = null) {
+        var order: JobOrder? = null
+        var mission: ActiveMission? = null
+    }
 
     private val pumper = Executors.newSingleThreadScheduledExecutor { Thread(it, "mission-host-pump").apply { isDaemon = true } }
 
@@ -612,40 +652,62 @@ class MissionHost(
         restoredAt = clock.now()
         records.openJournal().forEach { row -> restoreRow(row) }
         // 이번 기동에서 포기한 행은 attempt 가 이미 넣었고 그 GAVE_UP 이벤트도 일지에 있다. 작업 지시마다 한 번만 든다.
-        gaveUp += records.gaveUpJournal().filter { row -> gaveUp.none { it.jobOrderId == row.jobOrderId } }
+        val abandoned = records.gaveUpJournal()
+        gaveUp += abandoned.filter { row -> gaveUp.none { it.jobOrderId == row.jobOrderId } }
+        abandoned.filter { it.jobOrderId !in unclosed }.forEach { row ->
+            val event = records.events(row.jobOrderId).last { it.kind == JournalEventKind.GAVE_UP }
+            unclosed[row.jobOrderId] = Unclosed(row, previousOf(row), event.detail.orEmpty(), event.recordedAt)
+        }
+        records.attestedClosures().forEach { row -> attested += Attested(row, checkNotNull(records.closeOf(row.jobOrderId))) }
         openHolds += records.openResidualHolds()
     }
 
-    private fun restoreRow(row: JournalRow) {
-        val previous = records.events(row.jobOrderId).lastOrNull { it.kind == JournalEventKind.RESTORED }
+    /** 이 일지 행을 든 바로 앞 인스턴스와 실행. 마지막 RESTORED 이벤트의 것이고 없으면 받은 인스턴스와 실행이다. */
+    private fun previousOf(row: JournalRow): RestoredFromView =
+        records.events(row.jobOrderId).lastOrNull { it.kind == JournalEventKind.RESTORED }
             ?.let { RestoredFromView(it.instanceId, it.executionId!!) }
             ?: RestoredFromView(row.instanceId, row.executionId)
+
+    private fun restoreRow(row: JournalRow) {
+        val previous = previousOf(row)
         val index = restoreRows.size
         restoreRows += RestoreRowView(row.jobOrderId, row.robotId, previous.instanceId, previous.executionId, RestoreResult.GAVE_UP.name, null, null)
-        val prepared = try {
-            // 받은 개정판이 있으면 가장 높은 판이다(V10). picasso `resume` 은 이전 인스턴스가 받은 마지막 판을 받아야 한다.
-            val order = HostRequests.jobOrder(json.readTree(records.latestRevision(row.jobOrderId)?.jobOrder ?: row.jobOrder))
-            val version = row.missionVersion?.let {
-                store.version(row.workMasterId, it) ?: throw IllegalStateException("임무 버전 행이 없다: ${row.workMasterId} 버전 $it")
-            }
-            order to catalog.mission(row.workMasterId, version)
-        } catch (e: BadRequest) {
-            settleRestore(row, index, previous, RestoreResult.GAVE_UP, null, "일지의 작업 지시를 읽지 못했다: ${e.message}")
-            return
-        } catch (e: IllegalStateException) {
-            settleRestore(row, index, previous, RestoreResult.GAVE_UP, null, e.message ?: e.toString())
-            return
-        }
-        val waiting = Deferred(row, prepared.first, prepared.second, index)
-        // 행을 든 인스턴스는 바로 앞 RESTORED 의 인스턴스, 없으면 받은 인스턴스다([previous]). 살아 있으면 가져가지 않는다.
-        val holder = previous.instanceId
-        if (holder != instanceId && records.instanceLive(holder)) {
-            waiting.heldBy = holder
+        // 행을 든 인스턴스는 바로 앞 RESTORED 의 인스턴스, 없으면 받은 인스턴스다([previous]). 살아 있으면 가져가지 않는다. 작업 지시를 읽기 전에 본다 —
+        // 읽지 못하는 행을 먼저 GAVE_UP 으로 적으면 살아 있는 인스턴스의 행이 운영자 종결 대상이 된다.
+        val holder = liveHolder(previous)
+        if (holder != null) {
+            val waiting = Deferred(row, index, heldBy = holder)
             deferred += waiting
             settleRestore(row, index, previous, RestoreResult.DEFERRED, null, "$HELD_BY_LIVE_INSTANCE: instance=$holder")
             return
         }
-        attempt(waiting, previous, first = true)
+        attempt(Deferred(row, index), previous, first = true)
+    }
+
+    /** 이 일지 행을 든 인스턴스가 이 인스턴스가 아니고 지금 살아 있으면 그 id 다. */
+    private fun liveHolder(previous: RestoredFromView): String? =
+        previous.instanceId.takeIf { it != instanceId && records.instanceLive(it) }
+
+    /**
+     * 미룬 행의 작업 지시와 임무 버전을 읽어 [Deferred] 에 둔다. 이미 읽었으면 다시 읽지 않는다. 읽지 못하면 GAVE_UP 사유를 돌려준다.
+     * 받은 개정판이 있으면 가장 높은 판이다(V10). picasso `resume` 은 이전 인스턴스가 받은 마지막 판을 받아야 한다.
+     */
+    private fun prepare(waiting: Deferred): String? {
+        if (waiting.order != null) return null
+        val row = waiting.row
+        return try {
+            val order = HostRequests.jobOrder(json.readTree(records.latestRevision(row.jobOrderId)?.jobOrder ?: row.jobOrder))
+            val version = row.missionVersion?.let {
+                store.version(row.workMasterId, it) ?: throw IllegalStateException("임무 버전 행이 없다: ${row.workMasterId} 버전 $it")
+            }
+            waiting.mission = catalog.mission(row.workMasterId, version)
+            waiting.order = order
+            null
+        } catch (e: BadRequest) {
+            "일지의 작업 지시를 읽지 못했다: ${e.message}"
+        } catch (e: IllegalStateException) {
+            e.message ?: e.toString()
+        }
     }
 
     /**
@@ -656,6 +718,11 @@ class MissionHost(
         deferred.toList().forEach { waiting ->
             val previous = restoreRows[waiting.index].let { RestoredFromView(it.previousInstanceId, it.previousExecutionId) }
             try {
+                // 다른 인스턴스가 그 사이 종결했으면 이 인스턴스의 메모리가 든 채로 리빌드하지 않는다. 일지는 DB 가 원본이다.
+                records.closeOf(waiting.row.jobOrderId)?.let { closed ->
+                    forgetClosed(waiting.row, closed)
+                    return@forEach
+                }
                 val holder = waiting.heldBy
                 if (holder != null) {
                     if (records.instanceLive(holder)) return@forEach
@@ -669,7 +736,7 @@ class MissionHost(
     }
 
     private fun attempt(waiting: Deferred, previous: RestoredFromView, first: Boolean) {
-        val (result, executionId, reason) = resumed(waiting)
+        val (result, executionId, reason) = prepare(waiting)?.let { Triple(RestoreResult.GAVE_UP, null, it) } ?: resumed(waiting)
         if (result == RestoreResult.DEFERRED) {
             if (first) {
                 deferred += waiting
@@ -680,29 +747,33 @@ class MissionHost(
             }
             return
         }
-        settleRestore(waiting.row, waiting.index, previous, result, executionId, reason, waiting.order.version)
+        val event = settleRestore(waiting.row, waiting.index, previous, result, executionId, reason, waiting.order?.version)
         deferred.remove(waiting)
-        if (result == RestoreResult.GAVE_UP) gaveUp += waiting.row
+        if (result == RestoreResult.GAVE_UP) {
+            gaveUp += waiting.row
+            unclosed[waiting.row.jobOrderId] = Unclosed(waiting.row, previous, reason.orEmpty(), event.recordedAt)
+        }
     }
 
     /**
      * 결과를 일지 이벤트로 적고 보고 행을 갈아 끼운다. 이벤트를 먼저 적는다. 못 적으면 예외가 나가고 보고는 그대로다. [version] 은 다시 지은
-     * 작업 지시의 판이다(RESTORED 일 때).
+     * 작업 지시의 판이다(RESTORED 일 때). 적은 이벤트를 돌려준다.
      */
     private fun settleRestore(
         row: JournalRow, index: Int, previous: RestoredFromView, result: RestoreResult, executionId: String?, reason: String?, version: Int? = null,
-    ) {
+    ): JournalEvent {
         val kind = when (result) {
             RestoreResult.RESTORED -> JournalEventKind.RESTORED
             RestoreResult.DEFERRED -> JournalEventKind.DEFERRED
             RestoreResult.GAVE_UP -> JournalEventKind.GAVE_UP
         }
-        records.event(row.jobOrderId, kind, instanceId, executionId, reason)
+        val event = records.event(row.jobOrderId, kind, instanceId, executionId, reason)
         restoreRows[index] = RestoreRowView(row.jobOrderId, row.robotId, previous.instanceId, previous.executionId, result.name, executionId, reason)
         if (executionId != null) {
             restoredFrom[executionId] = previous
             journaled[row.jobOrderId] = checkNotNull(version) { "다시 지은 작업 지시의 판이 없다: ${row.jobOrderId}" }
         }
+        return event
     }
 
     /**
@@ -729,7 +800,7 @@ class MissionHost(
                 return Triple(RestoreResult.GAVE_UP, null, "$RECORD_UNREADABLE: record=${it.recordId}, ${e.message}")
             }
         }
-        return when (val submission = middleware.resume(waiting.order, waiting.row.robotId, waiting.mission, record)) {
+        return when (val submission = middleware.resume(checkNotNull(waiting.order), waiting.row.robotId, checkNotNull(waiting.mission), record)) {
             is Middleware.Submission.Accepted -> {
                 stored?.let { recorded[waiting.row.jobOrderId] = it.record }
                 cancel?.let { carryCancel(it, submission.execution) }
@@ -925,11 +996,21 @@ class MissionHost(
      * 미들웨어에 실행이 없는 작업 지시가 실행 일지에 이미 있으면 거부 사유, 없으면 `null`. 마지막으로 정착을 적은 작업 지시(이 인스턴스가
      * 놓았거나 재기동 전에 정착한 것)는 picasso 의 [Middleware.FORGOTTEN_JOB_ORDER] 로 시작해 picasso 의 거부와 같은 뜻으로 읽힌다. 그 밖의
      * 일지 행(미뤘거나 포기한 것, 정착 뒤 다시 돌아 미뤘거나 포기한 것)은 [JOURNALED_JOB_ORDER] 로 시작한다.
+     *
+     * 운영자가 종결한 작업 지시(결함 14, 마지막이 CLOSED)도 [Middleware.FORGOTTEN_JOB_ORDER] 로 시작한다 — 끝난 작업 지시라 같은 id 를 다시 받지
+     * 않는다([SubmitOutcome.forgottenJobOrder]). 다시 할 일은 새 작업 지시 id 로 낸다.
      */
     private fun journalRefusal(jobOrderId: String): String? {
         val row = records.journalRow(jobOrderId) ?: return null
         // 정착을 적은 뒤 다시 돌았으면(REOPENED) 끝난 작업 지시가 아니다. 마지막 정착·다시 돎·포기로 가른다.
-        val settled = records.events(jobOrderId).lastOrNull { it.kind in TURNS }?.takeIf { it.kind == JournalEventKind.SETTLED }
+        // 마지막이 운영자 종결(CLOSED)이면 끝난 작업 지시다.
+        val last = records.events(jobOrderId).lastOrNull { it.kind in TURNS }
+        if (last?.kind == JournalEventKind.CLOSED) {
+            val close = checkNotNull(records.closeOf(jobOrderId)) { "종결 이벤트에 종결 행이 없다: $jobOrderId" }
+            return "${Middleware.FORGOTTEN_JOB_ORDER}: $jobOrderId · ${close.closedInstanceId} ${close.closedExecutionId} · UNVERIFIED " +
+                "(운영자 종결, 실행 일지). 다시 할 일은 새 작업 지시 ID로 낸다"
+        }
+        val settled = last?.takeIf { it.kind == JournalEventKind.SETTLED }
             ?: return "$JOURNALED_JOB_ORDER: $jobOrderId · ${row.instanceId} ${row.executionId}"
         return "${Middleware.FORGOTTEN_JOB_ORDER}: $jobOrderId · ${settled.instanceId} ${settled.executionId} · ${settled.detail} " +
             "(실행 일지). 다시 할 일은 새 작업 지시 ID로 낸다"
@@ -1004,9 +1085,9 @@ class MissionHost(
      */
     fun executionsRecent(recent: Int): ExecutionPageView {
         require(recent in 1..ExecutionPages.MAX) { "recent 는 1~${ExecutionPages.MAX} 다: $recent" }
-        val (live, reworkable) = lock.withLock {
+        val (live, reworkable, unrestored) = lock.withLock {
             val latest = latestResponses(middleware.responses())
-            view(middleware.executions().filter { live(it, latest) }) to reworkableTargets(latest)
+            Triple(view(middleware.executions().filter { live(it, latest) }), reworkableTargets(latest), unrestoredRows())
         }
         val page = settledPage(null, recent)
         return ExecutionPageView(
@@ -1019,6 +1100,7 @@ class MissionHost(
             settled = page.settled,
             nextBefore = page.nextBefore,
             olderTotal = page.olderTotal,
+            unrestored = unrestored,
         )
     }
 
@@ -1670,7 +1752,9 @@ class MissionHost(
                 SkillFit.UNKNOWN -> add("기체 케이퍼빌리티를 못 물어봤다")
             }
             if (running != null) add("진행 중인 실행이 있다: $running")
-            unrestoredOn(robotId).takeIf { it.isNotEmpty() }?.let { add("$UNRESTORED_REASON: ${it.joinToString(", ")}") }
+            val (unrestored, closedUnconfirmed) = unrestoredOn(robotId)
+            unrestored.takeIf { it.isNotEmpty() }?.let { add("$UNRESTORED_REASON: ${it.joinToString(", ")}") }
+            closedUnconfirmed.takeIf { it.isNotEmpty() }?.let { add("$CLOSED_UNCONFIRMED_REASON: ${it.joinToString(", ")}") }
             openHolds.filter { it.robotId == robotId }.takeIf { it.isNotEmpty() }
                 ?.let { holds -> add("$RESIDUAL_HOLD_REASON: ${holds.joinToString(", ") { "${it.jobOrderId} ${it.unitId}" }}") }
             if (!applied) add(UNAPPLIED_REASON)
@@ -1680,20 +1764,287 @@ class MissionHost(
     }
 
     /**
-     * 이 기체에서 다시 짓지 못한 작업 지시(T4). 미룬 행은 늘 든다. 포기한 행은 그 기체의 스냅숏을 이번에 한 번 읽어, 그 작업 지시의
-     * 종료하지 않은 태스크(id 가 `jobOrderId#` 로 시작, `@rN` 이 붙은 재작업 태스크 포함)가 없으면 풀고 더 빼지 않는다. 스냅숏을 못 읽으면
-     * 계속 뺀다.
+     * 이 기체에서 다시 짓지 못한 작업 지시(T4)와, 정지 증언으로 종결했으나 스냅숏이 아직 동의하지 않은 작업 지시(결함 14). 앞의 것은 미룬 행이
+     * 늘 들고, 포기한 행은 그 기체의 스냅숏을 이번에 한 번 읽어 그 작업 지시의 종료하지 않은 태스크(id 가 `jobOrderId#` 로 시작, `@rN` 이
+     * 붙은 재작업 태스크 포함)가 없으면 풀고 더 빼지 않는다. 뒤의 것도 같은 읽기와 같은 규칙이다. 스냅숏을 못 읽으면 둘 다 계속 뺀다.
+     *
+     * @return (복원 못 한 작업 지시, 증언으로 종결했으나 확인 전인 작업 지시)
      */
-    private fun unrestoredOn(robotId: String): List<String> {
+    private fun unrestoredOn(robotId: String): Pair<List<String>, List<String>> {
         val waiting = deferred.filter { it.row.robotId == robotId }.map { it.row.jobOrderId }
         val abandoned = gaveUp.filter { it.robotId == robotId }
-        if (abandoned.isEmpty()) return waiting
-        val snapshot = robots.snapshot(robotId) ?: return waiting + abandoned.map { it.jobOrderId }
-        val still = abandoned.filter { row ->
-            snapshot.tasks.any { (taskId, state) -> taskId.startsWith("${row.jobOrderId}#") && state !in TERMINAL_TASK_STATES }
-        }
+        val closed = attested.filter { it.row.robotId == robotId }
+        if (abandoned.isEmpty() && closed.isEmpty()) return waiting to emptyList()
+        val snapshot = robots.snapshot(robotId) ?: return (waiting + abandoned.map { it.jobOrderId }) to closed.map { it.row.jobOrderId }
+        fun holding(jobOrderId: String) =
+            snapshot.tasks.any { (taskId, state) -> taskId.startsWith("$jobOrderId#") && state !in TERMINAL_TASK_STATES }
+        val still = abandoned.filter { holding(it.jobOrderId) }
         gaveUp.removeAll((abandoned - still.toSet()).toSet())
-        return waiting + still.map { it.jobOrderId }
+        val stillClosed = closed.filter { holding(it.row.jobOrderId) }
+        attested.removeAll((closed - stillClosed.toSet()).toSet())
+        return (waiting + still.map { it.jobOrderId }) to stillClosed.map { it.row.jobOrderId }
+    }
+
+    /**
+     * 복원 못 한 실행의 운영자 종결(결함 14). 호스트 잠금 아래에서 판정하고, 일지 이벤트(CLOSED)·종결 행·상위로 가는 UNVERIFIED 결과(송신 기록과
+     * 결과 아웃박스)를 한 트랜잭션으로 적은 뒤에만 메모리를 고친다. 적지 못하면 예외(`DataAccessException`)가 나가고 아무것도 바뀌지 않는다.
+     * 종결은 그 실행을 멈추지 않고 성공을 추정하지 않는다 — 결과는 `UNVERIFIED`·운영자 필요·도달 근거 `E0`·완료 단위 없음이다.
+     *
+     * 순서(앞 판정이 이기고 적기 전까지는 아무것도 적지 않는다):
+     * 1. 승인자가 사람이 아니면 [CloseResult.REFUSED]. REST 는 늘 사람 승인자를 만들므로 이 메서드를 직접 부를 때만 난다.
+     * 2. 같은 요청 id 의 종결 행이 있으면 [CloseRequestReused].
+     * 3. 일지 행이 없으면 [CloseResult.NOT_FOUND].
+     * 4. 마지막이 종결이면 [CloseResult.ALREADY_CLOSED](앞선 종결을 싣는다).
+     * 5. picasso 메모리에 그 작업 지시의 실행이 있거나(도는 실행) 마지막이 SETTLED 이면 [CloseResult.NOT_CLOSABLE].
+     * 6. 대상. 종결하지 않은 포기 행([unclosed])이거나, 기체 스냅숏을 못 읽어 미룬 행(`RESUME_SNAPSHOT_UNREADABLE`). 살아 있는 다른 인스턴스가 든
+     *    행([HELD_BY_LIVE_INSTANCE])과 그 밖의 행은 [CloseResult.NOT_CLOSABLE].
+     * 7. [seen] 이 지금 일지의 (인스턴스, 실행)과 다르면 [CloseResult.TARGET_CHANGED].
+     * 8. 정지 확인. 그 기체의 스냅숏에서 그 작업 지시의 종료하지 않은 태스크를 본다.
+     *    - 읽히고 그런 태스크가 없다: 포기 행은 근거 `SNAPSHOT`. 미룬 행은 다음 pump 가 리빌드할 행이라 [CloseResult.NOT_CLOSABLE] 이다
+     *      (닫으면 복원할 수 있는 실행을 버린다. 미룬 행은 스냅숏을 못 읽을 때 증언으로만 종결한다).
+     *    - `RETRIABLE`·`NEEDS_INTERVENTION` 밖의 태스크가 있다: [CloseResult.TASK_LIVE]. 기체가 움직이거나 명령이 걸려 있으니 증언도 받지 않는다.
+     *    - 스냅숏을 못 읽었거나 남은 태스크가 모두 사람을 기다리는 상태다: [attestedStopped] 가 거짓이면 [CloseResult.STOP_UNCONFIRMED], 참이면
+     *      근거 `ATTESTED`.
+     *
+     * 포기 행([unclosed])도 행을 든 인스턴스(`previous.instanceId`, 이 인스턴스가 아님)가 살아 있으면 [CloseResult.NOT_CLOSABLE] 이다
+     * ([HELD_BY_LIVE_INSTANCE]). 마지막 차례는 메모리가 아니라 DB 에서 읽고, 다른 인스턴스가 종결한 행은 이 인스턴스의 메모리에서도 뺀다([forgetClosed]).
+     *
+     * 이 요청 id 는 잠금을 기다리는 동안과 스냅숏을 읽는 동안에도 처리 중이다([CloseInProgress]). 미룬 행의 종결은 기체 스냅숏을 읽는 동안 호스트 잠금을
+     * 쥔다 — 스냅숏 읽기가 오래 걸리면 그 동안 pump 와 다른 조작이 기다린다.
+     *
+     * 종결한 포기 행은 [gaveUp]·[unclosed] 에서, 미룬 행은 [deferred] 에서 뺀다(리빌드하지 않는다). `ATTESTED` 는 [attested] 에 넣어 스냅숏이 동의할 때까지
+     * 그 기체를 판정에서 뺀다. 응답의 (인스턴스, 실행)은 종결한 실행(복원 행의 앞 인스턴스와 실행)이다 — `exec-N` 은 인스턴스마다 다시 세므로 지금
+     * 인스턴스에 붙이면 지금의 다른 실행을 가리킬 수 있다.
+     */
+    fun closeUnrestored(
+        jobOrderId: String, approver: Approver, reason: String, requestId: String, seen: Pair<String, String>, attestedStopped: Boolean,
+    ): CloseView {
+        if (approver.kind != ApproverKind.PERSON) {
+            return CloseView(CloseResult.REFUSED, jobOrderId, null, null, "$AGENT_CLOSE_REFUSED: ${approver.id}", requestId, null)
+        }
+        val requestKey = UUID.fromString(requestId)
+        // 잠금을 기다리는 동안과 스냅숏을 읽는 동안에도 이 요청 id 를 처리 중으로 둔다. 종결 조회가 «종결 없음» 이라고 답한 뒤에 종결이 커밋되면 안 된다.
+        if (!closing.add(requestKey)) throw CloseRequestReused(requestId)
+        try {
+            return lock.withLock { closeLocked(jobOrderId, approver, reason, requestId, requestKey, seen, attestedStopped) }
+        } finally {
+            closing.remove(requestKey)
+        }
+    }
+
+    private fun closeLocked(
+        jobOrderId: String, approver: Approver, reason: String, requestId: String, requestKey: UUID, seen: Pair<String, String>, attestedStopped: Boolean,
+    ): CloseView {
+        fun answer(result: CloseResult, detail: String, closure: CloseRecordView? = null) =
+            CloseView(result, jobOrderId, null, null, detail, requestId, closure)
+        if (records.closeByRequest(requestKey) != null) throw CloseRequestReused(requestId)
+        val journal = records.journalRow(jobOrderId) ?: return answer(CloseResult.NOT_FOUND, "해당 작업 지시의 일지 행이 없다")
+        // 마지막 차례는 메모리가 아니라 DB 에서 읽는다. 다른 인스턴스가 종결했으면 이 인스턴스의 메모리는 그 행을 아직 미룬·포기 행으로 든다.
+        val last = records.events(jobOrderId).lastOrNull { it.kind in TURNS }
+        if (last?.kind == JournalEventKind.CLOSED) {
+            val closed = records.closeOf(jobOrderId)
+            closed?.let { forgetClosed(journal, it) }
+            val closure = closed?.let(CloseRecordView::of)
+            return answer(CloseResult.ALREADY_CLOSED, "이미 운영자 종결한 작업 지시다: ${closure?.approverId} ${closure?.recordedAt}", closure)
+        }
+        middleware.executions().firstOrNull { it.order.jobOrderId == jobOrderId }?.let {
+            return answer(CloseResult.NOT_CLOSABLE, "진행 중인 실행이다: ${it.executionId}, 실행 취소를 사용한다")
+        }
+        if (last?.kind == JournalEventKind.SETTLED) return answer(CloseResult.NOT_CLOSABLE, "이미 끝난 작업 지시다")
+        val waiting = deferred.firstOrNull { it.row.jobOrderId == jobOrderId }
+        val abandoned = unclosed[jobOrderId]
+        val restoreReason: String
+        val previous: RestoredFromView
+        if (abandoned != null) {
+            restoreReason = abandoned.reason
+            previous = abandoned.previous
+            // 이전 기동이 읽지 못해 포기한 행도 살아 있는 다른 인스턴스가 든 채일 수 있다.
+            liveHolder(previous)?.let { return answer(CloseResult.NOT_CLOSABLE, "$HELD_BY_LIVE_INSTANCE: instance=$it") }
+        } else if (waiting != null) {
+            val row = restoreRows[waiting.index]
+            restoreReason = row.reason.orEmpty()
+            if (waiting.heldBy != null || restoreReason.startsWith(HELD_BY_LIVE_INSTANCE)) return answer(CloseResult.NOT_CLOSABLE, restoreReason)
+            if (!restoreReason.startsWith(Middleware.RESUME_SNAPSHOT_UNREADABLE)) {
+                return answer(CloseResult.NOT_CLOSABLE, "운영자 종결할 수 없는 미룬 행이다: $restoreReason")
+            }
+            previous = RestoredFromView(row.previousInstanceId, row.previousExecutionId)
+        } else {
+            return answer(CloseResult.NOT_CLOSABLE, "복원 못 한 실행이 아니다")
+        }
+        if (seen.first != previous.instanceId || seen.second != previous.executionId) {
+            return answer(CloseResult.TARGET_CHANGED, "본 실행이 지금 일지와 다르다: 지금은 ${previous.instanceId} ${previous.executionId}")
+        }
+        val snapshot = robots.snapshot(journal.robotId)
+        val live = snapshot?.tasks.orEmpty().filter { (taskId, state) -> taskId.startsWith("$jobOrderId#") && state !in TERMINAL_TASK_STATES }
+        val basis = when {
+            snapshot != null && abandoned == null -> return answer(CloseResult.NOT_CLOSABLE, "스냅숏이 읽힌다. 다음 pump 가 리빌드한다")
+            snapshot != null && live.isEmpty() -> CLOSE_BASIS_SNAPSHOT
+            else -> {
+                val moving = live.filter { it.value !in WAITING_TASK_STATES }
+                if (moving.isNotEmpty()) {
+                    return answer(CloseResult.TASK_LIVE, "기체가 해당 작업 지시의 태스크를 실행하고 있다: ${describe(moving)}")
+                }
+                if (!attestedStopped) {
+                    val why = if (snapshot == null) "기체 스냅숏을 읽지 못했다" else "사람을 기다리는 태스크가 남았다: ${describe(live)}"
+                    return answer(CloseResult.STOP_UNCONFIRMED, "$why. 로봇이 멈춘 것을 현장에서 확인해 증언해야 운영자 종결한다")
+                }
+                CLOSE_BASIS_ATTESTED
+            }
+        }
+        val inputs = closeInputs(journal)
+        val closed = records.inTransaction {
+            val row = records.closeUnrestored(
+                jobOrderId, instanceId, previous.instanceId, previous.executionId, journal.robotId,
+                if (abandoned != null) RestoreResult.GAVE_UP.name else RestoreResult.DEFERRED.name, restoreReason, basis,
+                approver.id, approver.kind.name, reason, requestKey,
+            )
+            val response = closeResponse(row, inputs)
+            records.logResponse(previous.instanceId, row.responseId, previous.executionId, closeContent(journal, response), ResponseDisposition.SENT)
+            records.appendResult(previous.instanceId, row.responseId, closeSnapshot(row, journal, response))
+            row
+        }
+        // 커밋한 뒤에만 메모리를 고친다.
+        forgetClosed(journal, closed)
+        return CloseView(CloseResult.CLOSED, jobOrderId, basis, closed.responseId, null, requestId)
+    }
+
+    /**
+     * 종결 행([closed])이 있는 작업 지시를 이 인스턴스의 메모리에서 뺀다. 이 인스턴스가 종결했을 때와 다른 인스턴스가 종결한 것을 본 때 둘 다 쓴다.
+     * 종결한 행은 리빌드하지 않는다. `ATTESTED` 는 스냅숏이 동의할 때까지 그 기체를 판정에서 뺀다([attested]). 호스트 잠금 아래에서 부른다.
+     */
+    private fun forgetClosed(journal: JournalRow, closed: CloseRow) {
+        val jobOrderId = journal.jobOrderId
+        unclosed.remove(jobOrderId)
+        gaveUp.removeAll { it.jobOrderId == jobOrderId }
+        deferred.removeAll { it.row.jobOrderId == jobOrderId }
+        if (closed.basis == CLOSE_BASIS_ATTESTED && attested.none { it.row.jobOrderId == jobOrderId }) attested += Attested(journal, closed)
+        val index = restoreRows.indexOfFirst { it.jobOrderId == jobOrderId }
+        if (index >= 0) restoreRows[index] = restoreRows[index].copy(close = CloseRecordView.of(closed))
+    }
+
+    /**
+     * 그 작업 지시의 운영자 종결. 없으면 `null` 이다. DB 만 읽고 호스트 잠금을 잡지 않는다. [requestId] 를 주면 그 요청 id 의 종결을 아직 처리 중일 때
+     * [CloseInProgress] 를 낸다. 처리 중 집합을 먼저 보고 DB 를 나중에 읽는다. 종결은 행을 커밋한 뒤에 집합에서 빠지므로 집합에 없고 DB 에도 없으면
+     * 그 요청은 아직 오지 않았거나 행을 남기지 않고 끝난 것이다.
+     */
+    fun closure(jobOrderId: String, requestId: UUID? = null): CloseRecordView? {
+        if (requestId != null && requestId in closing) throw CloseInProgress(requestId.toString())
+        return records.closeOf(jobOrderId)?.let(CloseRecordView::of)
+    }
+
+    private fun describe(tasks: Map<String, TaskState>): String = tasks.entries.joinToString(", ") { "${it.key}=${it.value.name}" }
+
+    /**
+     * 실행 목록 페이지의 `unrestored`(결함 14). 행은 메모리에서 읽는다. 다만 종결하지 않은 포기 행([unclosed])은 행을 든 인스턴스의 심장박동을 행마다
+     * DB 에서 읽는다(살아 있으면 `closable=false`). 포기 행은 재기동을 몇 번 넘어도 남고, 미룬 행과 증언으로 종결했으나 스냅숏이 아직 동의하지 않은
+     * 행([attested])이 뒤따른다. 호스트 잠금 아래에서 부른다.
+     */
+    private fun unrestoredRows(): List<UnrestoredRowView> {
+        val excluded = gaveUp.mapTo(HashSet()) { it.jobOrderId }
+        val abandoned = unclosed.values.map {
+            // 행을 든 인스턴스가 살아 있으면 닫을 수 없다([closeUnrestored]). 심장박동은 DB 에서 읽는다.
+            val holder = liveHolder(it.previous)
+            UnrestoredRowView(
+                it.row.jobOrderId, it.row.robotId, it.previous.instanceId, it.previous.executionId, RestoreResult.GAVE_UP.name, it.reason, it.since,
+                closable = holder == null, notClosableReason = holder?.let { id -> "$HELD_BY_LIVE_INSTANCE: instance=$id" }, close = null,
+                robotExcluded = it.row.jobOrderId in excluded,
+            )
+        }
+        val waiting = deferred.map {
+            val row = restoreRows[it.index]
+            val held = it.heldBy != null || row.reason?.startsWith(HELD_BY_LIVE_INSTANCE) == true
+            UnrestoredRowView(
+                row.jobOrderId, row.robotId, row.previousInstanceId, row.previousExecutionId, RestoreResult.DEFERRED.name, row.reason,
+                restoredAt ?: clock.now(), closable = !held, notClosableReason = row.reason.takeIf { held }, close = null, robotExcluded = true,
+            )
+        }
+        val closed = attested.map {
+            UnrestoredRowView(
+                it.row.jobOrderId, it.row.robotId, it.close.closedInstanceId, it.close.closedExecutionId, JournalEventKind.CLOSED.name, it.close.restoreReason,
+                it.close.recordedAt, closable = false, notClosableReason = null, close = CloseRecordView.of(it.close), robotExcluded = true,
+            )
+        }
+        return abandoned + waiting + closed
+    }
+
+    /** 종결 응답이 싣는 판·근거 등급·단위 id([closeInputs]). */
+    private class CloseInputs(val version: Int, val requiredEvidence: String, val units: List<String>)
+
+    /**
+     * 종결 응답이 싣는 판·근거 등급·단위 id. 작업 지시의 JSON 글자는 `HostRequests.jobOrder` 를 거치지 않고 칸을 바로 읽는다 — 그 읽기가 실패해서
+     * 포기한 행도 종결할 수 있어야 한다.
+     *
+     * 판: 받은 개정판의 가장 높은 판, 없으면 일지 행의 작업 지시 판, 없으면 마지막 송신 행의 판, 없으면 1. 요구 근거 등급도 같은 차례다(마지막은 `E0`).
+     * 단위 id: 마지막 송신 행의 네 단위 목록의 합집합(상위가 이미 가진 것), 없으면 일지의 작업 지시를 읽을 수 있을 때 임무 계획의 단위, 그것도 못
+     * 읽으면 비어 있다(검증이 빈 미완 단위를 받는다).
+     */
+    private fun closeInputs(journal: JournalRow): CloseInputs {
+        val revision = records.latestRevision(journal.jobOrderId)
+        val node = runCatching { json.readTree(revision?.jobOrder ?: journal.jobOrder) }.getOrNull()
+        val last = records.lastResponse(journal.jobOrderId)
+        val version = revision?.version
+            ?: node?.get("version")?.takeIf { it.isIntegralNumber && it.canConvertToInt() && it.asInt() > 0 }?.asInt()
+            ?: last?.content?.version
+            ?: 1
+        val evidence = node?.get("requiredEvidence")?.takeIf { it.isTextual && Evidence.entries.any { e -> e.name == it.asText() } }?.asText()
+            ?: last?.content?.requiredEvidence
+            ?: Evidence.E0.name
+        val sent = last?.content?.let { (it.completedUnits + it.unverifiedUnits + it.incompleteUnits + it.inDoubtUnits).distinct().sorted() }.orEmpty()
+        val units = sent.ifEmpty {
+            runCatching {
+                val order = HostRequests.jobOrder(checkNotNull(node))
+                val mission = catalog.mission(journal.workMasterId, journal.missionVersion?.let { store.version(journal.workMasterId, it) ?: error("임무 버전 행이 없다") })
+                mission.capability.plan(order).map { it.unitId }.distinct().sorted()
+            }.getOrDefault(emptyList())
+        }
+        return CloseInputs(version, evidence, units)
+    }
+
+    /** 종결 응답. 성공을 추정하지 않는다: 완료·미확정·불확실 단위가 없고 모든 단위가 [UNRESTORED_CLOSED] 로 미완이며 도달 근거는 `E0` 이다. */
+    private fun closeResponse(row: CloseRow, inputs: CloseInputs) = JobResponseView(
+        jobResponseId = row.responseId,
+        version = inputs.version,
+        physicalState = PhysicalState.UNVERIFIED.name,
+        requiredEvidence = inputs.requiredEvidence,
+        reachedEvidence = Evidence.E0.name,
+        completedUnits = emptyList(),
+        unverifiedUnits = emptyList(),
+        incompleteUnits = inputs.units.associateWith { UNRESTORED_CLOSED },
+        inDoubtUnits = emptyList(),
+        operatorRequired = true,
+        residualHold = HoldKind.HOLD_KIND_UNSPECIFIED.name,
+        blockedBy = emptyList(),
+        connection = "CONNECTION_STATE_UNSPECIFIED",
+    )
+
+    /** 송신 기록에 적는 내용 키. [contentOf] 가 짓는 것과 같은 모양이다(단위 id 는 정렬돼 있다). */
+    private fun closeContent(journal: JournalRow, response: JobResponseView) = ResponseContent(
+        jobOrderId = journal.jobOrderId,
+        version = response.version,
+        physicalState = response.physicalState,
+        requiredEvidence = response.requiredEvidence,
+        reachedEvidence = response.reachedEvidence,
+        completedUnits = emptyList(),
+        unverifiedUnits = emptyList(),
+        incompleteUnits = response.incompleteUnits.keys.sorted(),
+        inDoubtUnits = emptyList(),
+        operatorRequired = response.operatorRequired,
+        residualHold = response.residualHold,
+        blockedBy = emptyList(),
+    )
+
+    /**
+     * 결과 아웃박스에 넣는 본문. [logResponse] 가 짓는 것과 같은 모양이고 `instanceId`·`executionId` 는 종결한 쌍(앞 인스턴스의 것)이다. 최상위 `closure`
+     * 는 운영 서비스가 이 결과를 «운영자가 종결한 실행» 으로 알아보는 표시이고 근거만 싣는다(승인자와 사유는 종결 행과 운영 기록에 있다).
+     */
+    private fun closeSnapshot(row: CloseRow, journal: JournalRow, response: JobResponseView) = json.createObjectNode().apply {
+        put("instanceId", row.closedInstanceId); put("executionId", row.closedExecutionId)
+        put("jobOrderId", journal.jobOrderId); put("robotId", journal.robotId)
+        put("workMasterId", journal.workMasterId)
+        if (journal.missionVersion == null) putNull("missionVersion") else put("missionVersion", journal.missionVersion)
+        put("physicalState", response.physicalState)
+        set<com.fasterxml.jackson.databind.JsonNode>("jobResponse", json.valueToTree(response))
+        set<com.fasterxml.jackson.databind.JsonNode>("closure", json.createObjectNode().put("kind", UNRESTORED_CLOSED).put("basis", row.basis))
     }
 
     private fun contentOf(response: JobResponse) = ResponseContent(
@@ -1797,6 +2148,12 @@ class MissionHost(
         const val UNRESTORED_REASON = "복원 못 한 실행이 있다"
 
         /**
+         * 정지 증언으로 종결한 실행(`ATTESTED`)이 있는 기체에 판정이 더하는 이유의 앞부분. 뒤에 작업 지시 id 가 `, ` 로 붙는다. 그 기체의 스냅숏이
+         * 그 작업 지시의 종료하지 않은 태스크가 없다고 동의할 때까지 이 이유가 붙는다.
+         */
+        const val CLOSED_UNCONFIRMED_REASON = "정지 증언으로 종결하고 스냅숏 확인 전인 실행이 있다"
+
+        /**
          * 미해소 잔여 파지 표시가 있는 기체에 판정이 더하는 이유의 앞부분(P0-b2). 뒤에 `작업 지시 id 단위 id` 가 표시마다 `, ` 로 붙는다.
          * 복원 못 한 실행 다음, 미적용 앞자리다.
          */
@@ -1820,7 +2177,23 @@ class MissionHost(
         const val BLOCK_CHANGED_DETAIL = "본 결함과 지금 막는 결함이 다르다. 다시 읽고 판단한다"
 
         /** 기동 복원의 대상과 판정 제외를 정하는 일지 이벤트([HostRecords.openJournal]). 그 가운데 마지막이 정한다. */
-        private val TURNS = setOf(JournalEventKind.SETTLED, JournalEventKind.REOPENED, JournalEventKind.GAVE_UP)
+        private val TURNS = setOf(JournalEventKind.SETTLED, JournalEventKind.REOPENED, JournalEventKind.GAVE_UP, JournalEventKind.CLOSED)
+
+        /** 정지 확인에서 사람을 기다리는 태스크 상태. 기체가 움직이지 않는다. 이 밖의 종료하지 않은 태스크는 기체가 움직이거나 명령이 걸린 것이다(`TASK_LIVE`). */
+        private val WAITING_TASK_STATES = setOf(TaskState.TASK_STATE_RETRIABLE, TaskState.TASK_STATE_NEEDS_INTERVENTION)
+
+        /** 종결 행의 근거. 스냅숏이 정지를 보였거나(`SNAPSHOT`) 운영자가 로봇이 멈춘 것을 증언했다(`ATTESTED`). */
+        const val CLOSE_BASIS_SNAPSHOT = "SNAPSHOT"
+        const val CLOSE_BASIS_ATTESTED = "ATTESTED"
+
+        /**
+         * 종결 응답이 미완 단위마다 싣는 사유 코드. picasso 실패 분류와 같은 모양의 코드이고 화면에 보이는 문구가 아니다. 글자를 바꾸면 그것을 읽는
+         * 쪽이 같이 바뀌어야 한다.
+         */
+        const val UNRESTORED_CLOSED = "UNRESTORED_CLOSED"
+
+        /** 에이전트 승인자의 종결 거부 사유의 앞부분. 뒤에 승인자 id 가 붙는다. */
+        const val AGENT_CLOSE_REFUSED = "에이전트는 복원 못 한 실행을 종결하지 못한다. 로봇이 멈췄는지는 사람이 현장에서 확인한다"
 
         /** 종료 상태(용어집 태스크 수명주기). 사람을 기다리는 RETRIABLE·NEEDS_INTERVENTION 은 종료하지 않은 상태라 기체를 계속 뺀다. */
         private val TERMINAL_TASK_STATES = setOf(

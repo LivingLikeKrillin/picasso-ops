@@ -37,6 +37,8 @@ data class SettledExecutionView(
  * @param settled 최근 정착 이력(최근부터). 인스턴스를 가리지 않는다
  * @param nextBefore 더 오래된 정착 이력을 읽을 커서. 더 없으면 `null`
  * @param olderTotal [nextBefore] 보다 오래된 정착 이력 수. [nextBefore] 가 `null` 이면 0
+ * @param unrestored 복원 못 한 실행의 행([UnrestoredRowView], 결함 14). 재기동 보고(`restore`)는 이번 기동의 것뿐이지만 이 목록은 앞선 기동에서
+ *   포기한 행도 든다 — 운영자가 종결할 수 있는 행이 재기동으로 사라지지 않는다. 메모리만 읽는다
  */
 data class ExecutionPageView(
     val instanceId: String,
@@ -48,6 +50,34 @@ data class ExecutionPageView(
     val settled: List<SettledExecutionView>,
     val nextBefore: Long?,
     val olderTotal: Int,
+    val unrestored: List<UnrestoredRowView> = emptyList(),
+)
+
+/**
+ * 복원 못 한 실행 하나(결함 14). 일지 행이 GAVE_UP 이거나, 기체 스냅숏을 못 읽어 미룬 DEFERRED 이거나, 정지 증언으로 종결했으나 그 기체의 스냅숏이 아직
+ * 동의하지 않은 CLOSED 다.
+ *
+ * @param previousInstanceId·previousExecutionId 종결할 실행(앞 인스턴스에서 그 작업 지시를 들었던 실행). 운영자가 본 값을 종결 요청에 싣는다
+ * @param result `GAVE_UP`·`DEFERRED`·`CLOSED`(증언으로 종결한 행)
+ * @param reason 복원 사유. 종결한 행이면 종결 전의 사유다
+ * @param since 포기·미룸을 적은 DB 시각(미룬 행은 이번 기동의 복원 시각). 종결한 행이면 종결을 적은 DB 시각이다
+ * @param closable 지금 종결 조치를 받을 수 있다(살아 있는 다른 인스턴스가 든 미룬 행과 종결한 행은 거짓이다)
+ * @param notClosableReason [closable] 이 거짓인 까닭. 거짓이 아니면 `null`
+ * @param close CLOSED 일 때의 종결. 그 밖에는 `null`
+ * @param robotExcluded 이 행이 지금 그 기체를 배정에서 빼고 있다. 포기 행은 스냅숏이 동의하면 거짓이 되지만 행은 종결할 수 있는 채로 남는다
+ */
+data class UnrestoredRowView(
+    val jobOrderId: String,
+    val robotId: String,
+    val previousInstanceId: String,
+    val previousExecutionId: String,
+    val result: String,
+    val reason: String?,
+    val since: Instant,
+    val closable: Boolean,
+    val notClosableReason: String?,
+    val close: CloseRecordView?,
+    val robotExcluded: Boolean,
 )
 
 /**

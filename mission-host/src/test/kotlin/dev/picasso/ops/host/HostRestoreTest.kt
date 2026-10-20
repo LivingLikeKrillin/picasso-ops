@@ -302,7 +302,7 @@ class HostRestoreTest {
             "permitBlock", "blockedFaults", "releases",
         )
 
-        val RESTORE_ROW_FIELDS = listOf("jobOrderId", "robotId", "previousInstanceId", "previousExecutionId", "result", "executionId", "reason")
+        val RESTORE_ROW_FIELDS = listOf("jobOrderId", "robotId", "previousInstanceId", "previousExecutionId", "result", "executionId", "reason", "close")
 
         fun units(execution: JsonNode): Map<String, String> = execution["units"].associate { it["unitId"].asText() to it["state"].asText() }
 

@@ -1,6 +1,7 @@
 package dev.picasso.ops.host
 
 import dev.picasso.ops.host.store.CancelRow
+import dev.picasso.ops.host.store.CloseRow
 import dev.picasso.ops.host.store.ResidualHoldClearingRow
 import dev.picasso.ops.host.store.ResidualHoldRow
 import java.time.Instant
@@ -140,3 +141,69 @@ data class FaultReleaseView(
     val faults: List<FaultDetailView>,
     val recordedAt: Instant,
 )
+
+/**
+ * 복원 못 한 실행의 운영자 종결의 결과 이름(결함 14). 종결은 일지 행이 GAVE_UP 이거나, 기체 스냅숏을 못 읽어 미룬 DEFERRED 행(`RESUME_SNAPSHOT_UNREADABLE`)일
+ * 때만 한다. 살아 있는 다른 인스턴스가 든 행은 종결하지 않는다.
+ *
+ * - [CLOSED]: 일지 이벤트, 종결 행, UNVERIFIED 결과를 한 트랜잭션으로 적었다. 근거는 [CloseView.basis] 다.
+ * - [ALREADY_CLOSED]: 그 작업 지시는 이미 종결했다. [CloseView.closure] 가 앞선 종결이다.
+ * - [NOT_CLOSABLE]: 종결할 수 없는 행이다(도는 실행, 종결한 작업 지시, 살아 있는 다른 인스턴스가 든 행, 읽히는 스냅숏 위의 미룬 행 따위).
+ * - [TASK_LIVE]: 기체가 그 작업 지시의 태스크를 아직 돌리고 있다. 증언으로도 종결하지 않는다.
+ * - [STOP_UNCONFIRMED]: 스냅숏을 못 읽었거나 사람을 기다리는 태스크가 남았는데 정지 증언이 없다.
+ * - [TARGET_CHANGED]: 운영자가 본 실행(인스턴스와 실행 id)이 지금 일지의 것과 다르다.
+ * - [NOT_FOUND]: 그 작업 지시의 일지 행이 없다.
+ * - [REFUSED]: 승인자가 사람이 아니다. REST 는 늘 사람 승인자를 만들므로 이 메서드를 직접 부를 때만 난다.
+ *
+ * [CLOSED] 밖의 일곱은 아무것도 적지 않는다.
+ */
+enum class CloseResult { CLOSED, ALREADY_CLOSED, NOT_CLOSABLE, TASK_LIVE, STOP_UNCONFIRMED, TARGET_CHANGED, NOT_FOUND, REFUSED }
+
+/**
+ * `POST /host/job-orders/{jobOrderId}/close` 의 200 본문.
+ *
+ * @param basis CLOSED 일 때 근거(`SNAPSHOT`·`ATTESTED`). 그 밖에는 `null` 이다
+ * @param responseId CLOSED 일 때 상위로 낸 종결 응답의 id(`close-<eventId>`). 그 밖에는 `null` 이다
+ * @param detail CLOSED 가 아닐 때의 사유. CLOSED 면 `null` 이다
+ * @param requestId 요청의 requestId 를 그대로 돌려준다(CLOSED 면 종결 행에 적혀 있다)
+ * @param closure ALREADY_CLOSED 일 때 앞선 종결. 그 밖에는 `null` 이다
+ */
+data class CloseView(
+    val result: CloseResult,
+    val jobOrderId: String,
+    val basis: String?,
+    val responseId: String?,
+    val detail: String?,
+    val requestId: String,
+    val closure: CloseRecordView? = null,
+)
+
+/**
+ * 운영자 종결 한 행(`GET /host/job-orders/{jobOrderId}/closure` 의 200 본문, 실행 목록의 `unrestored` 행의 `close` 칸).
+ *
+ * @param attestedStopped 운영자가 로봇이 멈춘 것을 증언했다([basis] 가 `ATTESTED`)
+ * @param closedInstanceId·closedExecutionId 종결한 실행
+ * @param restoreResult·restoreReason 종결 전의 복원 결과(`GAVE_UP`·`DEFERRED`)와 그 사유
+ * @param responseId 상위로 낸 종결 응답의 id
+ * @param recordedAt 적은 DB 시각
+ */
+data class CloseRecordView(
+    val requestId: String,
+    val approverId: String,
+    val reason: String,
+    val basis: String,
+    val attestedStopped: Boolean,
+    val closedInstanceId: String,
+    val closedExecutionId: String,
+    val restoreResult: String,
+    val restoreReason: String,
+    val responseId: String,
+    val recordedAt: Instant,
+) {
+    companion object {
+        fun of(row: CloseRow) = CloseRecordView(
+            row.requestId.toString(), row.approverId, row.reason, row.basis, row.basis == "ATTESTED", row.closedInstanceId, row.closedExecutionId,
+            row.restoreResult, row.restoreReason, row.responseId, row.recordedAt,
+        )
+    }
+}

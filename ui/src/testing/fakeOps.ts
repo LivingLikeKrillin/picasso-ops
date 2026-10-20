@@ -4,10 +4,13 @@ import type {
   Binding,
   CellSignal,
   CellView,
+  CloseRecord,
+  CloseResult,
   DraftView,
   EarlierIncidentRow,
   EligibilityView,
   Execution,
+  ExecutionCloseOutcome,
   ExecutionPage,
   ExecutionsView,
   ExecutionSummary,
@@ -38,6 +41,7 @@ import type {
   SettledPage,
   RobotView,
   TestRequestState,
+  UnrestoredRow,
   VersionView,
 } from '../api'
 
@@ -62,9 +66,9 @@ export interface FakeOps {
   executions: ExecutionsView
   /**
    * 화면 실행 목록(`GET /api/executions?recent=`)의 정착 이력 쪽(HA 설계 기록 §10). 답은 [executions] 에 이것을 더한 것이다. 대역은 남은 실행을
-   * 고르지 않는다(실행 호스트의 몫). 기본은 종결 이력이 없다. `reworkableTargets` 도 호스트가 계산한 값을 그대로 싣는다(기본은 칸 없음).
+   * 고르지 않는다(실행 호스트의 몫). 기본은 종결 이력이 없다. `reworkableTargets`·`unrestored` 도 호스트가 계산한 값을 그대로 싣는다(기본은 칸 없음).
    */
-  recent: SettledPage & Pick<ExecutionPage, 'reworkableTargets'>
+  recent: SettledPage & Pick<ExecutionPage, 'reworkableTargets' | 'unrestored'>
   /** 이전 실행 페이지(`GET /api/executions?before=`). 커서마다의 답이고 없으면 빈 페이지다. */
   older: Map<number, SettledPage>
   cell: CellView
@@ -511,6 +515,72 @@ export function restoreRow(partial: Partial<RestoreRow> = {}): RestoreRow {
     reason: null,
     ...partial,
   }
+}
+
+/** 복원 못 한 실행 한 행(결함 14). 기본은 앞선 기동에서 포기한 행이고 종결할 수 있으며 그 기체를 배정에서 빼고 있다. */
+export function unrestoredRow(partial: Partial<UnrestoredRow> = {}): UnrestoredRow {
+  return {
+    jobOrderId: 'JO-20261009-cccccccc',
+    robotId: 'humanoid-01',
+    previousInstanceId: 'mw-0',
+    previousExecutionId: 'exec-7',
+    result: 'GAVE_UP',
+    reason: '판단 기록을 읽지 못해 리빌드하지 않는다: record=3, 형식 오류',
+    since: 'u1',
+    closable: true,
+    notClosableReason: null,
+    close: null,
+    robotExcluded: true,
+    ...partial,
+  }
+}
+
+/** 종결 한 건(결함 14). 기본은 kim 이 기체 스냅숏을 근거로 종결한 것이다. */
+export function closeRecord(partial: Partial<CloseRecord> = {}): CloseRecord {
+  return {
+    requestId: '7d1b6f0a-5b1c-4a52-9e0f-1c2d3e4f5a6b',
+    approverId: 'kim',
+    reason: '현장에서 정지를 확인했다',
+    basis: 'SNAPSHOT',
+    attestedStopped: false,
+    closedInstanceId: 'mw-0',
+    closedExecutionId: 'exec-7',
+    restoreResult: 'GAVE_UP',
+    restoreReason: '판단 기록을 읽지 못해 리빌드하지 않는다: record=3, 형식 오류',
+    responseId: 'close-12',
+    recordedAt: 'c1',
+    ...partial,
+  }
+}
+
+/** 운영자 종결 200 응답(결함 14). 기본은 종결해서 성공한 것이다. `answer` 를 주면 호스트 본문을 그것으로 바꾼다. */
+export function closeOutcome(partial: Partial<ExecutionCloseOutcome> = {}): ExecutionCloseOutcome {
+  return {
+    requestId: '0b8a3c1e-2f64-4d70-8c1d-6a5e4d3c2b1a',
+    jobOrderId: 'JO-20261009-cccccccc',
+    result: 'SUCCEEDED',
+    confirmation: null,
+    outcome: 'CLOSED',
+    answer: {
+      result: 'CLOSED',
+      jobOrderId: 'JO-20261009-cccccccc',
+      basis: 'SNAPSHOT',
+      responseId: 'close-12',
+      detail: null,
+      requestId: '0b8a3c1e-2f64-4d70-8c1d-6a5e4d3c2b1a',
+    },
+    rejection: null,
+    ...partial,
+  }
+}
+
+/** 호스트가 종결하지 않은 답(결함 14). 조작 기록은 거부로 남는다. */
+export function closeRefused(result: Exclude<CloseResult, 'CLOSED'>, detail: string): ExecutionCloseOutcome {
+  return closeOutcome({
+    result: 'REJECTED',
+    outcome: result,
+    answer: { result, jobOrderId: 'JO-20261009-cccccccc', basis: null, responseId: null, detail, requestId: '0b8a3c1e-2f64-4d70-8c1d-6a5e4d3c2b1a' },
+  })
 }
 
 /** 송신 기록(S4b 계약 H6). 기본은 행이 없는 지금 인스턴스 mw-1 이다. */

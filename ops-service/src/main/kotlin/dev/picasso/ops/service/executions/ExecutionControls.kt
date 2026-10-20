@@ -54,6 +54,23 @@ data class ExecutionReleaseOutcome(
 )
 
 /**
+ * 복원 못 한 실행의 운영자 종결의 200 응답(결함 14). 칸은 [ExecutionCancelOutcome] 과 같다.
+ *
+ * @param result 조작 기록의 결과. `CLOSED` 는 성공, 그 밖의 호스트 결과(ALREADY_CLOSED·NOT_CLOSABLE·TASK_LIVE·STOP_UNCONFIRMED·TARGET_CHANGED·
+ *   NOT_FOUND·REFUSED)와 호스트 4xx 는 거부, 호스트가 안 닿으면 응답 없음이다
+ * @param outcome 호스트 종결 결과 이름 그대로. 호스트가 200 으로 답했을 때만 있다
+ */
+data class ExecutionCloseOutcome(
+    val requestId: UUID,
+    val jobOrderId: String,
+    val result: OperationResult,
+    val confirmation: OperationResult?,
+    val outcome: String?,
+    val answer: JsonNode?,
+    val rejection: HostRejection?,
+)
+
+/**
  * 잔여 파지 표시 해소(기체 빈손 확인)의 200 응답(P0-b2).
  *
  * @param result 호스트가 해소하면 성공, 404 `RESIDUAL_HOLD_NOT_FOUND`·409 `RESIDUAL_HOLD_ALREADY_CLEARED` 는 거부다
@@ -82,6 +99,10 @@ data class RobotEmptyOutcome(
  * 빈손 확인: 정착할 때 로봇 단위의 마지막 파지 관측이 HOLDING 이던 기체에 호스트가 표시를 세우고, 표시가 있는 동안 그 기체를
  * 배정에서 뺀다. 사람이 현장에서 빈손을 확인해야 푼다. 응답 없음 뒤 재조회는 미해소 표시 목록으로 한다. 그 표시가 목록에 없으면
  * 반영됨이다(누가 풀었는지는 호스트의 해소 행이 말한다).
+ *
+ * 복원 못 한 실행의 종결(결함 14): 기동 복원이 GAVE_UP 이나 DEFERRED 로 남긴 일지 행을 운영자가 끝낸다. 호스트가 일지 이벤트와 UNVERIFIED 종결 응답을 한
+ * 트랜잭션으로 적고 운영 서비스는 그것을 보통의 결과 수집으로 모은다. 작업 요청 상태 집합은 그대로이고 종결 응답의 `closure` 표시가 결과 버전에 실린다
+ * ([dev.picasso.ops.service.requests.WorkRequests.CLOSED_KINDS]).
  *
  * 결함 감수: picasso `release` 는 막는 결함 전부를 감수하므로 운영자가 본 결함(`sawFaults`)을 함께 보내고, 대조는 실행 호스트가
  * 잠금 아래에서 한다. 감수는 결함을 지우지 않고 작업 허가 막음을 풀지 않는다. 재작업이 아니라 계획의 다음 단위로 가므로 재작업
@@ -139,6 +160,39 @@ class ExecutionControls(
         return ExecutionReleaseOutcome(ran.requestId, executionId, ran.result, ran.confirmation, outcome, ran.body, ran.rejection)
     }
 
+    /**
+     * 복원 못 한 실행의 운영자 종결(결함 14). [executionInstanceId]·[executionId] 는 운영자가 실행 목록에서 본 종결할 실행이고 [reason] 과 함께 컨트롤러가
+     * 비어 있지 않음을 본 값이다. 종결은 호스트가 정지를 확인하는 것(기체 스냅숏, 또는 [attestedStopped] 증언)에 달려 있고 로봇을 멈추지 않으며 성공을
+     * 추정하지 않는다. 호스트는 UNVERIFIED 종결 응답을 결과로 내고 운영 서비스가 그것을 결과 버전으로 모은다(작업 요청 상태 집합은 그대로다).
+     *
+     * 응답 없음 뒤 재조회는 `GET /host/job-orders/{jobOrderId}/closure?requestId=` 다. 종결 행의 요청 id 가 이 요청의 것이면 반영됨이고, 종결이 없거나 다른
+     * 요청 id 의 종결이면 반영 안 됨이다. 호스트가 이 요청을 아직 처리 중이면(잠금 대기·스냅숏 읽기) 못 읽은 것과 같이 확인하지 못한다(널). 다른 요청의 종결은
+     * 이 요청의 반영이 아니다.
+     */
+    fun close(
+        actor: Actor,
+        jobOrderId: String,
+        executionInstanceId: String,
+        executionId: String,
+        reason: String,
+        attestedStopped: Boolean,
+    ): ExecutionCloseOutcome {
+        val request = json.createObjectNode()
+            .put("op", CLOSE_OP)
+            .put("jobOrderId", jobOrderId)
+            .put("approverId", actor.user)
+            .put("executionInstanceId", executionInstanceId)
+            .put("executionId", executionId)
+            .put("attestedStopped", attestedStopped)
+        val ran = runner.run(
+            actor, jobOrderId, request, reason,
+            accepted = { body -> closeResultOf(body.path("result").takeIf { it.isTextual }?.asText()) },
+            recheck = { requestId -> recheckClose(jobOrderId, requestId) },
+        ) { requestId -> host.closeUnrestored(jobOrderId, actor.user, reason, executionInstanceId, executionId, attestedStopped, requestId) }
+        val outcome = ran.body?.path("result")?.takeIf { it.isTextual }?.asText()
+        return ExecutionCloseOutcome(ran.requestId, jobOrderId, ran.result, ran.confirmation, outcome, ran.body, ran.rejection)
+    }
+
     /** [reason] 은 컨트롤러가 비어 있지 않음을 본 값이다. */
     fun confirmEmpty(actor: Actor, robotId: String, markerId: Long, reason: String): RobotEmptyOutcome {
         val request = json.createObjectNode()
@@ -174,6 +228,14 @@ class ExecutionControls(
         return HostRecheck(releases.any { it.path("requestId").asText() == requestId.toString() }, execution)
     }
 
+    private fun recheckClose(jobOrderId: String, requestId: UUID): HostRecheck? = when (val call = host.closure(jobOrderId, requestId)) {
+        is HostCall.Silent -> null
+        is HostCall.Ok -> {
+            val closure = call.value
+            HostRecheck(closure != null && closure.path("requestId").asText() == requestId.toString(), closure)
+        }
+    }
+
     private fun recheckClear(markerId: Long): HostRecheck? {
         val holds = (host.residualHolds() as? HostCall.Ok)?.value?.path("holds")?.takeIf { it.isArray } ?: return null
         val open = holds.firstOrNull { it.path("markerId").asLong() == markerId }
@@ -194,6 +256,19 @@ class ExecutionControls(
         fun cancelResultOf(name: String?): OperationResult? = when (name) {
             CANCELED -> OperationResult.SUCCEEDED
             in CANCEL_REFUSALS -> OperationResult.REJECTED
+            else -> null
+        }
+
+        const val CLOSE_OP = "CLOSE_UNRESTORED"
+
+        /** 호스트 종결 결과 이름(결함 14). */
+        const val CLOSED = "CLOSED"
+        val CLOSE_REFUSALS: Set<String> =
+            setOf("ALREADY_CLOSED", "NOT_CLOSABLE", "TASK_LIVE", "STOP_UNCONFIRMED", "TARGET_CHANGED", "NOT_FOUND", "REFUSED")
+
+        fun closeResultOf(name: String?): OperationResult? = when (name) {
+            CLOSED -> OperationResult.SUCCEEDED
+            in CLOSE_REFUSALS -> OperationResult.REJECTED
             else -> null
         }
 

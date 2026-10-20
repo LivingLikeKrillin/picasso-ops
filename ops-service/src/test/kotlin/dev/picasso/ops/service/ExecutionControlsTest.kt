@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import dev.picasso.ops.service.executions.ExecutionCancelOutcome
+import dev.picasso.ops.service.executions.ExecutionCloseOutcome
 import dev.picasso.ops.service.executions.ExecutionControls
 import dev.picasso.ops.service.executions.ExecutionReleaseOutcome
 import dev.picasso.ops.service.executions.RobotEmptyOutcome
@@ -27,6 +28,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * 운영자 실행 취소와 기체 빈손 확인 API(P0-b2), 운영자 결함 감수 API(S3a JSON 계약 §9.8). 관문과 사전 거부, 조작 기록의 결과 매김, 응답 없음 뒤 재조회의 대조를 본다. 컨트롤러를
@@ -46,6 +48,11 @@ class ExecutionControlsTest {
         var cancelAnswer: HostWrite = HostWrite.Answered(200, cancelBody("CANCELED"))
         var clearAnswer: HostWrite = HostWrite.Answered(200, CLEARED)
         var releaseAnswer: HostWrite = HostWrite.Answered(200, releaseBody("RELEASED"))
+        var closeAnswer: HostWrite = HostWrite.Answered(200, closeBody("CLOSED"))
+
+        /** 종결 요청을 받을 때 종결 조회를 바꾼다. 재조회 본문이 이 요청의 id 를 실어야 할 때 쓴다. */
+        var onClose: (UUID) -> Unit = {}
+        var closureAnswer: HostCall<JsonNode?> = HostCall.Silent("응답 없음: ConnectException")
 
         /** 감수 요청을 받을 때 실행 목록을 바꾼다. 재조회 본문이 이 요청의 id 를 실어야 할 때 쓴다. */
         var onRelease: (UUID) -> Unit = {}
@@ -79,6 +86,26 @@ class ExecutionControlsTest {
             return releaseAnswer
         }
 
+        override fun closeUnrestored(
+            jobOrderId: String,
+            approverId: String,
+            reason: String,
+            executionInstanceId: String,
+            executionId: String,
+            attestedStopped: Boolean,
+            requestId: UUID,
+        ): HostWrite {
+            calls += mapOf(
+                "op" to "close", "jobOrderId" to jobOrderId, "approverId" to approverId, "reason" to reason,
+                "executionInstanceId" to executionInstanceId, "executionId" to executionId, "attestedStopped" to attestedStopped, "requestId" to requestId,
+            )
+            onClose(requestId)
+            return closeAnswer
+        }
+
+        override fun closure(jobOrderId: String, requestId: UUID): HostCall<JsonNode?> =
+            closureAnswer.also { calls += mapOf("op" to "closure", "jobOrderId" to jobOrderId, "requestId" to requestId) }
+
         override fun residualHolds(): HostCall<JsonNode> = holds.also { calls += mapOf("op" to "residualHolds") }
 
         override fun clearResidualHold(robotId: String, markerId: Long, approverId: String, reason: String, requestId: UUID): HostWrite {
@@ -86,7 +113,7 @@ class ExecutionControlsTest {
             return clearAnswer
         }
 
-        fun writes() = calls.filter { it["op"] in setOf("cancel", "clear", "release") }
+        fun writes() = calls.filter { it["op"] in setOf("cancel", "clear", "release", "close") }
     }
 
     @BeforeTest
@@ -104,6 +131,9 @@ class ExecutionControlsTest {
 
     private fun release(mode: String?, user: String? = "kim", body: String = RELEASE_REQUEST): ResponseEntity<Any> =
         controller.release("exec-1", mode, user, body.toByteArray())
+
+    private fun close(mode: String?, user: String? = "kim", body: String = CLOSE_REQUEST): ResponseEntity<Any> =
+        controller.close("JO-1", mode, user, body.toByteArray())
 
     private fun clear(mode: String?, user: String? = "kim", marker: String = "7", body: String = """{"reason":"현장에서 빈손 확인"}"""): ResponseEntity<Any> =
         controller.clear("humanoid-01", marker, mode, user, body.toByteArray())
@@ -351,6 +381,114 @@ class ExecutionControlsTest {
         assertEquals(5, log.list().count { it.result == OperationResult.NO_RESPONSE })
     }
 
+    @Test
+    fun `복원 못 한 실행 종결은 운영자 모드만 하고 본문이 틀리면 CLOSE_BAD_REQUEST 사유가 없으면 REASON_REQUIRED 이며 호스트를 부르지 않는다`() {
+        val engineer = close("engineer")
+        assertEquals(403, engineer.statusCode.value())
+        assertEquals("MODE_NOT_ALLOWED", engineer.rejection().error)
+        listOf(close(null), close("operator", user = null)).forEach { reply ->
+            assertEquals(400, reply.statusCode.value())
+            assertEquals("ACTOR_REQUIRED", reply.rejection().error)
+        }
+        listOf(
+            "종결",
+            """{"executionId":"exec-7","reason":"r","attestedStopped":false}""",
+            """{"executionInstanceId":" ","executionId":"exec-7","reason":"r","attestedStopped":false}""",
+            """{"executionInstanceId":"mw-0","reason":"r","attestedStopped":false}""",
+            """{"executionInstanceId":"mw-0","executionId":7,"reason":"r","attestedStopped":false}""",
+            """{"executionInstanceId":"mw-0","executionId":"exec-7","reason":"r"}""",
+            """{"executionInstanceId":"mw-0","executionId":"exec-7","reason":"r","attestedStopped":"true"}""",
+            """{"executionInstanceId":"mw-0","executionId":"exec-7","reason":"r","attestedStopped":1}""",
+            """{"executionInstanceId":"mw-0","executionId":"exec-7","reason":"r","attestedStopped":null}""",
+        ).forEach { body ->
+            val reply = close("operator", body = body)
+            assertEquals(400, reply.statusCode.value(), body)
+            assertEquals(ExecutionControlController.CLOSE_BAD_REQUEST, reply.rejection().error, body)
+        }
+        listOf(
+            """{"executionInstanceId":"mw-0","executionId":"exec-7","attestedStopped":false}""",
+            """{"executionInstanceId":"mw-0","executionId":"exec-7","reason":"  ","attestedStopped":true}""",
+        ).forEach { body ->
+            val reply = close("operator", body = body)
+            assertEquals(400, reply.statusCode.value(), body)
+            assertEquals(ExecutionControlController.REASON_REQUIRED, reply.rejection().error, body)
+        }
+        assertEquals(emptyList(), host.calls)
+        assertEquals(emptyList(), log.list())
+    }
+
+    @Test
+    fun `종결은 승인자가 행위자이고 CLOSED 는 성공 그 밖의 결과와 호스트 4xx 는 거부이며 응답이 없으면 closure 의 requestId 로 대조하고 못 읽으면 확인하지 못한다`() {
+        val closed = assertIs<ExecutionCloseOutcome>(
+            close("operator", body = """{"executionInstanceId":"mw-0","executionId":"exec-7","reason":" 현장에서 정지 확인 ","approverId":"mallory","attestedStopped":true}""").body,
+        )
+        assertEquals(listOf(OperationResult.SUCCEEDED, "CLOSED"), listOf(closed.result, closed.outcome))
+        assertEquals(
+            mapOf(
+                "op" to "close", "jobOrderId" to "JO-1", "approverId" to "kim", "reason" to "현장에서 정지 확인",
+                "executionInstanceId" to "mw-0", "executionId" to "exec-7", "attestedStopped" to true, "requestId" to closed.requestId,
+            ),
+            host.writes().single(),
+        )
+        val row = log.list().single()
+        assertEquals(listOf("kim", "JO-1", "현장에서 정지 확인"), listOf(row.user, row.target, row.reason))
+        assertEquals(
+            json.readTree("""{"op":"CLOSE_UNRESTORED","jobOrderId":"JO-1","approverId":"kim","executionInstanceId":"mw-0","executionId":"exec-7","attestedStopped":true}"""),
+            json.readTree(row.request),
+        )
+
+        listOf("ALREADY_CLOSED", "NOT_CLOSABLE", "TASK_LIVE", "STOP_UNCONFIRMED", "TARGET_CHANGED", "NOT_FOUND", "REFUSED").forEach { result ->
+            host.closeAnswer = HostWrite.Answered(200, closeBody(result))
+            val refused = assertIs<ExecutionCloseOutcome>(close("operator").body)
+            assertEquals(listOf(OperationResult.REJECTED, result), listOf(refused.result, refused.outcome))
+            assertEquals(result, refused.answer!!["result"].asText())
+        }
+        listOf(409 to "REQUEST_ID_REUSED", 400 to "BAD_REQUEST").forEach { (status, error) ->
+            host.closeAnswer = HostWrite.Answered(status, """{"error":"$error","detail":"x"}""")
+            val rejected = assertIs<ExecutionCloseOutcome>(close("operator").body)
+            assertEquals(listOf(OperationResult.REJECTED, status, error), listOf(rejected.result, rejected.rejection!!.status, rejected.rejection!!.error))
+            assertNull(rejected.outcome)
+        }
+        assertEquals(10, log.list().size)
+        assertEquals(mapOf(OperationResult.SUCCEEDED to 1, OperationResult.REJECTED to 9), log.list().groupingBy { it.result }.eachCount())
+
+        // 응답이 없으면 종결 조회의 requestId 가 이 요청의 것인지로 대조한다.
+        host.closeAnswer = HostWrite.NoResponse("응답 없음: HttpTimeoutException")
+        host.onClose = { id -> host.closureAnswer = HostCall.Ok(json.readTree(closureBody(id.toString()))) }
+        val applied = assertIs<ExecutionCloseOutcome>(close("operator").body)
+        assertEquals(listOf(OperationResult.NO_RESPONSE, OperationResult.CONFIRMED_APPLIED), listOf(applied.result, applied.confirmation))
+        val observed = log.list().single { it.result == OperationResult.CONFIRMED_APPLIED }
+        assertEquals(listOf(applied.requestId, "JO-1"), listOf(observed.requestId, observed.target))
+        assertEquals(json.readTree(closureBody(applied.requestId.toString())), json.readTree(observed.targetResponse)["observed"])
+
+        // 앞선 종결(다른 요청 id)만 있거나 종결이 없으면 이 요청의 반영이 아니다.
+        host.onClose = { host.closureAnswer = HostCall.Ok(json.readTree(closureBody(UUID.randomUUID().toString()))) }
+        assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, assertIs<ExecutionCloseOutcome>(close("operator").body).confirmation)
+        host.onClose = { host.closureAnswer = HostCall.Ok(null) }
+        assertEquals(OperationResult.CONFIRMED_NOT_APPLIED, assertIs<ExecutionCloseOutcome>(close("operator").body).confirmation)
+
+        // 못 읽으면 확인하지 못한다. 확인 행은 붙지 않는다.
+        host.onClose = { host.closureAnswer = HostCall.Silent("응답 없음: ConnectException") }
+        val unknown = assertIs<ExecutionCloseOutcome>(close("operator").body)
+        assertEquals(listOf(OperationResult.NO_RESPONSE, null), listOf(unknown.result, unknown.confirmation))
+        // 재조회는 그 종결 요청의 id 를 싣는다(호스트가 그 요청을 처리 중이면 모름으로 답하게).
+        val rechecks = host.calls.filter { it["op"] == "closure" }
+        assertEquals(4, rechecks.size)
+        assertEquals(listOf(applied.requestId, unknown.requestId), listOf(rechecks.first()["requestId"], rechecks.last()["requestId"]))
+        assertTrue(rechecks.all { it["jobOrderId"] == "JO-1" })
+        assertEquals(
+            listOf(OperationResult.CONFIRMED_APPLIED, OperationResult.CONFIRMED_NOT_APPLIED, OperationResult.CONFIRMED_NOT_APPLIED),
+            log.list().map { it.result }.filter { it != OperationResult.NO_RESPONSE && it != OperationResult.SUCCEEDED && it != OperationResult.REJECTED }.sortedBy { it.name },
+        )
+        assertEquals(4, log.list().count { it.result == OperationResult.NO_RESPONSE })
+
+        // 호스트가 그 요청을 아직 처리 중이면(재조회가 모름으로 답한다) 반영 안 됨으로 확인하지 않는다.
+        host.onClose = { host.closureAnswer = HostCall.Silent("호스트가 그 요청을 아직 처리 중이다") }
+        val inProgress = assertIs<ExecutionCloseOutcome>(close("operator").body)
+        assertEquals(listOf(OperationResult.NO_RESPONSE, null), listOf(inProgress.result, inProgress.confirmation))
+        assertEquals(0, log.list().count { it.result == OperationResult.CONFIRMED_NOT_APPLIED && it.requestId == inProgress.requestId })
+    }
+
     private fun releasedExecutions(instanceId: String, releases: String): HostCall<JsonNode> = HostCall.Ok(
         json.readTree(
             """{"instanceId":"$instanceId","pumpedAt":null,"executions":[{"executionId":"exec-1","jobOrderId":"JO-1","robotId":"quadruped-01",""" +
@@ -375,6 +513,15 @@ class ExecutionControlsTest {
             """{"hold":$HOLD,"clearing":{"approverId":"kim","approverKind":"PERSON","reason":"r","clearedAt":"2026-10-13T09:00:01Z"},"requestId":null}"""
 
         const val SAW = """[{"errorType":"LOCALIZATION_LOST","references":[]}]"""
+
+        const val CLOSE_REQUEST = """{"executionInstanceId":"mw-0","executionId":"exec-7","reason":"현장에서 정지 확인","attestedStopped":false}"""
+
+        fun closeBody(result: String) =
+            """{"result":"$result","jobOrderId":"JO-1","basis":${if (result == "CLOSED") "\"SNAPSHOT\"" else "null"},"responseId":null,"detail":null,"requestId":"3f0c6c1e-6a0e-4f43-9a52-2a3b4a9e8d10"}"""
+
+        fun closureBody(requestId: String) =
+            """{"requestId":"$requestId","approverId":"kim","reason":"r","basis":"SNAPSHOT","attestedStopped":false,"closedInstanceId":"mw-0","closedExecutionId":"exec-7",""" +
+                """"restoreResult":"GAVE_UP","restoreReason":"x","responseId":"close-1","recordedAt":"t"}"""
 
         const val RELEASE_REQUEST = """{"instanceId":"mw-1","reason":"현장에서 기체 상태 확인","sawFaults":$SAW}"""
 
