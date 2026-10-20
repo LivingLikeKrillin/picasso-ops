@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { faultBlocked, fetchSettledBefore, RECENT_EXECUTIONS } from '../api'
-import type { CancelRecord, Execution, ExecutionPage, JobResponse, ReleaseRecord, RestoreRow, Session, SettledExecution } from '../api'
+import type {
+  CancelRecord,
+  Delivered,
+  Execution,
+  ExecutionCloseOutcome,
+  ExecutionPage,
+  JobResponse,
+  ReleaseRecord,
+  RestoreRow,
+  Session,
+  SettledExecution,
+  UnrestoredRow,
+} from '../api'
 import { appendOlder, catchUp, olderCount, olderCursor, sameExecution } from '../executionHistory'
 import type { ExecutionHistory } from '../executionHistory'
-import { EXECUTION_CONTROL_TEXT, EXECUTION_LIST_TEXT as TEXT } from '../labels'
-import { CancelExecutionForm, ReleaseFaultForm, ReworkSkippedForm } from './ExecutionControls'
+import { EXECUTION_CONTROL_TEXT, EXECUTION_LIST_TEXT as TEXT, UNRESTORED_TEXT } from '../labels'
+import { CancelExecutionForm, CloseResultStatus, CloseUnrestoredForm, ReleaseFaultForm, ReworkSkippedForm } from './ExecutionControls'
 import { PermitBlockNotice } from './PermitBlockNotice'
 
 /** 실행 호스트를 거친 읽기 하나. 못 읽으면 직전 값을 지우지 않고 [error] 로 불통을 표시한다. */
@@ -54,6 +66,8 @@ const withoutLive = (rows: SettledExecution[], page: ExecutionPage) =>
  */
 export function ExecutionList({ read, highlight, session, onCanceled }: Props) {
   const { value, error } = read
+  // 마지막 운영자 종결 결과. 종결하면 목록을 다시 읽어 그 행과 종결 폼이 내려가므로 결과 줄은 여기서 쥔다.
+  const [lastClose, setLastClose] = useState<{ jobOrderId: string; sent: Delivered<ExecutionCloseOutcome> } | null>(null)
   if (value === null) {
     return <p>모름: 실행 목록을 아직 읽지 못했습니다{error !== null && ` (${error})`}</p>
   }
@@ -72,6 +86,15 @@ export function ExecutionList({ read, highlight, session, onCanceled }: Props) {
       {value.restore != null && value.restore.rows.length > 0 && (
         <RestoreReport at={value.restore.at} rows={value.restore.rows} />
       )}
+      {!!value.unrestored?.length && (
+        <UnrestoredExecutions
+          rows={value.unrestored}
+          session={session}
+          onClosed={onCanceled ?? (() => undefined)}
+          onResult={(jobOrderId, sent) => setLastClose({ jobOrderId, sent })}
+        />
+      )}
+      {lastClose !== null && <CloseResultStatus jobOrderId={lastClose.jobOrderId} sent={lastClose.sent} />}
       {live.length === 0 && settled.length === 0 ? (
         <p>실행이 없습니다</p>
       ) : (
@@ -322,7 +345,10 @@ function RestoreReport({ at, rows }: { at: string; rows: RestoreRow[] }) {
   const restored = rows.filter((row) => row.result === 'RESTORED')
   const deferred = rows.filter((row) => row.result === 'DEFERRED')
   const gaveUp = rows.filter((row) => row.result === 'GAVE_UP')
-  const unsettled = (row: RestoreRow) => `${row.jobOrderId}(${row.robotId}, 이전 ${row.previousExecutionId}): ${row.reason ?? '사유 없음'}`
+  const unsettled = (row: RestoreRow) =>
+    `${row.jobOrderId}(${row.robotId}, 이전 ${row.previousExecutionId}): ${row.reason ?? '사유 없음'}${
+      row.close != null ? ` · ${UNRESTORED_TEXT.reportClosed(row.close.approverId)}` : ''
+    }`
   return (
     <section aria-label="재기동 복원 보고" className="restore">
       <p>
@@ -349,13 +375,90 @@ function RestoreReport({ at, rows }: { at: string; rows: RestoreRow[] }) {
       )}
       {gaveUp.length > 0 && (
         <>
-          <p>포기한 실행 {gaveUp.length}건. 리빌드하지 않습니다. 기체의 남은 태스크를 운영자가 확인하십시오</p>
+          <p>포기한 실행 {gaveUp.length}건. 기체가 정지했음을 확인한 후 아래 «복원 못 한 실행»에서 종결하십시오.</p>
           <ul aria-label="포기한 실행">
             {gaveUp.map((row) => (
               <li key={row.jobOrderId}>{unsettled(row)}</li>
             ))}
           </ul>
         </>
+      )}
+    </section>
+  )
+}
+
+/**
+ * 복원 못 한 실행(결함 14). 이번 기동의 복원 보고와 달리 앞선 기동에서 포기한 행도 든다. 종결할 수 있는 행은 운영자 모드에서 «종결하기» 로 고르고
+ * 종결 폼을 연다. 종결할 수 없는 행(살아 있는 다른 인스턴스가 든 행)은 까닭을 보인다. 정지 증언으로 종결했으나 스냅숏이 아직 동의하지 않은 행은
+ * 승인자와 사유를 보이고 그 기체가 배정에서 빠져 있다고 알린다.
+ */
+function UnrestoredExecutions({
+  rows,
+  session,
+  onClosed,
+  onResult,
+}: {
+  rows: UnrestoredRow[]
+  session?: Session
+  onClosed: () => void
+  onResult: (jobOrderId: string, sent: Delivered<ExecutionCloseOutcome>) => void
+}) {
+  const [chosen, setChosen] = useState<string | null>(null)
+  const operator = session?.mode === 'operator'
+  const row = rows.find((candidate) => candidate.jobOrderId === chosen && candidate.closable) ?? null
+  return (
+    <section aria-label={UNRESTORED_TEXT.heading} className="restore">
+      <h3>{UNRESTORED_TEXT.heading}</h3>
+      <p>{UNRESTORED_TEXT.intro}</p>
+      <div className="table-scroll" tabIndex={0} role="group" aria-label="표 가로 스크롤">
+        <table aria-label={UNRESTORED_TEXT.table}>
+          <thead>
+            <tr>
+              <th>작업 지시</th>
+              <th>기체</th>
+              <th>이전 실행</th>
+              <th>결과</th>
+              <th>사유</th>
+              <th>시각</th>
+              <th>조치</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((unrestored) => (
+              <tr key={unrestored.jobOrderId} className={unrestored.jobOrderId === row?.jobOrderId ? 'selected' : undefined}>
+                <td>{unrestored.jobOrderId}</td>
+                <td>{unrestored.robotId}</td>
+                <td title={`인스턴스 ${unrestored.previousInstanceId}`}>{unrestored.previousExecutionId}</td>
+                <td>
+                  {UNRESTORED_TEXT.result[unrestored.result] ?? unrestored.result}
+                  {unrestored.close !== null && (
+                    <>
+                      {' '}
+                      ({UNRESTORED_TEXT.closedBy(unrestored.close.approverId, unrestored.close.reason)}). {UNRESTORED_TEXT.excludedUntilSnapshot}
+                    </>
+                  )}
+                </td>
+                <td>{unrestored.reason ?? '사유 없음'}</td>
+                <td>{unrestored.since}</td>
+                <td>
+                  {unrestored.closable ? (
+                    operator ? (
+                      <button type="button" onClick={() => setChosen(unrestored.jobOrderId)}>
+                        {UNRESTORED_TEXT.closeButton}
+                      </button>
+                    ) : null
+                  ) : (
+                    unrestored.notClosableReason
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {session !== undefined && !operator && rows.some((unrestored) => unrestored.closable) && <p>{UNRESTORED_TEXT.operatorOnly}</p>}
+      {session !== undefined && operator && row !== null && (
+        <CloseUnrestoredForm key={row.jobOrderId} row={row} session={session} onClosed={onClosed} onResult={(sent) => onResult(row.jobOrderId, sent)} />
       )}
     </section>
   )

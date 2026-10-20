@@ -31,6 +31,19 @@ data class CancelRequest(val approverId: String, val reason: String, val instanc
  */
 data class ReleaseRequest(val approverId: String, val reason: String, val instanceId: String, val sawFaults: List<FaultSighting>, val requestId: String?)
 
+/**
+ * 복원 못 한 실행의 운영자 종결 요청(결함 14). [requestId] 는 필수이고 종결 행에 적는다. [executionInstanceId]·[executionId] 는 운영자가 본 종결할
+ * 실행이다(지금 일지와 다르면 `TARGET_CHANGED`). [attestedStopped] 는 운영자가 로봇이 현장에서 멈춘 것을 확인했다는 증언이다.
+ */
+data class CloseRequest(
+    val approverId: String,
+    val reason: String,
+    val requestId: String,
+    val executionInstanceId: String,
+    val executionId: String,
+    val attestedStopped: Boolean,
+)
+
 /** 잔여 파지 표시 해소 요청(P0-b2). */
 data class ClearRequest(val approverId: String, val reason: String, val requestId: String?)
 
@@ -158,6 +171,22 @@ object HostRequests {
             )
         }
         return ReleaseRequest(text(body, "approverId"), text(body, "reason").trim(), text(body, "instanceId"), sightings, requestId(body))
+    }
+
+    /**
+     * 복원 못 한 실행의 운영자 종결 `{approverId, reason, requestId, executionInstanceId, executionId, attestedStopped}` 를 읽는다(결함 14). 앞 두
+     * 칸과 네 번째·다섯 번째 칸은 비어 있지 않은 문자열이고 사유는 앞뒤 공백을 뗀다. requestId 는 취소·수용과 달리 필수이고 UUID 문자열이다(응답 없음 뒤
+     * 재조회가 이것으로 대조한다). attestedStopped 는 참거짓 값이다(문자열이나 숫자는 400).
+     */
+    fun close(body: JsonNode?): CloseRequest {
+        if (body == null || !body.isObject) throw BadRequest(BAD_REQUEST, "본문이 JSON 객체가 아니다")
+        // 종결 행과 응답에는 정규형 문자열을 쓴다(운영 서비스가 재조회에서 문자열로 대조한다). 취소·수용·해소의 requestId 와 같이 정규형이 아닌 표기도 받는다.
+        val requestId = requestId(body)?.let { UUID.fromString(it).toString() } ?: throw BadRequest(BAD_REQUEST, "requestId 는 필수이고 UUID 문자열이다")
+        val attested = body.get("attestedStopped")?.takeIf { it.isBoolean }?.asBoolean()
+            ?: throw BadRequest(BAD_REQUEST, "attestedStopped 가 참거짓 값이 아니다")
+        return CloseRequest(
+            text(body, "approverId"), text(body, "reason").trim(), requestId, text(body, "executionInstanceId"), text(body, "executionId"), attested,
+        )
     }
 
     /** 잔여 파지 표시 해소 `{approverId, reason, requestId?}` 를 읽는다(P0-b2). 규칙은 [cancel] 과 같다. */

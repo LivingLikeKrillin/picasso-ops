@@ -28,10 +28,14 @@ class HostClientTest {
     /** 경로마다 받은 요청(방법, Content-Type, 본문)을 남긴다. */
     private val seen = mutableMapOf<String, Triple<String, String?, String>>()
 
+    /** 경로마다 받은 질의 문자열. */
+    private val queries = mutableMapOf<String, String?>()
+
     private fun serve(vararg routes: Pair<String, Pair<Int, String>>): HostClient {
         val s = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         routes.forEach { (path, answer) ->
             s.createContext(path) { exchange ->
+                queries[path] = exchange.requestURI.rawQuery
                 seen[path] = Triple(
                     exchange.requestMethod,
                     exchange.requestHeaders.getFirst("Content-Type"),
@@ -235,6 +239,42 @@ class HostClientTest {
             ),
             json.readTree(body),
         )
+    }
+
+    @Test
+    fun `종결은 승인자와 사유와 본 실행과 증언과 요청 id 를 실어 보내고 종결 조회는 404 NOT_CLOSED 만 없음으로 읽는다`() {
+        val requestId = UUID.fromString("6f1c2a9e-0b7d-4c55-9a51-2f3e4d5c6b7a")
+        val answer = """{"result":"CLOSED","jobOrderId":"JO-1","basis":"SNAPSHOT","responseId":"close-1","detail":null,"requestId":"$requestId"}"""
+        val closure = """{"requestId":"$requestId","approverId":"kim","reason":"r","basis":"SNAPSHOT","attestedStopped":false,"closedInstanceId":"mw-0","closedExecutionId":"exec-7"}"""
+        val client = serve(
+            "/host/job-orders/JO-1/close" to (200 to answer),
+            "/host/job-orders/JO-1/closure" to (200 to closure),
+            "/host/job-orders/JO-2/closure" to (404 to """{"error":"NOT_CLOSED","detail":"x"}"""),
+            "/host/job-orders/JO-3/closure" to (404 to """{"error":"OTHER","detail":"x"}"""),
+            "/host/job-orders/JO-4/closure" to (500 to ""),
+            "/host/job-orders/JO-5/closure" to (200 to "[]"),
+            "/host/job-orders/JO-6/closure" to (409 to """{"error":"REQUEST_IN_PROGRESS","detail":"x"}"""),
+        )
+        assertEquals(HostWrite.Answered(200, answer), client.closeUnrestored("JO-1", "kim", "현장 확인", "mw-0", "exec-7", true, requestId))
+        val (method, contentType, body) = seen.getValue("/host/job-orders/JO-1/close")
+        assertEquals(listOf("POST", "application/json"), listOf(method, contentType))
+        assertEquals(
+            json.readTree(
+                """{"approverId":"kim","reason":"현장 확인","executionInstanceId":"mw-0","executionId":"exec-7","attestedStopped":true,"requestId":"$requestId"}""",
+            ),
+            json.readTree(body),
+        )
+        assertEquals(json.readTree(closure), assertIs<HostCall.Ok<*>>(client.closure("JO-1", requestId)).value)
+        assertEquals("GET", seen.getValue("/host/job-orders/JO-1/closure").first)
+        // 재조회는 요청 id 를 실어 보낸다. 호스트가 그 요청을 처리 중이면 409 로 답한다.
+        assertEquals("requestId=$requestId", queries.getValue("/host/job-orders/JO-1/closure"))
+        // 종결하지 않았다는 호스트의 답(404 와 NOT_CLOSED)만 없음이다. 다른 404·500·모양 어긋남은 모름이다.
+        assertEquals(HostCall.Ok(null), client.closure("JO-2", requestId))
+        assertIs<HostCall.Silent>(client.closure("JO-3", requestId))
+        assertIs<HostCall.Silent>(client.closure("JO-4", requestId))
+        assertIs<HostCall.Silent>(client.closure("JO-5", requestId))
+        // 409 REQUEST_IN_PROGRESS 는 «종결 없음» 이 아니라 모름이다.
+        assertEquals(HostCall.Silent("호스트가 그 요청을 아직 처리 중이다"), client.closure("JO-6", requestId))
     }
 
     @Test

@@ -26,6 +26,9 @@ import org.springframework.web.bind.annotation.RestController
  * `CLEAR_BAD_REQUEST`·`RELEASE_BAD_REQUEST`) → 사유(400 `REASON_REQUIRED`)다. 모두 호스트에 닿지 않은 사전 거부라 조작 기록에 남지
  * 않는다. 본문은 바이트로 받아 관문을 지난 뒤 직접 읽고, 쓰기 본문은 `application/json` 만 받는다([IncidentController] 와 같은
  * 규칙). 세 조작은 호스트가 무엇을 답했든 200 과 조작 결과다.
+ *
+ * 복원 못 한 실행의 운영자 종결(결함 14, `POST /api/job-orders/{jobOrderId}/close`)도 운영자 모드만 하고 같은 규칙이다(본문 400
+ * `CLOSE_BAD_REQUEST`, 사유 400 `REASON_REQUIRED`).
  */
 @RestController
 class ExecutionControlController(private val controls: ExecutionControls) {
@@ -72,6 +75,29 @@ class ExecutionControlController(private val controls: ExecutionControls) {
         ResponseEntity.ok(controls.release(actor, executionId, instanceId, reason, saw))
     }
 
+    /**
+     * 복원 못 한 실행의 운영자 종결(결함 14). 본문 `{executionInstanceId, executionId, reason, attestedStopped}`. 앞 둘은 실행 목록 `unrestored` 행의
+     * `previousInstanceId`·`previousExecutionId`(운영자가 본 종결할 실행)이고 `attestedStopped` 는 참거짓 값이다(운영자가 로봇이 멈춘 것을 현장에서
+     * 확인했다는 증언, 없으면 400). 대상은 작업 지시 id 다.
+     */
+    @PostMapping("/api/job-orders/{jobOrderId}/close", consumes = [MediaType.APPLICATION_JSON_VALUE])
+    fun close(
+        @PathVariable jobOrderId: String,
+        @RequestHeader(Actor.MODE_HEADER, required = false) mode: String?,
+        @RequestHeader(Actor.USER_HEADER, required = false) user: String?,
+        @RequestBody(required = false) body: ByteArray?,
+    ): ResponseEntity<Any> = guarded(mode, user, Mode.OPERATOR) { actor ->
+        val node = read(body)
+        val instanceId = text(node, "executionInstanceId")
+            ?: return@guarded reject(HttpStatus.BAD_REQUEST, CLOSE_BAD_REQUEST, "executionInstanceId 는 비어 있지 않은 문자열이다(복원 못 한 실행의 previousInstanceId)")
+        val executionId = text(node, "executionId")
+            ?: return@guarded reject(HttpStatus.BAD_REQUEST, CLOSE_BAD_REQUEST, "executionId 는 비어 있지 않은 문자열이다(복원 못 한 실행의 previousExecutionId)")
+        val attested = node?.get("attestedStopped")?.takeIf { it.isBoolean }?.asBoolean()
+            ?: return@guarded reject(HttpStatus.BAD_REQUEST, CLOSE_BAD_REQUEST, "attestedStopped 는 참거짓 값이다")
+        val reason = reason(node) ?: return@guarded reject(HttpStatus.BAD_REQUEST, REASON_REQUIRED, "종결 사유가 없다")
+        ResponseEntity.ok(controls.close(actor, jobOrderId, instanceId, executionId, reason, attested))
+    }
+
     /** 본문 `{reason}`. [markerId] 는 미해소 표시 목록의 `markerId` 다. */
     @PostMapping("/api/robots/{robotId}/residual-holds/{markerId}/clear", consumes = [MediaType.APPLICATION_JSON_VALUE])
     fun clear(
@@ -116,6 +142,7 @@ class ExecutionControlController(private val controls: ExecutionControls) {
         const val CANCEL_BAD_REQUEST = "CANCEL_BAD_REQUEST"
         const val CLEAR_BAD_REQUEST = "CLEAR_BAD_REQUEST"
         const val RELEASE_BAD_REQUEST = "RELEASE_BAD_REQUEST"
+        const val CLOSE_BAD_REQUEST = "CLOSE_BAD_REQUEST"
         const val SAW_FAULTS_SHAPE =
             "sawFaults 는 비어 있지 않은 배열이고 원소마다 errorType 은 비어 있지 않은 문자열, references 는 {key, value} 객체의 배열이다"
 

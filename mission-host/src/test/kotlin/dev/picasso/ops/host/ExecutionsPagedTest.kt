@@ -121,7 +121,7 @@ class ExecutionsPagedTest {
             val first = bench.get("/host/executions?recent=1")
             assertEquals(withoutPump(mapper.readTree(mapper.writeValueAsString(bench.bean(MissionHost::class.java).executionsRecent(1)))), withoutPump(first))
             assertEquals(
-                listOf("instanceId", "pumpedAt", "executions", "restore", "journalBlockedExecutionIds", "reworkableTargets", "settled", "nextBefore", "olderTotal"),
+                listOf("instanceId", "pumpedAt", "executions", "restore", "journalBlockedExecutionIds", "reworkableTargets", "settled", "nextBefore", "olderTotal", "unrestored"),
                 first.fieldNames().asSequence().toList(),
             )
             assertEquals(listOf("settleSeq", "instanceId", "settledAt", "snapshot", "execution", "superseded"), first["settled"][0].fieldNames().asSequence().toList())

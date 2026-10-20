@@ -13,9 +13,10 @@ import java.util.UUID
 
 /**
  * 일지 행 이후의 일(S4b 스펙 T2·T3). [REOPENED] 는 이 인스턴스가 정착을 적은 실행이 개정판 수락이나 운영자 판단으로 다시 도는 것이다(V10).
- * 그 작업 지시의 [SETTLED]·[REOPENED]·[GAVE_UP] 가운데 마지막이 기동 복원의 대상과 판정 제외를 정한다([HostRecords.openJournal]).
+ * [CLOSED] 는 운영자가 복원 못 한 실행을 종결한 것이다(V12). 실행 id 가 없고 detail 이 근거(`SNAPSHOT`·`ATTESTED`)다.
+ * 그 작업 지시의 [SETTLED]·[REOPENED]·[GAVE_UP]·[CLOSED] 가운데 마지막이 기동 복원의 대상과 판정 제외를 정한다([HostRecords.openJournal]).
  */
-enum class JournalEventKind { RESTORED, DEFERRED, GAVE_UP, SETTLED, REOPENED }
+enum class JournalEventKind { RESTORED, DEFERRED, GAVE_UP, SETTLED, REOPENED, CLOSED }
 
 /**
  * 실행 일지 한 행(S4b 스펙 T2). [jobOrder] 는 picasso `JobOrder` 의 칸 그대로의 JSON 글자다.
@@ -196,9 +197,34 @@ data class JudgmentRecordRow(
 )
 
 /**
+ * 운영자 종결 한 행(V12). [instanceId] 는 종결한 인스턴스이고 [closedInstanceId]·[closedExecutionId] 는 종결한 실행이다(복원 행의 바로 앞
+ * 인스턴스와 실행). [restoreResult]·[restoreReason] 은 그때의 복원 결과다. [basis] 는 `SNAPSHOT` 이나 `ATTESTED` 이고 [responseId] 는 종결 응답의
+ * id(`close-<eventId>`)다.
+ */
+data class CloseRow(
+    val closeId: Long,
+    val eventId: Long,
+    val jobOrderId: String,
+    val instanceId: String,
+    val closedInstanceId: String,
+    val closedExecutionId: String,
+    val robotId: String,
+    val restoreResult: String,
+    val restoreReason: String,
+    val basis: String,
+    val approverId: String,
+    val approverKind: String,
+    val reason: String,
+    val requestId: UUID,
+    val responseId: String,
+    val recordedAt: Instant,
+)
+
+/**
  * 실행 호스트의 기록(S4b 스펙 §6.1). 실행 일지와 그 이벤트, 송신 기록, 인시던트 사본과 판단의 다섯 표다. 덧붙이기와 읽기만 있다.
  * P0-b2 의 V5 가 운영자 실행 취소, 잔여 파지 표시와 그 해소의 세 표를 더한다. HA 단계 0 의 V6 이 판단 기록(덧붙이기만)을, V7 이
  * 인스턴스 심장박동(인스턴스마다 한 행, 그 인스턴스만 고침)을 더한다. V11 이 운영자 결함 감수(덧붙이기만)를 더한다.
+ * V12 는 복원 못 한 실행의 운영자 종결(덧붙이기만)을 더한다.
  *
  * pump 뒤 기록은 [inTransaction] 하나로 묶는다(§6.2). 그 밖의 호출은 문장 하나가 한 트랜잭션이다. 호스트 잠금 아래에서 부를 수
  * 있고, 연결을 쥔 채 호스트 잠금을 기다리는 길은 없다(S3b 와 같은 잠금 순서).
@@ -385,6 +411,11 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
     /** 포기한 채인 일지 행. 정착·다시 돎·포기 이벤트 가운데 마지막이 포기다. 받은 순서다. 판정이 그 기체를 뺄지 본다(T4). */
     fun gaveUpJournal(): List<JournalRow> = journalWhere("$LAST_TURN = 'GAVE_UP'")
 
+    /** 정지 증언(`ATTESTED`)으로 종결한 채인 일지 행. 마지막이 종결이고 그 종결 행의 근거가 증언이다. 받은 순서다. 판정이 그 기체를 뺄지 본다. */
+    fun attestedClosures(): List<JournalRow> = journalWhere(
+        "$LAST_TURN = 'CLOSED' AND EXISTS (SELECT 1 FROM mission.execution_close c WHERE c.job_order_id = j.job_order_id AND c.basis = 'ATTESTED')",
+    )
+
     /** 받은 개정판을 적는다(V10). [jobOrder] 는 picasso `JobOrder` 의 칸 그대로의 JSON 글자다. */
     fun revision(jobOrderId: String, version: Int, jobOrder: String, instanceId: String, executionId: String): RevisionRow =
         jdbc.sql(
@@ -482,6 +513,14 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             .param("disposition", disposition.name)
             .query { rs, _ -> logRow(rs) }
             .single()
+
+    /** 그 작업 지시의 가장 최근 송신 기록 행(처분 무관, 재기동 중복 행 포함). 종결 응답이 단위 id 를 거기서 읽는다. 없으면 `null` 이다. */
+    fun lastResponse(jobOrderId: String): ResponseLogRow? =
+        jdbc.sql("SELECT $LOG_COLUMNS FROM mission.job_response_log WHERE job_order_id = :jobOrderId ORDER BY log_id DESC LIMIT 1")
+            .param("jobOrderId", jobOrderId)
+            .query { rs, _ -> logRow(rs) }
+            .optional()
+            .orElse(null)
 
     /** 송신 기록. 최근부터 많아야 [limit] 개다. [jobOrderId] 를 주면 그 작업 지시만이다. */
     fun responseLog(jobOrderId: String?, limit: Int): List<ResponseLogRow> =
@@ -719,6 +758,71 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             .list()
     }
 
+    // ── 복원 못 한 실행의 운영자 종결(V12)
+
+    /**
+     * 종결 이벤트(CLOSED)와 종결 행을 적는다. 이벤트를 먼저 적고 그 id 로 응답 id(`close-<eventId>`)를 짓는다. 두 문장이므로 부르는 쪽이
+     * [inTransaction] 안에서 부른다. 같은 [requestId] 나 같은 작업 지시의 종결 행이 이미 있으면 `DuplicateKeyException`(쓰기 실패)이다.
+     * [instanceId] 는 종결하는 인스턴스, [closedInstanceId]·[closedExecutionId] 는 종결하는 실행이다.
+     */
+    fun closeUnrestored(
+        jobOrderId: String,
+        instanceId: String,
+        closedInstanceId: String,
+        closedExecutionId: String,
+        robotId: String,
+        restoreResult: String,
+        restoreReason: String,
+        basis: String,
+        approverId: String,
+        approverKind: String,
+        reason: String,
+        requestId: UUID,
+    ): CloseRow {
+        val event = event(jobOrderId, JournalEventKind.CLOSED, instanceId, null, basis)
+        return jdbc.sql(
+            """
+            INSERT INTO mission.execution_close (event_id, job_order_id, instance_id, closed_instance_id, closed_execution_id, robot_id,
+                restore_result, restore_reason, basis, approver_id, approver_kind, reason, request_id, response_id)
+            VALUES (:eventId, :jobOrderId, :instanceId, :closedInstanceId, :closedExecutionId, :robotId, :restoreResult, :restoreReason, :basis,
+                :approverId, :approverKind, :reason, :requestId, :responseId)
+            RETURNING $CLOSE_COLUMNS
+            """.trimIndent(),
+        )
+            .param("eventId", event.eventId)
+            .param("jobOrderId", jobOrderId)
+            .param("instanceId", instanceId)
+            .param("closedInstanceId", closedInstanceId)
+            .param("closedExecutionId", closedExecutionId)
+            .param("robotId", robotId)
+            .param("restoreResult", restoreResult)
+            .param("restoreReason", restoreReason)
+            .param("basis", basis)
+            .param("approverId", approverId)
+            .param("approverKind", approverKind)
+            .param("reason", reason)
+            .param("requestId", requestId, Types.OTHER)
+            .param("responseId", "close-${event.eventId}")
+            .query { rs, _ -> closeRow(rs) }
+            .single()
+    }
+
+    /** 그 작업 지시의 종결 행. 없으면 `null` 이다. */
+    fun closeOf(jobOrderId: String): CloseRow? =
+        jdbc.sql("SELECT $CLOSE_COLUMNS FROM mission.execution_close WHERE job_order_id = :jobOrderId")
+            .param("jobOrderId", jobOrderId)
+            .query { rs, _ -> closeRow(rs) }
+            .optional()
+            .orElse(null)
+
+    /** 그 요청 id 의 종결 행. 없으면 `null` 이다. */
+    fun closeByRequest(requestId: UUID): CloseRow? =
+        jdbc.sql("SELECT $CLOSE_COLUMNS FROM mission.execution_close WHERE request_id = :requestId")
+            .param("requestId", requestId)
+            .query { rs, _ -> closeRow(rs) }
+            .optional()
+            .orElse(null)
+
     // ── 판단 기록(V6)
 
     fun judgmentRecord(jobOrderId: String, instanceId: String, executionId: String, wireVersion: String, record: String): JudgmentRecordRow =
@@ -811,6 +915,25 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
         jobOrder = rs.getString("job_order"),
         instanceId = rs.getString("instance_id"),
         executionId = rs.getString("execution_id"),
+        recordedAt = instant(rs, "recorded_at"),
+    )
+
+    private fun closeRow(rs: ResultSet) = CloseRow(
+        closeId = rs.getLong("close_id"),
+        eventId = rs.getLong("event_id"),
+        jobOrderId = rs.getString("job_order_id"),
+        instanceId = rs.getString("instance_id"),
+        closedInstanceId = rs.getString("closed_instance_id"),
+        closedExecutionId = rs.getString("closed_execution_id"),
+        robotId = rs.getString("robot_id"),
+        restoreResult = rs.getString("restore_result"),
+        restoreReason = rs.getString("restore_reason"),
+        basis = rs.getString("basis"),
+        approverId = rs.getString("approver_id"),
+        approverKind = rs.getString("approver_kind"),
+        reason = rs.getString("reason"),
+        requestId = rs.getObject("request_id", UUID::class.java),
+        responseId = rs.getString("response_id"),
         recordedAt = instant(rs, "recorded_at"),
     )
 
@@ -923,14 +1046,17 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
         const val EVENT_COLUMNS = "event_id, job_order_id, kind, instance_id, execution_id, detail, recorded_at"
         const val REVISION_COLUMNS = "revision_id, job_order_id, version, job_order, instance_id, execution_id, recorded_at"
 
-        /** 일지 행 `j` 의 정착·다시 돎·포기 이벤트 가운데 마지막의 종류(없으면 NULL). */
+        /** 일지 행 `j` 의 SETTLED·REOPENED·GAVE_UP·CLOSED 이벤트 가운데 마지막의 종류(없으면 NULL). */
         const val LAST_TURN =
             "(SELECT e.kind FROM mission.execution_journal_event e WHERE e.job_order_id = j.job_order_id " +
-                "AND e.kind IN ('SETTLED', 'REOPENED', 'GAVE_UP') ORDER BY e.event_id DESC LIMIT 1)"
+                "AND e.kind IN ('SETTLED', 'REOPENED', 'GAVE_UP', 'CLOSED') ORDER BY e.event_id DESC LIMIT 1)"
         const val LOG_COLUMNS =
             "log_id, instance_id, job_response_id, job_order_id, execution_id, version, physical_state, required_evidence, " +
                 "reached_evidence, completed_units, unverified_units, incomplete_units, in_doubt_units, operator_required, " +
                 "residual_hold, blocked_by, disposition, recorded_at"
+        const val CLOSE_COLUMNS =
+            "close_id, event_id, job_order_id, instance_id, closed_instance_id, closed_execution_id, robot_id, restore_result, restore_reason, " +
+                "basis, approver_id, approver_kind, reason, request_id, response_id, recorded_at"
         const val CANCEL_COLUMNS =
             "cancel_id, instance_id, execution_id, job_order_id, physical_state, approver_id, approver_kind, reason, recorded_at"
         const val RELEASE_COLUMNS =

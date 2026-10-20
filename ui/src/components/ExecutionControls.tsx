@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { cancelExecution, confirmRobotEmpty, faultBlocked, fetchResidualHolds, HOLD_EVICTED, releaseFaults, resolveHold } from '../api'
+import { cancelExecution, closeUnrestored, confirmRobotEmpty, faultBlocked, fetchResidualHolds, HOLD_EVICTED, releaseFaults, resolveHold } from '../api'
 import type {
   Delivered,
   Execution,
   ExecutionCancelOutcome,
+  ExecutionCloseOutcome,
   ExecutionReleaseOutcome,
   HoldResolveOutcome,
   ResidualHold,
@@ -11,8 +12,18 @@ import type {
   ReworkableTarget,
   RobotEmptyOutcome,
   Session,
+  UnrestoredRow,
 } from '../api'
-import { CANCEL_RESULT_LABEL, EXECUTION_CONTROL_TEXT as TEXT, kindLabel, rejectionText, RELEASE_RESULT_LABEL } from '../labels'
+import {
+  CANCEL_RESULT_LABEL,
+  CLOSE_BASIS_LABEL,
+  CLOSE_RESULT_LABEL,
+  EXECUTION_CONTROL_TEXT as TEXT,
+  kindLabel,
+  rejectionText,
+  RELEASE_RESULT_LABEL,
+  UNRESTORED_TEXT,
+} from '../labels'
 import type { HostRead } from './ExecutionList'
 import { FaultCard } from './FaultCard'
 
@@ -117,6 +128,106 @@ function describeCancel(sent: Delivered<ExecutionCancelOutcome>): string {
       return '응답 없음. 다시 읽어 보니 취소가 걸리지 않음. 실행 목록에서 확인하십시오'
     default:
       return '응답 없음. 취소가 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오'
+  }
+}
+
+interface CloseProps {
+  /** 종결할 복원 못 한 실행의 행(실행 목록 `unrestored`). 종결할 수 있는 행만 준다. */
+  row: UnrestoredRow
+  session: Session
+  /** 조작이 끝나면 부른다. 실행 목록을 지금 한 번, pump 뒤 한 번 더 읽는다. */
+  onClosed: () => void
+  /**
+   * 보낸 결과를 부른다. 결과 줄은 목록을 다시 읽어 이 행이 사라져도 남아야 하므로 폼이 아니라 부른 쪽이 그린다([CloseResultStatus]).
+   */
+  onResult: (sent: Delivered<ExecutionCloseOutcome>) => void
+}
+
+/**
+ * 복원 못 한 실행의 운영자 종결(결함 14). 운영자 모드에서만 조작하고 승인자는 운영 서비스가 행위자로 정한다(ADR 43). 사유가 있어야 보낸다.
+ * 종결할 실행은 행의 `previousInstanceId`·`previousExecutionId` 이고 지금 일지와 다르면 실행 호스트가 막는다. «로봇이 현장에서 멈춘 것을
+ * 확인했다» 증언은 체크한 채 보낼 때만 `attestedStopped` 로 간다. 실행 호스트가 스냅숏으로 정지를 보지 못하고 증언도 없으면 증언을 청한다.
+ * 종결은 로봇을 멈추지 않고 성공을 추정하지 않는다. 종결되지 않은 답은 사유와 증언 칸을 지우지 않는다(증언만 더해 다시 보낼 수 있다).
+ */
+export function CloseUnrestoredForm({ row, session, onClosed, onResult }: CloseProps) {
+  const [reason, setReason] = useState('')
+  const [attested, setAttested] = useState(false)
+  const [busy, setBusy] = useState(false)
+  if (session.mode !== 'operator') return <p>{UNRESTORED_TEXT.operatorOnly}</p>
+
+  const send = () => {
+    if (reason.trim() === '') return
+    setBusy(true)
+    closeUnrestored(
+      session,
+      { jobOrderId: row.jobOrderId, executionInstanceId: row.previousInstanceId, executionId: row.previousExecutionId },
+      reason.trim(),
+      attested,
+    )
+      .then((sent) => {
+        onResult(sent)
+        if (sent.kind === 'outcome' && sent.outcome.outcome === 'CLOSED') {
+          setReason('')
+          setAttested(false)
+        }
+      })
+      .finally(() => {
+        setBusy(false)
+        onClosed()
+      })
+  }
+
+  return (
+    <form aria-label={TEXT.closeHeading} onSubmit={(event) => event.preventDefault()}>
+      <h3>{TEXT.closeHeading}</h3>
+      <p>
+        {row.jobOrderId}({row.robotId}, 이전 {row.previousExecutionId}): {row.reason ?? '사유 없음'}
+      </p>
+      <p>{TEXT.closeWarning}</p>
+      {row.result === 'DEFERRED' && <p>{TEXT.closeDeferredNote}</p>}
+      <label>
+        {TEXT.closeReason}
+        <textarea maxLength={1000} value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} />
+      </label>{' '}
+      <label>
+        <input type="checkbox" checked={attested} disabled={busy} onChange={(event) => setAttested(event.target.checked)} />
+        {TEXT.closeAttest}
+      </label>{' '}
+      <button type="button" disabled={busy || reason.trim() === ''} onClick={send}>
+        {TEXT.closeButton}
+      </button>
+    </form>
+  )
+}
+
+/**
+ * 마지막 운영자 종결 결과 한 줄. 종결하면 목록을 다시 읽어 그 행이 사라지거나 종결할 수 없는 행이 되고 폼이 내려가므로, 폼 밖에서 그린다.
+ */
+export function CloseResultStatus({ jobOrderId, sent }: { jobOrderId: string; sent: Delivered<ExecutionCloseOutcome> }) {
+  return (
+    <p role="status" aria-label={TEXT.closeResultAria}>
+      {jobOrderId}: {describeClose(sent)}
+    </p>
+  )
+}
+
+function describeClose(sent: Delivered<ExecutionCloseOutcome>): string {
+  if (sent.kind === 'refused') return `보내지 않음(${kindLabel(sent.refusal.error)}). ${sent.refusal.detail}`
+  if (sent.kind === 'unknown') return `결과 모름(${sent.cause}). 실행 목록에서 확인하십시오`
+  const { outcome, answer, rejection, confirmation } = sent.outcome
+  if (outcome !== null) {
+    const label = CLOSE_RESULT_LABEL[outcome] ?? outcome
+    if (outcome === 'CLOSED') return answer?.basis ? `${label}(${CLOSE_BASIS_LABEL[answer.basis]})` : label
+    return answer?.detail ? `${label}. ${answer.detail}` : label
+  }
+  if (rejection !== null) return rejectionText('실행 호스트가 거부함', rejection)
+  switch (confirmation) {
+    case 'CONFIRMED_APPLIED':
+      return TEXT.closeApplied
+    case 'CONFIRMED_NOT_APPLIED':
+      return TEXT.closeNotApplied
+    default:
+      return TEXT.closeUnconfirmed
   }
 }
 

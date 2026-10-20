@@ -339,6 +339,28 @@ interface HostExecutionControls {
      */
     fun releaseFaults(executionId: String, approverId: String, reason: String, instanceId: String, sawFaults: ArrayNode, requestId: UUID): HostWrite
 
+    /**
+     * `POST /host/job-orders/{jobOrderId}/close`(결함 14). 복원 못 한 실행의 운영자 종결이다. [executionInstanceId]·[executionId] 는 운영자가 본 종결할
+     * 실행이고 지금 호스트 일지와 다르면 호스트가 `TARGET_CHANGED` 로 답한다. 호스트는 요청 id 를 종결 행에 적는다. 결과(CLOSED·ALREADY_CLOSED·
+     * NOT_CLOSABLE·TASK_LIVE·STOP_UNCONFIRMED·TARGET_CHANGED·NOT_FOUND·REFUSED)는 200 본문의 `result` 에 있다.
+     */
+    fun closeUnrestored(
+        jobOrderId: String,
+        approverId: String,
+        reason: String,
+        executionInstanceId: String,
+        executionId: String,
+        attestedStopped: Boolean,
+        requestId: UUID,
+    ): HostWrite
+
+    /**
+     * 종결의 응답 없음 뒤 재조회가 쓴다. `GET /host/job-orders/{jobOrderId}/closure?requestId=` 본문 그대로이고, 종결하지 않았다는 호스트의 답(404
+     * `NOT_CLOSED`)은 `Ok(null)` 이다. 호스트가 그 [requestId] 의 종결을 아직 처리 중이면(409 `REQUEST_IN_PROGRESS`) 모름이다 — 잠금을 기다리는
+     * 종결이 곧 커밋될 수 있다. 다른 404·200 아님·닿지 않음도 모름이다.
+     */
+    fun closure(jobOrderId: String, requestId: UUID): HostCall<JsonNode?>
+
     /** `GET /host/robots/residual-holds` 본문 그대로. */
     fun residualHolds(): HostCall<JsonNode>
 
@@ -553,6 +575,41 @@ class HostClient(
         return post("/host/executions/${segment(executionId)}/release", body)
     }
 
+    override fun closeUnrestored(
+        jobOrderId: String,
+        approverId: String,
+        reason: String,
+        executionInstanceId: String,
+        executionId: String,
+        attestedStopped: Boolean,
+        requestId: UUID,
+    ): HostWrite {
+        val body = json.createObjectNode()
+            .put("approverId", approverId)
+            .put("reason", reason)
+            .put("executionInstanceId", executionInstanceId)
+            .put("executionId", executionId)
+            .put("attestedStopped", attestedStopped)
+            .put("requestId", requestId.toString())
+        return post("/host/job-orders/${segment(jobOrderId)}/close", body)
+    }
+
+    override fun closure(jobOrderId: String, requestId: UUID): HostCall<JsonNode?> {
+        val request = HttpRequest.newBuilder(URI.create("$base/host/job-orders/${segment(jobOrderId)}/closure?requestId=$requestId")).GET()
+        val response = when (val write = send(request, requestTimeout)) {
+            is HostWrite.NoResponse -> return HostCall.Silent(write.cause)
+            is HostWrite.Answered -> write
+        }
+        val body = objectOrNull(response.body)
+        return when {
+            response.status == 200 && body != null -> HostCall.Ok(body)
+            response.status == 404 && body?.get("error")?.asText() == NOT_CLOSED -> HostCall.Ok(null)
+            response.status == 409 && body?.get("error")?.asText() == REQUEST_IN_PROGRESS -> HostCall.Silent("호스트가 그 요청을 아직 처리 중이다")
+            response.status == 200 -> HostCall.Silent("본문 모양이 다르다")
+            else -> HostCall.Silent("HTTP ${response.status}")
+        }
+    }
+
     override fun residualHolds(): HostCall<JsonNode> = get("/host/robots/residual-holds")
 
     override fun clearResidualHold(robotId: String, markerId: Long, approverId: String, reason: String, requestId: UUID): HostWrite {
@@ -625,6 +682,9 @@ class HostClient(
 
         /** 재조회에서 호스트가 그 요청을 아직 처리 중이라는 오류 이름(S3b JSON 계약 §3). */
         const val REQUEST_IN_PROGRESS = "REQUEST_IN_PROGRESS"
+
+        /** 종결 조회에서 종결하지 않았다는 호스트 오류 이름(결함 14). */
+        const val NOT_CLOSED = "NOT_CLOSED"
 
         /** 인시던트 단건에서 그런 인시던트가 없다는 호스트 오류 이름(S4a JSON 계약 §4). */
         const val INCIDENT_NOT_FOUND = "INCIDENT_NOT_FOUND"

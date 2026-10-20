@@ -164,8 +164,9 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  }
  /**
   * Commits the new receipt and its supersession of the upstream's earlier order [replaces] together, under that order's row lock.
-  * The earlier order must be the same source's, closed without executing: REJECTED or UNASSIGNED, no execution observed, no result
-  * version, and no station run still open. Each side is linked at most once. A replay of the same new order returns 0 and is answered
+  * The earlier order must be the same source's, and either closed without executing (REJECTED or UNASSIGNED, no execution observed,
+  * no result version) or closed by an operator (ACCEPTED, latest result version carries a closure of [CLOSED_KINDS]; the link then
+  * records that version). In both cases no station run may still be open. Each side is linked at most once. A replay of the same new order returns 0 and is answered
   * by the caller's duplicate check, never judged again. A refusal records nothing, so the upstream can resend with the same id.
   * The earlier order's state, detail and submission are never written here.
   */
@@ -179,13 +180,17 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   val ran=receipt.lastExecution!=null || jdbc.sql("SELECT count(*) FROM ops.work_result WHERE receipt_id=:id").param("id",original).query(Long::class.java).single()>0
   val station=jdbc.sql("SELECT count(*) FROM ops.station_run WHERE receipt_id=:id AND state NOT IN ('COMPLETED','TIMED_OUT','REJECTED','MANUALLY_CLEARED','CANCELLED')")
    .param("id",original).query(Long::class.java).single()>0
-  if(receipt.state !in setOf("REJECTED","UNASSIGNED") || ran || station)
-   throw RequestRejected("ORIGINAL_NOT_REPLACEABLE","실행 없이 끝난(거부·미배정) 앞선 작업 요청만 대체할 수 있습니다",409)
+  // An operator close of an execution the host could not restore ends in an UNVERIFIED result marked with a closure (defect 14).
+  val latest=storedResult(original,null)
+  val closed=receipt.state=="ACCEPTED" && ((latest?.get("snapshot") as? JsonNode)?.path("closure")?.path("kind")?.asText() in CLOSED_KINDS)
+  if(!((receipt.state in setOf("REJECTED","UNASSIGNED") && !ran) || closed) || station)
+   throw RequestRejected("ORIGINAL_NOT_REPLACEABLE","실행 없이 끝났거나 운영자가 종결한 앞선 작업 요청만 대체할 수 있습니다",409)
   if(link(original,"original_receipt_id","replacement_receipt_id")!=null)
    throw RequestRejected("ORIGINAL_ALREADY_REPLACED","앞선 작업 요청은 이미 다른 작업 요청으로 대체되었습니다",409)
   val inserted=insert()
-  if(inserted==1) jdbc.sql("""INSERT INTO ops.work_request_supersession(original_receipt_id,replacement_receipt_id,source_system_id,original_state)
-   VALUES(:original,:id,:source,:state)""").param("original",original).param("id",id).param("source",source).param("state",receipt.state).update()
+  if(inserted==1) jdbc.sql("""INSERT INTO ops.work_request_supersession(original_receipt_id,replacement_receipt_id,source_system_id,original_state,original_result_version)
+   VALUES(:original,:id,:source,:state,:version)""").param("original",original).param("id",id).param("source",source).param("state",receipt.state)
+   .param("version",if(closed) latest!!["version"] as Int else null,java.sql.Types.INTEGER).update()
   inserted
  }!!
  /** The other side of this receipt's supersession: [self] names this receipt's column, [other] the column read back. */
@@ -538,6 +543,11 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
   for(key in listOf("completedUnits","unverifiedUnits","inDoubtUnits","blockedBy"))check(response.path(key).isArray && response[key].all{it.isTextual})
   check(response.path("incompleteUnits").isObject && response["incompleteUnits"].all{it.isTextual})
   check(response.path("operatorRequired").isBoolean && response.path("residualHold").isTextual)
+  // An operator close (defect 14) marks its UNVERIFIED result with a closure; anything else in that field fails the page.
+  snapshot.get("closure")?.let{closure->
+   check(closure.isObject && closure.path("kind").isTextual && closure["kind"].asText() in CLOSED_KINDS &&
+    closure.path("basis").isTextual && closure["basis"].asText() in setOf("SNAPSHOT","ATTESTED") && snapshot["physicalState"].asText()=="UNVERIFIED") {"invalid closure"}
+  }
  }
  /**
   * The receipt behind a host execution, through the same execution read as observation. Null: no receipt (direct job order), or
@@ -665,6 +675,7 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
    set<JsonNode>("robotId",execution["robotId"]);set<JsonNode>("workMasterId",execution["workMasterId"])
    set<JsonNode>("missionVersion",execution["missionVersion"]);set<JsonNode>("jobResponse",response)
    set<JsonNode>("deployment",receipt.normalizedOrder?.get("deployment")?:json.nullNode())
+   execution["closure"]?.takeIf{it.isObject}?.let{set<JsonNode>("closure",it)}
   }
   val hash=MessageDigest.getInstance("SHA-256").digest(canonical(snapshot).toString().toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
   transactions.executeWithoutResult {
@@ -717,6 +728,8 @@ class WorkRequests(private val jdbc: JdbcClient, private val interfaces: Mission
  companion object {
   /** Optional inbound field: the upstream's own earlier externalOrderId this order replaces. */
   const val REPLACES="replacesExternalOrderId"
+  /** Closure kinds an operator close can write on a result. Supersede reads this set, not one literal, so another kind extends it. */
+  val CLOSED_KINDS=setOf("UNRESTORED_CLOSED")
   /** The SET item closing a work request's source confirmation round (V22); written in the statement that writes the dispatch's state. */
   private const val CLOSE_ROUND="source_confirmations_closed_at=clock_timestamp()"
   /**

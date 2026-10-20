@@ -621,7 +621,28 @@ export interface CancelRecord {
 /** 다시 짓기 결과 셋(S4b 스펙 T3). */
 export type RestoreResult = 'RESTORED' | 'DEFERRED' | 'GAVE_UP'
 
-/** 복원 보고의 행 하나(S4b 계약 H1, 7칸). `executionId` 는 RESTORED 일 때만, `reason` 은 그 밖일 때만 있다. */
+/** 복원 못 한 실행의 종결 근거(결함 14). 기체 스냅숏이 정지를 보였거나(SNAPSHOT) 운영자가 로봇이 멈춘 것을 증언했다(ATTESTED). */
+export type CloseBasis = 'SNAPSHOT' | 'ATTESTED'
+
+/**
+ * 복원 못 한 실행의 운영자 종결 한 건(결함 14). 실행 호스트가 일지에 적은 것이다. `closedInstanceId`·`closedExecutionId` 가 종결한 실행이고
+ * `restoreResult`·`restoreReason` 이 종결 전의 복원 결과다. `responseId` 는 상위로 낸 UNVERIFIED 종결 응답의 id 다.
+ */
+export interface CloseRecord {
+  requestId: string
+  approverId: string
+  reason: string
+  basis: CloseBasis
+  attestedStopped: boolean
+  closedInstanceId: string
+  closedExecutionId: string
+  restoreResult: 'GAVE_UP' | 'DEFERRED'
+  restoreReason: string
+  responseId: string
+  recordedAt: string
+}
+
+/** 복원 보고의 행 하나(S4b 계약 H1, 7칸 + 결함 14 의 `close`). `executionId` 는 RESTORED 일 때만, `reason` 은 그 밖일 때만 있다. */
 export interface RestoreRow {
   jobOrderId: string
   robotId: string
@@ -630,6 +651,30 @@ export interface RestoreRow {
   result: RestoreResult
   executionId: string | null
   reason: string | null
+  /** 이번 기동 뒤 운영자가 이 행을 종결했으면 그 종결. `result` 는 종결 전의 복원 결과 그대로다. 칸이 없던 호스트 본문은 undefined 다. */
+  close?: CloseRecord | null
+}
+
+/** 복원 못 한 실행 행의 결과(결함 14). CLOSED 는 정지 증언으로 종결했으나 그 기체의 스냅숏이 아직 동의하지 않은 행이다. */
+export type UnrestoredResult = 'GAVE_UP' | 'DEFERRED' | 'CLOSED'
+
+/**
+ * 복원 못 한 실행 한 행(결함 14, 실행 목록의 `unrestored`). 이번 기동의 복원 보고와 달리 앞선 기동에서 포기한 행도 든다. `previousInstanceId`·
+ * `previousExecutionId` 가 종결할 실행이고 종결 요청에 그대로 싣는다. `closable` 이 거짓이면 `notClosableReason` 이 까닭이다(살아 있는
+ * 다른 인스턴스가 든 행 등). `robotExcluded` 는 이 행이 지금 그 기체를 배정에서 빼고 있다는 뜻이다.
+ */
+export interface UnrestoredRow {
+  jobOrderId: string
+  robotId: string
+  previousInstanceId: string
+  previousExecutionId: string
+  result: UnrestoredResult
+  reason: string | null
+  since: string
+  closable: boolean
+  notClosableReason: string | null
+  close: CloseRecord | null
+  robotExcluded: boolean
 }
 
 /**
@@ -687,6 +732,8 @@ export interface ReworkableTarget {
  */
 export interface ExecutionPage extends ExecutionsView, SettledPage {
   reworkableTargets?: ReworkableTarget[]
+  /** 복원 못 한 실행(결함 14). 칸이 없던 호스트 본문은 undefined 다. */
+  unrestored?: UnrestoredRow[]
 }
 
 /** 운영 개요의 실행 수(`GET /api/executions/summary`). `states` 는 남은 실행의 물리 상태별 수다. */
@@ -1275,6 +1322,57 @@ export const cancelExecution = (session: Session, target: { instanceId: string; 
   postOps<ExecutionCancelOutcome>(`/api/executions/${encodeURIComponent(target.executionId)}/cancel`, session, {
     instanceId: target.instanceId,
     reason,
+  })
+
+/** 복원 못 한 실행의 운영자 종결 결과 이름(결함 14). CLOSED 밖의 일곱은 아무것도 적지 않는다. */
+export type CloseResult =
+  | 'CLOSED'
+  | 'ALREADY_CLOSED'
+  | 'NOT_CLOSABLE'
+  | 'TASK_LIVE'
+  | 'STOP_UNCONFIRMED'
+  | 'TARGET_CHANGED'
+  | 'NOT_FOUND'
+  | 'REFUSED'
+
+/** 실행 호스트 종결의 200 본문(결함 14). `detail` 은 CLOSED 가 아닐 때의 사유, `closure` 는 ALREADY_CLOSED 일 때 앞선 종결이다. */
+export interface CloseAnswer {
+  result: CloseResult
+  jobOrderId: string
+  basis: CloseBasis | null
+  responseId: string | null
+  detail: string | null
+  requestId: string
+  closure?: CloseRecord | null
+}
+
+/** 복원 못 한 실행의 운영자 종결 200 응답(결함 14). 화면은 `outcome`(실행 호스트 결과 이름 그대로)으로 가른다. */
+export interface ExecutionCloseOutcome {
+  requestId: string
+  jobOrderId: string
+  result: 'SUCCEEDED' | 'REJECTED' | 'NO_RESPONSE'
+  confirmation: 'CONFIRMED_APPLIED' | 'CONFIRMED_NOT_APPLIED' | null
+  outcome: CloseResult | null
+  answer: CloseAnswer | null
+  rejection: HostRejection | null
+}
+
+/**
+ * 승인자는 싣지 않는다. 운영 서비스가 `X-Ops-User` 로 정한다(ADR 43). 종결할 실행은 실행 목록 `unrestored` 행의 `previousInstanceId`·
+ * `previousExecutionId` 다(운영자가 본 값, 지금 일지와 다르면 실행 호스트가 `TARGET_CHANGED` 로 막는다). `attestedStopped` 는 운영자가
+ * 로봇이 현장에서 멈춘 것을 확인했다는 증언이다.
+ */
+export const closeUnrestored = (
+  session: Session,
+  target: { jobOrderId: string; executionInstanceId: string; executionId: string },
+  reason: string,
+  attestedStopped: boolean,
+) =>
+  postOps<ExecutionCloseOutcome>(`/api/job-orders/${encodeURIComponent(target.jobOrderId)}/close`, session, {
+    executionInstanceId: target.executionInstanceId,
+    executionId: target.executionId,
+    reason,
+    attestedStopped,
   })
 
 /** 실행 호스트 결함 감수 결과 이름(S3a JSON 계약 §5.10). */

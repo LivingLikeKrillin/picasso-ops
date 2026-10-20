@@ -1,4 +1,6 @@
 import type {
+  CloseBasis,
+  CloseResult,
   CommissioningState,
   Connection,
   FaultKind,
@@ -14,6 +16,7 @@ import type {
   SourceMissing,
   SourceUnobserved,
   TestRequestState,
+  UnrestoredResult,
 } from './api'
 
 /** 화면에 보이는 이름. 값은 운영 서비스의 열거형 그대로 받고, 이름만 여기서 붙인다. */
@@ -218,6 +221,37 @@ export const RELEASE_RESULT_LABEL: Record<ReleaseResult, string> = {
   REFUSED: '에이전트는 결함을 수용하지 못합니다',
 }
 
+/** 복원 못 한 실행의 운영자 종결 결과(결함 14). */
+export const CLOSE_RESULT_LABEL: Record<CloseResult, string> = {
+  CLOSED: '운영자 종결했습니다. 작업 요청은 미검증(UNVERIFIED)으로 상위 시스템에 전달됩니다',
+  ALREADY_CLOSED: '이미 운영자가 종결한 작업 지시입니다',
+  NOT_CLOSABLE: '운영자 종결할 수 없는 실행입니다',
+  TASK_LIVE: '기체가 해당 작업 지시의 태스크를 아직 실행하고 있어 운영자 종결하지 않았습니다. 정지를 증언해도 받아들이지 않습니다',
+  STOP_UNCONFIRMED: '로봇이 멈춘 것을 확인하지 못해 운영자 종결하지 않았습니다. 현장에서 정지를 확인했다면 증언 항목을 체크하고 다시 시도하십시오',
+  TARGET_CHANGED: '본 실행이 지금 일지와 다릅니다. 실행 목록을 다시 읽고 판단하십시오',
+  NOT_FOUND: '해당 작업 지시의 일지 행이 없습니다',
+  REFUSED: '에이전트는 복원 못 한 실행을 종결하지 못합니다',
+}
+
+/** 종결 근거의 이름(결함 14). */
+export const CLOSE_BASIS_LABEL: Record<CloseBasis, string> = {
+  SNAPSHOT: '기체 스냅숏 정지 확인',
+  ATTESTED: '운영자 정지 증언',
+}
+
+/** 실행 목록의 복원 못 한 실행(결함 14) 글자. */
+export const UNRESTORED_TEXT = {
+  heading: '복원 못 한 실행',
+  intro: '실행 호스트가 재기동 시 리빌드하지 못한 실행입니다. 운영자가 종결하면 작업 요청은 미검증(UNVERIFIED)으로 끝납니다.',
+  table: '복원 못 한 실행 목록',
+  result: { GAVE_UP: '포기', DEFERRED: '미룸', CLOSED: '증언 종결' } as Record<UnrestoredResult, string>,
+  closedBy: (approverId: string, reason: string) => `운영자 종결: ${approverId}, ${reason}`,
+  excludedUntilSnapshot: '스냅숏 확인 전까지 배정 제외',
+  closeButton: '운영자 종결',
+  operatorOnly: '복원 못 한 실행의 종결은 운영자 모드에서 합니다',
+  reportClosed: (approverId: string) => `운영자 종결(${approverId})`,
+} as const
+
 /** 실행 목록의 «활성 + 최근 N, 이력은 페이지»(HA 설계 기록 §10) 글자. */
 export const EXECUTION_LIST_TEXT = {
   scope: (recent: number) => `진행 중이거나 판단이 필요한 실행과 최근 종결한 실행 ${recent}건을 표시합니다. 그보다 오래된 실행은 이전 실행에서 확인합니다.`,
@@ -308,6 +342,18 @@ export const EXECUTION_CONTROL_TEXT = {
   reworkApplied: '응답은 없었으나 다시 읽어 보니 재작업이 걸림',
   reworkNotApplied: '응답 없음. 다시 읽어 보니 재작업이 걸리지 않음. 실행 목록에서 확인하십시오',
   reworkUnconfirmed: '응답 없음. 재작업이 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오',
+  // 복원 못 한 실행의 운영자 종결(결함 14).
+  closeHeading: '복원 못 한 실행 운영자 종결',
+  closeWarning:
+    '운영자 종결하면 이 작업 요청은 미검증(UNVERIFIED)으로 끝나고 성공으로 추정하지 않습니다. 상위 시스템은 그 결과를 받습니다. 로봇을 멈추지는 않습니다.',
+  closeDeferredNote: '기체 스냅숏을 읽지 못해 미룬 실행입니다. 로봇이 현장에서 멈춘 것을 확인했다고 증언해야 운영자 종결할 수 있습니다.',
+  closeReason: '종결 사유',
+  closeAttest: '로봇이 현장에서 멈춘 것을 확인했습니다',
+  closeButton: '현장 확인 후 운영자 종결',
+  closeResultAria: '운영자 종결 결과',
+  closeApplied: '응답은 없었으나 다시 읽어 보니 운영자 종결이 걸림',
+  closeNotApplied: '응답 없음. 다시 읽어 보니 운영자 종결이 걸리지 않음. 실행 목록에서 확인하십시오',
+  closeUnconfirmed: '응답 없음. 운영자 종결이 걸렸을 수 있음. 다시 읽지도 못해 확인하지 못했습니다. 실행 목록에서 확인하십시오',
   // 인시던트 판단 폼의 Refused. 건너뛴 대상 재작업의 거부도 이 폼의 인시던트 상세로 올 수 있어 승인자 종류를 가리지 않는다.
   incidentRefused: (detail: string | null) => (detail ? `실행 호스트가 판단을 거부했습니다. ${detail}` : '실행 호스트가 판단을 거부했습니다.'),
 } as const

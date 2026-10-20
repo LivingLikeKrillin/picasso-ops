@@ -1653,4 +1653,80 @@ class WorkRequestsTest {
   assertEquals(409 to "ORIGINAL_NOT_REPLACEABLE",refused(order("ORDER-B","ORDER-A")))
   assertEquals(0L,rows("ORDER-B"));assertEquals(0L,links())
  }
+ /**
+  * The host's terminal response when an operator closed an execution it could not restore (defect 14): UNVERIFIED, nothing completed, and a top-level
+  * `closure` marker. [closure] null leaves the marker out. The event is the [seq]th of the feed; each page holds one event after the cursor.
+  */
+ private fun closeFeed(job:String,seq:Int=1,closure:String?="""{"kind":"UNRESTORED_CLOSED","basis":"SNAPSHOT"}""",state:String="UNVERIFIED"):com.fasterxml.jackson.databind.JsonNode {
+  val marker=if(closure==null) "" else ""","closure":$closure"""
+  return json.readTree("""{"producerId":"$PRODUCER","highWatermark":$seq,"events":[{"sequence":$seq,"snapshot":{"instanceId":"mw-before","executionId":"exec-7","jobOrderId":"$job",
+   "robotId":"humanoid-01","workMasterId":"InspectAsset","missionVersion":null,"physicalState":"$state",
+   "jobResponse":{"jobResponseId":"close-$seq","version":1,"physicalState":"$state","requiredEvidence":"E0","reachedEvidence":"E0","completedUnits":[],"unverifiedUnits":[],
+   "incompleteUnits":{"T1":"UNRESTORED_CLOSED"},"inDoubtUnits":[],"operatorRequired":true,"residualHold":"HOLD_KIND_UNSPECIFIED","blockedBy":[],"connection":"CONNECTION_STATE_UNSPECIFIED"}$marker}}]}""")
+ }
+ @Test fun `종결 결과 이벤트는 closure 를 결과 버전에 싣고 결과 불명 작업 요청을 수락으로 올리며 틀린 closure 는 쪽 전체를 되돌린다`() {
+  bench.answer=HostWrite.NoResponse("timeout");bench.executions=HostCall.Silent("offline")
+  val row=service.receive("mes",body).receipt;assertEquals("IN_DOUBT",row.state)
+  // A malformed closure, or a closure on a result that is not UNVERIFIED, fails the whole page: no version, no cursor move, no state change.
+  listOf(
+   closeFeed(row.jobOrderId,closure="""{"kind":"OTHER","basis":"SNAPSHOT"}"""),
+   closeFeed(row.jobOrderId,closure="""{"kind":"UNRESTORED_CLOSED","basis":"WITNESS"}"""),
+   closeFeed(row.jobOrderId,closure="""{"kind":"UNRESTORED_CLOSED"}"""),
+   closeFeed(row.jobOrderId,closure="\"UNRESTORED_CLOSED\""),
+   closeFeed(row.jobOrderId,state="PHYSICALLY_DONE"),
+  ).forEachIndexed{index,page->
+   val worker=durable{HostCall.Ok(page)}
+   assertFailsWith<IllegalStateException>("page $index"){worker.collectResults()}
+   assertEquals(0L,worker.cursorStatus()["sequence"],"page $index");assertEquals(0L,resultCount(),"page $index");assertEquals("IN_DOUBT",service.get(row.receiptId).state,"page $index")
+  }
+  // The same kind of event without a closure is an ordinary UNVERIFIED result and carries none.
+  val plain=service.receive("mes",body.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>().put("externalOrderId","ORDER-PLAIN")).receipt
+  assertEquals(1,durable{HostCall.Ok(closeFeed(plain.jobOrderId,closure=null))}.collectResults())
+  assertFalse((service.result(plain.receiptId,"mes",1)["snapshot"] as com.fasterxml.jackson.databind.JsonNode).has("closure"))
+  // A valid closure rides on its own result version and lifts an IN_DOUBT request to ACCEPTED (the host answered about it).
+  val worker=durable{HostCall.Ok(closeFeed(row.jobOrderId,seq=2,closure="""{"kind":"UNRESTORED_CLOSED","basis":"ATTESTED"}"""))}
+  assertEquals(1,worker.collectResults())
+  assertEquals("ACCEPTED",service.get(row.receiptId).state)
+  val stored=service.result(row.receiptId,"mes",1)
+  val snapshot=stored["snapshot"] as com.fasterxml.jackson.databind.JsonNode
+  assertEquals(json.readTree("""{"kind":"UNRESTORED_CLOSED","basis":"ATTESTED"}"""),snapshot["closure"],snapshot.toString())
+  assertEquals(listOf("mw-before","exec-7","UNVERIFIED","close-2"),listOf(snapshot["instanceId"].asText(),snapshot["executionId"].asText(),snapshot["jobResponse"]["physicalState"].asText(),snapshot["jobResponse"]["jobResponseId"].asText()))
+  assertTrue(snapshot["jobResponse"]["completedUnits"].isEmpty)
+  assertEquals(2L,worker.cursorStatus()["sequence"])
+ }
+ @Test fun `운영자가 종결한 수락 작업 요청은 대체할 수 있고 연결에 그 결과 버전을 적으며 closure 없는 UNVERIFIED 와 열린 스테이션 작업은 대체하지 않는다`() {
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID))
+  val closed=posted(order("ORDER-A"),"ACCEPTED");val plain=posted(order("ORDER-P"),"ACCEPTED");val busy=posted(order("ORDER-S"),"ACCEPTED")
+  var page:com.fasterxml.jackson.databind.JsonNode=json.readTree("""{"producerId":"$PRODUCER","highWatermark":0,"events":[]}""")
+  val worker=durable{HostCall.Ok(page)}
+  var seq=0
+  fun collect(id:UUID,closure:String?="""{"kind":"UNRESTORED_CLOSED","basis":"SNAPSHOT"}"""){page=closeFeed(service.get(id).jobOrderId,++seq,closure);assertEquals(1,worker.collectResults())}
+  collect(closed);collect(plain,closure=null);collect(busy)
+  jdbc.sql("INSERT INTO ops.rf_station(station_id,name,ready_signal,complete_signal,timeout_seconds,created_by) VALUES('inspection-1','공유 검사','ready','complete',30,'engineer/lee')").update()
+  jdbc.sql("INSERT INTO ops.station_run(run_id,station_id,payload,actor,state,reason,receipt_id,created_at,phase_at) VALUES(:id,'inspection-1','{}','operator/kim','RUNNING','실행',:receipt,clock_timestamp(),clock_timestamp())")
+   .param("id",UUID.randomUUID()).param("receipt",busy).update()
+  // Not replaceable: UNVERIFIED without the closure marker, and a closed request whose station run is still open.
+  assertEquals(409 to "ORIGINAL_NOT_REPLACEABLE",refused(order("ORDER-Q","ORDER-P")))
+  assertEquals(409 to "ORIGINAL_NOT_REPLACEABLE",refused(order("ORDER-T","ORDER-S")))
+  assertEquals(0L,rows("ORDER-Q"));assertEquals(0L,rows("ORDER-T"));assertEquals(0L,links())
+  // Replaceable: the closed request. The link names the result version that closed it.
+  val replacement=posted(order("ORDER-B","ORDER-A"),"ACCEPTED")
+  val link=jdbc.sql("SELECT original_state,original_result_version FROM ops.work_request_supersession WHERE original_receipt_id=:id").param("id",closed)
+   .query{rs,_->rs.getString(1) to rs.getObject(2) as Int?}.single()
+  assertEquals("ACCEPTED" to 1,link)
+  assertEquals(replacement.toString(),status(closed)["supersededBy"]["receiptId"].asText());assertEquals("ORDER-A",status(replacement)["replaces"]["externalOrderId"].asText())
+  // Each side is linked at most once.
+  assertEquals(409 to "ORIGINAL_ALREADY_REPLACED",refused(order("ORDER-C","ORDER-A")))
+  // A request that ended without executing is still replaceable and records no result version.
+  bench.answer=HostWrite.Answered(200,rejectedShortage("[]"));val rejected=posted(order("ORDER-R"),"REJECTED")
+  bench.answer=HostWrite.Answered(200,JobOrderBench.accepted(JobOrderBench.HUMANOID));posted(order("ORDER-R2","ORDER-R"),"ACCEPTED")
+  assertEquals("REJECTED" to null,jdbc.sql("SELECT original_state,original_result_version FROM ops.work_request_supersession WHERE original_receipt_id=:id").param("id",rejected)
+   .query{rs,_->rs.getString(1) to rs.getObject(2) as Int?}.single())
+  // The table only holds the two valid shapes.
+  val a=raw("ACCEPTED");val b=raw("ACCEPTED");val c=raw("ACCEPTED");val d=raw("ACCEPTED")
+  fun link(original:UUID,replacement:UUID,state:String,version:Int?)=jdbc.sql("INSERT INTO ops.work_request_supersession(original_receipt_id,replacement_receipt_id,source_system_id,original_state,original_result_version) VALUES(:o,:r,'mes',:s,:v)")
+   .param("o",original).param("r",replacement).param("s",state).param("v",version,java.sql.Types.INTEGER).update()
+  assertFails{link(a,b,"ACCEPTED",null)};assertFails{link(a,b,"ACCEPTED",0)};assertFails{link(a,b,"REJECTED",1)};assertFails{link(a,b,"IN_DOUBT",1)}
+  assertEquals(1,link(a,b,"ACCEPTED",2));assertEquals(1,link(c,d,"UNASSIGNED",null))
+ }
 }
