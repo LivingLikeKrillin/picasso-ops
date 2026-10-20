@@ -68,7 +68,8 @@ class HostInstanceTest {
             assertEquals("DEFERRED", bench.get("/host/executions")["restore"]["rows"].single()["result"].asText())
             assertEquals(listOf("DEFERRED"), events("JO-1"))
 
-            PostgresSupport.execute("UPDATE mission.host_instance SET expires_at = clock_timestamp() - interval '1 second' WHERE instance_id = 'mw-other'")
+            // last_seen_at 도 함께 앞으로 당긴다: expires_at >= last_seen_at(V7) 을 행을 넣은 직후에도 지킨다.
+            PostgresSupport.execute("UPDATE mission.host_instance SET last_seen_at = clock_timestamp() - interval '2 seconds', expires_at = clock_timestamp() - interval '1 second' WHERE instance_id = 'mw-other'")
             bench.eventually("만료 뒤 다시 짓기") { bench.get("/host/executions")["restore"]["rows"].single()["result"].asText() == "RESTORED" }
             val restored = bench.get("/host/executions")["restore"]["rows"].single()
             assertTrue(restored["reason"].isNull, restored.toString())
