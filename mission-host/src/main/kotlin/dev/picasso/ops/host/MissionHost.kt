@@ -1781,8 +1781,20 @@ class MissionHost(
         val still = abandoned.filter { holding(it.jobOrderId) }
         gaveUp.removeAll((abandoned - still.toSet()).toSet())
         val stillClosed = closed.filter { holding(it.row.jobOrderId) }
-        attested.removeAll((closed - stillClosed.toSet()).toSet())
-        return (waiting + still.map { it.jobOrderId }) to stillClosed.map { it.row.jobOrderId }
+        // 스냅숏이 동의한 증언 종결은 확인 행을 적은 뒤에만 메모리에서 뺀다(재기동이 다시 올리지 않는다). 못 적으면 로그만 남기고 메모리에 둔다 —
+        // 그 기체는 계속 빠지고 판정은 깨지지 않으며 다음 판정이 다시 적는다.
+        val unconfirmed = (closed - stillClosed.toSet()).filterNot { confirmed(it) }
+        attested.removeAll((closed - stillClosed.toSet() - unconfirmed.toSet()).toSet())
+        return (waiting + still.map { it.jobOrderId }) to (stillClosed + unconfirmed).sortedBy { closed.indexOf(it) }.map { it.row.jobOrderId }
+    }
+
+    /** 증언 종결의 확인 행을 적는다. 적었으면 `true`, 못 적었으면 `false` 다(이 판정을 깨지 않는다). 호스트 잠금 아래에서 부른다. */
+    private fun confirmed(entry: Attested): Boolean = try {
+        records.confirmClose(entry.close.closeId, instanceId)
+        true
+    } catch (e: Exception) {
+        log.warn("증언 종결의 확인 행을 적지 못했다, 다음 판정에 다시 한다: {} {}", entry.row.jobOrderId, e.toString())
+        false
     }
 
     /**

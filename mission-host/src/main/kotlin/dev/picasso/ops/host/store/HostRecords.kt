@@ -224,7 +224,7 @@ data class CloseRow(
  * 실행 호스트의 기록(S4b 스펙 §6.1). 실행 일지와 그 이벤트, 송신 기록, 인시던트 사본과 판단의 다섯 표다. 덧붙이기와 읽기만 있다.
  * P0-b2 의 V5 가 운영자 실행 취소, 잔여 파지 표시와 그 해소의 세 표를 더한다. HA 단계 0 의 V6 이 판단 기록(덧붙이기만)을, V7 이
  * 인스턴스 심장박동(인스턴스마다 한 행, 그 인스턴스만 고침)을 더한다. V11 이 운영자 결함 감수(덧붙이기만)를 더한다.
- * V12 는 복원 못 한 실행의 운영자 종결(덧붙이기만)을 더한다.
+ * V12 는 복원 못 한 실행의 운영자 종결(덧붙이기만)을, V13 은 증언 종결의 스냅숏 확인(덧붙이기만)을 더한다.
  *
  * pump 뒤 기록은 [inTransaction] 하나로 묶는다(§6.2). 그 밖의 호출은 문장 하나가 한 트랜잭션이다. 호스트 잠금 아래에서 부를 수
  * 있고, 연결을 쥔 채 호스트 잠금을 기다리는 길은 없다(S3b 와 같은 잠금 순서).
@@ -411,9 +411,13 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
     /** 포기한 채인 일지 행. 정착·다시 돎·포기 이벤트 가운데 마지막이 포기다. 받은 순서다. 판정이 그 기체를 뺄지 본다(T4). */
     fun gaveUpJournal(): List<JournalRow> = journalWhere("$LAST_TURN = 'GAVE_UP'")
 
-    /** 정지 증언(`ATTESTED`)으로 종결한 채인 일지 행. 마지막이 종결이고 그 종결 행의 근거가 증언이다. 받은 순서다. 판정이 그 기체를 뺄지 본다. */
+    /**
+     * 정지 증언(`ATTESTED`)으로 종결했고 아직 스냅숏이 동의하지 않은 일지 행. 마지막이 종결이고 그 종결 행의 근거가 증언이며 확인 행(V13,
+     * [confirmClose])이 없다. 받은 순서다. 판정이 그 기체를 뺄지 본다.
+     */
     fun attestedClosures(): List<JournalRow> = journalWhere(
-        "$LAST_TURN = 'CLOSED' AND EXISTS (SELECT 1 FROM mission.execution_close c WHERE c.job_order_id = j.job_order_id AND c.basis = 'ATTESTED')",
+        "$LAST_TURN = 'CLOSED' AND EXISTS (SELECT 1 FROM mission.execution_close c WHERE c.job_order_id = j.job_order_id AND c.basis = 'ATTESTED' " +
+            "AND NOT EXISTS (SELECT 1 FROM mission.execution_close_confirmed k WHERE k.close_id = c.close_id))",
     )
 
     /** 받은 개정판을 적는다(V10). [jobOrder] 는 picasso `JobOrder` 의 칸 그대로의 JSON 글자다. */
@@ -814,6 +818,17 @@ class HostRecords(private val jdbc: JdbcClient, private val transactions: Transa
             .query { rs, _ -> closeRow(rs) }
             .optional()
             .orElse(null)
+
+    /**
+     * 증언 종결을 기체 스냅숏이 확인했음을 적는다(V13). 종결 행마다 한 행이고 이미 있으면 아무것도 하지 않는다(`ON CONFLICT DO NOTHING`).
+     * [instanceId] 는 확인을 본 인스턴스다. 문장 하나가 한 트랜잭션이다. 적지 못하면 `DataAccessException` 이다.
+     */
+    fun confirmClose(closeId: Long, instanceId: String) {
+        jdbc.sql("INSERT INTO mission.execution_close_confirmed (close_id, instance_id) VALUES (:closeId, :instanceId) ON CONFLICT (close_id) DO NOTHING")
+            .param("closeId", closeId)
+            .param("instanceId", instanceId)
+            .update()
+    }
 
     /** 그 요청 id 의 종결 행. 없으면 `null` 이다. */
     fun closeByRequest(requestId: UUID): CloseRow? =
