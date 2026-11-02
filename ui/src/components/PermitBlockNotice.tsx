@@ -1,17 +1,24 @@
 import type { PermitBlock } from '../api'
-import { PERMIT_BLOCK_TEXT as TEXT, PERMIT_CAUSE_LABEL, WITHHELD_ISSUE_LABEL, WORK_PERMIT_LABEL } from '../labels'
+import { PERMIT_BLOCK_TEXT as TEXT, PERMIT_CAUSE_LABEL, RETIRED_BLOCK_TEXT as RETIRED, WITHHELD_ISSUE_LABEL, WORK_PERMIT_LABEL } from '../labels'
 
 /**
  * 작업 허가로 막힌 새 로봇 명령(ADR 52, 실행의 `permitBlock`). 어느 기체가, 무엇 때문에, 무엇이 바뀌면 풀리는지를 보인다. 읽기만 한다.
  *
  * 운영자 보류·결함 막음과 다른 표시다. 작업 허가는 안전 신호를 비춘 정보이고, 이 화면은 그것으로 picasso 가 새 명령을 내지 않고 있다는
  * 것만 말한다. 기체를 세우는 것은 안전 계통이다.
+ *
+ * 같은 발행 게이트가 퇴역한 기체(까닭 `RETIRED`, picasso §15.249)도 막는다. 까닭이 모두 퇴역이면 퇴역의 제목과 안내를 보이고, 작업 허가와
+ * 섞였으면 작업 허가의 안내에 퇴역은 운영자가 풀 수 있다는 한 줄을 더한다.
  */
 export function PermitBlockNotice({ block }: { block: PermitBlock }) {
+  const causes = block.robots.flatMap((robot) => robot.reasons.map((reason) => reason.cause))
+  const retiredCount = causes.filter((cause) => cause === 'RETIRED').length
+  const retiredOnly = causes.length > 0 && retiredCount === causes.length
+  const heading = retiredOnly ? RETIRED.heading : TEXT.heading
   return (
-    <section className="permit-block" aria-label={TEXT.heading}>
-      <h4>{TEXT.heading}</h4>
-      <p>{TEXT.intro}</p>
+    <section className="permit-block" aria-label={heading}>
+      <h4>{heading}</h4>
+      <p>{retiredOnly ? RETIRED.intro : TEXT.intro}</p>
       <dl>
         <dt>{TEXT.unit}</dt>
         <dd>{block.unitId}</dd>
@@ -41,8 +48,18 @@ export function PermitBlockNotice({ block }: { block: PermitBlock }) {
           </li>
         ))}
       </ul>
-      <p>{TEXT.notOperator}</p>
-      <p>{TEXT.notSafety}</p>
+      {retiredOnly ? (
+        <>
+          <p>{RETIRED.resume}</p>
+          <p>{RETIRED.notStop}</p>
+        </>
+      ) : (
+        <>
+          <p>{TEXT.notOperator}</p>
+          {retiredCount > 0 && <p>{RETIRED.mixed}</p>}
+          <p>{TEXT.notSafety}</p>
+        </>
+      )}
     </section>
   )
 }

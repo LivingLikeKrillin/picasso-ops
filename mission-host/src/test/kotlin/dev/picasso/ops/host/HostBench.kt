@@ -46,6 +46,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  *   기동마다 새 채널과 새 `ClientRobotPort` 다(재기동한 호스트가 핸들을 처음부터 다시 받는 것과 같게).
  * @param permitMapping 주면 현장이 이 작업 허가 대응을 선언한 것이다(`host.work-permit.mapping`, ADR 52). 셀 대역 대역의 안전 신호가 원천이다.
  * @param heartbeat 주면 인스턴스 심장박동의 주기와 만료를 이것으로 덮는다(`host.instance.heartbeat-period`·`-expiry`).
+ * @param registryUrl 주면 호스트가 이 주소의 registry 진단 읽기로 기체 퇴역을 읽는다(`host.registry.url`). 안 주면 비워서 포트를 붙이지
+ *   않는다. 기본 설정의 `REGISTRY_PORT` 는 이 기계에 뜬 실제 registry 일 수 있다.
+ * @param retirementInterval 주면 퇴역 읽기 주기를 이것으로 덮는다(`host.retirement.read-interval`).
  */
 class HostBench(
     private val mockVirtualLimit: Duration? = null,
@@ -54,6 +57,8 @@ class HostBench(
     private val gated: Boolean = false,
     private val permitMapping: Path? = null,
     private val heartbeat: Pair<Duration, Duration>? = null,
+    private val registryUrl: String? = null,
+    private val retirementInterval: Duration? = null,
 ) : AutoCloseable {
 
     /** [gated] 일 때 스냅숏을 못 읽는 기체. 바꾸면 다음 호출부터 미친다. */
@@ -216,6 +221,8 @@ class HostBench(
             mockVirtualLimit?.let { add("--host.mock-run.virtual-limit=$it") }
             readInterval?.let { add("--host.site-timings.read-interval=$it") }
             permitMapping?.let { add("--host.work-permit.mapping=$it") }
+            add("--host.registry.url=${registryUrl.orEmpty()}")
+            retirementInterval?.let { add("--host.retirement.read-interval=$it") }
             heartbeat?.let { (period, expiry) ->
                 add("--host.instance.heartbeat-period=$period")
                 add("--host.instance.heartbeat-expiry=$expiry")

@@ -199,6 +199,7 @@ class E2eStack private constructor(
             val db = db()
             return MissionHostApplication.builder(HostClock { site.now() }).run(
                 "--host.work-permit.mapping=${permitMapping ?: ""}",
+                "--host.registry.url=${site.registryUrl}",
                 "--server.port=$port",
                 "--host.mimic.port=${site.mimicPort}",
                 "--host.cell.url=http://127.0.0.1:${site.cellPort}",

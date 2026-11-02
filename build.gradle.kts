@@ -45,7 +45,7 @@ subprojects {
 
     // 토큰을 쥐는 곳은 스펙 §4 의 표대로다. 적재 토큰은 mimic 이 있는 site 만 받는다.
     // site 가 운영자 토큰도 받는 것은 같은 프로세스에서 registry(토큰을 검증하는 쪽)를 띄우기 때문이다.
-    // 실행 호스트는 registry 를 부르지 않으므로 두 토큰 다 받지 않는다(S3a 스펙 §7.1).
+    // 실행 호스트는 registry 의 토큰 없는 진단 읽기만 부르므로 두 토큰 다 받지 않는다(S3a 스펙 §7.1, picasso §15.249).
     val withheld = when (name) {
         "site" -> emptySet()
         "mission-host" -> setOf("PICASSO_INGEST_TOKEN", "PICASSO_OPERATOR_TOKEN")
