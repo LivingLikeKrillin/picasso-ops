@@ -111,6 +111,7 @@ class LoadStack(val robots: Int, withOps: Boolean = true) : AutoCloseable {
         "--host.mock-run.profile=${ROOT.resolve("mission-host/mock-run/humanoid-a.json")}",
         "--host.mock-run.schema=${ROOT.resolve("picasso/profile/schema/capability-profile.schema.json")}",
         "--host.work-permit.mapping=",
+        "--host.registry.url=",
         "--logging.level.root=WARN",
     )
     val hostUrl = "http://127.0.0.1:${(host as WebServerApplicationContext).webServer.port}"

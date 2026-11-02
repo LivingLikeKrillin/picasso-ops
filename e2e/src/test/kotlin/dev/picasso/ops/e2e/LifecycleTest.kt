@@ -8,6 +8,7 @@ import org.junit.jupiter.api.MethodOrderer
 import org.junit.jupiter.api.Order
 import org.junit.jupiter.api.TestMethodOrder
 import java.time.Duration
+import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -43,6 +44,24 @@ class LifecycleTest {
     /** S1d 부터 바인딩 안 된 기체에는 `UNBOUND` 가 붙는다(P2·S1d 스펙 §8.5). 이 시험은 바인딩을 하지 않으므로 늘 그것이 있다. */
     private fun blockers(robot: JsonNode) = robot["blockers"].map { it["kind"].asText() }
 
+    /**
+     * 실행 호스트가 registry 진단 읽기로 비춘 퇴역(picasso §15.249)이 [expected] 가 될 때까지 기다린다. 읽기 주기는 실제 시간 2초라
+     * 실제 시간 상한 10초로 본다. 실제 registry 본문을 호스트가 읽는지를 보는 자리다(호스트 시험은 대역 본문이다).
+     */
+    private fun awaitHostRetired(expected: List<Pair<String, String>>) {
+        val deadline = Instant.now().plusSeconds(10)
+        while (true) {
+            val view = E2eStack.read("${stack.hostUrl}/host/retirements")
+            val retired = view["retired"].map { it["robotId"].asText() to it["reason"].asText() }
+            if (retired == expected) {
+                assertEquals(true, view["declared"].asBoolean(), view.toString())
+                return
+            }
+            check(Instant.now().isBefore(deadline)) { "10초 안에 호스트의 퇴역이 $expected 가 되지 않았다: $view" }
+            Thread.sleep(200)
+        }
+    }
+
     /** 프로파일의 상태 발행 주기 상한 30초를 넘겨 민다. 상태 발행이 곧 생존 보고다. */
     private fun report() = stack.site.advance(Duration.ofSeconds(31))
 
@@ -74,6 +93,7 @@ class LifecycleTest {
         val reply = stack.send("POST", "/api/robots/$ROBOT/retirement", "operator", body = """{"reason":"정비"}""")
         assertEquals("SUCCEEDED", reply.body!!["result"].asText())
         assertEquals("RETIRED", robot()["robot"]["status"].asText())
+        awaitHostRetired(listOf(ROBOT to "정비"))
     }
 
     @Test
@@ -105,6 +125,7 @@ class LifecycleTest {
         val robot = robot()
         assertEquals("CONFIRMED", robot["robot"]["status"].asText())
         assertEquals(listOf("UNBOUND"), blockers(robot))
+        awaitHostRetired(emptyList())
     }
 
     @Test

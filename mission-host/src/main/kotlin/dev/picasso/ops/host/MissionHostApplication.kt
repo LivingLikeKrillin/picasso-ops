@@ -10,6 +10,7 @@ import dev.picasso.ops.host.mission.MockRunner
 import dev.picasso.ops.host.mission.StoredMissionCatalog
 import dev.picasso.ops.host.permit.CellWorkPermits
 import dev.picasso.ops.host.permit.WorkPermitMap
+import dev.picasso.ops.host.retire.RegistryRetirements
 import dev.picasso.ops.host.store.HostSchema
 import dev.picasso.ops.host.store.HostRecords
 import dev.picasso.ops.host.store.HostSchemaMigrated
@@ -90,6 +91,18 @@ open class MissionHostApplication {
         @Value("\${host.site-timings.read-interval}") interval: Duration,
     ): SiteTimingsReader = SiteTimingsReader(jdbc, clock).start(interval)
 
+    /**
+     * 기체 퇴역 읽기 주기(picasso §15.249). [url](`host.registry.url`)이 비어 있으면 읽지 않고 미들웨어에 포트를 붙이지 않는다. 있으면 기동
+     * 안에서 registry 의 진단 읽기를 한 번 동기로 읽고 [interval](`host.retirement.read-interval`, 기본 2초)마다 다시 읽는다. registry 가
+     * 안 닿아도 기동은 멈추지 않는다.
+     */
+    @Bean(destroyMethod = "close")
+    open fun registryRetirements(
+        clock: HostClock,
+        @Value("\${host.registry.url}") url: String,
+        @Value("\${host.retirement.read-interval}") interval: Duration,
+    ): RegistryRetirements = RegistryRetirements(url, clock).start(interval)
+
     /** 실행 일지, 송신 기록, 인시던트 사본(S4b 스펙 §6.1). pump 뒤 기록은 이 데이터 소스의 트랜잭션 하나로 묶는다. */
     @Bean
     open fun hostRecords(
@@ -111,6 +124,8 @@ open class MissionHostApplication {
      *
      * [revisableRetention] 은 `FAILED`·`UNVERIFIED` 로 정착한 실행을 picasso 메모리에서 놓기 전에 두는 폭이다(`host.settled.revisable-retention`,
      * [MissionHost.DEFAULT_REVISABLE_RETENTION]). 음수면 기동이 멈춘다.
+     *
+     * [retirements] 는 registry 주소를 설정했을 때만 미들웨어에 넘긴다([RegistryRetirements.declared]).
      */
     @Bean(destroyMethod = "close")
     open fun missionHost(
@@ -122,6 +137,7 @@ open class MissionHostApplication {
         records: HostRecords,
         store: MissionStore,
         json: ObjectMapper,
+        retirements: RegistryRetirements,
         @Value("\${host.work-permit.mapping}") permitMapping: String,
         @Value("\${host.instance.heartbeat-period}") heartbeatPeriod: Duration,
         @Value("\${host.instance.heartbeat-expiry}") heartbeatExpiry: Duration,
@@ -129,6 +145,7 @@ open class MissionHostApplication {
     ): MissionHost = MissionHost(
         robots, cellBand, clock, catalog, timings, records, store, json, workPermits(permitMapping, clock),
         HostHeartbeat(heartbeatPeriod, heartbeatExpiry), revisableRetention,
+        retirements.takeIf { it.declared },
     ).start()
 
     /**

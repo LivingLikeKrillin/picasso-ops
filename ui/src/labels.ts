@@ -425,6 +425,19 @@ export const PERMIT_BLOCK_TEXT = {
 } as const
 
 /** 작업 허가 값. */
+/**
+ * 퇴역으로 막힌 새 로봇 명령(picasso §15.249, 까닭 `RETIRED`). 표시는 작업 허가 대기와 같은 자리지만 원천이 안전 신호가 아니라 기체 목록의
+ * 운영자 판단이라 안내가 다르다. 퇴역만으로 막혔으면 [PERMIT_BLOCK_TEXT] 의 제목과 안내 대신 이것을 쓰고, 작업 허가와 섞였으면 [mixed] 를 더한다.
+ */
+export const RETIRED_BLOCK_TEXT = {
+  heading: '퇴역 기체 대기',
+  intro: '퇴역한 기체라 이 실행의 새 로봇 명령을 내지 않고 기다립니다. 실패나 운영자 보류가 아닙니다.',
+  notStop:
+    '퇴역은 기체 목록의 운영자 판단이며 기체를 세우지 않습니다. 이미 나간 명령과 도는 단위의 취소는 이 대기와 상관없이 그대로입니다. 다만 미확정 단위의 취소는 재조회가 필요하여 퇴역을 취소한 뒤에 나갑니다.',
+  resume: '기체 화면에서 이 기체의 퇴역을 취소하면 다음 pump 에 명령을 냅니다.',
+  mixed: '까닭이 퇴역인 기체는 기체 화면에서 퇴역을 취소해야 풀립니다.',
+}
+
 export const WORK_PERMIT_LABEL: Record<string, string> = {
   PERMITTED: '허가',
   INHIBITED: '차단',
@@ -446,4 +459,5 @@ export const PERMIT_CAUSE_LABEL: Record<string, string> = {
   SCOPE_UNKNOWN: '대상 기체 모름',
   NOT_COVERED: '허가 원천 없음',
   PORT_FAILED: '허가를 읽지 못함',
+  RETIRED: '퇴역',
 }

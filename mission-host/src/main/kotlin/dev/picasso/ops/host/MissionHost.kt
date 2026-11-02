@@ -28,6 +28,7 @@ import dev.picasso.middleware.PrepareSequencedRack
 import dev.picasso.middleware.RemedyOutcome
 import dev.picasso.middleware.Route
 import dev.picasso.middleware.ResolveOutcome
+import dev.picasso.middleware.RetirementPort
 import dev.picasso.middleware.RobotPort
 import dev.picasso.middleware.SiteTimingsSource
 import dev.picasso.middleware.SourceUnobserved
@@ -490,6 +491,12 @@ data class HostFootprint(
  * 스냅숏을 잠금 아래에서 넘긴다([CellWorkPermits.observe]). 포트의 읽기는 그 스냅숏으로 지어 둔 판독이라 잠금 아래에서 기다리지 않는다.
  * 없으면 포트를 붙이지 않아 발행 거동이 오늘 그대로다. 허가는 안전 계통 상태를 비춘 정보이고 이 호스트는 그것으로 새 로봇 명령만 내지
  * 않는다.
+ *
+ * ## 기체 퇴역(picasso §15.249)
+ *
+ * [retirements] 는 registry 주소를 설정했을 때만 있다. 있으면 미들웨어의 퇴역 포트로 붙인다. 포트의 읽기는 읽기 주기가 잠금 밖에서 읽어
+ * 둔 스냅숏이라 잠금 아래에서 기다리지 않는다. 미들웨어는 퇴역한 기체로 새 로봇 명령을 내지 않고(`Execution.permitBlock`, 까닭 `RETIRED`)
+ * 재할당 후보에서도 뺀다. 도는 단위는 끊지 않는다. 없으면 붙이지 않아 발행 동작이 오늘 그대로다.
  */
 class MissionHost(
     private val robots: RobotPort,
@@ -503,6 +510,7 @@ class MissionHost(
     private val permits: CellWorkPermits? = null,
     private val heartbeat: HostHeartbeat = HostHeartbeat.DEFAULT,
     private val revisableRetention: Duration = DEFAULT_REVISABLE_RETENTION,
+    private val retirements: RetirementPort? = null,
 ) : AutoCloseable {
     init {
         require(!revisableRetention.isNegative) { "개정판을 받을 실행을 두는 폭은 음수가 아니어야 한다: $revisableRetention" }
@@ -513,6 +521,7 @@ class MissionHost(
 
     private val middleware = Middleware(
         robots = robots, cell = signals, now = clock::now, missions = catalog, siteTimings = siteTimings, permits = permits,
+        retirements = retirements,
     )
 
     private var pumpedAt: Instant? = null

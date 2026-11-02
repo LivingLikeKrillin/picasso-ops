@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { Execution, PermitBlock } from '../api'
-import { PERMIT_BLOCK_TEXT as TEXT } from '../labels'
+import { PERMIT_BLOCK_TEXT as TEXT, RETIRED_BLOCK_TEXT as RETIRED } from '../labels'
 import { ExecutionList } from './ExecutionList'
 import { WorkRequests } from './WorkRequests'
 
@@ -83,6 +83,42 @@ it('모름(UNKNOWN)은 까닭과 원천 없음을 그대로 보인다', () => {
   expect(within(notice).getByText('개정 갱신')).toBeVisible()
   expect(within(notice).getByText('기체 humanoid-01: 모름(차단)')).toBeVisible()
   expect(within(notice).getByText(/까닭 허가 원천 없음 · 막는 주체 없음/)).toBeVisible()
+})
+
+const retiredReason = {
+  source: null,
+  cause: 'RETIRED',
+  subject: '감속기 교체',
+  resumeBasis: '운영자가 이 기체의 퇴역을 취소할 때',
+  observedAt: null,
+}
+
+it('퇴역만으로 막힌 실행은 퇴역의 제목과 안내를 보이고 안전 신호와 운영자 판단 불가 안내는 보이지 않는다', () => {
+  const retired: PermitBlock = { ...block, robots: [{ robotId: 'humanoid-01', permit: 'INHIBITED', reasons: [retiredReason] }] }
+  render(<ExecutionList read={{ value: { instanceId: 'mw-1', pumpedAt: 't', executions: [execution({ permitBlock: retired })], ...NO_SETTLED }, error: null }} highlight={null} />)
+  expect(screen.queryByRole('region', { name: TEXT.heading })).not.toBeInTheDocument()
+  const notice = screen.getByRole('region', { name: RETIRED.heading })
+  expect(within(notice).getByText(RETIRED.intro)).toBeVisible()
+  expect(within(notice).getByText(/까닭 퇴역 · 막는 주체 감속기 교체/)).toBeVisible()
+  expect(within(notice).getByText(RETIRED.resume)).toBeVisible()
+  expect(within(notice).getByText(RETIRED.notStop)).toBeVisible()
+  expect(within(notice).queryByText(TEXT.notOperator)).not.toBeInTheDocument()
+  expect(within(notice).queryByText(TEXT.notSafety)).not.toBeInTheDocument()
+})
+
+it('작업 허가와 퇴역이 섞이면 작업 허가의 안내에 퇴역을 풀 수 있다는 줄을 더한다', () => {
+  const mixed: PermitBlock = { ...block, robots: [...block.robots, { robotId: 'quadruped-01', permit: 'INHIBITED', reasons: [retiredReason] }] }
+  render(<ExecutionList read={{ value: { instanceId: 'mw-1', pumpedAt: 't', executions: [execution({ permitBlock: mixed })], ...NO_SETTLED }, error: null }} highlight={null} />)
+  const notice = screen.getByRole('region', { name: TEXT.heading })
+  expect(within(notice).getByText(TEXT.notOperator)).toBeVisible()
+  expect(within(notice).getByText(RETIRED.mixed)).toBeVisible()
+  expect(within(notice).getByText(TEXT.notSafety)).toBeVisible()
+})
+
+it('작업 허가만으로 막히면 퇴역 줄이 없다', () => {
+  render(<ExecutionList read={{ value: { instanceId: 'mw-1', pumpedAt: 't', executions: [execution({ permitBlock: block })], ...NO_SETTLED }, error: null }} highlight={null} />)
+  const notice = screen.getByRole('region', { name: TEXT.heading })
+  expect(within(notice).queryByText(RETIRED.mixed)).not.toBeInTheDocument()
 })
 
 it('작업 요청 상세는 현재 실행의 작업 허가 대기를 보인다', async () => {

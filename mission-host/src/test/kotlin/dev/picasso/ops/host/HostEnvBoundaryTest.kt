@@ -5,7 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/** 실행 호스트는 registry 를 부르지 않으므로 적재 토큰도 운영자 토큰도 받지 않는다(S3a 스펙 §7.1). */
+/** 실행 호스트는 registry 의 토큰 없는 진단 읽기만 부르므로 적재 토큰도 운영자 토큰도 받지 않는다(S3a 스펙 §7.1, picasso §15.249). */
 class HostEnvBoundaryTest {
 
     @Test
