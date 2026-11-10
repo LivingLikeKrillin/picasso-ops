@@ -1,5 +1,8 @@
 # picasso-ops
 
+> 이 저장소는 2026-11-10부로 조직 저장소 [picasso-robotics/mission-ops](https://github.com/picasso-robotics/mission-ops)로 이전되었습니다.
+> 신규 작업은 새 조직 저장소에서 진행되며, 본 저장소는 과거 PR과 작업 이력을 보존하는 용도로 계속 유지합니다.
+
 **상위 시스템의 외부 주문을 로봇 임무에 연결하고, 작업 요청부터 실행·결과 회신까지 운영하는 미들웨어 PoC입니다.**
 
 MES·WMS 같은 상위 시스템은 외부 주문을 전달하고, 로봇은 기종별 케이퍼빌리티에 맞춰 작업을 수행합니다. 그 사이에는 입력 규격, 실행 버전, 배정 조건, 설비 사용 순서, 중복 요청 및 통신 단절을 처리하는 운영 계층이 필요합니다. picasso-ops는 이 흐름을 [picasso](https://github.com/LivingLikeKrillin/picasso) 기반으로 구현합니다.
